@@ -20,9 +20,9 @@ Subcommands:
   agents  List registered agents with pane liveness
   whoami  Show this session's registration (uses $CLAUDE_AGENT_NAME)
   serve   Run the mailman daemon for one agent
-  pause   Halt one or all mailman daemons (not yet implemented)
-  resume  Resume paused mailmen (not yet implemented)
-  reset   Purge messages (not yet implemented)
+  pause   Halt one or all mailman daemons
+  resume  Resume paused mailmen
+  reset   Purge messages (requires --confirm)
   log     Inspect message threads (not yet implemented)
   mcp     Speak MCP over stdio (not yet implemented)
 
@@ -56,7 +56,13 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runWhoamiCLI(args[1:], stdout, stderr)
 	case "serve":
 		return runServeCLI(args[1:], stdout, stderr)
-	case "pause", "resume", "reset", "log", "discover", "mcp":
+	case "pause":
+		return runPauseCLI(args[1:], true, stdout, stderr)
+	case "resume":
+		return runPauseCLI(args[1:], false, stdout, stderr)
+	case "reset":
+		return runResetCLI(args[1:], stdout, stderr)
+	case "log", "discover", "mcp":
 		fmt.Fprintf(stderr, "claude-msg %s: not yet implemented — see the roadmap epic\n", args[0])
 		return exitInternal
 	default:
