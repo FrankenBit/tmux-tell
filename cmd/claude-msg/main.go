@@ -1,8 +1,9 @@
 // Package main is the claude-msg CLI entrypoint.
 //
-// Subcommand dispatcher only. Each subcommand handler will land in its own
-// file (send.go, inbox.go, serve.go, …) once the corresponding milestone
-// issue is picked up. The shape mirrors the README's "CLI shape" section.
+// Subcommand dispatcher only. Each subcommand handler lives in its own file
+// (send.go, inbox.go, status.go, agents.go, whoami.go, …) and is split into
+// runFooCLI (flag parsing + store open) and runFooWithStore (pure logic,
+// testable). See the README for the project shape.
 package main
 
 import (
@@ -10,58 +11,54 @@ import (
 	"os"
 )
 
-// sysexits-style exit codes used by send + future subcommands.
-const (
-	exitOK          = 0
-	exitUsage       = 64 // bad arguments / unknown subcommand
-	exitDataErr     = 65 // malformed input (e.g. empty body)
-	exitUnavailable = 69 // recipient unknown / agent registry miss
-	exitTempFail    = 75 // queue cap exceeded (transient — retry later)
-	exitNotImpl     = 70 // stub
-)
-
 const usage = `usage: claude-msg <subcommand> [args]
 
 Subcommands:
   send    Queue a message for an agent (validates caps, returns JSON)
   inbox   List queued messages for an agent
-  serve   Run the mailman daemon for one agent
-  status  Show paused state + queue depths
-  pause   Halt one or all mailman daemons
-  resume  Resume paused mailmen
-  reset   Purge messages (requires --confirm)
-  log     Inspect message threads
+  status  Show paused state + queue depths across all agents
+  agents  List registered agents with pane liveness
+  whoami  Show this session's registration (uses $CLAUDE_AGENT_NAME)
+  serve   Run the mailman daemon for one agent (not yet implemented)
+  pause   Halt one or all mailman daemons (not yet implemented)
+  resume  Resume paused mailmen (not yet implemented)
+  reset   Purge messages (not yet implemented)
+  log     Inspect message threads (not yet implemented)
+  mcp     Speak MCP over stdio (not yet implemented)
 
 See https://git.frankenbit.de/frankenbit/cli-semaphore for the design notes.
 `
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stderr, usage)
-		os.Exit(exitUsage)
-	}
-
-	switch os.Args[1] {
-	case "send":
-		os.Exit(runSend(os.Args[2:]))
-	case "inbox", "serve", "status", "pause", "resume", "reset", "log":
-		fmt.Fprintf(os.Stderr, "claude-msg %s: not yet implemented — see the roadmap epic\n", os.Args[1])
-		os.Exit(exitNotImpl)
-	case "-h", "--help", "help":
-		fmt.Print(usage)
-		os.Exit(exitOK)
-	default:
-		fmt.Fprintf(os.Stderr, "claude-msg: unknown subcommand %q\n\n%s", os.Args[1], usage)
-		os.Exit(exitUsage)
-	}
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-// runSend is the stub for the M2.3 implementation. It validates argument
-// shape so the contract surfaces in `claude-msg send --help` even before
-// the store backend lands.
-func runSend(args []string) int {
-	// TODO(M2.3): flag parsing (--from, --to, --reply-to, --body), store insert,
-	// caps validation, JSON response on stdout. See the roadmap epic.
-	fmt.Fprintln(os.Stderr, `{"ok":false,"error":"send is not yet implemented — see issue M2.3"}`)
-	return exitNotImpl
+// run is the testable entrypoint. It returns the exit code.
+func run(args []string, stdout, stderr *os.File) int {
+	if len(args) == 0 {
+		fmt.Fprint(stderr, usage)
+		return exitUsage
+	}
+
+	switch args[0] {
+	case "-h", "--help", "help":
+		fmt.Fprint(stdout, usage)
+		return exitOK
+	case "send":
+		return runSendCLI(args[1:], stdout, stderr)
+	case "inbox":
+		return runInboxCLI(args[1:], stdout, stderr)
+	case "status":
+		return runStatusCLI(args[1:], stdout, stderr)
+	case "agents":
+		return runAgentsCLI(args[1:], stdout, stderr)
+	case "whoami":
+		return runWhoamiCLI(args[1:], stdout, stderr)
+	case "serve", "pause", "resume", "reset", "log", "discover", "mcp":
+		fmt.Fprintf(stderr, "claude-msg %s: not yet implemented — see the roadmap epic\n", args[0])
+		return exitInternal
+	default:
+		fmt.Fprintf(stderr, "claude-msg: unknown subcommand %q\n\n%s", args[0], usage)
+		return exitUsage
+	}
 }
