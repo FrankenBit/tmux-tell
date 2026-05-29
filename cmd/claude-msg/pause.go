@@ -53,21 +53,43 @@ func runPauseCLI(args []string, paused bool, stdout, stderr io.Writer) int {
 	return runPauseWithStore(context.Background(), s, target, paused, *format, stdout, stderr)
 }
 
+// agentState is the per-agent result element for pause/resume responses.
+type agentState struct {
+	Name   string `json:"name"`
+	Paused bool   `json:"paused"`
+}
+
 func runPauseWithStore(ctx context.Context, s *store.Store,
 	target string, paused bool, format string,
 	stdout, stderr io.Writer,
 ) int {
 	if target == "" {
-		// --all path
-		n, err := s.SetPausedAll(ctx, paused)
+		// --all path: flip everyone, then list every touched agent's
+		// new state so the operator sees per-agent confirmation.
+		if _, err := s.SetPausedAll(ctx, paused); err != nil {
+			return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+		}
+		agents, err := s.ListAgents(ctx)
 		if err != nil {
 			return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 		}
-		return writeOK(format, stdout, map[string]any{
-			"ok":      true,
-			"paused":  paused,
-			"updated": n,
-		}, fmt.Sprintf("%s applied to %d agent(s)", action(paused), n))
+		out := make([]agentState, 0, len(agents))
+		for _, a := range agents {
+			out = append(out, agentState{Name: a.Name, Paused: a.Paused})
+		}
+		switch format {
+		case "json":
+			_ = writeJSONResult(stdout, map[string]any{
+				"ok":     true,
+				"paused": paused,
+				"agents": out,
+			})
+		default:
+			fmt.Fprintf(stdout, "%s applied to %d agent(s):\n", action(paused), len(out))
+			renderTextTable(stdout, []string{"NAME", "PAUSED"},
+				agentStateRows(out))
+		}
+		return exitOK
 	}
 
 	if err := s.SetPaused(ctx, target, paused); err != nil {
@@ -82,6 +104,14 @@ func runPauseWithStore(ctx context.Context, s *store.Store,
 		"agent":  target,
 		"paused": paused,
 	}, fmt.Sprintf("%s %s", action(paused), target))
+}
+
+func agentStateRows(in []agentState) [][]string {
+	rows := make([][]string, 0, len(in))
+	for _, a := range in {
+		rows = append(rows, []string{a.Name, yesNo(a.Paused)})
+	}
+	return rows
 }
 
 func action(paused bool) string {

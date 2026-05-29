@@ -27,7 +27,7 @@ func TestPause_OneAgent(t *testing.T) {
 	}
 }
 
-func TestPause_All(t *testing.T) {
+func TestPause_All_ReturnsPerAgentList(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob", "carol")
 	var stdout, stderr bytes.Buffer
 	exit := runPauseWithStore(context.Background(), s, "", true, "json", &stdout, &stderr)
@@ -36,11 +36,54 @@ func TestPause_All(t *testing.T) {
 	}
 	got := parseJSONResult(t, stdout.Bytes())
 	if got["paused"] != true {
-		t.Errorf("paused = %v", got["paused"])
+		t.Errorf("paused flag = %v", got["paused"])
 	}
-	if int(got["updated"].(float64)) != 3 {
-		t.Errorf("updated = %v, want 3", got["updated"])
+	agents, ok := got["agents"].([]any)
+	if !ok {
+		t.Fatalf("agents not an array: %v", got["agents"])
 	}
+	if len(agents) != 3 {
+		t.Errorf("agents = %d, want 3", len(agents))
+	}
+	names := map[string]bool{}
+	for _, a := range agents {
+		m := a.(map[string]any)
+		if m["paused"] != true {
+			t.Errorf("agent %v paused = %v", m["name"], m["paused"])
+		}
+		names[m["name"].(string)] = true
+	}
+	for _, want := range []string{"alice", "bob", "carol"} {
+		if !names[want] {
+			t.Errorf("missing agent %q in result", want)
+		}
+	}
+}
+
+func TestPause_All_TextLists(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bob")
+	var stdout, stderr bytes.Buffer
+	_ = runPauseWithStore(context.Background(), s, "", true, "text", &stdout, &stderr)
+	out := stdout.String()
+	for _, want := range []string{"paused applied to 2 agent(s)", "NAME\tPAUSED", "alice\tyes", "bob\tyes"} {
+		if !contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+}
+
+func contains(haystack, needle string) bool {
+	return len(haystack) > 0 && len(needle) > 0 &&
+		stringIndex(haystack, needle) >= 0
+}
+
+func stringIndex(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
 }
 
 func TestPause_UnknownAgent(t *testing.T) {

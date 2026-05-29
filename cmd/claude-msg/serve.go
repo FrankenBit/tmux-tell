@@ -14,6 +14,7 @@ import (
 
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/discover"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/render"
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/sdnotify"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
 )
@@ -118,9 +119,24 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	logger.Printf("starting pane=%s", a.PaneID)
 	defer logger.Printf("stopped")
 
+	// systemd watchdog: tell the manager we're up, log the interval that
+	// will keep WatchdogSec= happy. The ping at the bottom of each loop
+	// iteration covers the busy path; the idle-poll select includes the
+	// watchdog window for empty queues.
+	if err := sdnotify.Ready(); err != nil {
+		logger.Printf("sdnotify_ready_err err=%v", err)
+	}
+	watchdogPing, _ := sdnotify.WatchdogInterval()
+	if watchdogPing > 0 {
+		logger.Printf("watchdog interval=%s", watchdogPing)
+	}
+
 	for {
 		if stopCtx.Err() != nil {
 			return exitOK
+		}
+		if watchdogPing > 0 {
+			_ = sdnotify.Watchdog()
 		}
 
 		// Re-read every iteration so pause/resume and discover updates
