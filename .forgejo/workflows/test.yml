@@ -1,0 +1,28 @@
+name: test
+run-name: test on ${{ gitea.ref }} (${{ gitea.event_name }})
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: go vet + build + test
+    runs-on: go
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: go version
+        run: go version
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      - name: go test -race
+        run: go test -race -count=1 ./...

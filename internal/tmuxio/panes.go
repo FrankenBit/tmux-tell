@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +20,59 @@ import (
 var listPanesRunner = func(ctx context.Context) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-aF", "#{pane_id}")
 	return cmd.Output()
+}
+
+// listPanesWithPIDRunner is the swappable shell-out for ListPanesWithPID.
+var listPanesWithPIDRunner = func(ctx context.Context) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-aF", "#{pane_id} #{pane_pid}")
+	return cmd.Output()
+}
+
+// SetListPanesWithPIDRunner is for tests.
+func SetListPanesWithPIDRunner(r func(ctx context.Context) ([]byte, error)) func(ctx context.Context) ([]byte, error) {
+	prev := listPanesWithPIDRunner
+	listPanesWithPIDRunner = r
+	return prev
+}
+
+// PaneInfo describes one tmux pane for discovery purposes.
+type PaneInfo struct {
+	ID  string // "%3"
+	PID int    // pane root process id
+}
+
+// ListPanesWithPID returns every pane with its root process pid. Same
+// soft-failure semantics as LivePanes: no tmux running → empty slice.
+func ListPanesWithPID(ctx context.Context) ([]PaneInfo, error) {
+	out, err := listPanesWithPIDRunner(ctx)
+	if err != nil {
+		var ee *exec.ExitError
+		if asExitError(err, &ee) {
+			return nil, nil
+		}
+		if isExecNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var infos []PaneInfo
+	for _, line := range bytes.Split(bytes.TrimSpace(out), []byte{'\n'}) {
+		s := strings.TrimSpace(string(line))
+		if s == "" {
+			continue
+		}
+		// "%3 12345"
+		parts := strings.Fields(s)
+		if len(parts) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(parts[1])
+		if err != nil {
+			continue
+		}
+		infos = append(infos, PaneInfo{ID: parts[0], PID: pid})
+	}
+	return infos, nil
 }
 
 // LivePanes returns the set of pane ids (e.g. "%1", "%3") currently
