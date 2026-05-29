@@ -61,6 +61,15 @@ var Allowed = map[string]Command{
 	"rename":  {Text: "/rename", Self: true, Peer: true},
 	"cost":    {Text: "/cost", Self: true, Peer: false},
 	"help":    {Text: "/help", Self: true, Peer: true},
+	// MCP-server lifecycle: useful after deploying a new semaphore tool
+	// so a running agent can refresh its tool surface without losing
+	// session context. Disruption surface is small (a brief tool-list
+	// flicker, no context loss), so peer-invocation is enabled.
+	// Usage: try `mcp-enable-semaphore` first; if Claude Code's `/mcp
+	// enable` on an already-enabled server doesn't reconnect, chain
+	// `mcp-disable-semaphore` then `mcp-enable-semaphore`.
+	"mcp-disable-semaphore": {Text: "/mcp disable semaphore", Self: true, Peer: true},
+	"mcp-enable-semaphore":  {Text: "/mcp enable semaphore", Self: true, Peer: true},
 }
 
 // ErrNotAllowed is returned by Resolve when the requested command is

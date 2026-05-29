@@ -7,13 +7,15 @@ import (
 
 func TestResolve_SelfScope(t *testing.T) {
 	cases := map[string]string{
-		"compact":  "/compact",
-		"rename":   "/rename",
-		"cost":     "/cost",
-		"help":     "/help",
-		"/compact": "/compact",
-		"COMPACT":  "/compact",
-		"  cost  ": "/cost",
+		"compact":               "/compact",
+		"rename":                "/rename",
+		"cost":                  "/cost",
+		"help":                  "/help",
+		"mcp-enable-semaphore":  "/mcp enable semaphore",
+		"mcp-disable-semaphore": "/mcp disable semaphore",
+		"/compact":              "/compact",
+		"COMPACT":               "/compact",
+		"  cost  ":              "/cost",
 	}
 	for in, want := range cases {
 		got, err := Resolve(in, ScopeSelf)
@@ -29,8 +31,10 @@ func TestResolve_SelfScope(t *testing.T) {
 
 func TestResolve_PeerScope_OnlyPeerAllowed(t *testing.T) {
 	allowed := map[string]string{
-		"rename": "/rename",
-		"help":   "/help",
+		"rename":                "/rename",
+		"help":                  "/help",
+		"mcp-enable-semaphore":  "/mcp enable semaphore",
+		"mcp-disable-semaphore": "/mcp disable semaphore",
 	}
 	for in, want := range allowed {
 		got, err := Resolve(in, ScopePeer)
@@ -66,7 +70,7 @@ func TestResolve_RejectsUnknown(t *testing.T) {
 
 func TestNames_SortedAndComplete(t *testing.T) {
 	names := Names()
-	want := []string{"compact", "cost", "help", "rename"}
+	want := []string{"compact", "cost", "help", "mcp-disable-semaphore", "mcp-enable-semaphore", "rename"}
 	if len(names) != len(want) {
 		t.Fatalf("Names() = %v, want %v", names, want)
 	}
@@ -79,11 +83,11 @@ func TestNames_SortedAndComplete(t *testing.T) {
 
 func TestNamesForScope(t *testing.T) {
 	self := NamesForScope(ScopeSelf)
-	if len(self) != 4 {
-		t.Errorf("self names = %v, want all 4 commands", self)
+	if len(self) != len(Allowed) {
+		t.Errorf("self names = %v, want all %d commands", self, len(Allowed))
 	}
 	peer := NamesForScope(ScopePeer)
-	want := []string{"help", "rename"}
+	want := []string{"help", "mcp-disable-semaphore", "mcp-enable-semaphore", "rename"}
 	if len(peer) != len(want) {
 		t.Fatalf("peer names = %v, want %v", peer, want)
 	}

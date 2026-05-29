@@ -214,6 +214,8 @@ working context.
 | `rename`  | ✓ | ✓ | Useful for `<Project> #<Issue>` automation |
 | `cost`    | ✓ | ✗ | Self-only — output goes to recipient |
 | `help`    | ✓ | ✓ | Harmless either way |
+| `mcp-enable-semaphore`  | ✓ | ✓ | Refresh tool surface after deploying a new `semaphore.*` tool — no context loss |
+| `mcp-disable-semaphore` | ✓ | ✓ | Companion: chain `disable` then `enable` if `enable` alone doesn't reconnect |
 
 ```text
 # Self: an agent asks itself to compact
