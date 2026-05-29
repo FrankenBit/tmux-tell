@@ -109,11 +109,11 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpRegisterHandler(s))
 
 	srv.RegisterTool("semaphore.control",
-		"Send a whitelisted slash-command (compact|rename|cost|help) directly to a peer pane. Bypasses the chat-message renderer.",
+		"Send a whitelisted Claude Code slash-command directly to a pane. Scope-gated: when to==self, the self-whitelist applies (compact|rename|cost|help); when to is a peer, only the peer-whitelist applies (rename|help). Bypasses the chat-message renderer.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"to":      {"type": "string", "description": "Recipient agent name"},
+				"to":      {"type": "string", "description": "Recipient agent name; set to your own name for self-invocation"},
 				"command": {"type": "string", "description": "Whitelisted command (e.g. 'compact'); leading slash optional"}
 			},
 			"required": ["to", "command"]
@@ -272,17 +272,21 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 		if in.To == "" {
 			return nil, fmt.Errorf("to required")
 		}
-		text, err := control.Resolve(in.Command)
-		if err != nil {
-			return nil, fmt.Errorf("command %q not allowed; whitelist: %v",
-				in.Command, control.Names())
-		}
 		from, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
 			return nil, err
 		}
 		if from == "" {
 			return nil, fmt.Errorf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+		}
+		scope := control.ScopePeer
+		if in.To == from {
+			scope = control.ScopeSelf
+		}
+		text, err := control.Resolve(in.Command, scope)
+		if err != nil {
+			return nil, fmt.Errorf("%w; %s-invokable: %v",
+				err, scope, control.NamesForScope(scope))
 		}
 		if _, err := s.GetAgent(ctx, in.To); err != nil {
 			if errors.Is(err, store.ErrNotFound) {

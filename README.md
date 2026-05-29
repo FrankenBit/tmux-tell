@@ -196,18 +196,36 @@ systemctl --user enable --now claude-mailman@myname.service
 
 ### Whitelisted control commands
 
-`semaphore.control` lets one agent send a short, vetted Claude Code
-slash-command to a peer pane — useful for asking a noisy session to
-`/compact` itself or for nudging a stuck tab.
+`semaphore.control` types a vetted Claude Code slash-command into a
+pane — either the caller's own pane (most common: an agent quietly
+asking itself to `/compact` at a quiescent point) or another agent's
+pane (for benign peer nudges like retitling). The string is typed
+directly (no chat header, no buffer) so Claude Code parses it exactly
+as if the operator had typed it.
+
+The whitelist is two-axis: every command opts in to *self* and/or
+*peer* independently. Self-only commands are rejected at the MCP
+boundary when targeted at another agent, so a peer can never wipe your
+working context.
+
+| command | self | peer | note |
+|---|---|---|---|
+| `compact` | ✓ | ✗ | Self-only — peers can't truncate your context |
+| `rename`  | ✓ | ✓ | Useful for `<Project> #<Issue>` automation |
+| `cost`    | ✓ | ✗ | Self-only — output goes to recipient |
+| `help`    | ✓ | ✓ | Harmless either way |
 
 ```text
-semaphore.control to=surveyor command=compact
+# Self: an agent asks itself to compact
+semaphore.control to=bosun command=compact   # invoked from the bosun pane
+
+# Peer: Bosun retitles Pilot's tab
+semaphore.control to=pilot command=rename
 ```
 
-Currently allowed: `compact`, `rename`, `cost`, `help`. The string is
-typed directly into the recipient pane (no chat header, no buffer), so
-Claude Code parses it exactly as if the operator had typed it. Anything
-not on the whitelist is rejected at the MCP boundary.
+Adding a command or flipping a scope flag requires a code change
+(`internal/control/control.go`) — the audit surface is intentionally
+small.
 
 ### Removing a pane
 
