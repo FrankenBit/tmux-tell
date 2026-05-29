@@ -176,17 +176,29 @@ for every pane it owns — `%1`, `%3`, etc.). The MCP server looks that
 pane id up in the `agents` table and uses the matching agent name as the
 session's identity.
 
-So the workflow for a **new pane** is just:
+So the workflow for a **new pane** is just one tool call from that pane:
 
-1. Open the pane and start Claude as usual.
-2. From any pane, `sqlite3 /var/lib/cli-semaphore/messages.db \
-   "INSERT INTO agents (name, pane_id) VALUES ('newagent', '%N');"` —
-   or run `claude-msg discover` if the pane was launched with
-   `claude --resume <name>` (and #20/#21 follow-ups have shipped).
-3. `systemctl --user enable --now claude-mailman@newagent.service`.
+> *Claude, please call `semaphore.register name=myname`*
 
-Done. The Claude in that pane already has `semaphore.*` tools and
-they'll resolve identity automatically.
+The pane is auto-detected from `$TMUX_PANE`, the row is inserted, and
+`systemctl --user enable --now claude-mailman@myname.service` runs in
+the same step. Equivalent CLI fallback:
+
+```bash
+# from inside the new pane
+CLAUDE_AGENT_NAME=myname claude-msg ...   # (CLI doesn't yet expose register;
+                                          # fall back to SQL until then)
+sqlite3 /var/lib/cli-semaphore/messages.db \
+  "INSERT INTO agents (name, pane_id) VALUES ('myname', '$TMUX_PANE');"
+systemctl --user enable --now claude-mailman@myname.service
+```
+
+### Removing a pane
+
+> *Claude, please call `semaphore.unregister name=oldname`*
+
+Stops the mailman, drops the agent row, and optionally purges the
+agent's message history (`purge_messages: true`).
 
 ### Identity precedence
 

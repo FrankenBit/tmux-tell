@@ -158,9 +158,9 @@ func TestMCP_Status(t *testing.T) {
 	}
 }
 
-// listToolsCovers the documented contract: every tool advertised has a
-// matching schema entry.
-func TestMCP_ToolsListReturnsAllFive(t *testing.T) {
+// TestMCP_ToolsListContract pins the full list of advertised tools so
+// adding/removing one is intentional.
+func TestMCP_ToolsListContract(t *testing.T) {
 	s := newCmdTestStore(t)
 	srv := newMCPServer(s)
 	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}` + "\n")
@@ -170,19 +170,26 @@ func TestMCP_ToolsListReturnsAllFive(t *testing.T) {
 	_ = json.Unmarshal(bytes.TrimSpace(out.Bytes()), &resp)
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
-	if len(tools) != 5 {
-		t.Errorf("tools = %d, want 5", len(tools))
+	want := map[string]bool{
+		"semaphore.send":       true,
+		"semaphore.agents":     true,
+		"semaphore.whoami":     true,
+		"semaphore.inbox":      true,
+		"semaphore.status":     true,
+		"semaphore.register":   true,
+		"semaphore.unregister": true,
 	}
-	names := map[string]bool{}
-	for _, t := range tools {
-		names[t.(map[string]any)["name"].(string)] = true
+	if len(tools) != len(want) {
+		t.Errorf("tools = %d, want %d", len(tools), len(want))
 	}
-	for _, want := range []string{
-		"semaphore.send", "semaphore.agents", "semaphore.whoami",
-		"semaphore.inbox", "semaphore.status",
-	} {
-		if !names[want] {
-			t.Errorf("missing tool: %s", want)
+	for _, ti := range tools {
+		name := ti.(map[string]any)["name"].(string)
+		if !want[name] {
+			t.Errorf("unexpected tool advertised: %s", name)
 		}
+		delete(want, name)
+	}
+	for missing := range want {
+		t.Errorf("missing tool: %s", missing)
 	}
 }

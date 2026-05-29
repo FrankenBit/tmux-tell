@@ -93,6 +93,33 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpStatusHandler(s))
 
+	srv.RegisterTool("semaphore.register",
+		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"name":          {"type": "string", "description": "Agent name (the new identity)"},
+				"pane":          {"type": "string", "description": "Pane id like %5 (default: $TMUX_PANE)"},
+				"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now claude-mailman@NAME (default true)"},
+				"force":         {"type": "boolean", "description": "Overwrite an existing row with the same name (default false)"}
+			},
+			"required": ["name"]
+		}`),
+		mcpRegisterHandler(s))
+
+	srv.RegisterTool("semaphore.unregister",
+		"Remove an agent from the registry. stop_mailman defaults true.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"name":           {"type": "string"},
+				"stop_mailman":   {"type": "boolean", "description": "Run systemctl --user disable --now (default true)"},
+				"purge_messages": {"type": "boolean", "description": "Also delete delivered/failed audit rows (default false)"}
+			},
+			"required": ["name"]
+		}`),
+		mcpUnregisterHandler(s))
+
 	return srv
 }
 
@@ -337,6 +364,127 @@ func mcpInboxHandler(s *store.Store) mcp.ToolHandler {
 			out = append(out, messageToMap(m))
 		}
 		return out, nil
+	}
+}
+
+func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		Name         string `json:"name"`
+		Pane         string `json:"pane"`
+		StartMailman *bool  `json:"start_mailman"`
+		Force        bool   `json:"force"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if in.Name == "" {
+			return nil, fmt.Errorf("name required")
+		}
+		pane := in.Pane
+		if pane == "" {
+			pane = os.Getenv("TMUX_PANE")
+		}
+		if pane == "" {
+			return nil, fmt.Errorf("pane required (no --pane given and $TMUX_PANE empty)")
+		}
+
+		// Collision check.
+		existing, err := s.GetAgent(ctx, in.Name)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+		if existing != nil && !in.Force {
+			return nil, fmt.Errorf("agent %q already registered with pane %s; pass force=true to overwrite",
+				in.Name, existing.PaneID)
+		}
+
+		if err := s.UpsertAgent(ctx, in.Name, pane); err != nil {
+			return nil, err
+		}
+
+		// Default start_mailman to true.
+		start := true
+		if in.StartMailman != nil {
+			start = *in.StartMailman
+		}
+		mailmanState := "skipped"
+		if start {
+			if err := startMailman(ctx, in.Name); err != nil {
+				return map[string]any{
+					"ok":             true,
+					"name":           in.Name,
+					"pane":           pane,
+					"mailman":        "failed",
+					"mailman_error":  err.Error(),
+					"registered":     true,
+				}, nil
+			}
+			mailmanState = "active"
+		}
+		return map[string]any{
+			"ok":         true,
+			"name":       in.Name,
+			"pane":       pane,
+			"mailman":    mailmanState,
+			"registered": true,
+		}, nil
+	}
+}
+
+func mcpUnregisterHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		Name           string `json:"name"`
+		StopMailman    *bool  `json:"stop_mailman"`
+		PurgeMessages  bool   `json:"purge_messages"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if in.Name == "" {
+			return nil, fmt.Errorf("name required")
+		}
+
+		// Stop the mailman first so it doesn't try to deliver to a soon-
+		// to-be-deleted agent.
+		stop := true
+		if in.StopMailman != nil {
+			stop = *in.StopMailman
+		}
+		mailmanState := "skipped"
+		if stop {
+			if err := stopMailman(ctx, in.Name); err != nil {
+				return nil, err
+			}
+			mailmanState = "stopped"
+		}
+
+		var deleted int64
+		if in.PurgeMessages {
+			n, err := s.DeleteMessages(ctx, in.Name,
+				[]store.State{store.StateQueued, store.StateDelivering,
+					store.StateDelivered, store.StateFailed})
+			if err != nil {
+				return nil, err
+			}
+			deleted = n
+		}
+
+		// Drop the agent row.
+		if _, err := s.DB().ExecContext(ctx, `DELETE FROM agents WHERE name = ?`, in.Name); err != nil {
+			return nil, err
+		}
+
+		return map[string]any{
+			"ok":              true,
+			"name":            in.Name,
+			"mailman":         mailmanState,
+			"deleted":         deleted,
+			"unregistered":    true,
+		}, nil
 	}
 }
 
