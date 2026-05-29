@@ -33,12 +33,13 @@ func runStatusCLI(args []string, stdout, stderr io.Writer) int {
 
 // agentStatus is the per-agent summary status reports.
 type agentStatus struct {
-	Name       string `json:"name"`
-	Paused     bool   `json:"paused"`
-	Queued     int    `json:"queued"`
-	Delivering int    `json:"delivering"`
-	Delivered  int    `json:"delivered"`
-	Failed     int    `json:"failed"`
+	Name             string `json:"name"`
+	Paused           bool   `json:"paused"`
+	Queued           int    `json:"queued"`
+	Delivering       int    `json:"delivering"`
+	Delivered        int    `json:"delivered"`
+	Failed           int    `json:"failed"`
+	OldestQueuedAge  string `json:"oldest_queued_age,omitempty"` // "-" if no queued
 }
 
 func runStatusWithStore(ctx context.Context, s *store.Store,
@@ -68,6 +69,13 @@ func runStatusWithStore(ctx context.Context, s *store.Store,
 			switch state {
 			case store.StateQueued:
 				st.Queued = len(msgs)
+				if len(msgs) > 0 {
+					// messages come back ordered by id ASC, so msgs[0] is
+					// the oldest queued for this agent.
+					st.OldestQueuedAge = ageOf(msgs[0].CreatedAt)
+				} else {
+					st.OldestQueuedAge = "-"
+				}
 			case store.StateDelivering:
 				st.Delivering = len(msgs)
 			case store.StateDelivered:
@@ -84,7 +92,7 @@ func runStatusWithStore(ctx context.Context, s *store.Store,
 		_ = writeJSONResult(stdout, rows)
 		return exitOK
 	case "text", "":
-		header := []string{"NAME", "PAUSED", "QUEUED", "DELIVERING", "DELIVERED", "FAILED"}
+		header := []string{"NAME", "PAUSED", "QUEUED", "DELIVERING", "DELIVERED", "FAILED", "OLDEST"}
 		out := make([][]string, 0, len(rows))
 		for _, r := range rows {
 			out = append(out, []string{
@@ -94,6 +102,7 @@ func runStatusWithStore(ctx context.Context, s *store.Store,
 				itoa(r.Delivering),
 				itoa(r.Delivered),
 				itoa(r.Failed),
+				r.OldestQueuedAge,
 			})
 		}
 		renderTextTable(stdout, header, out)

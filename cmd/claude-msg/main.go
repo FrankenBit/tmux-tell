@@ -23,7 +23,7 @@ Subcommands:
   pause   Halt one or all mailman daemons
   resume  Resume paused mailmen
   reset   Purge messages (requires --confirm)
-  log     Inspect message threads (not yet implemented)
+  log     Inspect message threads
   mcp     Speak MCP over stdio (not yet implemented)
 
 See https://git.frankenbit.de/frankenbit/cli-semaphore for the design notes.
@@ -62,7 +62,9 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runPauseCLI(args[1:], false, stdout, stderr)
 	case "reset":
 		return runResetCLI(args[1:], stdout, stderr)
-	case "log", "discover", "mcp":
+	case "log":
+		return runLogCLI(args[1:], stdout, stderr)
+	case "discover", "mcp":
 		fmt.Fprintf(stderr, "claude-msg %s: not yet implemented — see the roadmap epic\n", args[0])
 		return exitInternal
 	default:
