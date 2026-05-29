@@ -12,6 +12,15 @@ const (
 	StateFailed     State = "failed"
 )
 
+// Kind distinguishes a paste-rendered chat message from a control command
+// that is typed directly into the recipient pane.
+type Kind string
+
+const (
+	KindMessage Kind = "message"
+	KindControl Kind = "control"
+)
+
 // Message mirrors a row in the messages table. Timestamps are kept as
 // strings (ISO 8601 UTC) — callers parse to time.Time at presentation time
 // if needed; the store layer is timezone-agnostic.
@@ -22,6 +31,7 @@ type Message struct {
 	ToAgent     string
 	ReplyTo     sql.NullString
 	Body        string
+	Kind        Kind
 	State       State
 	CreatedAt   string
 	DeliveredAt sql.NullString

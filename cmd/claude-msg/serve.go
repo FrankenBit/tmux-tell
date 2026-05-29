@@ -171,18 +171,12 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			continue
 		}
 
-		logger.Printf("delivering id=%s from=%s body_bytes=%d",
-			msg.PublicID, msg.FromAgent, len(msg.Body))
-
-		rendered := render.Message(*msg)
+		logger.Printf("delivering id=%s kind=%s from=%s body_bytes=%d",
+			msg.PublicID, msg.Kind, msg.FromAgent, len(msg.Body))
 
 		paneForDelivery := a.PaneID
 		deliverCtx, cancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
-		derr := tmuxio.Deliver(deliverCtx, tmuxio.DeliverParams{
-			Pane:        paneForDelivery,
-			Body:        rendered,
-			VerifyToken: "id " + msg.PublicID,
-		})
+		derr := deliverOne(deliverCtx, paneForDelivery, msg)
 		cancel()
 
 		// Auto-heal on pane-id drift: if tmux says the pane is gone, ask
@@ -201,11 +195,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					logger.Printf("auto_heal_update_failed err=%v", uerr)
 				} else {
 					retryCtx, rcancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
-					derr = tmuxio.Deliver(retryCtx, tmuxio.DeliverParams{
-						Pane:        newPane,
-						Body:        rendered,
-						VerifyToken: "id " + msg.PublicID,
-					})
+					derr = deliverOne(retryCtx, newPane, msg)
 					rcancel()
 				}
 			} else if lerr != nil {
@@ -229,6 +219,21 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			return exitOK
 		}
 	}
+}
+
+// deliverOne dispatches a single message to a pane based on its Kind:
+// regular messages go through the paste-buffer renderer with verification;
+// control commands type their body directly via send-keys -l so they hit
+// Claude Code's slash-command parser without the chat header.
+func deliverOne(ctx context.Context, pane string, msg *store.Message) error {
+	if msg.Kind == store.KindControl {
+		return tmuxio.SendKeys(ctx, pane, msg.Body)
+	}
+	return tmuxio.Deliver(ctx, tmuxio.DeliverParams{
+		Pane:        pane,
+		Body:        render.Message(*msg),
+		VerifyToken: "id " + msg.PublicID,
+	})
 }
 
 // isCantFindPaneError detects the tmux delivery failure mode that means

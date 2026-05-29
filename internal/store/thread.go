@@ -34,7 +34,7 @@ func (s *Store) GetThread(ctx context.Context, anyID string) ([]Message, error) 
 		queue = queue[1:]
 
 		rows, err := s.db.QueryContext(ctx,
-			`SELECT id, public_id, from_agent, to_agent, reply_to, body,
+			`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
 			        state, created_at, delivered_at, error
 			 FROM messages WHERE reply_to = ?
 			 ORDER BY id ASC`, current)
@@ -45,7 +45,7 @@ func (s *Store) GetThread(ctx context.Context, anyID string) ([]Message, error) 
 		for rows.Next() {
 			var m Message
 			if err := rows.Scan(
-				&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body,
+				&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
 				&m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error); err != nil {
 				rows.Close()
 				return nil, err
@@ -80,10 +80,10 @@ func (s *Store) findThreadRoot(ctx context.Context, startID string) (*Message, e
 
 		var m Message
 		err := s.db.QueryRowContext(ctx,
-			`SELECT id, public_id, from_agent, to_agent, reply_to, body,
+			`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
 			        state, created_at, delivered_at, error
 			 FROM messages WHERE public_id = ?`, current).Scan(
-			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body,
+			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
 			&m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound

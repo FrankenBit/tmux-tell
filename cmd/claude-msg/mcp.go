@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/control"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/mcp"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
@@ -106,6 +107,18 @@ func newMCPServer(s *store.Store) *mcp.Server {
 			"required": ["name"]
 		}`),
 		mcpRegisterHandler(s))
+
+	srv.RegisterTool("semaphore.control",
+		"Send a whitelisted slash-command (compact|rename|cost|help) directly to a peer pane. Bypasses the chat-message renderer.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"to":      {"type": "string", "description": "Recipient agent name"},
+				"command": {"type": "string", "description": "Whitelisted command (e.g. 'compact'); leading slash optional"}
+			},
+			"required": ["to", "command"]
+		}`),
+		mcpControlHandler(s))
 
 	srv.RegisterTool("semaphore.unregister",
 		"Remove an agent from the registry. stop_mailman defaults true.",
@@ -244,6 +257,65 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		"id":     res.PublicID,
 		"queued": res.Queued,
 	}, nil
+}
+
+func mcpControlHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		To      string `json:"to"`
+		Command string `json:"command"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if in.To == "" {
+			return nil, fmt.Errorf("to required")
+		}
+		text, err := control.Resolve(in.Command)
+		if err != nil {
+			return nil, fmt.Errorf("command %q not allowed; whitelist: %v",
+				in.Command, control.Names())
+		}
+		from, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		if from == "" {
+			return nil, fmt.Errorf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+		}
+		if _, err := s.GetAgent(ctx, in.To); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, fmt.Errorf("unknown recipient: %s", in.To)
+			}
+			return nil, err
+		}
+		if depth, err := s.RecipientQueueDepth(ctx, in.To); err != nil {
+			return nil, err
+		} else if depth >= capRecipientQueue {
+			return nil, fmt.Errorf("queue full for %s (%d/%d)", in.To, depth, capRecipientQueue)
+		}
+		if backlog, err := s.SenderBacklog(ctx, from); err != nil {
+			return nil, err
+		} else if backlog >= capSenderBacklog {
+			return nil, fmt.Errorf("sender backlog full for %s (%d/%d)", from, backlog, capSenderBacklog)
+		}
+		res, err := s.InsertMessage(ctx, store.InsertParams{
+			FromAgent: from,
+			ToAgent:   in.To,
+			Body:      text,
+			Kind:      store.KindControl,
+		})
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{
+			"ok":      true,
+			"id":      res.PublicID,
+			"queued":  res.Queued,
+			"command": text,
+		}, nil
+	}
 }
 
 func mcpAgentsHandler(s *store.Store) mcp.ToolHandler {

@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS messages (
     to_agent      TEXT NOT NULL,
     reply_to      TEXT REFERENCES messages(public_id),
     body          TEXT NOT NULL,
+    kind          TEXT NOT NULL DEFAULT 'message',-- message | control
     state         TEXT NOT NULL DEFAULT 'queued', -- queued|delivering|delivered|failed
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     delivered_at  TEXT,

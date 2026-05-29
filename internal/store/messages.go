@@ -9,12 +9,13 @@ import (
 )
 
 // InsertParams is the input to InsertMessage. ReplyTo may be empty for new
-// (non-reply) threads.
+// (non-reply) threads. Kind defaults to KindMessage when empty.
 type InsertParams struct {
 	FromAgent string
 	ToAgent   string
 	ReplyTo   string
 	Body      string
+	Kind      Kind
 }
 
 // InsertResult is the output of InsertMessage. Queued is the recipient's
@@ -66,6 +67,11 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 		replyToArg = p.ReplyTo
 	}
 
+	kind := p.Kind
+	if kind == "" {
+		kind = KindMessage
+	}
+
 	var publicID string
 	for i := 0; i < publicIDRetryAttempts; i++ {
 		candidate, err := generatePublicID()
@@ -73,9 +79,9 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 			return InsertResult{}, fmt.Errorf("store: generate public_id: %w", err)
 		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body)
-			 VALUES (?, ?, ?, ?, ?)`,
-			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body)
+			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind)
 		if err == nil {
 			publicID = candidate
 			break
@@ -117,14 +123,14 @@ func (s *Store) ClaimNext(ctx context.Context, toAgent string) (*Message, error)
 
 	var m Message
 	err = tx.QueryRowContext(ctx,
-		`SELECT id, public_id, from_agent, to_agent, reply_to, body,
+		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
 		        state, created_at, delivered_at, error
 		 FROM messages
 		 WHERE to_agent = ? AND state = ?
 		 ORDER BY id
 		 LIMIT 1`,
 		toAgent, StateQueued).Scan(
-		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body,
+		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
 		&m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -219,11 +225,11 @@ func (s *Store) SenderBacklog(ctx context.Context, fromAgent string) (int, error
 func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, error) {
 	var m Message
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, public_id, from_agent, to_agent, reply_to, body,
+		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
 		        state, created_at, delivered_at, error
 		 FROM messages WHERE public_id = ?`,
 		publicID).Scan(
-		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body,
+		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
 		&m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -268,7 +274,7 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	}
 	args = append(args, f.Limit)
 
-	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body,
+	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
 	             state, created_at, delivered_at, error
 	      FROM messages`
 	if len(wheres) > 0 {
@@ -286,7 +292,7 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	for rows.Next() {
 		var m Message
 		if err := rows.Scan(
-			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body,
+			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
 			&m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error); err != nil {
 			return nil, err
 		}

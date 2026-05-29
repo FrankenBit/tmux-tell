@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -77,7 +78,26 @@ func Open(path string) (*Store, error) {
 		return nil, fmt.Errorf("store: apply schema: %w", err)
 	}
 
+	// Idempotent column-adds for databases created before the column
+	// existed. SQLite doesn't support ALTER TABLE ADD COLUMN IF NOT
+	// EXISTS, so we swallow the "duplicate column" error explicitly.
+	for _, m := range migrations {
+		if _, err := s.db.ExecContext(ctx, m); err != nil {
+			if !strings.Contains(err.Error(), "duplicate column name") {
+				_ = db.Close()
+				return nil, fmt.Errorf("store: migrate %q: %w", m, err)
+			}
+		}
+	}
+
 	return s, nil
+}
+
+// migrations are idempotent schema patches. Each must be safe to re-run
+// (i.e. either inherently idempotent or — for ALTER TABLE ADD COLUMN —
+// fails with "duplicate column name" which Open() ignores).
+var migrations = []string{
+	`ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'`,
 }
 
 // Close releases the underlying database handle.

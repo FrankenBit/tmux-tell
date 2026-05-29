@@ -112,6 +112,31 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		p.VerifyToken, len(retryDelays)+1, trim(lastCapture, 400))
 }
 
+// SendKeys types text directly into the recipient pane and presses Enter,
+// bypassing the paste-buffer machinery used by Deliver. It is intended for
+// short control strings (e.g. "/compact") that must hit Claude Code's
+// slash-command parser exactly as typed, without the rendered chat header
+// Deliver wraps around regular messages.
+//
+// No verification: control commands don't echo a predictable token.
+func SendKeys(ctx context.Context, pane, text string) error {
+	if pane == "" {
+		return errors.New("tmuxio: pane required")
+	}
+	if text == "" {
+		return errors.New("tmuxio: text required")
+	}
+	if out, err := tmuxRun(ctx, nil,
+		"send-keys", "-t", pane, "-l", text); err != nil {
+		return fmt.Errorf("tmuxio: send-keys literal: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := tmuxRun(ctx, nil,
+		"send-keys", "-t", pane, "Enter"); err != nil {
+		return fmt.Errorf("tmuxio: send-keys Enter: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func uniqueBufferName() string {
 	var b [4]byte
 	_, _ = rand.Read(b[:])

@@ -151,8 +151,9 @@ the rest of the read-side subcommands work without flags.
 ## Use from Claude Code (MCP)
 
 The same binary speaks MCP over stdio under `claude-msg mcp`, exposing
-`semaphore.send / agents / whoami / inbox / status` as native Claude
-tools. **One user-level config; identity is auto-resolved per pane.**
+`semaphore.send / control / agents / whoami / inbox / status / register
+/ unregister` as native Claude tools. **One user-level config; identity
+is auto-resolved per pane.**
 
 Add the server once in `~/.claude.json` (or your equivalent Claude Code
 config) — no per-pane env or config files needed:
@@ -192,6 +193,21 @@ sqlite3 /var/lib/cli-semaphore/messages.db \
   "INSERT INTO agents (name, pane_id) VALUES ('myname', '$TMUX_PANE');"
 systemctl --user enable --now claude-mailman@myname.service
 ```
+
+### Whitelisted control commands
+
+`semaphore.control` lets one agent send a short, vetted Claude Code
+slash-command to a peer pane — useful for asking a noisy session to
+`/compact` itself or for nudging a stuck tab.
+
+```text
+semaphore.control to=surveyor command=compact
+```
+
+Currently allowed: `compact`, `rename`, `cost`, `help`. The string is
+typed directly into the recipient pane (no chat header, no buffer), so
+Claude Code parses it exactly as if the operator had typed it. Anything
+not on the whitelist is rejected at the MCP boundary.
 
 ### Removing a pane
 

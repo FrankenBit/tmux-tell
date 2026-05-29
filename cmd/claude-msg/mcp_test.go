@@ -178,6 +178,7 @@ func TestMCP_ToolsListContract(t *testing.T) {
 		"semaphore.status":     true,
 		"semaphore.register":   true,
 		"semaphore.unregister": true,
+		"semaphore.control":    true,
 	}
 	if len(tools) != len(want) {
 		t.Errorf("tools = %d, want %d", len(tools), len(want))
