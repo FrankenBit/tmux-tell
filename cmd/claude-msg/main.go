@@ -25,7 +25,7 @@ Subcommands:
   reset   Purge messages (requires --confirm)
   log     Inspect message threads
   discover Re-derive agents.pane_id from current tmux state
-  mcp     Speak MCP over stdio (not yet implemented)
+  mcp     Speak MCP over stdio (Claude Code tools)
 
 See https://git.frankenbit.de/frankenbit/cli-semaphore for the design notes.
 `
@@ -68,8 +68,7 @@ func run(args []string, stdout, stderr *os.File) int {
 	case "discover":
 		return runDiscoverCLI(args[1:], stdout, stderr)
 	case "mcp":
-		fmt.Fprintf(stderr, "claude-msg %s: not yet implemented — see the roadmap epic\n", args[0])
-		return exitInternal
+		return runMCPCLI(args[1:], os.Stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "claude-msg: unknown subcommand %q\n\n%s", args[0], usage)
 		return exitUsage

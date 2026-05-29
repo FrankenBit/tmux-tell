@@ -1,0 +1,337 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/mcp"
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
+)
+
+// runMCPCLI parses MCP-mode flags, opens the store, and serves on stdio.
+//
+// Usage: claude-msg mcp [--db PATH]
+//
+// Identity is taken from $CLAUDE_AGENT_NAME — see whoami.go. The MCP
+// client (Claude Code) is expected to set it in the mcpServers.env block.
+func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	if err := fs.Parse(args); err != nil {
+		return exitUsage
+	}
+
+	s, err := store.Open(resolveDBPath(*dbPath))
+	if err != nil {
+		fmt.Fprintf(stderr, "open store: %v\n", err)
+		return exitInternal
+	}
+	defer s.Close()
+
+	srv := newMCPServer(s)
+	if err := srv.Serve(context.Background(), stdin, stdout); err != nil && !errors.Is(err, io.EOF) {
+		fmt.Fprintf(stderr, "mcp serve: %v\n", err)
+		return exitInternal
+	}
+	return exitOK
+}
+
+// newMCPServer wires the five semaphore.* tools onto an mcp.Server.
+func newMCPServer(s *store.Store) *mcp.Server {
+	srv := mcp.NewServer("semaphore", "0.1.0")
+
+	srv.RegisterTool("semaphore.send",
+		"Queue a message for another agent. From is taken from $CLAUDE_AGENT_NAME.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"to":       {"type": "string", "description": "Recipient agent name"},
+				"body":     {"type": "string", "description": "Message body"},
+				"reply_to": {"type": "string", "description": "Optional public_id of the message this is a reply to"}
+			},
+			"required": ["to", "body"]
+		}`),
+		mcpSendHandler(s))
+
+	srv.RegisterTool("semaphore.agents",
+		"List registered agents with pane liveness.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"available_only": {"type": "boolean", "description": "Filter to live + not-paused agents"}
+			}
+		}`),
+		mcpAgentsHandler(s))
+
+	srv.RegisterTool("semaphore.whoami",
+		"Return this session's registration (uses $CLAUDE_AGENT_NAME).",
+		json.RawMessage(`{"type": "object", "properties": {}}`),
+		mcpWhoamiHandler(s))
+
+	srv.RegisterTool("semaphore.inbox",
+		"List the caller's own queued messages.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"state": {"type": "string", "enum": ["queued","delivering","delivered","failed"]},
+				"limit": {"type": "integer", "minimum": 1, "maximum": 1000}
+			}
+		}`),
+		mcpInboxHandler(s))
+
+	srv.RegisterTool("semaphore.status",
+		"Return registry overview: paused state + queue depths per agent.",
+		json.RawMessage(`{"type": "object", "properties": {}}`),
+		mcpStatusHandler(s))
+
+	return srv
+}
+
+// --- tool handlers ---
+
+func mcpSendHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		To      string `json:"to"`
+		Body    string `json:"body"`
+		ReplyTo string `json:"reply_to"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		from := os.Getenv("CLAUDE_AGENT_NAME")
+		if from == "" {
+			return nil, fmt.Errorf("CLAUDE_AGENT_NAME not set on the mcp server process")
+		}
+		p := sendParams{
+			From:         from,
+			To:           in.To,
+			ReplyTo:      in.ReplyTo,
+			Body:         in.Body,
+			MaxRecipient: capRecipientQueue,
+			MaxSender:    capSenderBacklog,
+			MaxBody:      capBodyBytes,
+		}
+		// Re-use the validation + cap logic from the CLI by going
+		// directly through the store ourselves but mirroring the checks.
+		return doSendMCP(ctx, s, p)
+	}
+}
+
+// doSendMCP is the MCP-side equivalent of runSendWithStore. We use the
+// same validation cascade but return structured Go data instead of writing
+// JSON to a Writer.
+func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
+	if p.To == "" {
+		return nil, fmt.Errorf("to required")
+	}
+	if p.Body == "" {
+		return nil, fmt.Errorf("body required")
+	}
+	if p.MaxBody > 0 && len(p.Body) > p.MaxBody {
+		return nil, fmt.Errorf("body too large (%d > %d bytes)", len(p.Body), p.MaxBody)
+	}
+	if _, err := s.GetAgent(ctx, p.To); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, fmt.Errorf("unknown recipient: %s", p.To)
+		}
+		return nil, err
+	}
+	if _, err := s.GetAgent(ctx, p.From); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, fmt.Errorf("unknown sender: %s", p.From)
+		}
+		return nil, err
+	}
+	if depth, err := s.RecipientQueueDepth(ctx, p.To); err != nil {
+		return nil, err
+	} else if depth >= p.MaxRecipient {
+		return nil, fmt.Errorf("queue full for %s (%d/%d)", p.To, depth, p.MaxRecipient)
+	}
+	if backlog, err := s.SenderBacklog(ctx, p.From); err != nil {
+		return nil, err
+	} else if backlog >= p.MaxSender {
+		return nil, fmt.Errorf("sender backlog full for %s (%d/%d)", p.From, backlog, p.MaxSender)
+	}
+	res, err := s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: p.From,
+		ToAgent:   p.To,
+		ReplyTo:   p.ReplyTo,
+		Body:      p.Body,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, fmt.Errorf("unknown reply-to id: %s", p.ReplyTo)
+		}
+		return nil, err
+	}
+	return map[string]any{
+		"ok":     true,
+		"id":     res.PublicID,
+		"queued": res.Queued,
+	}, nil
+}
+
+func mcpAgentsHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		AvailableOnly bool `json:"available_only"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		_ = json.Unmarshal(args, &in)
+		live, err := tmuxio.LivePanes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		agents, err := s.ListAgents(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := []agentView{}
+		for _, a := range agents {
+			v := agentView{Name: a.Name, Pane: a.PaneID, Paused: a.Paused}
+			switch {
+			case a.PaneID == "":
+				v.PaneStatus = "no-pane"
+			case live[a.PaneID]:
+				v.PaneStatus = "live"
+			default:
+				v.PaneStatus = "stale"
+			}
+			depth, err := s.RecipientQueueDepth(ctx, a.Name)
+			if err != nil {
+				return nil, err
+			}
+			v.Queued = depth
+			if in.AvailableOnly && (v.PaneStatus != "live" || v.Paused) {
+				continue
+			}
+			out = append(out, v)
+		}
+		return out, nil
+	}
+}
+
+func mcpWhoamiHandler(s *store.Store) mcp.ToolHandler {
+	return func(ctx context.Context, _ json.RawMessage) (any, error) {
+		name := os.Getenv("CLAUDE_AGENT_NAME")
+		if name == "" {
+			return nil, fmt.Errorf("CLAUDE_AGENT_NAME not set on the mcp server process")
+		}
+		a, err := s.GetAgent(ctx, name)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return map[string]any{
+					"ok":         false,
+					"error":      "agent not in registry",
+					"name":       name,
+					"registered": false,
+				}, nil
+			}
+			return nil, err
+		}
+		live, _ := tmuxio.LivePanes(ctx)
+		paneStatus := "no-pane"
+		switch {
+		case a.PaneID == "":
+			paneStatus = "no-pane"
+		case live[a.PaneID]:
+			paneStatus = "live"
+		default:
+			paneStatus = "stale"
+		}
+		depth, _ := s.RecipientQueueDepth(ctx, name)
+		return map[string]any{
+			"ok":          true,
+			"name":        a.Name,
+			"registered":  true,
+			"pane":        a.PaneID,
+			"pane_status": paneStatus,
+			"paused":      a.Paused,
+			"queued":      depth,
+		}, nil
+	}
+}
+
+func mcpInboxHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		State string `json:"state"`
+		Limit int    `json:"limit"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		_ = json.Unmarshal(args, &in)
+		name := os.Getenv("CLAUDE_AGENT_NAME")
+		if name == "" {
+			return nil, fmt.Errorf("CLAUDE_AGENT_NAME not set on the mcp server process")
+		}
+		state := store.State(in.State)
+		if state == "" {
+			state = store.StateQueued
+		}
+		limit := in.Limit
+		if limit == 0 {
+			limit = 50
+		}
+		msgs, err := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: name, State: state, Limit: limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out := make([]map[string]any, 0, len(msgs))
+		for _, m := range msgs {
+			out = append(out, messageToMap(m))
+		}
+		return out, nil
+	}
+}
+
+func mcpStatusHandler(s *store.Store) mcp.ToolHandler {
+	return func(ctx context.Context, _ json.RawMessage) (any, error) {
+		agents, err := s.ListAgents(ctx)
+		if err != nil {
+			return nil, err
+		}
+		rows := []agentStatus{}
+		for _, a := range agents {
+			st := agentStatus{Name: a.Name, Paused: a.Paused}
+			for _, state := range []store.State{
+				store.StateQueued, store.StateDelivering,
+				store.StateDelivered, store.StateFailed,
+			} {
+				msgs, err := s.ListMessages(ctx, store.ListFilter{
+					ToAgent: a.Name, State: state, Limit: 1000,
+				})
+				if err != nil {
+					return nil, err
+				}
+				switch state {
+				case store.StateQueued:
+					st.Queued = len(msgs)
+					if len(msgs) > 0 {
+						st.OldestQueuedAge = ageOf(msgs[0].CreatedAt)
+					} else {
+						st.OldestQueuedAge = "-"
+					}
+				case store.StateDelivering:
+					st.Delivering = len(msgs)
+				case store.StateDelivered:
+					st.Delivered = len(msgs)
+				case store.StateFailed:
+					st.Failed = len(msgs)
+				}
+			}
+			rows = append(rows, st)
+		}
+		return rows, nil
+	}
+}
