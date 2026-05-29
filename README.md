@@ -150,21 +150,51 @@ the rest of the read-side subcommands work without flags.
 
 ## Use from Claude Code (MCP)
 
-The same binary speaks MCP over stdio under `claude-msg mcp` so each pane
-gets `semaphore.send / agents / whoami / inbox / status` as native Claude
-tools. Wire it up per pane:
+The same binary speaks MCP over stdio under `claude-msg mcp`, exposing
+`semaphore.send / agents / whoami / inbox / status` as native Claude
+tools. **One user-level config; identity is auto-resolved per pane.**
+
+Add the server once in `~/.claude.json` (or your equivalent Claude Code
+config) — no per-pane env or config files needed:
 
 ```json
 {
   "mcpServers": {
     "semaphore": {
       "command": "/usr/local/bin/claude-msg",
-      "args": ["mcp"],
-      "env": { "CLAUDE_AGENT_NAME": "bosun" }
+      "args": ["mcp"]
     }
   }
 }
 ```
+
+### How identity works
+
+When Claude in a tmux pane spawns the semaphore MCP server, the child
+process inherits `$TMUX_PANE` from the shell (tmux sets it automatically
+for every pane it owns — `%1`, `%3`, etc.). The MCP server looks that
+pane id up in the `agents` table and uses the matching agent name as the
+session's identity.
+
+So the workflow for a **new pane** is just:
+
+1. Open the pane and start Claude as usual.
+2. From any pane, `sqlite3 /var/lib/cli-semaphore/messages.db \
+   "INSERT INTO agents (name, pane_id) VALUES ('newagent', '%N');"` —
+   or run `claude-msg discover` if the pane was launched with
+   `claude --resume <name>` (and #20/#21 follow-ups have shipped).
+3. `systemctl --user enable --now claude-mailman@newagent.service`.
+
+Done. The Claude in that pane already has `semaphore.*` tools and
+they'll resolve identity automatically.
+
+### Identity precedence
+
+1. `$CLAUDE_AGENT_NAME` — explicit override, useful for scripts or
+   non-tmux contexts.
+2. `$TMUX_PANE` → agents.pane_id → name — the default for normal use.
+3. Neither → the tool errors with an actionable message pointing the
+   operator at the registry.
 
 ## Roadmap
 

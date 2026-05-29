@@ -18,8 +18,10 @@ import (
 //
 // Usage: claude-msg mcp [--db PATH]
 //
-// Identity is taken from $CLAUDE_AGENT_NAME — see whoami.go. The MCP
-// client (Claude Code) is expected to set it in the mcpServers.env block.
+// Identity is resolved from $CLAUDE_AGENT_NAME (explicit override) or
+// from $TMUX_PANE looked up in the agents registry. The latter means a
+// pane that's registered (via `discover` or manual INSERT) just works —
+// no per-pane MCP config needed.
 func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("mcp", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -48,7 +50,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("semaphore", "0.1.0")
 
 	srv.RegisterTool("semaphore.send",
-		"Queue a message for another agent. From is taken from $CLAUDE_AGENT_NAME.",
+		"Queue a message for another agent. Sender is resolved from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -71,7 +73,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpAgentsHandler(s))
 
 	srv.RegisterTool("semaphore.whoami",
-		"Return this session's registration (uses $CLAUDE_AGENT_NAME).",
+		"Return this session's registration. Identity from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry.",
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpWhoamiHandler(s))
 
@@ -96,6 +98,40 @@ func newMCPServer(s *store.Store) *mcp.Server {
 
 // --- tool handlers ---
 
+// resolveMCPIdentity figures out which agent the calling pane is. Order of
+// precedence:
+//
+//  1. $CLAUDE_AGENT_NAME — explicit override, useful for tests and
+//     non-tmux invocations.
+//  2. $TMUX_PANE → agents.pane_id → agent name. This is the path that
+//     makes the bus work with zero per-pane config: tmux already sets
+//     TMUX_PANE for every pane it spawns, claude inherits it, the MCP
+//     server (claude's child) inherits it, and we resolve through the
+//     registry that discover / manual upsert has populated.
+//
+// Returns "" with no error when neither source resolves — the caller
+// surfaces an MCP tool error so the operator sees the actionable
+// "register this pane" message instead of a silent failure.
+func resolveMCPIdentity(ctx context.Context, s *store.Store) (string, error) {
+	if name := os.Getenv("CLAUDE_AGENT_NAME"); name != "" {
+		return name, nil
+	}
+	pane := os.Getenv("TMUX_PANE")
+	if pane == "" {
+		return "", nil
+	}
+	agents, err := s.ListAgents(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, a := range agents {
+		if a.PaneID == pane {
+			return a.Name, nil
+		}
+	}
+	return "", nil
+}
+
 func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
 		To      string `json:"to"`
@@ -107,9 +143,12 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 		if err := json.Unmarshal(args, &in); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
-		from := os.Getenv("CLAUDE_AGENT_NAME")
+		from, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
 		if from == "" {
-			return nil, fmt.Errorf("CLAUDE_AGENT_NAME not set on the mcp server process")
+			return nil, fmt.Errorf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		p := sendParams{
 			From:         from,
@@ -222,9 +261,12 @@ func mcpAgentsHandler(s *store.Store) mcp.ToolHandler {
 
 func mcpWhoamiHandler(s *store.Store) mcp.ToolHandler {
 	return func(ctx context.Context, _ json.RawMessage) (any, error) {
-		name := os.Getenv("CLAUDE_AGENT_NAME")
+		name, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
 		if name == "" {
-			return nil, fmt.Errorf("CLAUDE_AGENT_NAME not set on the mcp server process")
+			return nil, fmt.Errorf("cannot resolve identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		a, err := s.GetAgent(ctx, name)
 		if err != nil {
@@ -269,9 +311,12 @@ func mcpInboxHandler(s *store.Store) mcp.ToolHandler {
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
 		_ = json.Unmarshal(args, &in)
-		name := os.Getenv("CLAUDE_AGENT_NAME")
+		name, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
 		if name == "" {
-			return nil, fmt.Errorf("CLAUDE_AGENT_NAME not set on the mcp server process")
+			return nil, fmt.Errorf("cannot resolve identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		state := store.State(in.State)
 		if state == "" {
