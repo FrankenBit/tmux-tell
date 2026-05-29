@@ -23,8 +23,10 @@ var listPanesRunner = func(ctx context.Context) ([]byte, error) {
 }
 
 // listPanesWithPIDRunner is the swappable shell-out for ListPanesWithPID.
+// Output is tab-separated so titles with spaces survive intact.
 var listPanesWithPIDRunner = func(ctx context.Context) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-aF", "#{pane_id} #{pane_pid}")
+	cmd := exec.CommandContext(ctx, "tmux", "list-panes", "-aF",
+		"#{pane_id}\t#{pane_pid}\t#{pane_title}\t#{window_name}")
 	return cmd.Output()
 }
 
@@ -37,8 +39,10 @@ func SetListPanesWithPIDRunner(r func(ctx context.Context) ([]byte, error)) func
 
 // PaneInfo describes one tmux pane for discovery purposes.
 type PaneInfo struct {
-	ID  string // "%3"
-	PID int    // pane root process id
+	ID         string // "%3"
+	PID        int    // pane root process id
+	Title      string // pane_title — typically what the running app sets
+	WindowName string // window_name — operator-named or app-set
 }
 
 // ListPanesWithPID returns every pane with its root process pid. Same
@@ -57,20 +61,29 @@ func ListPanesWithPID(ctx context.Context) ([]PaneInfo, error) {
 	}
 	var infos []PaneInfo
 	for _, line := range bytes.Split(bytes.TrimSpace(out), []byte{'\n'}) {
-		s := strings.TrimSpace(string(line))
-		if s == "" {
+		s := strings.TrimRight(string(line), "\r\n")
+		if strings.TrimSpace(s) == "" {
 			continue
 		}
-		// "%3 12345"
-		parts := strings.Fields(s)
+		parts := strings.SplitN(s, "\t", 4)
 		if len(parts) < 2 {
 			continue
 		}
-		pid, err := strconv.Atoi(parts[1])
+		pid, err := strconv.Atoi(strings.TrimSpace(parts[1]))
 		if err != nil {
 			continue
 		}
-		infos = append(infos, PaneInfo{ID: parts[0], PID: pid})
+		p := PaneInfo{
+			ID:  strings.TrimSpace(parts[0]),
+			PID: pid,
+		}
+		if len(parts) >= 3 {
+			p.Title = parts[2]
+		}
+		if len(parts) >= 4 {
+			p.WindowName = parts[3]
+		}
+		infos = append(infos, p)
 	}
 	return infos, nil
 }

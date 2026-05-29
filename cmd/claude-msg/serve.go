@@ -8,9 +8,11 @@ import (
 	"io"
 	"log"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/discover"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/render"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
@@ -23,6 +25,10 @@ type serveOpts struct {
 	IdlePollInterval   time.Duration
 	PauseCheckInterval time.Duration
 	DeliverTimeout     time.Duration
+	// Walker resolves pane-id drift via the shared discover package. When
+	// nil, runServeWithStore constructs a discover.New() — tests can inject
+	// a fake walker that doesn't touch real tmux/proc.
+	Walker *discover.Walker
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -108,6 +114,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		logger.Printf("recovered count=%d", n)
 	}
 
+	walker := opts.Walker
 	logger.Printf("starting pane=%s", a.PaneID)
 	defer logger.Printf("stopped")
 
@@ -153,13 +160,42 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 
 		rendered := render.Message(*msg)
 
+		paneForDelivery := a.PaneID
 		deliverCtx, cancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
 		derr := tmuxio.Deliver(deliverCtx, tmuxio.DeliverParams{
-			Pane:        a.PaneID,
+			Pane:        paneForDelivery,
 			Body:        rendered,
 			VerifyToken: "id " + msg.PublicID,
 		})
 		cancel()
+
+		// Auto-heal on pane-id drift: if tmux says the pane is gone, ask
+		// the discover walker for the agent's current pane, update the
+		// row, retry once. Avoids marking messages 'failed' when the
+		// operator just respawned a pane in a new window.
+		if derr != nil && isCantFindPaneError(derr) {
+			if walker == nil {
+				walker = discover.New()
+			}
+			newPane, lerr := walker.LookupByName(opCtx, opts.Agent)
+			if lerr == nil && newPane != "" && newPane != paneForDelivery {
+				logger.Printf("auto_heal id=%s agent=%s old_pane=%s new_pane=%s",
+					msg.PublicID, opts.Agent, paneForDelivery, newPane)
+				if uerr := s.UpsertAgent(opCtx, opts.Agent, newPane); uerr != nil {
+					logger.Printf("auto_heal_update_failed err=%v", uerr)
+				} else {
+					retryCtx, rcancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
+					derr = tmuxio.Deliver(retryCtx, tmuxio.DeliverParams{
+						Pane:        newPane,
+						Body:        rendered,
+						VerifyToken: "id " + msg.PublicID,
+					})
+					rcancel()
+				}
+			} else if lerr != nil {
+				logger.Printf("auto_heal_lookup_err err=%v", lerr)
+			}
+		}
 
 		if derr != nil {
 			logger.Printf("deliver_failed id=%s err=%v", msg.PublicID, derr)
@@ -177,6 +213,17 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			return exitOK
 		}
 	}
+}
+
+// isCantFindPaneError detects the tmux delivery failure mode that means
+// the recipient's stored pane_id no longer exists. tmux 3.x phrases this
+// as "can't find pane: %N"; we match on the substring so the format can
+// drift across versions without breaking the auto-heal path.
+func isCantFindPaneError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "can't find pane")
 }
 
 // stopOrSleep waits for d or until stopCtx is cancelled. Returns true on

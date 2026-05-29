@@ -7,9 +7,11 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/discover"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
 )
@@ -259,3 +261,205 @@ func TestServe_MarksFailedOnDeliveryError(t *testing.T) {
 type errString struct{ s string }
 
 func (e *errString) Error() string { return e.s }
+
+// fakeWalker stubs discover.Walker.LookupByName for the auto-heal tests.
+type fakeWalker struct {
+	hits map[string]string // agent → pane id
+}
+
+func (f *fakeWalker) walker() *discover.Walker {
+	return &discover.Walker{
+		CmdlineReader:  func(int) (string, error) { return "", nil },
+		ChildrenReader: func(int) []int { return nil },
+		MaxDepth:       0,
+	}
+}
+
+func TestIsCantFindPaneError(t *testing.T) {
+	cases := map[string]bool{
+		"":                                        false,
+		"some other error":                        false,
+		"tmuxio: paste-buffer: can't find pane: %7": true,
+		"can't find pane: %42":                    true,
+	}
+	for in, want := range cases {
+		t.Run(in, func(t *testing.T) {
+			var err error
+			if in != "" {
+				err = &errString{in}
+			}
+			if got := isCantFindPaneError(err); got != want {
+				t.Errorf("got %v, want %v", got, want)
+			}
+		})
+	}
+}
+
+func TestServe_AutoHealOnPaneDrift(t *testing.T) {
+	// Sets up: stored pane is %7 (stale); LookupByName returns %9 (current).
+	// Deliver fails on %7 ("can't find pane"), succeeds on %9.
+	var captures atomic.Int64
+	var (
+		bodyMu sync.Mutex
+		body   string
+	)
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "load-buffer":
+			if stdin != nil {
+				b, _ := io.ReadAll(stdin)
+				bodyMu.Lock()
+				body = string(b)
+				bodyMu.Unlock()
+			}
+			return nil, nil
+		case "paste-buffer":
+			// First call targets %7 (stale) → fail.
+			// Second call targets %9 (current) → succeed.
+			for i, a := range args {
+				if a == "-t" && i+1 < len(args) && args[i+1] == "%7" {
+					return []byte("can't find pane: %7"), &errString{"exit 1: can't find pane: %7"}
+				}
+			}
+			return nil, nil
+		case "send-keys":
+			return nil, nil
+		case "capture-pane":
+			captures.Add(1)
+			bodyMu.Lock()
+			defer bodyMu.Unlock()
+			return []byte(body), nil
+		case "delete-buffer":
+			return nil, nil
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bosun", "%7") // ← stale
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "bosun", Body: "auto-heal me",
+	})
+
+	// Walker that knows bosun is now at %9.
+	walker := &discover.Walker{
+		CmdlineReader: func(pid int) (string, error) {
+			if pid == 999 {
+				return "claude\x00--resume\x00bosun\x00", nil
+			}
+			return "", nil
+		},
+		ChildrenReader: func(int) []int { return nil },
+		MaxDepth:       1,
+	}
+	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		return []byte("%9\t999\tbosun\tclaude\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+	opts := fastOpts("bosun")
+	opts.Walker = walker
+
+	stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		d, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "bosun", State: store.StateDelivered, Limit: 10,
+		})
+		if len(d) == 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	// Message delivered.
+	delivered, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "bosun", State: store.StateDelivered, Limit: 10,
+	})
+	if len(delivered) != 1 {
+		t.Errorf("delivered = %d, want 1; log:\n%s", len(delivered), logbuf.String())
+	}
+	// Row was healed.
+	a, _ := s.GetAgent(ctx, "bosun")
+	if a.PaneID != "%9" {
+		t.Errorf("pane_id after heal = %s, want %%9", a.PaneID)
+	}
+	// auto_heal log line emitted.
+	if !strings.Contains(logbuf.String(), "auto_heal") {
+		t.Errorf("expected auto_heal log line; got:\n%s", logbuf.String())
+	}
+}
+
+func TestServe_AutoHealNoMatchStillFails(t *testing.T) {
+	// Deliver fails with can't-find-pane; LookupByName returns no match;
+	// message ends in 'failed'.
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		if args[0] == "paste-buffer" {
+			return []byte("can't find pane: %7"), &errString{"can't find pane: %7"}
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		return []byte(""), nil // no panes
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "ghost", "%7")
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "ghost", Body: "no rebind possible",
+	})
+
+	opts := fastOpts("ghost")
+	opts.Walker = discover.New()
+
+	stop, wait, _ := runServeInBackgroundOpts(t, s, opts)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		f, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "ghost", State: store.StateFailed, Limit: 10,
+		})
+		if len(f) == 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	failed, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "ghost", State: store.StateFailed, Limit: 10,
+	})
+	if len(failed) != 1 {
+		t.Errorf("failed = %d, want 1", len(failed))
+	}
+}
+
+// runServeInBackgroundOpts is like runServeInBackground but accepts a full
+// serveOpts so tests can plug in a walker.
+func runServeInBackgroundOpts(t *testing.T, s *store.Store, opts serveOpts) (cancel func(), wait func() int, logbuf *bytes.Buffer) {
+	t.Helper()
+	stopCtx, stop := context.WithCancel(context.Background())
+	logbuf = &bytes.Buffer{}
+	logger := log.New(logbuf, "[mailman/test] ", 0)
+	var (
+		exit int
+		wg   sync.WaitGroup
+	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		exit = runServeWithStore(stopCtx, s, opts, logger, io.Discard, io.Discard)
+	}()
+	return stop, func() int { wg.Wait(); return exit }, logbuf
+}
