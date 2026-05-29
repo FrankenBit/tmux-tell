@@ -234,6 +234,15 @@ small.
 Stops the mailman, drops the agent row, and optionally purges the
 agent's message history (`purge_messages: true`).
 
+### New tools require a session restart
+
+MCP tool lists are sent once during the `initialize` handshake and not
+refreshed. Updating `/usr/local/bin/claude-msg` and restarting the
+mailmen makes new tools available to *future* Claude sessions, but
+sessions that started before the upgrade stay pinned to the tool
+surface they were initialized with. To propagate a new `semaphore.*`
+tool into a running pane, restart its Claude session.
+
 ### Identity precedence
 
 1. `$CLAUDE_AGENT_NAME` — explicit override, useful for scripts or
