@@ -1,0 +1,30 @@
+# Binaries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Go test/coverage artifacts
+*.test
+*.out
+coverage.html
+
+# Go workspaces (per-developer)
+go.work
+go.work.sum
+
+# Build output
+/bin/
+/dist/
+
+# Local SQLite scratch DBs
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Editor & OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
