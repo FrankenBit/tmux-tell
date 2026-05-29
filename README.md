@@ -101,6 +101,71 @@ looking now, ETA 3 min
 ────────────────────────────────────────────────
 ```
 
+## Install
+
+On a Linux host that has tmux, sqlite3, and Go (≥ 1.24):
+
+```bash
+git clone https://git.frankenbit.de/frankenbit/cli-semaphore.git
+cd cli-semaphore
+make build
+sudo -A ./install.sh                  # uses sudo -A so a tmux-popup
+                                      # askpass surfaces nicely on alcatraz
+```
+
+This:
+- builds `bin/claude-msg`,
+- installs the binary to `/usr/local/bin/claude-msg`,
+- creates `/var/lib/cli-semaphore/` (operator-owned, holds `messages.db`),
+- drops the systemd user template into the operator's `~/.config/systemd/user/`.
+
+Then, **as the operator (not root)**:
+
+```bash
+# Make sure the user systemd manager keeps running across reboots:
+sudo loginctl enable-linger $USER
+
+# Reload the user manager so it sees the new template:
+systemctl --user daemon-reload
+
+# Populate the agents table from the current tmux state:
+claude-msg discover
+
+# Enable a mailman per agent you want to receive messages:
+systemctl --user enable --now claude-mailman@surveyor.service
+
+# Tail the mailman log:
+journalctl --user -u claude-mailman@surveyor.service -f
+```
+
+Each Claude pane that should be able to *send* must export its identity
+in its shell profile (matches the pane's `--resume <name>`):
+
+```bash
+export CLAUDE_AGENT_NAME=bosun
+```
+
+After that, `claude-msg send --to surveyor "…"`, `claude-msg whoami`, and
+the rest of the read-side subcommands work without flags.
+
+## Use from Claude Code (MCP)
+
+The same binary speaks MCP over stdio under `claude-msg mcp` so each pane
+gets `semaphore.send / agents / whoami / inbox / status` as native Claude
+tools. Wire it up per pane:
+
+```json
+{
+  "mcpServers": {
+    "semaphore": {
+      "command": "/usr/local/bin/claude-msg",
+      "args": ["mcp"],
+      "env": { "CLAUDE_AGENT_NAME": "bosun" }
+    }
+  }
+}
+```
+
 ## Roadmap
 
 Tracked in the epic + milestone sub-issues — see the [Issues tab](../../issues).
