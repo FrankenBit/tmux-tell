@@ -44,17 +44,51 @@ type DeliverParams struct {
 	VerifyToken string
 }
 
-// retryDelays are the post-paste backoff window. Two attempts after the
-// initial Enter — 50 ms and 200 ms — match the issue.
-var retryDelays = []time.Duration{50 * time.Millisecond, 200 * time.Millisecond}
+// SetRetryDelaysForTest swaps the package-level retryDelays and returns
+// the previous value so test cleanups can restore it. Tests that drive
+// the verify-retry path want near-instant retries instead of the
+// production ~5s budget.
+func SetRetryDelaysForTest(delays []time.Duration) []time.Duration {
+	prev := retryDelays
+	retryDelays = delays
+	return prev
+}
+
+// retryDelays are the post-paste verification backoff window. Total
+// budget ~5s (100ms + 250ms + 500ms + 1s + 1.5s + 1.65s = 5s) so we
+// give Claude Code time to redraw and submit when it was mid-turn at
+// paste time. Each delay is the wait BEFORE re-attempting capture, so
+// the first capture happens immediately after Enter.
+var retryDelays = []time.Duration{
+	100 * time.Millisecond,
+	250 * time.Millisecond,
+	500 * time.Millisecond,
+	1 * time.Second,
+	1500 * time.Millisecond,
+	1650 * time.Millisecond,
+}
+
+// ErrUnverifiedDelivery is returned by Deliver when the paste + Enter
+// sequence completed without tmux errors, but the verify token never
+// became visible in the pane within the retry budget. The caller's
+// policy is to treat this as a soft success: the text reached the
+// pane, Enter was sent, but Claude Code didn't surface the message
+// in time — usually because it was mid-turn and Enter was queued for
+// later submission. Marking the message failed would be wrong; the
+// operator will see the text and submit it manually.
+var ErrUnverifiedDelivery = errors.New("tmuxio: delivery unverified")
 
 // Deliver pastes Body into the given tmux pane and presses Enter. It uses
 // a unique named buffer per call so concurrent invocations from multiple
 // mailmen can never race the default buffer.
 //
 // If VerifyToken is set, Deliver captures the pane after Enter and confirms
-// the token landed. On miss it backs off and retries up to len(retryDelays)
-// times before returning an error containing the last captured pane state.
+// the token landed. On miss it backs off and retries across retryDelays
+// (~5s total). If the token is still not visible after the full budget,
+// returns ErrUnverifiedDelivery (a soft-fail sentinel) — paste/Enter
+// succeeded mechanically, but we couldn't confirm Claude Code surfaced the
+// message in time. Caller policy distinguishes that from hard errors
+// (tmux returning a real error from load-buffer/paste-buffer/send-keys).
 func Deliver(ctx context.Context, p DeliverParams) error {
 	if p.Pane == "" {
 		return errors.New("tmuxio: pane required")
@@ -108,8 +142,8 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("tmuxio: verify token %q not visible after %d attempts; last capture (trunc):\n%s",
-		p.VerifyToken, len(retryDelays)+1, trim(lastCapture, 400))
+	return fmt.Errorf("%w: token %q not visible after %d attempts; last capture (trunc):\n%s",
+		ErrUnverifiedDelivery, p.VerifyToken, len(retryDelays)+1, trim(lastCapture, 400))
 }
 
 // SendKeys types text directly into the recipient pane and presses Enter,

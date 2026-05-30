@@ -145,7 +145,7 @@ func TestDeliver_VerifyRetriesOnMiss(t *testing.T) {
 	}
 }
 
-func TestDeliver_FailsAfterRetriesExhausted(t *testing.T) {
+func TestDeliver_ReturnsUnverifiedSentinelAfterRetriesExhausted(t *testing.T) {
 	shortRetries(t)
 	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
 		if args[0] == "capture-pane" {
@@ -159,8 +159,15 @@ func TestDeliver_FailsAfterRetriesExhausted(t *testing.T) {
 	if err == nil {
 		t.Fatal("want error after retries exhausted")
 	}
-	if !strings.Contains(err.Error(), "verify token") {
-		t.Errorf("error = %v, want mention of verify token", err)
+	// Soft-fail sentinel: paste/Enter completed mechanically, just
+	// couldn't confirm the token surfaced. Caller treats this as a
+	// soft success (mark delivered + WARN) rather than hard failure
+	// (drop message).
+	if !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Errorf("error should wrap ErrUnverifiedDelivery; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "missing") {
+		t.Errorf("error should name the missing token; got %v", err)
 	}
 }
 

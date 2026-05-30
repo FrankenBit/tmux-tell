@@ -286,26 +286,42 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			}
 		}
 
-		if derr != nil {
-			logger.Printf("deliver_failed id=%s err=%v", msg.PublicID, derr)
-			if err := s.MarkFailed(opCtx, msg.PublicID, derr.Error()); err != nil {
-				logger.Printf("mark_failed_err id=%s err=%v", msg.PublicID, err)
-			}
-		} else {
+		// Three outcomes:
+		//   - derr == nil: verified delivery (verify token observed in
+		//     the post-Enter capture). Normal success path.
+		//   - errors.Is(derr, tmuxio.ErrUnverifiedDelivery): paste +
+		//     Enter completed mechanically, but Claude Code didn't
+		//     surface the token in the retry budget. Typically means
+		//     Claude was mid-turn and Enter was queued. We mark
+		//     delivered + log WARN; the operator sees the text in
+		//     their pane and submits it manually if Claude was busy.
+		//     Marking failed here would drop the message permanently
+		//     even though it's sitting in the input box.
+		//   - other err: hard failure (tmux command errored, ctx
+		//     cancelled, etc.). Mark failed.
+		switch {
+		case derr == nil:
 			logger.Printf("delivered id=%s", msg.PublicID)
 			if err := s.MarkDelivered(opCtx, msg.PublicID); err != nil {
 				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
 			}
-			// After a successful /compact, hold the queue so any
-			// follow-up the sender pre-queued (a `resume_with` from
-			// semaphore.control) lands AFTER Claude Code has finished
-			// the slash-command, not into the parser mid-compaction.
 			if isCompactControl(msg) && opts.PostCompactPause > 0 {
 				logger.Printf("post_compact_pause id=%s duration=%s",
 					msg.PublicID, opts.PostCompactPause)
 				if sleepRespectingWatchdog(stopCtx, opts.PostCompactPause, watchdogPing) {
 					return exitOK
 				}
+			}
+		case errors.Is(derr, tmuxio.ErrUnverifiedDelivery):
+			logger.Printf("WARN delivered_unverified id=%s — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); marking delivered, operator may need to submit manually",
+				msg.PublicID)
+			if err := s.MarkDelivered(opCtx, msg.PublicID); err != nil {
+				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
+			}
+		default:
+			logger.Printf("deliver_failed id=%s err=%v", msg.PublicID, derr)
+			if err := s.MarkFailed(opCtx, msg.PublicID, derr.Error()); err != nil {
+				logger.Printf("mark_failed_err id=%s err=%v", msg.PublicID, err)
 			}
 		}
 
