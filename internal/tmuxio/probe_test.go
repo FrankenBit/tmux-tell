@@ -179,6 +179,63 @@ func TestWaitForQuietPane_ContextCancellation(t *testing.T) {
 	}
 }
 
+// TestWaitForQuietPane_PingsDuringBackoff is the regression for the
+// 2026-05-30 surveyor-mailman crash. Without periodic pings inside
+// the activity-detected backoff, the systemd watchdog (WatchdogSec=30s)
+// trips and SIGABRTs the mailman. This test pins that Ping is invoked
+// at least once during a backoff window that exceeds PingInterval.
+func TestWaitForQuietPane_PingsDuringBackoff(t *testing.T) {
+	// before + after differ → activity → backoff fires.
+	// Then second iteration succeeds.
+	fr := newFakeProbeRunner([]string{
+		"> typing\n",
+		"> typing more\n",
+		"> typing more\n",
+		"> typing more─\n",
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	var pingCount int
+	opts := QuietOpts{
+		ObserveWindow:   2 * time.Millisecond,
+		BackoffInterval: 12 * time.Millisecond,
+		MaxWait:         500 * time.Millisecond,
+		CaptureLines:    5,
+		PingInterval:    3 * time.Millisecond,
+		Ping:            func() { pingCount++ },
+	}
+	if err := WaitForQuietPane(context.Background(), "%1", opts); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	// 12ms backoff with 3ms ping interval ⇒ at least 3 ping calls
+	// during the backoff alone (plus more from the ObserveWindows,
+	// which are below PingInterval so they don't tick a ping). Lower
+	// bound to avoid flakiness on slow CI; tightening would just trade
+	// flake for false positives.
+	if pingCount < 3 {
+		t.Errorf("ping count = %d; want >= 3 (backoff > pingInterval should tick)", pingCount)
+	}
+}
+
+// TestWaitForQuietPane_NilPingNoPanic guards the documented "ping
+// optional" contract — passing nil should not panic, just skip the
+// keep-alive ticks.
+func TestWaitForQuietPane_NilPingNoPanic(t *testing.T) {
+	fr := newFakeProbeRunner([]string{
+		"> \n",
+		"> ─\n",
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	opts := shortOpts()
+	opts.Ping = nil
+	if err := WaitForQuietPane(context.Background(), "%1", opts); err != nil {
+		t.Errorf("nil Ping should be safe: %v", err)
+	}
+}
+
 func TestIsQuiet_ProbeAtEnd(t *testing.T) {
 	if !isQuiet("> hello", "> hello─", "─") {
 		t.Error("appending probe to end should be quiet")

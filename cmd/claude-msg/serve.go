@@ -164,6 +164,18 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		logger.Printf("watchdog interval=%s", watchdogPing)
 	}
 
+	// Wire a ping closure into the quiet-pane gate so its internal
+	// sleeps (ObserveWindow + BackoffInterval) keep the systemd
+	// watchdog ticking. Without this, a 60s activity-detected backoff
+	// trips WatchdogSec=30s and SIGABRTs the mailman mid-backoff
+	// (2026-05-30 incident).
+	if opts.QuietOpts.Ping == nil {
+		opts.QuietOpts.Ping = func() { _ = sdnotify.Watchdog() }
+	}
+	if opts.QuietOpts.PingInterval == 0 && watchdogPing > 0 {
+		opts.QuietOpts.PingInterval = watchdogPing
+	}
+
 	for {
 		if stopCtx.Err() != nil {
 			return exitOK

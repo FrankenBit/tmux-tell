@@ -65,6 +65,23 @@ type QuietOpts struct {
 	// where the gate never sees clean quiet), the cap fires and the
 	// mailman delivers anyway with a WARN log.
 	CaptureLines int
+
+	// Ping, when non-nil, is invoked periodically during long internal
+	// sleeps (the ObserveWindow and the activity-detected backoff). It
+	// exists so the mailman can keep `sd_notify(WATCHDOG=1)` ticking
+	// without coupling this package to internal/sdnotify — pass a
+	// closure that calls Watchdog().
+	//
+	// Without Ping, the BackoffInterval (default 60s) can outrun
+	// systemd's WatchdogSec=30s and trip SIGABRT on the mailman
+	// (incident 2026-05-30: surveyor mailman crashed during a probe
+	// backoff that didn't ping in time).
+	Ping func()
+	// PingInterval is the upper bound between Ping() calls during
+	// internal sleeps. Default 10s — well under the typical
+	// WatchdogSec=30s used by the mailman unit so two consecutive
+	// pings still fit inside the deadline.
+	PingInterval time.Duration
 }
 
 func (o QuietOpts) withDefaults() QuietOpts {
@@ -79,6 +96,9 @@ func (o QuietOpts) withDefaults() QuietOpts {
 	}
 	if o.CaptureLines <= 0 {
 		o.CaptureLines = 5
+	}
+	if o.PingInterval <= 0 {
+		o.PingInterval = 10 * time.Second
 	}
 	return o
 }
@@ -121,10 +141,8 @@ func WaitForQuietPane(ctx context.Context, pane string, opts QuietOpts) error {
 			return fmt.Errorf("tmuxio: probe send-keys: %w: %s",
 				err, strings.TrimSpace(string(out)))
 		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(opts.ObserveWindow):
+		if err := sleepWithPing(ctx, opts.ObserveWindow, opts.Ping, opts.PingInterval); err != nil {
+			return err
 		}
 		after, err := captureTail(ctx, pane, opts.CaptureLines)
 		if err != nil {
@@ -142,10 +160,52 @@ func WaitForQuietPane(ctx context.Context, pane string, opts QuietOpts) error {
 		// the dash themselves or let it slide into their text. Wait,
 		// retry. The cap check at the top of the next iteration handles
 		// the runaway case.
+		if err := sleepWithPing(ctx, opts.BackoffInterval, opts.Ping, opts.PingInterval); err != nil {
+			return err
+		}
+	}
+}
+
+// sleepWithPing blocks for d, returning early when ctx cancels. When
+// ping is non-nil, it's called at most every pingEvery seconds during
+// the sleep — the systemd watchdog stays happy through long backoffs.
+//
+// Bug history: before #(this commit), WaitForQuietPane used plain
+// `time.After(60s)` for the activity-detected backoff. The mailman
+// unit's `WatchdogSec=30s` tripped at 30s and SIGABRT'd the process
+// mid-backoff (2026-05-30 surveyor mailman crash). The mailman now
+// passes a ping closure that calls sd_notify; sleepWithPing fires it
+// often enough that a backoff longer than WatchdogSec is safe.
+func sleepWithPing(ctx context.Context, d time.Duration, ping func(), pingEvery time.Duration) error {
+	if d <= 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return nil
+	}
+	if ping == nil || pingEvery >= d {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(opts.BackoffInterval):
+		case <-time.After(d):
+			return nil
+		}
+	}
+	deadline := time.Now().Add(d)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil
+		}
+		chunk := pingEvery
+		if chunk > remaining {
+			chunk = remaining
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(chunk):
+			ping()
 		}
 	}
 }
