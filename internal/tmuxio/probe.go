@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
+
 	"strings"
 	"time"
 )
@@ -178,10 +178,6 @@ func WaitForQuietPane(ctx context.Context, pane string, opts QuietOpts) error {
 				err, strings.TrimSpace(string(out)))
 		}
 		probesAccumulated++
-		cursorY, err := queryCursorY(ctx, pane)
-		if err != nil {
-			return fmt.Errorf("tmuxio: cursor-y: %w", err)
-		}
 		if err := sleepWithPing(ctx, opts.ObserveWindow, opts.Ping, opts.PingInterval); err != nil {
 			return err
 		}
@@ -190,7 +186,7 @@ func WaitForQuietPane(ctx context.Context, pane string, opts QuietOpts) error {
 			return fmt.Errorf("tmuxio: capture after-probe: %w", err)
 		}
 
-		switch analyzeDelta(string(before), string(after), cursorY, QuietProbe) {
+		switch analyzeDelta(string(before), string(after), QuietProbe) {
 		case DeltaQuiet:
 			cleanupProbes()
 			return nil
@@ -210,83 +206,98 @@ func WaitForQuietPane(ctx context.Context, pane string, opts QuietOpts) error {
 	}
 }
 
-// queryCursorY returns the cursor's current row within the pane's
-// visible region (0-indexed from the top). Used to identify the input
-// row line within capture-pane output.
-func queryCursorY(ctx context.Context, pane string) (int, error) {
-	out, err := tmuxRun(ctx, nil,
-		"display-message", "-p", "-t", pane, "#{cursor_y}")
-	if err != nil {
-		return 0, err
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil {
-		return 0, fmt.Errorf("tmuxio: parse cursor_y %q: %w", string(out), err)
-	}
-	return n, nil
-}
-
 // analyzeDelta classifies the change between before- and after-probe
-// captures. cursorY identifies which line in the capture is the input
-// row (queried right after probe injection, so it's where the probe
-// landed). probe is the literal injected character.
+// captures. probe is the literal injected character.
+//
+// The input row is identified by where the probe actually landed, not
+// by tmux's cursor_y — the rendering cursor moves around as Claude
+// Code redraws output (tool calls, streaming), so cursor_y often
+// points at the response area, not the input box. Typed input always
+// lands in the input box regardless. Searching for "the row that
+// gained exactly one probe and is otherwise unchanged" finds the input
+// box reliably (2026-05-31 Bosun bug fix).
 //
 // Decision tree:
-//  1. After-capture's input row doesn't contain the probe → ProbeMissing.
-//  2. After-capture's input row, with rightmost probe stripped, doesn't
-//     equal before-capture's input row → InputActivity (operator typed,
-//     deleted the probe, or edited).
-//  3. Otherwise (input row is clean), compare every other row → TUINoise
-//     if any differ, Quiet if they all match.
-func analyzeDelta(before, after string, cursorY int, probe string) DeltaKind {
+//  1. Find a row in `after` whose probe count is exactly one greater
+//     than `before` AND whose content (with the rightmost probe
+//     stripped) matches the corresponding row in before. That's the
+//     input row, the probe landed cleanly.
+//      - If other rows also changed → DeltaTUINoise.
+//      - Otherwise → DeltaQuiet.
+//  2. If no such row exists, but SOME row gained probe characters →
+//     the operator typed on the input row (probe + their text), so the
+//     strip-rightmost trick can't recover before. → DeltaInputActivity.
+//  3. If no row contains a new probe at all → DeltaProbeMissing.
+func analyzeDelta(before, after, probe string) DeltaKind {
 	beforeLines := strings.Split(before, "\n")
 	afterLines := strings.Split(after, "\n")
 
-	if cursorY < 0 || cursorY >= len(afterLines) {
-		return DeltaProbeMissing
-	}
-
-	inputAfter := afterLines[cursorY]
-	idx := strings.LastIndex(inputAfter, probe)
-	if idx == -1 {
-		return DeltaProbeMissing
-	}
-
-	inputAfterStripped := inputAfter[:idx] + inputAfter[idx+len(probe):]
-
-	var inputBefore string
-	if cursorY < len(beforeLines) {
-		inputBefore = beforeLines[cursorY]
-	}
-	if inputAfterStripped != inputBefore {
-		return DeltaInputActivity
-	}
-
-	// Input row is clean. Check other rows for changes.
-	if len(beforeLines) != len(afterLines) {
-		return DeltaTUINoise
-	}
-	for i := range beforeLines {
-		if i == cursorY {
+	// Pass 1: find the input row by the +1-probe-and-otherwise-clean
+	// signature.
+	for i := 0; i < len(afterLines); i++ {
+		afterRow := afterLines[i]
+		idx := strings.LastIndex(afterRow, probe)
+		if idx == -1 {
 			continue
 		}
-		if beforeLines[i] != afterLines[i] {
+		stripped := afterRow[:idx] + afterRow[idx+len(probe):]
+		var beforeRow string
+		if i < len(beforeLines) {
+			beforeRow = beforeLines[i]
+		}
+		if stripped != beforeRow {
+			continue
+		}
+		// Found a row that gained exactly the probe with no other
+		// changes — this is the input row. Now check the rest of the
+		// pane for TUI noise.
+		if len(beforeLines) != len(afterLines) {
 			return DeltaTUINoise
 		}
+		for j := range beforeLines {
+			if j == i {
+				continue
+			}
+			if beforeLines[j] != afterLines[j] {
+				return DeltaTUINoise
+			}
+		}
+		return DeltaQuiet
 	}
-	return DeltaQuiet
+
+	// Pass 2: no clean +1-probe row. Either the operator typed on top
+	// of the probe (so input row has probe + other chars and won't
+	// match the "strip rightmost == before" pattern), or the probe
+	// didn't land at all. Distinguish by checking if any row gained
+	// probe characters.
+	for i := 0; i < len(afterLines); i++ {
+		afterCount := strings.Count(afterLines[i], probe)
+		var beforeCount int
+		if i < len(beforeLines) {
+			beforeCount = strings.Count(beforeLines[i], probe)
+		}
+		if afterCount > beforeCount {
+			return DeltaInputActivity
+		}
+	}
+	return DeltaProbeMissing
 }
 
 // sleepWithPing blocks for d, returning early when ctx cancels. When
-// ping is non-nil, it's called at most every pingEvery seconds during
-// the sleep — the systemd watchdog stays happy through long backoffs.
+// ping is non-nil, it's called at the end of every chunk AND at the
+// end of every short sleep, so the systemd watchdog stays happy even
+// when many short sleeps run back-to-back.
 //
-// Bug history: before #(this commit), WaitForQuietPane used plain
-// `time.After(60s)` for the activity-detected backoff. The mailman
-// unit's `WatchdogSec=30s` tripped at 30s and SIGABRT'd the process
-// mid-backoff (2026-05-30 surveyor mailman crash). The mailman now
-// passes a ping closure that calls sd_notify; sleepWithPing fires it
-// often enough that a backoff longer than WatchdogSec is safe.
+// Bug history:
+//   - 2026-05-30 (surveyor): plain `time.After(60s)` for the activity-
+//     detected backoff outran the mailman's WatchdogSec=30s and
+//     SIGABRT'd the process mid-backoff. Fixed by adding the Ping
+//     callback + this chunked sleep.
+//   - 2026-05-31 (bosun, 4 crashes): the short-sleep no-chunk path
+//     (used for ObserveWindow=5s when pingEvery=15s) didn't ping
+//     either, so consecutive short sleeps from outer-loop iterations
+//     could accumulate >30s of silent time under load. Fixed by
+//     always pinging at the end of a short sleep too.
 func sleepWithPing(ctx context.Context, d time.Duration, ping func(), pingEvery time.Duration) error {
 	if d <= 0 {
 		if err := ctx.Err(); err != nil {
@@ -299,6 +310,9 @@ func sleepWithPing(ctx context.Context, d time.Duration, ping func(), pingEvery 
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(d):
+			if ping != nil {
+				ping()
+			}
 			return nil
 		}
 	}

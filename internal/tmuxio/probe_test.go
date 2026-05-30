@@ -14,77 +14,83 @@ import (
 // --- analyzeDelta unit tests ---
 
 func TestAnalyzeDelta_Quiet(t *testing.T) {
-	// Input row at index 2; rest of the pane identical, probe lands
-	// at the end of the input row.
 	before := "response line A\nresponse line B\n> hello\nstatus line\n"
 	after := "response line A\nresponse line B\n> hello─\nstatus line\n"
-	if v := analyzeDelta(before, after, 2, "─"); v != DeltaQuiet {
+	if v := analyzeDelta(before, after, "─"); v != DeltaQuiet {
 		t.Errorf("verdict = %v, want DeltaQuiet", v)
 	}
 }
 
 func TestAnalyzeDelta_InputActivity_OperatorTyped(t *testing.T) {
-	// Operator typed 'x' after our probe landed.
+	// Operator typed 'x' after our probe landed. The input row
+	// (somewhere — we don't tell analyzeDelta where) gained both
+	// a probe AND an 'x', so no row matches the "+probe-only"
+	// signature; pass 2 sees a row gained a probe → InputActivity.
 	before := "context\n\n> \n"
 	after := "context\n\n> ─x\n"
-	if v := analyzeDelta(before, after, 2, "─"); v != DeltaInputActivity {
+	if v := analyzeDelta(before, after, "─"); v != DeltaInputActivity {
 		t.Errorf("verdict = %v, want DeltaInputActivity", v)
 	}
 }
 
-func TestAnalyzeDelta_InputActivity_OperatorDeletedProbe(t *testing.T) {
+func TestAnalyzeDelta_OperatorDeletedProbe_ClassifiesAsProbeMissing(t *testing.T) {
 	// The handshake: operator saw the probe and removed it. The
-	// input row now matches the before state (no probe). This must
-	// be classified as input activity so we back off the full
-	// InputActivityBackoff — the operator wants more time.
+	// after-capture has no new probe characters anywhere → no row
+	// gained a probe → DeltaProbeMissing. The mailman's policy treats
+	// this as the same "safe back off" path as DeltaInputActivity,
+	// so the operator-deleted-probe handshake still gets the long
+	// backoff downstream.
 	before := "context\n\n> \n"
-	after := "context\n\n> \n" // probe deleted
-	if v := analyzeDelta(before, after, 2, "─"); v != DeltaProbeMissing {
-		// "Probe missing" is what we get when the probe didn't land
-		// (or was removed). The mailman's policy treats this as the
-		// same "safe back off" path as DeltaInputActivity, so the
-		// operator-deleted-probe handshake gets the right semantics
-		// downstream even though the verdict name reads as "missing."
-		// This test pins that classification.
+	after := "context\n\n> \n"
+	if v := analyzeDelta(before, after, "─"); v != DeltaProbeMissing {
 		t.Errorf("verdict = %v, want DeltaProbeMissing (operator-removed-probe)", v)
 	}
 }
 
 func TestAnalyzeDelta_TUINoise(t *testing.T) {
-	// Status line changed but the input row is clean (probe added, no
-	// other input-row changes). Should be classified as TUI noise so
-	// we back off the short TUINoiseBackoff.
+	// Status line changed but the input row is clean. The input row
+	// (last line) signature matches; non-input rows differ → TUINoise.
 	before := "line A\nthinking... 5s\n> \n"
 	after := "line A\nthinking... 6s\n> ─\n"
-	if v := analyzeDelta(before, after, 2, "─"); v != DeltaTUINoise {
+	if v := analyzeDelta(before, after, "─"); v != DeltaTUINoise {
 		t.Errorf("verdict = %v, want DeltaTUINoise", v)
 	}
 }
 
 func TestAnalyzeDelta_ProbeMissing(t *testing.T) {
-	// After-capture has no probe at all — tmux ate the keystroke
-	// or capture lagged.
 	before := "ctx\n> hi\n"
 	after := "ctx\n> hi\n"
-	if v := analyzeDelta(before, after, 1, "─"); v != DeltaProbeMissing {
-		t.Errorf("verdict = %v, want DeltaProbeMissing", v)
-	}
-}
-
-func TestAnalyzeDelta_CursorYOutOfBounds(t *testing.T) {
-	if v := analyzeDelta("a\nb\n", "a\nb\n", 99, "─"); v != DeltaProbeMissing {
+	if v := analyzeDelta(before, after, "─"); v != DeltaProbeMissing {
 		t.Errorf("verdict = %v, want DeltaProbeMissing", v)
 	}
 }
 
 func TestAnalyzeDelta_ProbeStrippedFromRightmost(t *testing.T) {
 	// Before contains existing probe characters (chat header). Our
-	// probe should be stripped from the rightmost position (most
-	// recently added). Quiet verdict required.
+	// probe is the rightmost newly-added one. The chat header row
+	// has the same probe count in before and after, so it gets
+	// skipped; the input row gains the probe and matches.
 	before := "─── header ───\nbody\n> already typing\n"
 	after := "─── header ───\nbody\n> already typing─\n"
-	if v := analyzeDelta(before, after, 2, "─"); v != DeltaQuiet {
+	if v := analyzeDelta(before, after, "─"); v != DeltaQuiet {
 		t.Errorf("verdict = %v, want DeltaQuiet (rightmost-probe-stripped)", v)
+	}
+}
+
+// 2026-05-31 regression: when Claude Code renders a tool call, the
+// rendering cursor sits inside the response area (not the input box).
+// The probe still lands in the input box because typed text always
+// goes there. cursor_y-based identification would look at the wrong
+// row and return ProbeMissing; the probe-position-based approach
+// finds the input row by where the new probe character landed.
+func TestAnalyzeDelta_RenderingCursorElsewhereStillFindsInputRow(t *testing.T) {
+	// Multi-line response area + input box at the bottom. Imagine
+	// cursor_y pointed at line 1 (response area). The old logic would
+	// look at line 1 for the probe, miss it, return ProbeMissing.
+	before := "tool output line\nmore output\n> \n"
+	after := "tool output line\nmore output\n> ─\n"
+	if v := analyzeDelta(before, after, "─"); v != DeltaQuiet {
+		t.Errorf("verdict = %v, want DeltaQuiet (find input row by probe location, not cursor_y)", v)
 	}
 }
 
