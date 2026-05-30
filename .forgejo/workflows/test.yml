@@ -24,5 +24,9 @@ jobs:
       - name: go build
         run: go build ./...
 
-      - name: go test -race
-        run: go test -race -count=1 ./...
+      - name: go test
+        # -race omitted in CI: the Forgejo runner image doesn't ship
+        # cgo / a C compiler, which the race detector requires. Local
+        # pre-commit should still use `go test -race -count=1 ./...`
+        # — see README "Development" for the full pre-commit recipe.
+        run: go test -count=1 ./...

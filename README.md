@@ -356,6 +356,21 @@ access, and the registry has no per-pane authentication. This widens
 *convenience*, it does not authenticate identity — the trust model is
 "whoever has shell access is trusted," same as the rest of the bus.
 
+## Development
+
+Local pre-commit recipe:
+
+```bash
+go vet ./...
+go build ./...
+go test -race -count=1 ./...
+```
+
+CI runs `go vet`, `go build`, and `go test -count=1` (without `-race`)
+— the Forgejo runner image doesn't ship cgo / a C compiler, which the
+race detector requires. Local runs catch data races; CI catches the
+rest. Push with `-race` clean.
+
 ## Roadmap
 
 Tracked in the epic + milestone sub-issues — see the [Issues tab](../../issues).
