@@ -89,6 +89,17 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpInboxHandler(s))
 
+	srv.RegisterTool("semaphore.message_status",
+		"Look up the delivery state of a sent message by its public_id. Returns created_at + delivered_at + error so the sender can see whether the bus has handed off the row yet.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"id": {"type": "string", "description": "Public ID of the message to look up (returned in the send/control response)"}
+			},
+			"required": ["id"]
+		}`),
+		mcpMessageStatusHandler(s))
+
 	srv.RegisterTool("semaphore.status",
 		"Return registry overview: paused state + queue depths per agent.",
 		json.RawMessage(`{"type": "object", "properties": {}}`),
@@ -232,6 +243,23 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		"id":     res.PublicID,
 		"queued": res.Queued,
 	}, nil
+}
+
+func mcpMessageStatusHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		ID string `json:"id"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		// doTrack returns the struct directly; the MCP framework
+		// json.Marshals handler returns (internal/mcp/server.go:212),
+		// so the JSON tags on trackResult are the single source of
+		// truth for the wire shape.
+		return doTrack(ctx, s, in.ID)
+	}
 }
 
 func mcpControlHandler(s *store.Store) mcp.ToolHandler {

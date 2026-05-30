@@ -16,6 +16,7 @@ const usage = `usage: claude-msg <subcommand> [args]
 Subcommands:
   send    Queue a message for an agent (validates caps, returns JSON)
   control Send a whitelisted slash-command to a pane (mirrors semaphore.control)
+  track   Show the delivery state of a single message by its public_id
   inbox   List queued messages for an agent
   status  Show paused state + queue depths across all agents
   agents  List registered agents with pane liveness
@@ -50,6 +51,8 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runSendCLI(args[1:], stdout, stderr)
 	case "control":
 		return runControlCLI(args[1:], stdout, stderr)
+	case "track":
+		return runTrackCLI(args[1:], stdout, stderr)
 	case "inbox":
 		return runInboxCLI(args[1:], stdout, stderr)
 	case "status":

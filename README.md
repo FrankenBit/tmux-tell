@@ -281,6 +281,29 @@ sessions that started before the upgrade stay pinned to the tool
 surface they were initialized with. To propagate a new `semaphore.*`
 tool into a running pane, restart its Claude session.
 
+### Tracking delivery
+
+With the probe-and-watch gate the bus is no longer instantaneous —
+a message can dwell minutes waiting for the recipient pane to go
+quiet. To check whether a sent message has actually landed:
+
+```bash
+# From any shell:
+claude-msg track 9c1d           # human-readable text
+claude-msg track 9c1d --format json   # piping into scripts
+
+# From a Claude session (MCP):
+# call semaphore.message_status with {"id": "9c1d"}
+```
+
+Both paths return the same shape (`state`, `created_at`,
+`delivered_at`, `error`, `reply_to`). `state` walks through
+`queued → delivering → delivered` (or `failed` with the reason in
+`error`). Queue-full rejections at *send* time are still synchronous —
+`claude-msg send` returns `{ok: false, error: "queue full ..."}` at
+attempt time — so `track` is purely for confirming positive
+delivery after queuing.
+
 ### Delivery semantics: probe-and-watch quiet-pane gate
 
 Before each delivery the mailman checks whether the recipient pane is
