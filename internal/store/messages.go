@@ -97,12 +97,21 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 // p1 and p2 must share FromAgent and ToAgent — the call paths that use
 // this (restart, resume_with) always do.
 //
-// When linkP2ToP1 is true, p2.ReplyTo is overwritten with p1's assigned
-// public_id; this gives the two rows the audit-trail thread relationship
-// the existing callers established before #29.
+// linkP2ToP1 controls the audit thread between the two rows. When
+// true, the function sets p2.ReplyTo to p1's assigned public_id; this
+// gives the two rows the same thread relationship the existing callers
+// established before #29.
+//
+// Precondition: when linkP2ToP1 is true, p2.ReplyTo MUST be empty. The
+// call returns an error otherwise — passing both is a caller bug we
+// surface rather than silently overwrite (Surveyor #29 review).
 func (s *Store) InsertMessagePair(ctx context.Context, p1, p2 InsertParams, linkP2ToP1 bool) (InsertResult, InsertResult, error) {
 	if p1.FromAgent != p2.FromAgent || p1.ToAgent != p2.ToAgent {
 		return InsertResult{}, InsertResult{}, errors.New("store: pair must share from/to")
+	}
+	if linkP2ToP1 && p2.ReplyTo != "" {
+		return InsertResult{}, InsertResult{}, errors.New(
+			"store: linkP2ToP1 requires p2.ReplyTo to be empty (caller is asking the store to set it from p1)")
 	}
 	if err := validateInsertParams(p1); err != nil {
 		return InsertResult{}, InsertResult{}, err

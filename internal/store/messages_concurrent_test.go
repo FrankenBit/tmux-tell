@@ -4,12 +4,78 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 )
+
+// Surveyor #29 review (a): InsertMessagePair's linkP2ToP1=true should
+// reject a caller who also set p2.ReplyTo to something explicit, rather
+// than silently overwrite. The doc says "MUST be empty"; this test
+// pins the runtime guard.
+func TestInsertMessagePair_LinkP2ToP1_RejectsExplicitReplyTo(t *testing.T) {
+	s := openFileStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%2")
+
+	p1 := store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob",
+		Body: "first", Kind: store.KindControl,
+	}
+	p2 := store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob",
+		Body: "second", Kind: store.KindControl,
+		ReplyTo: "ffff", // caller mistake: set ReplyTo AND ask to link
+	}
+	_, _, err := s.InsertMessagePair(ctx, p1, p2, true)
+	if err == nil {
+		t.Fatal("expected error when linkP2ToP1=true and p2.ReplyTo is non-empty")
+	}
+	if !strings.Contains(err.Error(), "linkP2ToP1") {
+		t.Errorf("error should explain the linkP2ToP1 precondition; got %v", err)
+	}
+
+	// Sanity: no rows should have been inserted.
+	depth, _ := s.RecipientQueueDepth(ctx, "bob")
+	if depth != 0 {
+		t.Errorf("guard fired but %d rows landed; want 0", depth)
+	}
+}
+
+// Symmetric path: linkP2ToP1=false with an explicit p2.ReplyTo should
+// still work and validate against the store as before.
+func TestInsertMessagePair_NoLink_HonoursExplicitReplyTo(t *testing.T) {
+	s := openFileStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%2")
+
+	// Seed a target message we can reply to.
+	seed, err := s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob", Body: "target",
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	p1 := store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob",
+		Body: "first", Kind: store.KindControl,
+	}
+	p2 := store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob",
+		Body: "second", Kind: store.KindControl,
+		ReplyTo: seed.PublicID,
+	}
+	_, _, err = s.InsertMessagePair(ctx, p1, p2, false)
+	if err != nil {
+		t.Fatalf("explicit p2.ReplyTo on no-link path should work: %v", err)
+	}
+}
 
 // TestInsertMessage_CapEnforcedUnderConcurrency is the load-bearing
 // regression for #29. Without atomic cap enforcement, N concurrent
