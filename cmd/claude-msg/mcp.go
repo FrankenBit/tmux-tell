@@ -264,24 +264,13 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 		if err != nil {
 			return nil, err
 		}
-		// Render to the MCP map shape, omitting empty fields so existing
-		// callers see the same wire format they used to.
-		out := map[string]any{
-			"ok":      res.OK,
-			"id":      res.ID,
-			"queued":  res.Queued,
-			"command": res.Command,
-		}
-		if res.EnableID != "" {
-			out["enable_id"] = res.EnableID
-		}
-		if res.ResumeID != "" {
-			out["resume_id"] = res.ResumeID
-		}
-		if res.Macro != "" {
-			out["macro"] = res.Macro
-		}
-		return out, nil
+		// The MCP framework json.Marshals handler returns
+		// (internal/mcp/server.go:212), and controlResult's JSON tags
+		// already encode the wire shape — so returning the struct
+		// directly produces byte-identical output to the previous
+		// map[string]any construction. Both callers now go through the
+		// same single source of truth for the wire shape.
+		return res, nil
 	}
 }
 

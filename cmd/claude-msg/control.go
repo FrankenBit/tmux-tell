@@ -26,8 +26,11 @@ type controlParams struct {
 }
 
 // controlResult is the structured return from doControl. Both the MCP
-// handler (wraps in map[string]any) and the CLI subcommand (writes JSON
-// to stdout) consume it.
+// handler and the CLI subcommand serialise it directly — the JSON tags
+// (with omitempty on the per-path fields) are the single source of
+// truth for the wire shape. Don't reconstruct this shape by hand in
+// either caller, or the two outputs will drift the next time a field
+// is added.
 type controlResult struct {
 	OK       bool   `json:"ok"`
 	ID       string `json:"id"`
@@ -80,8 +83,17 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 		return nil, err
 	}
 
+	// canonName is the whitelist key (lowercased, slash-stripped,
+	// trimmed). We dispatch path 1 / path 2 against this — NOT against
+	// the resolved text — so the macro is keyed on the canonical command
+	// name rather than its prose form. (If a future whitelist edit added
+	// another entry whose Text happened to be `/mcp restart semaphore`,
+	// dispatching on text would silently route it through the macro;
+	// dispatching on name keeps the coupling visible.)
+	canonName := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(p.Command), "/"))
+
 	// Path 1: restart macro.
-	if text == "/mcp restart semaphore" {
+	if canonName == "mcp-restart-semaphore" {
 		if err := checkTwoSlotCaps(ctx, s, p); err != nil {
 			return nil, err
 		}

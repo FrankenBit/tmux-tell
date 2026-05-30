@@ -290,6 +290,40 @@ func TestMCP_Control_RawDisable_RejectedOnPeer(t *testing.T) {
 	}
 }
 
+// Regression for #28 follow-up (Surveyor Q1A): the macro dispatch is
+// keyed on the canonical command name, not the resolved Text. A call
+// whose .Command resolves through Resolve() but whose name isn't
+// "mcp-restart-semaphore" must NOT enter the two-row macro path.
+// Today no other entry shares the macro's text, but the contract
+// should be enforced on name to keep the coupling visible.
+func TestMCP_Control_RestartMacro_DispatchesOnName(t *testing.T) {
+	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice")
+
+	// `help` is a plain command that resolves to "/help", never to
+	// "/mcp restart semaphore". This is a sanity-pin that the macro
+	// dispatch isn't accidentally string-matching on something else.
+	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+		"to":      "alice",
+		"command": "help",
+	})
+	if got["ok"] != true {
+		t.Fatalf("got=%v", got)
+	}
+	if got["macro"] != nil {
+		t.Errorf("plain command should not produce macro field; got %v", got)
+	}
+	if got["enable_id"] != nil {
+		t.Errorf("plain command should not have enable_id; got %v", got)
+	}
+	msgs, _ := s.ListMessages(context.Background(), store.ListFilter{
+		ToAgent: "alice", State: store.StateQueued, Limit: 10,
+	})
+	if len(msgs) != 1 {
+		t.Errorf("plain command should queue exactly 1 row; got %d", len(msgs))
+	}
+}
+
 func TestMCP_Control_RequiresIdentity(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")
