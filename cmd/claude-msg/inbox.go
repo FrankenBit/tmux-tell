@@ -7,12 +7,16 @@ import (
 	"io"
 	"time"
 
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/identity"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 )
 
 // runInboxCLI parses inbox-subcommand flags and dispatches.
 //
-// Usage: claude-msg inbox AGENT [--state STATE] [--limit N] [--format text|json]
+// Usage: claude-msg inbox [AGENT] [--state STATE] [--limit N] [--format text|json]
+//
+// AGENT defaults to the calling pane's identity (via the same
+// resolution rules as semaphore.whoami).
 func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -24,11 +28,10 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
-	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: claude-msg inbox AGENT [flags]")
+	if fs.NArg() > 1 {
+		fmt.Fprintln(stderr, "usage: claude-msg inbox [AGENT] [flags]")
 		return exitUsage
 	}
-	agent := fs.Arg(0)
 
 	s, err := store.Open(resolveDBPath(*dbPath))
 	if err != nil {
@@ -37,7 +40,23 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	defer s.Close()
 
-	return runInboxWithStore(context.Background(), s,
+	ctx := context.Background()
+	var agent string
+	if fs.NArg() == 1 {
+		agent = fs.Arg(0)
+	} else {
+		agent, _, err = identity.Resolve(ctx, s, "")
+		if err != nil {
+			return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+		}
+		if agent == "" {
+			return writeJSONError(stdout, stderr,
+				"cannot resolve identity: pass AGENT, set $CLAUDE_AGENT_NAME, or register this pane",
+				exitUsage)
+		}
+	}
+
+	return runInboxWithStore(ctx, s,
 		agent, store.State(*stateFlag), *limit, *format, stdout, stderr)
 }
 

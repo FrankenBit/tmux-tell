@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/control"
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/identity"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/mcp"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
@@ -139,38 +140,12 @@ func newMCPServer(s *store.Store) *mcp.Server {
 
 // --- tool handlers ---
 
-// resolveMCPIdentity figures out which agent the calling pane is. Order of
-// precedence:
-//
-//  1. $CLAUDE_AGENT_NAME — explicit override, useful for tests and
-//     non-tmux invocations.
-//  2. $TMUX_PANE → agents.pane_id → agent name. This is the path that
-//     makes the bus work with zero per-pane config: tmux already sets
-//     TMUX_PANE for every pane it spawns, claude inherits it, the MCP
-//     server (claude's child) inherits it, and we resolve through the
-//     registry that discover / manual upsert has populated.
-//
-// Returns "" with no error when neither source resolves — the caller
-// surfaces an MCP tool error so the operator sees the actionable
-// "register this pane" message instead of a silent failure.
+// resolveMCPIdentity is the MCP-side adapter over identity.Resolve. The
+// MCP path has no `--from` analogue, so it always passes "" as override.
+// Kept as a thin wrapper so handler call-sites stay readable.
 func resolveMCPIdentity(ctx context.Context, s *store.Store) (string, error) {
-	if name := os.Getenv("CLAUDE_AGENT_NAME"); name != "" {
-		return name, nil
-	}
-	pane := os.Getenv("TMUX_PANE")
-	if pane == "" {
-		return "", nil
-	}
-	agents, err := s.ListAgents(ctx)
-	if err != nil {
-		return "", err
-	}
-	for _, a := range agents {
-		if a.PaneID == pane {
-			return a.Name, nil
-		}
-	}
-	return "", nil
+	name, _, err := identity.Resolve(ctx, s, "")
+	return name, err
 }
 
 func mcpSendHandler(s *store.Store) mcp.ToolHandler {

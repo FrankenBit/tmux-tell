@@ -269,11 +269,24 @@ tool into a running pane, restart its Claude session.
 
 ### Identity precedence
 
-1. `$CLAUDE_AGENT_NAME` — explicit override, useful for scripts or
-   non-tmux contexts.
-2. `$TMUX_PANE` → agents.pane_id → name — the default for normal use.
+Both the MCP server and the CLI subcommands (`send`, `inbox`, `whoami`,
+`control`) resolve identity through one shared helper
+(`internal/identity`). Precedence:
+
+1. Explicit override — `--from` on `send`, `--as` on `whoami`, or
+   `$CLAUDE_AGENT_NAME` for any path. Highest precedence.
+2. `$TMUX_PANE` → `agents.pane_id` → name. The default for a
+   registered pane; no env var needed.
 3. Neither → the tool errors with an actionable message pointing the
-   operator at the registry.
+   operator at registration.
+
+`whoami` surfaces a `source` field (`explicit` / `env` / `pane`) so
+the operator can see how identity was resolved.
+
+**Spoofing note:** `$TMUX_PANE` is settable by anything with shell
+access, and the registry has no per-pane authentication. This widens
+*convenience*, it does not authenticate identity — the trust model is
+"whoever has shell access is trusted," same as the rest of the bus.
 
 ## Roadmap
 

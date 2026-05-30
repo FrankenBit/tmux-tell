@@ -45,16 +45,6 @@ func resolveDBPath(flagValue string) string {
 	return defaultDBLocation
 }
 
-// resolveAgentName picks a sender / self identity from (in order):
-// the explicit flag, the $CLAUDE_AGENT_NAME env var. Returns "" if neither
-// is set; the caller decides whether that's a usage error.
-func resolveAgentName(flagValue string) string {
-	if flagValue != "" {
-		return flagValue
-	}
-	return os.Getenv("CLAUDE_AGENT_NAME")
-}
-
 // writeJSONResult writes the given value to w as a single line of JSON.
 // Returns the error from the encoder, if any (caller usually ignores it
 // since we're at the end of a CLI run).

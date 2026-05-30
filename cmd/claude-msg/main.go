@@ -18,7 +18,7 @@ Subcommands:
   inbox   List queued messages for an agent
   status  Show paused state + queue depths across all agents
   agents  List registered agents with pane liveness
-  whoami  Show this session's registration (uses $CLAUDE_AGENT_NAME)
+  whoami  Show this session's registration (auto-resolves identity)
   serve   Run the mailman daemon for one agent
   pause   Halt one or all mailman daemons
   resume  Resume paused mailmen

@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/identity"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 )
 
@@ -42,8 +43,21 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	s, err := store.Open(resolveDBPath(*dbPath))
+	if err != nil {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("open store: %v", err), exitInternal)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	fromName, _, err := identity.Resolve(ctx, s, *from)
+	if err != nil {
+		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+	}
+
 	p := sendParams{
-		From:         resolveAgentName(*from),
+		From:         fromName,
 		To:           *to,
 		ReplyTo:      *replyTo,
 		Body:         *body,
@@ -55,14 +69,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		p.Body = strings.Join(fs.Args(), " ")
 	}
 
-	s, err := store.Open(resolveDBPath(*dbPath))
-	if err != nil {
-		return writeJSONError(stdout, stderr,
-			fmt.Sprintf("open store: %v", err), exitInternal)
-	}
-	defer s.Close()
-
-	return runSendWithStore(context.Background(), s, p, stdout, stderr)
+	return runSendWithStore(ctx, s, p, stdout, stderr)
 }
 
 // runSendWithStore is the pure-logic core: validates the parameters,
@@ -72,7 +79,8 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 	// Identity
 	if p.From == "" {
 		return writeJSONError(stdout, stderr,
-			"--from required or set $CLAUDE_AGENT_NAME", exitUsage)
+			"cannot resolve sender: pass --from, set $CLAUDE_AGENT_NAME, or register this pane",
+			exitUsage)
 	}
 	if p.To == "" {
 		return writeJSONError(stdout, stderr,

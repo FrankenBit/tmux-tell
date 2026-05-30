@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/identity"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
 )
@@ -25,12 +26,6 @@ func runWhoamiCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	name := resolveAgentName(*asName)
-	if name == "" {
-		return writeJSONError(stdout, stderr,
-			"CLAUDE_AGENT_NAME not set; pass --as <name>", exitUsage)
-	}
-
 	s, err := store.Open(resolveDBPath(*dbPath))
 	if err != nil {
 		return writeJSONError(stdout, stderr,
@@ -38,15 +33,26 @@ func runWhoamiCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	defer s.Close()
 
-	live, err := tmuxio.LivePanes(context.Background())
+	ctx := context.Background()
+	name, src, err := identity.Resolve(ctx, s, *asName)
 	if err != nil {
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
-	return runWhoamiWithStore(context.Background(), s, live, name, *format, stdout, stderr)
+	if name == "" {
+		return writeJSONError(stdout, stderr,
+			"cannot resolve identity: pass --as, set $CLAUDE_AGENT_NAME, or register this pane",
+			exitUsage)
+	}
+
+	live, err := tmuxio.LivePanes(ctx)
+	if err != nil {
+		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+	}
+	return runWhoamiWithStore(ctx, s, live, name, string(src), *format, stdout, stderr)
 }
 
 func runWhoamiWithStore(ctx context.Context, s *store.Store,
-	live map[string]bool, name, format string,
+	live map[string]bool, name, source, format string,
 	stdout, stderr io.Writer,
 ) int {
 	a, err := s.GetAgent(ctx, name)
@@ -89,6 +95,7 @@ func runWhoamiWithStore(ctx context.Context, s *store.Store,
 			"pane_status": paneStatus,
 			"paused":      a.Paused,
 			"queued":      depth,
+			"source":      source,
 		})
 		return exitOK
 	case "text", "":
@@ -96,7 +103,7 @@ func runWhoamiWithStore(ctx context.Context, s *store.Store,
 		if pane == "" {
 			pane = "-"
 		}
-		fmt.Fprintf(stdout, "NAME\t%s\n", a.Name)
+		fmt.Fprintf(stdout, "NAME\t%s (via %s)\n", a.Name, source)
 		fmt.Fprintf(stdout, "PANE\t%s (%s)\n", pane, paneStatus)
 		fmt.Fprintf(stdout, "PAUSED\t%s\n", yesNo(a.Paused))
 		fmt.Fprintf(stdout, "INBOX\t%d queued\n", depth)

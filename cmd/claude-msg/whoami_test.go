@@ -18,7 +18,7 @@ func TestWhoami_RegisteredLive(t *testing.T) {
 	live := map[string]bool{"%1": true}
 
 	var stdout bytes.Buffer
-	exit := runWhoamiWithStore(ctx, s, live, "bosun", "json", &stdout, &bytes.Buffer{})
+	exit := runWhoamiWithStore(ctx, s, live, "bosun", "explicit", "json", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -34,7 +34,7 @@ func TestWhoami_NotRegistered(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runWhoamiWithStore(context.Background(), s, map[string]bool{},
-		"ghost", "json", &stdout, &stderr)
+		"ghost", "explicit", "json", &stdout, &stderr)
 	if exit != exitUnavailable {
 		t.Errorf("exit = %d, want %d", exit, exitUnavailable)
 	}
@@ -58,7 +58,7 @@ func TestWhoami_TextFormat(t *testing.T) {
 
 	var stdout bytes.Buffer
 	exit := runWhoamiWithStore(context.Background(), s,
-		map[string]bool{"%1": true}, "bosun", "text", &stdout, &bytes.Buffer{})
+		map[string]bool{"%1": true}, "bosun", "explicit", "text", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -87,7 +87,7 @@ func TestWhoami_JSONRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	_ = s.UpsertAgent(ctx, "bosun", "")
 	var stdout bytes.Buffer
-	_ = runWhoamiWithStore(ctx, s, nil, "bosun", "json", &stdout, &bytes.Buffer{})
+	_ = runWhoamiWithStore(ctx, s, nil, "bosun", "explicit", "json", &stdout, &bytes.Buffer{})
 	var got map[string]any
 	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &got); err != nil {
 		t.Fatalf("decode: %v", err)
