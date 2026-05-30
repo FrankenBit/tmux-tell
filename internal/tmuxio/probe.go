@@ -33,7 +33,15 @@ type QuietOpts struct {
 	BackoffInterval time.Duration
 	// MaxWait caps the total wait across all probe iterations. After
 	// this, WaitForQuietPane returns ErrCapExceeded and the mailman
-	// delivers anyway with a WARN log. Default 30min.
+	// delivers anyway with a WARN log. Default 5min.
+	//
+	// Sized to the operator-latency expectation, not the absolute
+	// worst case: a human who sees the probe appear typically needs
+	// 2-10 minutes to close a sentence or cut their in-progress
+	// message out of the input box. Beyond that they've usually
+	// walked away, so delaying further just buys nothing. The
+	// fragmented-delivery WARN past the cap is the honest signal
+	// when this assumption fails.
 	MaxWait time.Duration
 	// CaptureLines is how many bottom rows of the pane to capture for
 	// the diff. Smaller is sharper (less noise from agent-streaming
@@ -53,9 +61,9 @@ type QuietOpts struct {
 	//     bottom rows during long tool-heavy turns. Same effect.
 	//   - Alternate frontends with different bottom-row content.
 	//
-	// The 30-minute MaxWait acts as the backstop: in the worst case
-	// (long busy turn where the gate never sees clean quiet), the cap
-	// fires and the mailman delivers anyway with a WARN log.
+	// MaxWait acts as the backstop: in the worst case (long busy turn
+	// where the gate never sees clean quiet), the cap fires and the
+	// mailman delivers anyway with a WARN log.
 	CaptureLines int
 }
 
@@ -67,7 +75,7 @@ func (o QuietOpts) withDefaults() QuietOpts {
 		o.BackoffInterval = 60 * time.Second
 	}
 	if o.MaxWait <= 0 {
-		o.MaxWait = 30 * time.Minute
+		o.MaxWait = 5 * time.Minute
 	}
 	if o.CaptureLines <= 0 {
 		o.CaptureLines = 5

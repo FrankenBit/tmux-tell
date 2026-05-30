@@ -71,7 +71,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"how long to watch the recipient pane after injecting the probe character")
 	quietBackoff := fs.Duration("quiet-backoff", 60*time.Second,
 		"how long to wait before re-probing after detecting operator activity")
-	quietMaxWait := fs.Duration("quiet-max-wait", 30*time.Minute,
+	quietMaxWait := fs.Duration("quiet-max-wait", 5*time.Minute,
 		"total cap on the pre-delivery quiet wait; on cap we deliver anyway with a WARN log")
 	quietDisabled := fs.Bool("quiet-disabled", false,
 		"bypass the probe-and-watch gate (delivery happens immediately on every queue head)")

@@ -323,16 +323,19 @@ sits below the response area; only changes to the input row itself
 count as activity. So this gate distinguishes operator vs Claude
 correctly without ever blocking on an agent's own work.
 
-A total-time cap (default 30 min) prevents a permanently busy pane
-from starving the queue forever. Crossing the cap delivers anyway with
-a `WARN quiet_cap_exceeded` line in journalctl so the operator can see
-why fragmented input happened.
+A total-time cap (default 5 min) sets the expectation honestly: a
+human who sees the probe appear typically needs 2-10 minutes to close
+a sentence or cut their in-progress message out of the input box.
+Beyond that they've usually walked away, so delaying further just buys
+nothing. Crossing the cap delivers anyway with a `WARN
+quiet_cap_exceeded` line in journalctl so the operator can see why
+fragmented input happened.
 
 Flags on `claude-msg serve`:
 
 - `--quiet-observe-window` (default 5s)
 - `--quiet-backoff` (default 60s)
-- `--quiet-max-wait` (default 30m)
+- `--quiet-max-wait` (default 5m)
 - `--quiet-disabled` (escape hatch)
 
 ### Identity precedence
