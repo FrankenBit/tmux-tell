@@ -38,6 +38,24 @@ type QuietOpts struct {
 	// CaptureLines is how many bottom rows of the pane to capture for
 	// the diff. Smaller is sharper (less noise from agent-streaming
 	// output above the input box). Default 5.
+	//
+	// LOAD-BEARING ASSUMPTION: the chosen N must isolate the input row
+	// from any pane region that changes for non-operator reasons. The
+	// gate's "agent vs operator" distinction depends on this. Things
+	// that can break the assumption — bumping CaptureLines down to 1-2
+	// is the usual lever — include:
+	//
+	//   - Claude Code's status-line tick during streaming (token
+	//     counter, spinner, "Press ESC to interrupt" hint flips). Any
+	//     of these in the captured tail will be misread as activity
+	//     and cause unnecessary backoff.
+	//   - Tool-use frames in the response area extending into the
+	//     bottom rows during long tool-heavy turns. Same effect.
+	//   - Alternate frontends with different bottom-row content.
+	//
+	// The 30-minute MaxWait acts as the backstop: in the worst case
+	// (long busy turn where the gate never sees clean quiet), the cap
+	// fires and the mailman delivers anyway with a WARN log.
 	CaptureLines int
 }
 

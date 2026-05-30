@@ -180,6 +180,47 @@ func TestMCP_MessageStatus_NotFound(t *testing.T) {
 	}
 }
 
+// Pins the omitempty contract on trackResult's optional fields. With
+// just OK/ID/From/To/State/Kind/CreatedAt populated and the three
+// state-dependent fields empty, the rendered JSON must NOT include
+// delivered_at, error, or reply_to as keys. Surveyor's #31 Q(d)
+// follow-up: the cross-CLI/MCP shape test verifies byte-identity
+// between the two callers, but not that the omitempty contract
+// itself holds — this test pins it.
+func TestTrackResult_OmitemptyContract(t *testing.T) {
+	res := &trackResult{
+		OK:        true,
+		ID:        "abcd",
+		From:      "alice",
+		To:        "bob",
+		State:     "queued",
+		Kind:      "message",
+		CreatedAt: "2026-05-30T11:00:00Z",
+		// DeliveredAt, Error, ReplyTo intentionally empty
+	}
+	raw, err := json.Marshal(res)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, banned := range []string{"delivered_at", "error", "reply_to"} {
+		if strings.Contains(string(raw), banned) {
+			t.Errorf("omitempty contract: empty %q field should not appear in:\n%s",
+				banned, raw)
+		}
+	}
+
+	// Inverse pin: when all three are non-empty, they must appear.
+	res.DeliveredAt = "2026-05-30T11:01:00Z"
+	res.Error = "boom"
+	res.ReplyTo = "1234"
+	raw, _ = json.Marshal(res)
+	for _, required := range []string{"delivered_at", "error", "reply_to"} {
+		if !strings.Contains(string(raw), required) {
+			t.Errorf("populated %q field should appear in:\n%s", required, raw)
+		}
+	}
+}
+
 // Wire-shape contract: the CLI's --format json and the MCP tool's
 // response must serialise to the same JSON. Pins the single-source-
 // of-truth invariant (Surveyor's Q3 carry-over).

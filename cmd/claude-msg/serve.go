@@ -214,16 +214,29 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		// risk a fragmented delivery than starve the queue. The
 		// per-iteration cap inside WaitForQuietPane handles the truly
 		// pathological "operator never stops typing" case.
+		//
+		// We derive the quiet ctx from stopCtx (not opCtx) so SIGTERM
+		// wakes us out of a long quiet wait — the operator shouldn't
+		// have to wait up to 30 minutes for the mailman to notice it
+		// should stop. The ClaimNext above already transitioned the
+		// row to 'delivering'; on SIGTERM exit, RecoverDelivering at
+		// the next startup resets it to 'queued' for a clean retry.
 		if !opts.QuietDisabled {
-			quietCtx, qcancel := context.WithTimeout(opCtx,
+			quietCtx, qcancel := context.WithTimeout(stopCtx,
 				opts.QuietOpts.MaxWait+5*time.Second)
 			qerr := tmuxio.WaitForQuietPane(quietCtx, paneForDelivery, opts.QuietOpts)
 			qcancel()
 			if qerr != nil {
-				if errors.Is(qerr, tmuxio.ErrCapExceeded) {
+				switch {
+				case errors.Is(qerr, context.Canceled):
+					// SIGTERM during the quiet wait — exit cleanly, do
+					// not deliver. Row stays 'delivering'; recovered
+					// on next startup.
+					return exitOK
+				case errors.Is(qerr, tmuxio.ErrCapExceeded):
 					logger.Printf("WARN quiet_cap_exceeded id=%s pane=%s — delivering anyway",
 						msg.PublicID, paneForDelivery)
-				} else {
+				default:
 					logger.Printf("WARN quiet_check_err id=%s err=%v — delivering anyway",
 						msg.PublicID, qerr)
 				}
