@@ -229,6 +229,27 @@ Adding a command or flipping a scope flag requires a code change
 (`internal/control/control.go`) — the audit surface is intentionally
 small.
 
+#### Self-compact with a follow-up
+
+`/compact` leaves the session sitting at an empty prompt — no work
+resumes until input lands. To bridge the gap, `semaphore.control`
+accepts an optional `resume_with` string when `command=compact` on
+self-invocation:
+
+```text
+semaphore.control to=bosun command=compact \
+  resume_with="finish #25 follow-ups, then triage tomorrow's queue"
+```
+
+The MCP handler queues two rows back-to-back (the `/compact` control
+plus the resume message, threaded via `reply_to` for audit). The
+mailman holds the queue for `--post-compact-pause` (default 120s)
+after delivering `/compact`, so the follow-up lands once Claude Code
+has settled — not into the slash-command parser mid-compaction.
+
+`resume_with` is only valid with `command=compact` on self; the call
+is rejected at the MCP boundary otherwise.
+
 ### Removing a pane
 
 > *Claude, please call `semaphore.unregister name=oldname`*

@@ -109,12 +109,13 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpRegisterHandler(s))
 
 	srv.RegisterTool("semaphore.control",
-		"Send a whitelisted Claude Code slash-command directly to a pane. Scope-gated: when to==self, the self-whitelist applies (compact|rename|cost|help); when to is a peer, only the peer-whitelist applies (rename|help). Bypasses the chat-message renderer.",
+		"Send a whitelisted Claude Code slash-command directly to a pane. Scope-gated: when to==self, the self-whitelist applies; when to is a peer, only the peer-whitelist applies. Bypasses the chat-message renderer. Optional resume_with (only with command=compact, only on self) queues a follow-up message that the mailman delivers AFTER /compact has settled — pre-write your continuation instead of going silent post-compact.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"to":      {"type": "string", "description": "Recipient agent name; set to your own name for self-invocation"},
-				"command": {"type": "string", "description": "Whitelisted command (e.g. 'compact'); leading slash optional"}
+				"to":          {"type": "string", "description": "Recipient agent name; set to your own name for self-invocation"},
+				"command":     {"type": "string", "description": "Whitelisted command (e.g. 'compact'); leading slash optional"},
+				"resume_with": {"type": "string", "description": "Optional continuation prompt delivered after /compact settles. Only valid with command=compact on self-invocation."}
 			},
 			"required": ["to", "command"]
 		}`),
@@ -261,8 +262,9 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 
 func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
-		To      string `json:"to"`
-		Command string `json:"command"`
+		To         string `json:"to"`
+		Command    string `json:"command"`
+		ResumeWith string `json:"resume_with"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -294,6 +296,57 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 			}
 			return nil, err
 		}
+
+		// resume_with is a sugar for compact-and-continue. The mailman's
+		// post-compact pause is what makes the follow-up land after the
+		// slash-command settles; the bus side just queues both rows.
+		if in.ResumeWith != "" {
+			if text != "/compact" {
+				return nil, fmt.Errorf("resume_with is only valid with command=compact")
+			}
+			if scope != control.ScopeSelf {
+				return nil, fmt.Errorf("resume_with requires self-invocation")
+			}
+			if len(in.ResumeWith) > capBodyBytes {
+				return nil, fmt.Errorf("resume_with too large (%d > %d bytes)", len(in.ResumeWith), capBodyBytes)
+			}
+			// Cap budget for two rows so we never insert /compact and
+			// then leave the agent without a resume.
+			if depth, err := s.RecipientQueueDepth(ctx, in.To); err != nil {
+				return nil, err
+			} else if depth+2 > capRecipientQueue {
+				return nil, fmt.Errorf("queue full for %s; need 2 slots, %d/%d used", in.To, depth, capRecipientQueue)
+			}
+			if backlog, err := s.SenderBacklog(ctx, from); err != nil {
+				return nil, err
+			} else if backlog+2 > capSenderBacklog {
+				return nil, fmt.Errorf("sender backlog full for %s; need 2 slots, %d/%d used", from, backlog, capSenderBacklog)
+			}
+			compactRes, err := s.InsertMessage(ctx, store.InsertParams{
+				FromAgent: from, ToAgent: in.To,
+				Body: text, Kind: store.KindControl,
+			})
+			if err != nil {
+				return nil, err
+			}
+			resumeRes, err := s.InsertMessage(ctx, store.InsertParams{
+				FromAgent: from, ToAgent: in.To,
+				Body:    in.ResumeWith,
+				Kind:    store.KindMessage,
+				ReplyTo: compactRes.PublicID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"ok":        true,
+				"id":        compactRes.PublicID,
+				"resume_id": resumeRes.PublicID,
+				"queued":    resumeRes.Queued,
+				"command":   text,
+			}, nil
+		}
+
 		if depth, err := s.RecipientQueueDepth(ctx, in.To); err != nil {
 			return nil, err
 		} else if depth >= capRecipientQueue {

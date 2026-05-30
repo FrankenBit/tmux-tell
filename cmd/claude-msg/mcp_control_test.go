@@ -113,6 +113,80 @@ func TestMCP_Control_RejectsUnknownRecipient(t *testing.T) {
 	}
 }
 
+// resume_with on a self-compact queues two rows back-to-back: the
+// /compact control row first, then the resume message threaded via
+// reply_to so the audit trail shows the link.
+func TestMCP_Control_CompactWithResume_QueuesBothRows(t *testing.T) {
+	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice")
+
+	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+		"to":          "alice",
+		"command":     "compact",
+		"resume_with": "continue the bus work; specifically finish #25 follow-ups",
+	})
+	if got["ok"] != true {
+		t.Fatalf("ok = %v; got=%v", got["ok"], got)
+	}
+	compactID, _ := got["id"].(string)
+	resumeID, _ := got["resume_id"].(string)
+	if len(compactID) != 4 || len(resumeID) != 4 {
+		t.Fatalf("ids = %q / %q; both should be 4-char public_ids", compactID, resumeID)
+	}
+
+	msgs, err := s.ListMessages(context.Background(), store.ListFilter{
+		ToAgent: "alice", State: store.StateQueued, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("queued = %d, want 2", len(msgs))
+	}
+	if msgs[0].Kind != store.KindControl || msgs[0].Body != "/compact" {
+		t.Errorf("first row should be /compact control; got %+v", msgs[0])
+	}
+	if msgs[1].Kind != store.KindMessage {
+		t.Errorf("second row should be kind=message; got kind=%q", msgs[1].Kind)
+	}
+	if msgs[1].ReplyTo.String != compactID {
+		t.Errorf("resume row should thread via reply_to=%s; got %q",
+			compactID, msgs[1].ReplyTo.String)
+	}
+}
+
+// resume_with on a non-compact command is rejected at the MCP boundary.
+func TestMCP_Control_ResumeWith_RejectedOnNonCompact(t *testing.T) {
+	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice")
+
+	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+		"to":          "alice",
+		"command":     "help",
+		"resume_with": "anything",
+	})
+	if got["_isError"] != true {
+		t.Errorf("resume_with on /help should be rejected; got %v", got)
+	}
+}
+
+// resume_with on a peer-target is rejected (compact is self-only
+// already, but the error should be precise rather than relying on the
+// scope rejection landing first).
+func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
+	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice", "bob")
+
+	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+		"to":          "bob",
+		"command":     "compact",
+		"resume_with": "irrelevant",
+	})
+	if got["_isError"] != true {
+		t.Errorf("compact+resume_with on peer should be rejected; got %v", got)
+	}
+}
+
 func TestMCP_Control_RequiresIdentity(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")

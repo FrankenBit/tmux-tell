@@ -26,6 +26,13 @@ type serveOpts struct {
 	IdlePollInterval   time.Duration
 	PauseCheckInterval time.Duration
 	DeliverTimeout     time.Duration
+	// PostCompactPause is the quiescent window the mailman holds after
+	// delivering a `/compact` control message. /compact takes ~90s in
+	// practice and leaves the recipient waiting on input afterwards; a
+	// well-timed follow-up message wants to land after the compact has
+	// settled, not into the slash-command parser mid-compaction. Zero
+	// disables the pause entirely.
+	PostCompactPause time.Duration
 	// Walker resolves pane-id drift via the shared discover package. When
 	// nil, runServeWithStore constructs a discover.New() — tests can inject
 	// a fake walker that doesn't touch real tmux/proc.
@@ -49,6 +56,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"interval to re-check the paused flag")
 	deliverTimeout := fs.Duration("deliver-timeout", 30*time.Second,
 		"per-message deadline for the tmux delivery sequence")
+	postCompactPause := fs.Duration("post-compact-pause", 120*time.Second,
+		"quiescent window after delivering /compact before claiming the next message (0 to disable)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -78,6 +87,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		IdlePollInterval:   *idlePoll,
 		PauseCheckInterval: *pausePoll,
 		DeliverTimeout:     *deliverTimeout,
+		PostCompactPause:   *postCompactPause,
 	}, logger, stdout, stderr)
 }
 
@@ -213,6 +223,17 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if err := s.MarkDelivered(opCtx, msg.PublicID); err != nil {
 				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
 			}
+			// After a successful /compact, hold the queue so any
+			// follow-up the sender pre-queued (a `resume_with` from
+			// semaphore.control) lands AFTER Claude Code has finished
+			// the slash-command, not into the parser mid-compaction.
+			if isCompactControl(msg) && opts.PostCompactPause > 0 {
+				logger.Printf("post_compact_pause id=%s duration=%s",
+					msg.PublicID, opts.PostCompactPause)
+				if sleepRespectingWatchdog(stopCtx, opts.PostCompactPause, watchdogPing) {
+					return exitOK
+				}
+			}
 		}
 
 		if stopOrSleep(stopCtx, opts.InterMessageDelay) {
@@ -245,6 +266,50 @@ func isCantFindPaneError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), "can't find pane")
+}
+
+// isCompactControl returns true when msg is a control row whose body is
+// exactly `/compact` (no args today — kept strict so a future arg-bearing
+// /compact-style command doesn't accidentally pull in the long pause).
+func isCompactControl(msg *store.Message) bool {
+	return msg.Kind == store.KindControl && strings.TrimSpace(msg.Body) == "/compact"
+}
+
+// sleepRespectingWatchdog blocks for d, returning early when stopCtx
+// cancels. It pings sd_notify every pingEvery so the systemd watchdog
+// doesn't trip during long quiescent windows (the post-compact pause is
+// ~120s, well above WatchdogSec=30s). pingEvery <= 0 falls back to a
+// single uninterrupted sleep — fine for tests, fine on hosts without a
+// configured watchdog.
+func sleepRespectingWatchdog(stopCtx context.Context, d, pingEvery time.Duration) bool {
+	if d <= 0 {
+		return stopCtx.Err() != nil
+	}
+	if pingEvery <= 0 || pingEvery >= d {
+		select {
+		case <-stopCtx.Done():
+			return true
+		case <-time.After(d):
+			return false
+		}
+	}
+	deadline := time.Now().Add(d)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		wait := pingEvery
+		if wait > remaining {
+			wait = remaining
+		}
+		select {
+		case <-stopCtx.Done():
+			return true
+		case <-time.After(wait):
+			_ = sdnotify.Watchdog()
+		}
+	}
 }
 
 // stopOrSleep waits for d or until stopCtx is cancelled. Returns true on
