@@ -33,6 +33,15 @@ type serveOpts struct {
 	// settled, not into the slash-command parser mid-compaction. Zero
 	// disables the pause entirely.
 	PostCompactPause time.Duration
+	// QuietOpts configures the pre-delivery probe-and-watch gate so the
+	// mailman doesn't fragment the operator's in-progress typing. See
+	// internal/tmuxio.QuietOpts for the per-field semantics.
+	QuietOpts tmuxio.QuietOpts
+	// QuietDisabled bypasses the probe-and-watch gate entirely. Useful
+	// in tests (the existing fast-opts helper sets this so the fake
+	// tmux runner doesn't need to handle the probe sequence) and as an
+	// escape hatch if the probe pattern misbehaves with a future TUI.
+	QuietDisabled bool
 	// Walker resolves pane-id drift via the shared discover package. When
 	// nil, runServeWithStore constructs a discover.New() — tests can inject
 	// a fake walker that doesn't touch real tmux/proc.
@@ -58,6 +67,14 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"per-message deadline for the tmux delivery sequence")
 	postCompactPause := fs.Duration("post-compact-pause", 120*time.Second,
 		"quiescent window after delivering /compact before claiming the next message (0 to disable)")
+	quietObserve := fs.Duration("quiet-observe-window", 5*time.Second,
+		"how long to watch the recipient pane after injecting the probe character")
+	quietBackoff := fs.Duration("quiet-backoff", 60*time.Second,
+		"how long to wait before re-probing after detecting operator activity")
+	quietMaxWait := fs.Duration("quiet-max-wait", 30*time.Minute,
+		"total cap on the pre-delivery quiet wait; on cap we deliver anyway with a WARN log")
+	quietDisabled := fs.Bool("quiet-disabled", false,
+		"bypass the probe-and-watch gate (delivery happens immediately on every queue head)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -88,6 +105,12 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		PauseCheckInterval: *pausePoll,
 		DeliverTimeout:     *deliverTimeout,
 		PostCompactPause:   *postCompactPause,
+		QuietOpts: tmuxio.QuietOpts{
+			ObserveWindow:   *quietObserve,
+			BackoffInterval: *quietBackoff,
+			MaxWait:         *quietMaxWait,
+		},
+		QuietDisabled: *quietDisabled,
 	}, logger, stdout, stderr)
 }
 
@@ -185,6 +208,28 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			msg.PublicID, msg.Kind, msg.FromAgent, len(msg.Body))
 
 		paneForDelivery := a.PaneID
+
+		// Pre-delivery quiet-pane gate (probe-and-watch). On any error
+		// other than a clean quiet exit, log and proceed — we'd rather
+		// risk a fragmented delivery than starve the queue. The
+		// per-iteration cap inside WaitForQuietPane handles the truly
+		// pathological "operator never stops typing" case.
+		if !opts.QuietDisabled {
+			quietCtx, qcancel := context.WithTimeout(opCtx,
+				opts.QuietOpts.MaxWait+5*time.Second)
+			qerr := tmuxio.WaitForQuietPane(quietCtx, paneForDelivery, opts.QuietOpts)
+			qcancel()
+			if qerr != nil {
+				if errors.Is(qerr, tmuxio.ErrCapExceeded) {
+					logger.Printf("WARN quiet_cap_exceeded id=%s pane=%s — delivering anyway",
+						msg.PublicID, paneForDelivery)
+				} else {
+					logger.Printf("WARN quiet_check_err id=%s err=%v — delivering anyway",
+						msg.PublicID, qerr)
+				}
+			}
+		}
+
 		deliverCtx, cancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
 		derr := deliverOne(deliverCtx, paneForDelivery, msg)
 		cancel()

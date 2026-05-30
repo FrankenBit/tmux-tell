@@ -281,6 +281,37 @@ sessions that started before the upgrade stay pinned to the tool
 surface they were initialized with. To propagate a new `semaphore.*`
 tool into a running pane, restart its Claude session.
 
+### Delivery semantics: probe-and-watch quiet-pane gate
+
+Before each delivery the mailman checks whether the recipient pane is
+quiet: it injects a single `─` character (no Enter), waits 5 seconds,
+and re-captures the bottom of the pane. If the only change is that
+probe character, nobody was typing — the mailman backspaces the probe
+and delivers normally. If anything else changed (operator typed,
+deleted, pasted), the mailman backs off 60 seconds and retries.
+
+The probe is **not** backspaced on the backoff path. The operator will
+usually delete the stray dash themselves, or it lands harmlessly in
+the text they're already typing. Eating one of their real keystrokes
+with a guess-backspace would be worse.
+
+Agent-streaming output doesn't trigger backoff because the input box
+sits below the response area; only changes to the input row itself
+count as activity. So this gate distinguishes operator vs Claude
+correctly without ever blocking on an agent's own work.
+
+A total-time cap (default 30 min) prevents a permanently busy pane
+from starving the queue forever. Crossing the cap delivers anyway with
+a `WARN quiet_cap_exceeded` line in journalctl so the operator can see
+why fragmented input happened.
+
+Flags on `claude-msg serve`:
+
+- `--quiet-observe-window` (default 5s)
+- `--quiet-backoff` (default 60s)
+- `--quiet-max-wait` (default 30m)
+- `--quiet-disabled` (escape hatch)
+
 ### Identity precedence
 
 Both the MCP server and the CLI subcommands (`send`, `inbox`, `whoami`,

@@ -25,6 +25,12 @@ func fastOpts(agent string) serveOpts {
 		IdlePollInterval:   time.Millisecond,
 		PauseCheckInterval: time.Millisecond,
 		DeliverTimeout:     5 * time.Second,
+		// Existing serve tests pre-date the probe-and-watch gate and
+		// drive the fake runner with capture-pane responses tuned for
+		// the delivery sequence only. Bypass the gate so they keep
+		// observing the same call shape. New gate-specific tests live
+		// in serve_quiet_test.go.
+		QuietDisabled: true,
 	}
 }
 
