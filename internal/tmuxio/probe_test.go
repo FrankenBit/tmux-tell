@@ -184,18 +184,21 @@ func TestWaitForQuietPane_QuietFirstAttempt(t *testing.T) {
 	}
 }
 
-// TUI noise on the first iteration, quiet on the second.
-// Verifies: short backoff between iterations, then accumulated probes
-// (2 by now) are cleaned up on the quiet path.
+// TUI noise on the first iteration, quiet on the second. After
+// 2026-05-31 hotfix: each TUI-noise iteration backspaces its own
+// probe before the backoff, so probes don't accumulate across a
+// busy-but-not-operator-driven session. The "before" capture of
+// round 2 sees a clean input row (probe was backspaced after round
+// 1's TUI-noise verdict).
 func TestWaitForQuietPane_TUINoiseThenQuiet(t *testing.T) {
 	fr := newFakeProbeRunner(
 		[]string{
 			"thinking 1s\n> \n",   // round 1 before
-			"thinking 2s\n> ─\n",  // round 1 after — TUI noise (status changed)
-			"thinking 2s\n> ─\n",  // round 2 before (probe still in input)
-			"thinking 2s\n> ──\n", // round 2 after — only input changed by new probe
+			"thinking 2s\n> ─\n",  // round 1 after — TUI noise → backspace
+			"thinking 2s\n> \n",   // round 2 before (probe was cleaned up)
+			"thinking 2s\n> ─\n",  // round 2 after — DeltaQuiet
 		},
-		[]int{1, 1}, // cursor_y stable across both rounds
+		[]int{1, 1},
 	)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -206,9 +209,43 @@ func TestWaitForQuietPane_TUINoiseThenQuiet(t *testing.T) {
 	if fr.probeChars != 2 {
 		t.Errorf("probe injections = %d, want 2", fr.probeChars)
 	}
-	// Two probes were sent. The quiet exit backspaces both.
+	// Two backspaces total: one mid-flight (TUINoise cleanup),
+	// one on the quiet exit (which finds probesAccumulated==1).
 	if fr.backspaces != 2 {
-		t.Errorf("backspaces = %d, want 2 (cleanup of accumulated probes)", fr.backspaces)
+		t.Errorf("backspaces = %d, want 2 (one per TUI-noise iter + quiet exit)", fr.backspaces)
+	}
+}
+
+// Regression for the 2026-05-31 23:50 Surveyor "probe creep again"
+// report: a long stretch of TUI-noise iterations must NOT accumulate
+// probes. With MaxWait short and only TUI noise, every probe should
+// be backspaced before the next iteration.
+func TestWaitForQuietPane_TUINoiseDoesNotAccumulateProbes(t *testing.T) {
+	// Every capture pair is TUI noise — input row clean, status row
+	// ticks. The loop runs ~5 iterations before hitting the cap.
+	captures := []string{}
+	for i := 0; i < 20; i++ {
+		captures = append(captures,
+			fmt.Sprintf("thinking %ds\n> \n", i),
+			fmt.Sprintf("thinking %ds\n> ─\n", i+1),
+		)
+	}
+	fr := newFakeProbeRunner(captures, []int{1})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	opts := shortOpts()
+	opts.MaxWait = 30 * time.Millisecond
+	if err := WaitForQuietPane(context.Background(), "%1", opts); !errors.Is(err, ErrCapExceeded) {
+		t.Fatalf("err = %v, want ErrCapExceeded", err)
+	}
+	// Key invariant: backspaces should match probes (one per
+	// TUI-noise iteration). Cap-exit cleanup runs but
+	// probesAccumulated should be 0 by then, so no extra cleanup
+	// backspaces.
+	if fr.backspaces != fr.probeChars {
+		t.Errorf("backspaces (%d) != probes (%d) — probes leaked",
+			fr.backspaces, fr.probeChars)
 	}
 }
 

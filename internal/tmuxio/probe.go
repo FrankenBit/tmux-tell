@@ -191,14 +191,34 @@ func WaitForQuietPane(ctx context.Context, pane string, opts QuietOpts) error {
 			cleanupProbes()
 			return nil
 		case DeltaInputActivity:
+			// Don't backspace. The operator's typing is on the input
+			// row alongside our probe; we can't safely tell them apart
+			// without eating real keystrokes. Probes accumulate as the
+			// "I see you" visual handshake.
 			if err := sleepWithPing(ctx, opts.InputActivityBackoff, opts.Ping, opts.PingInterval); err != nil {
 				return err
 			}
 		case DeltaTUINoise:
+			// Safe to backspace: TUI noise means the input row is
+			// clean *except* for our probe (that's the definition of
+			// the verdict). The accumulated probe just sits in the
+			// input box across iterations otherwise — what the user
+			// reported on Surveyor 2026-05-31 23:50 as "probe creep
+			// again". Clean it up between iterations so a long
+			// agent-busy stretch doesn't leave dozens of dashes.
+			if out, err := tmuxRun(ctx, nil, "send-keys", "-t", pane, "BSpace"); err != nil {
+				return fmt.Errorf("tmuxio: probe backspace on tui-noise: %w: %s",
+					err, strings.TrimSpace(string(out)))
+			}
+			probesAccumulated--
 			if err := sleepWithPing(ctx, opts.TUINoiseBackoff, opts.Ping, opts.PingInterval); err != nil {
 				return err
 			}
 		case DeltaProbeMissing:
+			// Don't backspace. We can't see our probe, so we don't
+			// know whether the operator deleted it (in which case
+			// backspace would eat their text) or something else went
+			// wrong. Safe default: leave it.
 			if err := sleepWithPing(ctx, opts.InputActivityBackoff, opts.Ping, opts.PingInterval); err != nil {
 				return err
 			}
