@@ -230,6 +230,20 @@ Adding a command or flipping a scope flag requires a code change
 (`internal/control/control.go`) — the audit surface is intentionally
 small.
 
+#### From a shell
+
+The same surface is available as a CLI subcommand, useful for
+scripts, cron jobs, and sessions whose MCP isn't loaded yet:
+
+```bash
+claude-msg control --to surveyor --command rename
+claude-msg control --to bosun --command compact \
+  --resume-with "carry on with the v0.15.0 cut"
+```
+
+Identity is auto-resolved the same way as the MCP tool — `$TMUX_PANE`
+→ `agents` registry. Pass `--from` to override.
+
 #### Self-compact with a follow-up
 
 `/compact` leaves the session sitting at an empty prompt — no work

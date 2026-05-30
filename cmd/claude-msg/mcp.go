@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/control"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/identity"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/mcp"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
@@ -246,9 +245,6 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 		if err := json.Unmarshal(args, &in); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
-		if in.To == "" {
-			return nil, fmt.Errorf("to required")
-		}
 		from, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
 			return nil, err
@@ -256,140 +252,36 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 		if from == "" {
 			return nil, fmt.Errorf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
-		scope := control.ScopePeer
-		if in.To == from {
-			scope = control.ScopeSelf
-		}
-		text, err := control.Resolve(in.Command, scope)
-		if err != nil {
-			return nil, fmt.Errorf("%w; %s-invokable: %v",
-				err, scope, control.NamesForScope(scope))
-		}
-		if _, err := s.GetAgent(ctx, in.To); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return nil, fmt.Errorf("unknown recipient: %s", in.To)
-			}
-			return nil, err
-		}
-
-		// mcp-restart-semaphore is a macro: synthesise the disable+enable
-		// cycle into two control rows. The whitelist scope check has
-		// already authorised the macro at the boundary; the inner rows
-		// have bodies a peer wouldn't normally be allowed to send, but
-		// that's fine — the mailman trusts the table and the handler is
-		// the trust boundary. (Don't be tempted to re-validate the body
-		// in the mailman; it'd break this pattern.)
-		if text == "/mcp restart semaphore" {
-			if depth, err := s.RecipientQueueDepth(ctx, in.To); err != nil {
-				return nil, err
-			} else if depth+2 > capRecipientQueue {
-				return nil, fmt.Errorf("queue full for %s; need 2 slots, %d/%d used", in.To, depth, capRecipientQueue)
-			}
-			if backlog, err := s.SenderBacklog(ctx, from); err != nil {
-				return nil, err
-			} else if backlog+2 > capSenderBacklog {
-				return nil, fmt.Errorf("sender backlog full for %s; need 2 slots, %d/%d used", from, backlog, capSenderBacklog)
-			}
-			disableRes, err := s.InsertMessage(ctx, store.InsertParams{
-				FromAgent: from, ToAgent: in.To,
-				Body: "/mcp disable semaphore", Kind: store.KindControl,
-			})
-			if err != nil {
-				return nil, err
-			}
-			enableRes, err := s.InsertMessage(ctx, store.InsertParams{
-				FromAgent: from, ToAgent: in.To,
-				Body: "/mcp enable semaphore", Kind: store.KindControl,
-				ReplyTo: disableRes.PublicID,
-			})
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{
-				"ok":         true,
-				"id":         disableRes.PublicID,
-				"enable_id":  enableRes.PublicID,
-				"queued":     enableRes.Queued,
-				"command":    text,
-				"macro":      "restart",
-			}, nil
-		}
-
-		// resume_with is a sugar for compact-and-continue. The mailman's
-		// post-compact pause is what makes the follow-up land after the
-		// slash-command settles; the bus side just queues both rows.
-		if in.ResumeWith != "" {
-			if text != "/compact" {
-				return nil, fmt.Errorf("resume_with is only valid with command=compact")
-			}
-			if scope != control.ScopeSelf {
-				return nil, fmt.Errorf("resume_with requires self-invocation")
-			}
-			if len(in.ResumeWith) > capBodyBytes {
-				return nil, fmt.Errorf("resume_with too large (%d > %d bytes)", len(in.ResumeWith), capBodyBytes)
-			}
-			// Cap budget for two rows so we never insert /compact and
-			// then leave the agent without a resume.
-			if depth, err := s.RecipientQueueDepth(ctx, in.To); err != nil {
-				return nil, err
-			} else if depth+2 > capRecipientQueue {
-				return nil, fmt.Errorf("queue full for %s; need 2 slots, %d/%d used", in.To, depth, capRecipientQueue)
-			}
-			if backlog, err := s.SenderBacklog(ctx, from); err != nil {
-				return nil, err
-			} else if backlog+2 > capSenderBacklog {
-				return nil, fmt.Errorf("sender backlog full for %s; need 2 slots, %d/%d used", from, backlog, capSenderBacklog)
-			}
-			compactRes, err := s.InsertMessage(ctx, store.InsertParams{
-				FromAgent: from, ToAgent: in.To,
-				Body: text, Kind: store.KindControl,
-			})
-			if err != nil {
-				return nil, err
-			}
-			resumeRes, err := s.InsertMessage(ctx, store.InsertParams{
-				FromAgent: from, ToAgent: in.To,
-				Body:    in.ResumeWith,
-				Kind:    store.KindMessage,
-				ReplyTo: compactRes.PublicID,
-			})
-			if err != nil {
-				return nil, err
-			}
-			return map[string]any{
-				"ok":        true,
-				"id":        compactRes.PublicID,
-				"resume_id": resumeRes.PublicID,
-				"queued":    resumeRes.Queued,
-				"command":   text,
-			}, nil
-		}
-
-		if depth, err := s.RecipientQueueDepth(ctx, in.To); err != nil {
-			return nil, err
-		} else if depth >= capRecipientQueue {
-			return nil, fmt.Errorf("queue full for %s (%d/%d)", in.To, depth, capRecipientQueue)
-		}
-		if backlog, err := s.SenderBacklog(ctx, from); err != nil {
-			return nil, err
-		} else if backlog >= capSenderBacklog {
-			return nil, fmt.Errorf("sender backlog full for %s (%d/%d)", from, backlog, capSenderBacklog)
-		}
-		res, err := s.InsertMessage(ctx, store.InsertParams{
-			FromAgent: from,
-			ToAgent:   in.To,
-			Body:      text,
-			Kind:      store.KindControl,
+		res, err := doControl(ctx, s, controlParams{
+			From:         from,
+			To:           in.To,
+			Command:      in.Command,
+			ResumeWith:   in.ResumeWith,
+			MaxRecipient: capRecipientQueue,
+			MaxSender:    capSenderBacklog,
+			MaxBody:      capBodyBytes,
 		})
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{
-			"ok":      true,
-			"id":      res.PublicID,
+		// Render to the MCP map shape, omitting empty fields so existing
+		// callers see the same wire format they used to.
+		out := map[string]any{
+			"ok":      res.OK,
+			"id":      res.ID,
 			"queued":  res.Queued,
-			"command": text,
-		}, nil
+			"command": res.Command,
+		}
+		if res.EnableID != "" {
+			out["enable_id"] = res.EnableID
+		}
+		if res.ResumeID != "" {
+			out["resume_id"] = res.ResumeID
+		}
+		if res.Macro != "" {
+			out["macro"] = res.Macro
+		}
+		return out, nil
 	}
 }
 
