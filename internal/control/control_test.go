@@ -13,6 +13,7 @@ func TestResolve_SelfScope(t *testing.T) {
 		"help":                  "/help",
 		"mcp-enable-semaphore":  "/mcp enable semaphore",
 		"mcp-disable-semaphore": "/mcp disable semaphore",
+		"mcp-restart-semaphore": "/mcp restart semaphore",
 		"/compact":              "/compact",
 		"COMPACT":               "/compact",
 		"  cost  ":              "/cost",
@@ -34,7 +35,7 @@ func TestResolve_PeerScope_OnlyPeerAllowed(t *testing.T) {
 		"rename":                "/rename",
 		"help":                  "/help",
 		"mcp-enable-semaphore":  "/mcp enable semaphore",
-		"mcp-disable-semaphore": "/mcp disable semaphore",
+		"mcp-restart-semaphore": "/mcp restart semaphore",
 	}
 	for in, want := range allowed {
 		got, err := Resolve(in, ScopePeer)
@@ -49,7 +50,10 @@ func TestResolve_PeerScope_OnlyPeerAllowed(t *testing.T) {
 }
 
 func TestResolve_PeerScope_RejectsSelfOnly(t *testing.T) {
-	for _, in := range []string{"compact", "cost"} {
+	// mcp-disable-semaphore moved from self+peer to self-only in #28.
+	// Pin the regression test so future scope shuffles can't silently
+	// expose the peer-DoS surface again.
+	for _, in := range []string{"compact", "cost", "mcp-disable-semaphore"} {
 		_, err := Resolve(in, ScopePeer)
 		if !errors.Is(err, ErrScopeDenied) {
 			t.Errorf("Resolve(%q, peer): want ErrScopeDenied, got %v", in, err)
@@ -70,7 +74,11 @@ func TestResolve_RejectsUnknown(t *testing.T) {
 
 func TestNames_SortedAndComplete(t *testing.T) {
 	names := Names()
-	want := []string{"compact", "cost", "help", "mcp-disable-semaphore", "mcp-enable-semaphore", "rename"}
+	want := []string{
+		"compact", "cost", "help",
+		"mcp-disable-semaphore", "mcp-enable-semaphore", "mcp-restart-semaphore",
+		"rename",
+	}
 	if len(names) != len(want) {
 		t.Fatalf("Names() = %v, want %v", names, want)
 	}
@@ -87,7 +95,7 @@ func TestNamesForScope(t *testing.T) {
 		t.Errorf("self names = %v, want all %d commands", self, len(Allowed))
 	}
 	peer := NamesForScope(ScopePeer)
-	want := []string{"help", "mcp-disable-semaphore", "mcp-enable-semaphore", "rename"}
+	want := []string{"help", "mcp-enable-semaphore", "mcp-restart-semaphore", "rename"}
 	if len(peer) != len(want) {
 		t.Fatalf("peer names = %v, want %v", peer, want)
 	}

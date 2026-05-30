@@ -215,7 +215,8 @@ working context.
 | `cost`    | ✓ | ✗ | Self-only — output goes to recipient |
 | `help`    | ✓ | ✓ | Harmless either way |
 | `mcp-enable-semaphore`  | ✓ | ✓ | Refresh tool surface after deploying a new `semaphore.*` tool — no context loss |
-| `mcp-disable-semaphore` | ✓ | ✓ | Companion: chain `disable` then `enable` if `enable` alone doesn't reconnect |
+| `mcp-disable-semaphore` | ✓ | ✗ | Self-only: raw peer-disable is a DoS surface; use the restart macro instead |
+| `mcp-restart-semaphore` | ✓ | ✓ | Macro: the handler synthesises `disable` + `enable` as two control rows for a peer-safe reconnect cycle |
 
 ```text
 # Self: an agent asks itself to compact

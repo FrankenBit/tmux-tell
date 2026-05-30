@@ -63,13 +63,25 @@ var Allowed = map[string]Command{
 	"help":    {Text: "/help", Self: true, Peer: true},
 	// MCP-server lifecycle: useful after deploying a new semaphore tool
 	// so a running agent can refresh its tool surface without losing
-	// session context. Disruption surface is small (a brief tool-list
-	// flicker, no context loss), so peer-invocation is enabled.
-	// Usage: try `mcp-enable-semaphore` first; if Claude Code's `/mcp
-	// enable` on an already-enabled server doesn't reconnect, chain
-	// `mcp-disable-semaphore` then `mcp-enable-semaphore`.
-	"mcp-disable-semaphore": {Text: "/mcp disable semaphore", Self: true, Peer: true},
+	// session context.
+	//
+	// Scope split: raw disable is self-only because a peer-DoS via
+	// repeated /mcp disable would silently cut another agent off the
+	// bus. Enable stays peer-allowed (re-enabling someone is helpful).
+	// For the legitimate "peer asks me to restart your MCP" case,
+	// callers use the mcp-restart-semaphore macro below, which the
+	// MCP handler synthesises into disable+enable internally.
+	"mcp-disable-semaphore": {Text: "/mcp disable semaphore", Self: true, Peer: false},
 	"mcp-enable-semaphore":  {Text: "/mcp enable semaphore", Self: true, Peer: true},
+	// mcp-restart-semaphore is a *macro*. The Text field documents what
+	// the macro represents but is not actually typed into a pane —
+	// Claude Code has no `/mcp restart` slash command. The MCP handler
+	// detects this command by name (or by matching this Text as a
+	// sentinel) and queues two control rows: `/mcp disable semaphore`
+	// then `/mcp enable semaphore`. Peer-allowed because the synthesised
+	// rows always restore the connection; the raw disable that would
+	// expose the DoS surface is never exposed to peers directly.
+	"mcp-restart-semaphore": {Text: "/mcp restart semaphore", Self: true, Peer: true},
 }
 
 // ErrNotAllowed is returned by Resolve when the requested command is

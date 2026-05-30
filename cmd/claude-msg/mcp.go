@@ -297,6 +297,49 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 
+		// mcp-restart-semaphore is a macro: synthesise the disable+enable
+		// cycle into two control rows. The whitelist scope check has
+		// already authorised the macro at the boundary; the inner rows
+		// have bodies a peer wouldn't normally be allowed to send, but
+		// that's fine — the mailman trusts the table and the handler is
+		// the trust boundary. (Don't be tempted to re-validate the body
+		// in the mailman; it'd break this pattern.)
+		if text == "/mcp restart semaphore" {
+			if depth, err := s.RecipientQueueDepth(ctx, in.To); err != nil {
+				return nil, err
+			} else if depth+2 > capRecipientQueue {
+				return nil, fmt.Errorf("queue full for %s; need 2 slots, %d/%d used", in.To, depth, capRecipientQueue)
+			}
+			if backlog, err := s.SenderBacklog(ctx, from); err != nil {
+				return nil, err
+			} else if backlog+2 > capSenderBacklog {
+				return nil, fmt.Errorf("sender backlog full for %s; need 2 slots, %d/%d used", from, backlog, capSenderBacklog)
+			}
+			disableRes, err := s.InsertMessage(ctx, store.InsertParams{
+				FromAgent: from, ToAgent: in.To,
+				Body: "/mcp disable semaphore", Kind: store.KindControl,
+			})
+			if err != nil {
+				return nil, err
+			}
+			enableRes, err := s.InsertMessage(ctx, store.InsertParams{
+				FromAgent: from, ToAgent: in.To,
+				Body: "/mcp enable semaphore", Kind: store.KindControl,
+				ReplyTo: disableRes.PublicID,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"ok":         true,
+				"id":         disableRes.PublicID,
+				"enable_id":  enableRes.PublicID,
+				"queued":     enableRes.Queued,
+				"command":    text,
+				"macro":      "restart",
+			}, nil
+		}
+
 		// resume_with is a sugar for compact-and-continue. The mailman's
 		// post-compact pause is what makes the follow-up land after the
 		// slash-command settles; the bus side just queues both rows.

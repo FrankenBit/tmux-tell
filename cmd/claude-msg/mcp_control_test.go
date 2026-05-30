@@ -187,6 +187,109 @@ func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
 	}
 }
 
+// mcp-restart-semaphore is a peer-allowed macro that the handler
+// expands into two control rows: /mcp disable semaphore, then
+// /mcp enable semaphore (reply_to-threaded for audit).
+func TestMCP_Control_RestartMacro_SelfInvocation_QueuesBothRows(t *testing.T) {
+	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice")
+
+	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+		"to":      "alice",
+		"command": "mcp-restart-semaphore",
+	})
+	if got["ok"] != true || got["macro"] != "restart" {
+		t.Fatalf("got=%v; want ok+macro=restart", got)
+	}
+	disableID, _ := got["id"].(string)
+	enableID, _ := got["enable_id"].(string)
+	if len(disableID) != 4 || len(enableID) != 4 {
+		t.Fatalf("ids = %q / %q; both should be 4-char public_ids", disableID, enableID)
+	}
+
+	msgs, err := s.ListMessages(context.Background(), store.ListFilter{
+		ToAgent: "alice", State: store.StateQueued, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("queued = %d, want 2", len(msgs))
+	}
+	if msgs[0].Kind != store.KindControl || msgs[0].Body != "/mcp disable semaphore" {
+		t.Errorf("row[0] should be disable control; got %+v", msgs[0])
+	}
+	if msgs[1].Kind != store.KindControl || msgs[1].Body != "/mcp enable semaphore" {
+		t.Errorf("row[1] should be enable control; got %+v", msgs[1])
+	}
+	if msgs[1].ReplyTo.String != disableID {
+		t.Errorf("enable row should thread via reply_to=%s; got %q",
+			disableID, msgs[1].ReplyTo.String)
+	}
+}
+
+// Peer-invocation of the macro is the whole point — proves the macro
+// preserves the legitimate "operator asks me to restart your MCP"
+// case while raw mcp-disable is locked to self-only.
+func TestMCP_Control_RestartMacro_PeerInvocation_QueuesBothRows(t *testing.T) {
+	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice", "bob")
+
+	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+		"to":      "bob",
+		"command": "mcp-restart-semaphore",
+	})
+	if got["ok"] != true || got["macro"] != "restart" {
+		t.Fatalf("got=%v; want ok+macro=restart", got)
+	}
+
+	msgs, err := s.ListMessages(context.Background(), store.ListFilter{
+		ToAgent: "bob", State: store.StateQueued, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("queued = %d, want 2", len(msgs))
+	}
+	for i, want := range []string{"/mcp disable semaphore", "/mcp enable semaphore"} {
+		if msgs[i].Body != want || msgs[i].Kind != store.KindControl {
+			t.Errorf("row[%d] = %+v; want body=%q kind=control", i, msgs[i], want)
+		}
+		if msgs[i].FromAgent != "alice" || msgs[i].ToAgent != "bob" {
+			t.Errorf("row[%d] from/to = %s/%s; want alice/bob",
+				i, msgs[i].FromAgent, msgs[i].ToAgent)
+		}
+	}
+}
+
+// Regression test for the #28 scope flip: raw mcp-disable-semaphore
+// is now self-only. A peer attempt must be rejected so a prompt-
+// injected agent can't silently DoS another agent's bus connection.
+func TestMCP_Control_RawDisable_RejectedOnPeer(t *testing.T) {
+	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice", "bob")
+
+	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+		"to":      "bob",
+		"command": "mcp-disable-semaphore",
+	})
+	if got["_isError"] != true {
+		t.Fatalf("raw mcp-disable on peer must be rejected; got=%v", got)
+	}
+	text, _ := got["_text"].(string)
+	if !strings.Contains(text, "self-only") {
+		t.Errorf("error should explain self-only; got %q", text)
+	}
+	// No row should be queued.
+	msgs, _ := s.ListMessages(context.Background(), store.ListFilter{
+		ToAgent: "bob", State: store.StateQueued, Limit: 10,
+	})
+	if len(msgs) != 0 {
+		t.Errorf("denied peer-disable must not queue a row; got %d", len(msgs))
+	}
+}
+
 func TestMCP_Control_RequiresIdentity(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")
