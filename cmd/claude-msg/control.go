@@ -92,23 +92,23 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 	// dispatching on name keeps the coupling visible.)
 	canonName := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(p.Command), "/"))
 
-	// Path 1: restart macro.
+	// Path 1: restart macro. After #29, both rows land in a single
+	// BEGIN IMMEDIATE transaction via InsertMessagePair — atomicity
+	// guarantee means we can never leave the recipient half-actioned
+	// (disabled but never re-enabled). Cap budget for +2 slots is
+	// enforced inside the same transaction.
 	if canonName == "mcp-restart-semaphore" {
-		if err := checkTwoSlotCaps(ctx, s, p); err != nil {
-			return nil, err
-		}
-		disableRes, err := s.InsertMessage(ctx, store.InsertParams{
+		disableP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
 			Body: "/mcp disable semaphore", Kind: store.KindControl,
-		})
-		if err != nil {
-			return nil, err
+			MaxRecipientQueue: p.MaxRecipient,
+			MaxSenderBacklog:  p.MaxSender,
 		}
-		enableRes, err := s.InsertMessage(ctx, store.InsertParams{
+		enableP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
 			Body: "/mcp enable semaphore", Kind: store.KindControl,
-			ReplyTo: disableRes.PublicID,
-		})
+		}
+		disableRes, enableRes, err := s.InsertMessagePair(ctx, disableP, enableP, true)
 		if err != nil {
 			return nil, err
 		}
@@ -118,7 +118,9 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 		}, nil
 	}
 
-	// Path 2: compact + resume_with.
+	// Path 2: compact + resume_with. Same atomicity pattern via
+	// InsertMessagePair so we can never /compact the recipient and
+	// then fail to queue the resume prompt.
 	if p.ResumeWith != "" {
 		if text != "/compact" {
 			return nil, errors.New("resume_with is only valid with command=compact")
@@ -130,22 +132,17 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 			return nil, fmt.Errorf("resume_with too large (%d > %d bytes)",
 				len(p.ResumeWith), p.MaxBody)
 		}
-		if err := checkTwoSlotCaps(ctx, s, p); err != nil {
-			return nil, err
-		}
-		compactRes, err := s.InsertMessage(ctx, store.InsertParams{
+		compactP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
 			Body: text, Kind: store.KindControl,
-		})
-		if err != nil {
-			return nil, err
+			MaxRecipientQueue: p.MaxRecipient,
+			MaxSenderBacklog:  p.MaxSender,
 		}
-		resumeRes, err := s.InsertMessage(ctx, store.InsertParams{
+		resumeP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
-			Body:    p.ResumeWith,
-			Kind:    store.KindMessage,
-			ReplyTo: compactRes.PublicID,
-		})
+			Body: p.ResumeWith, Kind: store.KindMessage,
+		}
+		compactRes, resumeRes, err := s.InsertMessagePair(ctx, compactP, resumeP, true)
 		if err != nil {
 			return nil, err
 		}
@@ -155,13 +152,13 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 		}, nil
 	}
 
-	// Path 3: plain control.
-	if err := checkOneSlotCaps(ctx, s, p); err != nil {
-		return nil, err
-	}
+	// Path 3: plain control. Cap enforcement lives inside InsertMessage's
+	// transaction since #29; no separate pre-check.
 	res, err := s.InsertMessage(ctx, store.InsertParams{
 		FromAgent: p.From, ToAgent: p.To,
 		Body: text, Kind: store.KindControl,
+		MaxRecipientQueue: p.MaxRecipient,
+		MaxSenderBacklog:  p.MaxSender,
 	})
 	if err != nil {
 		return nil, err
@@ -169,52 +166,6 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 	return &controlResult{
 		OK: true, ID: res.PublicID, Queued: res.Queued, Command: text,
 	}, nil
-}
-
-func checkOneSlotCaps(ctx context.Context, s *store.Store, p controlParams) error {
-	if p.MaxRecipient > 0 {
-		depth, err := s.RecipientQueueDepth(ctx, p.To)
-		if err != nil {
-			return err
-		}
-		if depth >= p.MaxRecipient {
-			return fmt.Errorf("queue full for %s (%d/%d)", p.To, depth, p.MaxRecipient)
-		}
-	}
-	if p.MaxSender > 0 {
-		backlog, err := s.SenderBacklog(ctx, p.From)
-		if err != nil {
-			return err
-		}
-		if backlog >= p.MaxSender {
-			return fmt.Errorf("sender backlog full for %s (%d/%d)", p.From, backlog, p.MaxSender)
-		}
-	}
-	return nil
-}
-
-func checkTwoSlotCaps(ctx context.Context, s *store.Store, p controlParams) error {
-	if p.MaxRecipient > 0 {
-		depth, err := s.RecipientQueueDepth(ctx, p.To)
-		if err != nil {
-			return err
-		}
-		if depth+2 > p.MaxRecipient {
-			return fmt.Errorf("queue full for %s; need 2 slots, %d/%d used",
-				p.To, depth, p.MaxRecipient)
-		}
-	}
-	if p.MaxSender > 0 {
-		backlog, err := s.SenderBacklog(ctx, p.From)
-		if err != nil {
-			return err
-		}
-		if backlog+2 > p.MaxSender {
-			return fmt.Errorf("sender backlog full for %s; need 2 slots, %d/%d used",
-				p.From, backlog, p.MaxSender)
-		}
-	}
-	return nil
 }
 
 // runControlCLI parses control-subcommand flags and dispatches to
@@ -276,13 +227,13 @@ func runControlCLI(args []string, stdout, stderr io.Writer) int {
 		MaxBody:      *maxBody,
 	})
 	if err != nil {
-		// Cap rejections and unknown-recipient are temp/data errors; the
-		// rest get the data-err exit. Conservative: callers can branch
-		// on the JSON "error" field.
+		// Cap rejections route via sentinel (post-#29), not string
+		// match. Other paths route by error class so callers can branch
+		// on exit code or the JSON "error" field.
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "queue full"),
-			strings.Contains(msg, "sender backlog full"):
+		case errors.Is(err, store.ErrRecipientQueueFull),
+			errors.Is(err, store.ErrSenderBacklogFull):
 			return writeJSONError(stdout, stderr, msg, exitTempFail)
 		case strings.Contains(msg, "unknown recipient"):
 			return writeJSONError(stdout, stderr, msg, exitUnavailable)

@@ -42,11 +42,19 @@ func Open(path string) (*Store, error) {
 		}
 	}
 
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)"
+	// _txlock=immediate makes BeginTx issue `BEGIN IMMEDIATE`, acquiring
+	// the RESERVED lock at transaction start. This is what makes the
+	// in-transaction cap checks in InsertMessage / InsertMessagePair
+	// safe against cross-process write races (#29) — two concurrent
+	// senders to the same recipient can no longer both read N, both
+	// decide N+1 ≤ cap, and both insert past the cap. With IMMEDIATE,
+	// the second BeginTx waits for the first to COMMIT (bounded by
+	// busy_timeout above) before seeing the post-insert state.
+	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_txlock=immediate"
 	if path == ":memory:" {
 		// shared cache so the sql.DB connection pool sees the same DB
 		// across multiple physical connections (relevant for in-mem tests).
-		dsn = "file::memory:?cache=shared&_pragma=busy_timeout(5000)"
+		dsn = "file::memory:?cache=shared&_pragma=busy_timeout(5000)&_txlock=immediate"
 	}
 
 	db, err := sql.Open("sqlite", dsn)

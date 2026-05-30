@@ -10,12 +10,21 @@ import (
 
 // InsertParams is the input to InsertMessage. ReplyTo may be empty for new
 // (non-reply) threads. Kind defaults to KindMessage when empty.
+//
+// MaxRecipientQueue and MaxSenderBacklog opt into in-transaction cap
+// enforcement. Zero disables that cap (the store inserts unconditionally).
+// Non-zero gives the caller a hard ceiling: the cap is checked inside the
+// same BEGIN IMMEDIATE transaction that does the INSERT, so two concurrent
+// senders to the same recipient can no longer race past it (#29).
 type InsertParams struct {
 	FromAgent string
 	ToAgent   string
 	ReplyTo   string
 	Body      string
 	Kind      Kind
+
+	MaxRecipientQueue int // 0 = no cap check
+	MaxSenderBacklog  int // 0 = no cap check
 }
 
 // InsertResult is the output of InsertMessage. Queued is the recipient's
@@ -24,6 +33,15 @@ type InsertResult struct {
 	PublicID string
 	Queued   int
 }
+
+// ErrRecipientQueueFull is returned by InsertMessage / InsertMessagePair
+// when MaxRecipientQueue > 0 and the in-transaction depth check would
+// be violated. The error message carries the agent name + observed
+// depth + cap so the caller can surface a precise reason.
+var ErrRecipientQueueFull = errors.New("store: recipient queue full")
+
+// ErrSenderBacklogFull is the symmetric sentinel for the from-side cap.
+var ErrSenderBacklogFull = errors.New("store: sender backlog full")
 
 // publicIDRetryAttempts caps the collision-retry loop in InsertMessage.
 // At 4 hex chars (~65 K namespace) and a few thousand outstanding rows,
@@ -34,26 +52,18 @@ const publicIDRetryAttempts = 20
 // plus the recipient's new queue depth. Public IDs are generated server-side
 // with collision retry.
 //
-// Cap *enforcement* (queue depth limits, body size limit) is the caller's
-// responsibility (#3); InsertMessage only insists on schema invariants
-// (non-empty fields, reply_to references an existing message).
+// When p.MaxRecipientQueue or p.MaxSenderBacklog are non-zero, the cap
+// is enforced inside the BEGIN IMMEDIATE transaction — the SELECT
+// COUNT(*) and the INSERT see consistent data, and concurrent writers
+// from other connections can't race past the cap (resolved by #29).
+// Cross-process write contention is bounded by the busy_timeout PRAGMA
+// configured in Open().
 func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult, error) {
-	if p.Body == "" {
-		return InsertResult{}, errors.New("store: body must be non-empty")
+	if err := validateInsertParams(p); err != nil {
+		return InsertResult{}, err
 	}
-	if p.FromAgent == "" || p.ToAgent == "" {
-		return InsertResult{}, errors.New("store: from and to are required")
-	}
-	if p.ReplyTo != "" {
-		var dummy int
-		err := s.db.QueryRowContext(ctx,
-			`SELECT 1 FROM messages WHERE public_id = ? LIMIT 1`,
-			p.ReplyTo).Scan(&dummy)
-		if errors.Is(err, sql.ErrNoRows) {
-			return InsertResult{}, fmt.Errorf("store: reply_to %q: %w", p.ReplyTo, ErrNotFound)
-		} else if err != nil {
-			return InsertResult{}, fmt.Errorf("store: validate reply_to: %w", err)
-		}
+	if err := s.validateReplyTo(ctx, p.ReplyTo); err != nil {
+		return InsertResult{}, err
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -62,11 +72,159 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	if err := checkCapsInTx(ctx, tx, p, 1); err != nil {
+		return InsertResult{}, err
+	}
+
+	res, err := insertOneInTx(ctx, tx, p)
+	if err != nil {
+		return InsertResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return InsertResult{}, err
+	}
+	return res, nil
+}
+
+// InsertMessagePair inserts two messages in a single BEGIN IMMEDIATE
+// transaction. Both rows land or neither does — the atomicity guarantee
+// the restart macro and resume_with sugar need so neither can leave the
+// recipient half-actioned (e.g. /mcp disable without the matching
+// enable, or /compact without the follow-up).
+//
+// Caps are checked once for +2 slots up front, so the call fails fast
+// without inserting either row when the budget can't accommodate both.
+// p1 and p2 must share FromAgent and ToAgent — the call paths that use
+// this (restart, resume_with) always do.
+//
+// When linkP2ToP1 is true, p2.ReplyTo is overwritten with p1's assigned
+// public_id; this gives the two rows the audit-trail thread relationship
+// the existing callers established before #29.
+func (s *Store) InsertMessagePair(ctx context.Context, p1, p2 InsertParams, linkP2ToP1 bool) (InsertResult, InsertResult, error) {
+	if p1.FromAgent != p2.FromAgent || p1.ToAgent != p2.ToAgent {
+		return InsertResult{}, InsertResult{}, errors.New("store: pair must share from/to")
+	}
+	if err := validateInsertParams(p1); err != nil {
+		return InsertResult{}, InsertResult{}, err
+	}
+	if err := validateInsertParams(p2); err != nil {
+		return InsertResult{}, InsertResult{}, err
+	}
+	// reply_to on p1 must still resolve. On p2 we either link to p1
+	// (no pre-validation needed) or honour the caller's explicit value.
+	if err := s.validateReplyTo(ctx, p1.ReplyTo); err != nil {
+		return InsertResult{}, InsertResult{}, err
+	}
+	if !linkP2ToP1 {
+		if err := s.validateReplyTo(ctx, p2.ReplyTo); err != nil {
+			return InsertResult{}, InsertResult{}, err
+		}
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InsertResult{}, InsertResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if err := checkCapsInTx(ctx, tx, p1, 2); err != nil {
+		return InsertResult{}, InsertResult{}, err
+	}
+
+	res1, err := insertOneInTx(ctx, tx, p1)
+	if err != nil {
+		return InsertResult{}, InsertResult{}, err
+	}
+	if linkP2ToP1 {
+		p2.ReplyTo = res1.PublicID
+	}
+	res2, err := insertOneInTx(ctx, tx, p2)
+	if err != nil {
+		return InsertResult{}, InsertResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return InsertResult{}, InsertResult{}, err
+	}
+	return res1, res2, nil
+}
+
+// validateInsertParams pulls the shape checks out so InsertMessage and
+// InsertMessagePair don't drift.
+func validateInsertParams(p InsertParams) error {
+	if p.Body == "" {
+		return errors.New("store: body must be non-empty")
+	}
+	if p.FromAgent == "" || p.ToAgent == "" {
+		return errors.New("store: from and to are required")
+	}
+	return nil
+}
+
+// validateReplyTo is a thin wrapper over the existence-check pattern so
+// both single and pair inserts share the wording on ErrNotFound.
+func (s *Store) validateReplyTo(ctx context.Context, replyTo string) error {
+	if replyTo == "" {
+		return nil
+	}
+	var dummy int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT 1 FROM messages WHERE public_id = ? LIMIT 1`,
+		replyTo).Scan(&dummy)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("store: reply_to %q: %w", replyTo, ErrNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("store: validate reply_to: %w", err)
+	}
+	return nil
+}
+
+// checkCapsInTx enforces the recipient-queue and sender-backlog caps
+// inside an existing transaction. addedRows is how many rows the
+// caller is about to insert (1 for InsertMessage, 2 for
+// InsertMessagePair); the cap is satisfied when (current_depth +
+// addedRows) ≤ cap.
+//
+// Atomicity guarantee: the BEGIN IMMEDIATE tx (from the _txlock=immediate
+// DSN parameter set in Open) has held the RESERVED lock since BEGIN, so
+// the COUNT(*) reads here are consistent with the subsequent INSERTs in
+// the same transaction.
+func checkCapsInTx(ctx context.Context, tx *sql.Tx, p InsertParams, addedRows int) error {
+	if p.MaxRecipientQueue > 0 {
+		var depth int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM messages WHERE to_agent = ? AND state = ?`,
+			p.ToAgent, StateQueued).Scan(&depth); err != nil {
+			return fmt.Errorf("store: cap check recipient: %w", err)
+		}
+		if depth+addedRows > p.MaxRecipientQueue {
+			return fmt.Errorf("%w: %s (%d/%d, need %d slot(s))",
+				ErrRecipientQueueFull, p.ToAgent, depth, p.MaxRecipientQueue, addedRows)
+		}
+	}
+	if p.MaxSenderBacklog > 0 {
+		var backlog int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM messages WHERE from_agent = ? AND state = ?`,
+			p.FromAgent, StateQueued).Scan(&backlog); err != nil {
+			return fmt.Errorf("store: cap check sender: %w", err)
+		}
+		if backlog+addedRows > p.MaxSenderBacklog {
+			return fmt.Errorf("%w: %s (%d/%d, need %d slot(s))",
+				ErrSenderBacklogFull, p.FromAgent, backlog, p.MaxSenderBacklog, addedRows)
+		}
+	}
+	return nil
+}
+
+// insertOneInTx is the shared INSERT-with-collision-retry helper used
+// by InsertMessage and InsertMessagePair. It assumes the caller has
+// already opened the transaction and performed cap checks.
+func insertOneInTx(ctx context.Context, tx *sql.Tx, p InsertParams) (InsertResult, error) {
 	var replyToArg any
 	if p.ReplyTo != "" {
 		replyToArg = p.ReplyTo
 	}
-
 	kind := p.Kind
 	if kind == "" {
 		kind = KindMessage
@@ -103,10 +261,6 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 		`SELECT COUNT(*) FROM messages WHERE to_agent = ? AND state = ?`,
 		p.ToAgent, StateQueued).Scan(&queued); err != nil {
 		return InsertResult{}, fmt.Errorf("store: queue depth: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return InsertResult{}, err
 	}
 	return InsertResult{PublicID: publicID, Queued: queued}, nil
 }

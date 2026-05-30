@@ -13,6 +13,14 @@ import (
 const defaultDBLocation = "/var/lib/cli-semaphore/messages.db"
 
 // Caps — operator-chosen 2026-05-29 (see roadmap epic #1).
+//
+// Hard ceilings since #29. Enforcement lives inside InsertMessage /
+// InsertMessagePair's BEGIN IMMEDIATE transaction, so the depth read
+// and the INSERT are atomic with respect to other concurrent writers
+// (cross-process safe via _txlock=immediate in the store's DSN, and
+// trivially safe within a process via SetMaxOpenConns(1)). N concurrent
+// senders can never overshoot the cap — at most `capRecipientQueue`
+// inserts succeed regardless of concurrency.
 const (
 	capRecipientQueue = 5
 	capSenderBacklog  = 2

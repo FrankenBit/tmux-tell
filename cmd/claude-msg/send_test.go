@@ -112,8 +112,8 @@ func TestSend_CapsEnforced(t *testing.T) {
 	}
 	got := parseJSONResult(t, stdout.Bytes())
 	errStr, _ := got["error"].(string)
-	if !strings.Contains(errStr, "queue full for bob") {
-		t.Errorf("error = %q, want mention of 'queue full for bob'", errStr)
+	if !strings.Contains(errStr, "recipient queue full") || !strings.Contains(errStr, "bob") {
+		t.Errorf("error = %q, want mention of recipient queue full + bob", errStr)
 	}
 }
 
@@ -141,8 +141,8 @@ func TestSend_SenderBacklogCapEnforced(t *testing.T) {
 		t.Errorf("sender cap exit = %d, want %d", exit, exitTempFail)
 	}
 	got := parseJSONResult(t, stdout.Bytes())
-	if errStr, _ := got["error"].(string); !strings.Contains(errStr, "backlog full for alice") {
-		t.Errorf("error = %q, want mention 'backlog full for alice'", errStr)
+	if errStr, _ := got["error"].(string); !strings.Contains(errStr, "sender backlog full") || !strings.Contains(errStr, "alice") {
+		t.Errorf("error = %q, want mention of sender backlog full + alice", errStr)
 	}
 }
 

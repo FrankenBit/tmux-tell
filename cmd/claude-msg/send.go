@@ -115,40 +115,24 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
 
-	// Caps. Check both before either is exceeded so the error message
-	// names the right one.
-	if p.MaxRecipient > 0 {
-		depth, err := s.RecipientQueueDepth(ctx, p.To)
-		if err != nil {
-			return writeJSONError(stdout, stderr, err.Error(), exitInternal)
-		}
-		if depth >= p.MaxRecipient {
-			return writeJSONError(stdout, stderr,
-				fmt.Sprintf("queue full for %s (%d/%d)", p.To, depth, p.MaxRecipient),
-				exitTempFail)
-		}
-	}
-	if p.MaxSender > 0 {
-		backlog, err := s.SenderBacklog(ctx, p.From)
-		if err != nil {
-			return writeJSONError(stdout, stderr, err.Error(), exitInternal)
-		}
-		if backlog >= p.MaxSender {
-			return writeJSONError(stdout, stderr,
-				fmt.Sprintf("sender backlog full for %s (%d/%d)", p.From, backlog, p.MaxSender),
-				exitTempFail)
-		}
-	}
-
-	// Insert.
+	// Caps. After #29, cap enforcement lives inside InsertMessage's
+	// transaction so we don't need to pre-check here — the store
+	// returns ErrRecipientQueueFull / ErrSenderBacklogFull with a
+	// precise depth/cap snapshot, which we surface to the caller.
 	res, err := s.InsertMessage(ctx, store.InsertParams{
-		FromAgent: p.From,
-		ToAgent:   p.To,
-		ReplyTo:   p.ReplyTo,
-		Body:      p.Body,
+		FromAgent:         p.From,
+		ToAgent:           p.To,
+		ReplyTo:           p.ReplyTo,
+		Body:              p.Body,
+		MaxRecipientQueue: p.MaxRecipient,
+		MaxSenderBacklog:  p.MaxSender,
 	})
 	if err != nil {
-		if errors.Is(err, store.ErrNotFound) {
+		switch {
+		case errors.Is(err, store.ErrRecipientQueueFull),
+			errors.Is(err, store.ErrSenderBacklogFull):
+			return writeJSONError(stdout, stderr, err.Error(), exitTempFail)
+		case errors.Is(err, store.ErrNotFound):
 			return writeJSONError(stdout, stderr,
 				fmt.Sprintf("unknown reply-to id: %s", p.ReplyTo), exitDataErr)
 		}

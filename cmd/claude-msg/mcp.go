@@ -216,21 +216,15 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		}
 		return nil, err
 	}
-	if depth, err := s.RecipientQueueDepth(ctx, p.To); err != nil {
-		return nil, err
-	} else if depth >= p.MaxRecipient {
-		return nil, fmt.Errorf("queue full for %s (%d/%d)", p.To, depth, p.MaxRecipient)
-	}
-	if backlog, err := s.SenderBacklog(ctx, p.From); err != nil {
-		return nil, err
-	} else if backlog >= p.MaxSender {
-		return nil, fmt.Errorf("sender backlog full for %s (%d/%d)", p.From, backlog, p.MaxSender)
-	}
+	// Cap enforcement lives inside InsertMessage's transaction since
+	// #29 — no pre-check needed.
 	res, err := s.InsertMessage(ctx, store.InsertParams{
-		FromAgent: p.From,
-		ToAgent:   p.To,
-		ReplyTo:   p.ReplyTo,
-		Body:      p.Body,
+		FromAgent:         p.From,
+		ToAgent:           p.To,
+		ReplyTo:           p.ReplyTo,
+		Body:              p.Body,
+		MaxRecipientQueue: p.MaxRecipient,
+		MaxSenderBacklog:  p.MaxSender,
 	})
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
