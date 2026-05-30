@@ -69,8 +69,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"quiescent window after delivering /compact before claiming the next message (0 to disable)")
 	quietObserve := fs.Duration("quiet-observe-window", 5*time.Second,
 		"how long to watch the recipient pane after injecting the probe character")
-	quietBackoff := fs.Duration("quiet-backoff", 60*time.Second,
-		"how long to wait before re-probing after detecting operator activity")
+	quietInputBackoff := fs.Duration("quiet-input-backoff", 60*time.Second,
+		"how long to wait before re-probing after detecting operator activity in the input row")
+	quietTUIBackoff := fs.Duration("quiet-tui-backoff", 5*time.Second,
+		"how long to wait before re-probing after detecting non-operator TUI noise (status line tick, streaming)")
 	quietMaxWait := fs.Duration("quiet-max-wait", 5*time.Minute,
 		"total cap on the pre-delivery quiet wait; on cap we deliver anyway with a WARN log")
 	quietDisabled := fs.Bool("quiet-disabled", false,
@@ -106,9 +108,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		DeliverTimeout:     *deliverTimeout,
 		PostCompactPause:   *postCompactPause,
 		QuietOpts: tmuxio.QuietOpts{
-			ObserveWindow:   *quietObserve,
-			BackoffInterval: *quietBackoff,
-			MaxWait:         *quietMaxWait,
+			ObserveWindow:        *quietObserve,
+			InputActivityBackoff: *quietInputBackoff,
+			TUINoiseBackoff:      *quietTUIBackoff,
+			MaxWait:              *quietMaxWait,
 		},
 		QuietDisabled: *quietDisabled,
 	}, logger, stdout, stderr)

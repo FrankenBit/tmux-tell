@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -12,27 +13,33 @@ import (
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
 )
 
-// TestServe_QuietGate_BlocksUntilQuiet drives a fake tmux that reports
-// activity on the first probe (operator typing) and quiet on the
-// second. The mailman must perform two probe iterations before
-// delivery and never call load-buffer until the quiet path runs.
-func TestServe_QuietGate_BlocksUntilQuiet(t *testing.T) {
+// TestServe_QuietGate_DeliversAfterInputActivity drives a fake tmux
+// that reports operator activity on the first probe (typed text),
+// then a clean quiet path on the second. The mailman must perform
+// both probe iterations before delivery, and the load-buffer + Enter
+// path only runs after the quiet exit.
+func TestServe_QuietGate_DeliversAfterInputActivity(t *testing.T) {
 	var (
 		mu             sync.Mutex
 		captureIdx     int
+		cursorIdx      int
 		captureScript  = []string{
-			"> typing in progress\n",       // round 1: before-probe
-			"> typing in progressmore\n",   // round 1: after-probe (activity!)
-			"> typing in progressmore\n",   // round 2: before-probe
-			"> typing in progressmore─\n",  // round 2: after-probe (quiet)
-			"id 1234 verify-token\n",       // delivery: capture-pane verify
+			// Each row pair = (before-probe, after-probe). Input row
+			// is index 1. Round 1: operator typed 'x' → activity.
+			"ctx\n> \n",
+			"ctx\n> ─x\n",
+			// Round 2: input row clean except for our probe → quiet.
+			"ctx\n> ─x\n",
+			"ctx\n> ─x─\n",
+			// Delivery: capture-pane for verify-token of "id <id>".
+			"ctx\nid TEST verify\n",
 		}
-		loadBufferUsed bool
-		bspaceCount    int
-		probeCount     int
+		cursorScript    = []int{1, 1}
+		loadBufferUsed  bool
+		probeCount      int
+		bspaceCount     int
 	)
-
-	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch args[0] {
@@ -43,6 +50,13 @@ func TestServe_QuietGate_BlocksUntilQuiet(t *testing.T) {
 				return []byte(out), nil
 			}
 			return []byte(captureScript[len(captureScript)-1]), nil
+		case "display-message":
+			var cy int
+			if cursorIdx < len(cursorScript) {
+				cy = cursorScript[cursorIdx]
+				cursorIdx++
+			}
+			return []byte(fmt.Sprintf("%d\n", cy)), nil
 		case "send-keys":
 			for i, a := range args {
 				if a == "-l" && i+1 < len(args) && args[i+1] == tmuxio.QuietProbe {
@@ -67,28 +81,25 @@ func TestServe_QuietGate_BlocksUntilQuiet(t *testing.T) {
 	_ = s.UpsertAgent(ctx, "alice", "%1")
 	_ = s.UpsertAgent(ctx, "bob", "%3")
 
-	// Note: rendered chat header includes "id 1234" so the verify
-	// token in our scripted capture-pane delivery response matches.
-	res, err := s.InsertMessage(ctx, store.InsertParams{
+	if _, err := s.InsertMessage(ctx, store.InsertParams{
 		FromAgent: "alice", ToAgent: "bob",
 		Body: "test body",
-	})
-	if err != nil {
+	}); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	_, _ = res, err
-	// Force the public_id for predictable verify-token in the capture script.
-	if _, err := s.DB().ExecContext(ctx, `UPDATE messages SET public_id='1234' WHERE id=?`, 1); err != nil {
+	// Force the public_id so the verify token in our scripted
+	// capture-pane delivery response matches.
+	if _, err := s.DB().ExecContext(ctx, `UPDATE messages SET public_id='TEST' WHERE id=?`, 1); err != nil {
 		t.Fatalf("rewrite public_id: %v", err)
 	}
 
 	opts := fastOpts("bob")
 	opts.QuietDisabled = false
 	opts.QuietOpts = tmuxio.QuietOpts{
-		ObserveWindow:   5 * time.Millisecond,
-		BackoffInterval: 5 * time.Millisecond,
-		MaxWait:         100 * time.Millisecond,
-		CaptureLines:    5,
+		ObserveWindow:        5 * time.Millisecond,
+		InputActivityBackoff: 5 * time.Millisecond,
+		TUINoiseBackoff:      2 * time.Millisecond,
+		MaxWait:              200 * time.Millisecond,
 	}
 
 	stop, wait, _ := runServeInBackground(t, s, opts)
@@ -115,43 +126,58 @@ func TestServe_QuietGate_BlocksUntilQuiet(t *testing.T) {
 		t.Fatalf("delivered = %d, want 1", len(delivered))
 	}
 	if probeCount != 2 {
-		t.Errorf("probe injections = %d, want 2 (one per round)", probeCount)
+		t.Errorf("probe injections = %d, want 2", probeCount)
 	}
-	if bspaceCount != 1 {
-		t.Errorf("backspaces = %d, want 1 (only after the quiet exit)", bspaceCount)
+	// Quiet exit backspaces the 2 accumulated probes.
+	if bspaceCount != 2 {
+		t.Errorf("backspaces = %d, want 2", bspaceCount)
 	}
 	if !loadBufferUsed {
-		t.Errorf("load-buffer should have run after the quiet path")
+		t.Errorf("load-buffer should run after the quiet exit")
 	}
 }
 
 // TestServe_QuietGate_CapExceededLogsAndDelivers asserts that when the
 // gate hits its total-time cap, the mailman logs a WARN and proceeds
-// with delivery rather than failing the message.
+// with delivery rather than failing the message. Also asserts the
+// accumulated probes are backspaced before delivery so the input row
+// is clean even on cap-exceeded — the visual-mess fix from 2026-05-30.
 func TestServe_QuietGate_CapExceededLogsAndDelivers(t *testing.T) {
 	var (
 		mu             sync.Mutex
 		captureIdx     int
+		cursorIdx      int
 		loadBufferUsed bool
+		bspaceCount    int
+		probeCount     int
 	)
-	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch args[0] {
 		case "capture-pane":
-			// Always return "activity" — before and after never match.
+			// Always alternate "before" and "after" with a status-line
+			// tick — DeltaTUINoise on every iteration so the loop
+			// never finds quiet.
 			captureIdx++
 			if captureIdx%2 == 1 {
-				return []byte("> A\n"), nil
+				return []byte(fmt.Sprintf("tick %d\n> \n", captureIdx)), nil
 			}
-			return []byte("> B\n"), nil
+			return []byte(fmt.Sprintf("tick %d\n> ─\n", captureIdx)), nil
+		case "display-message":
+			cursorIdx++
+			return []byte("1\n"), nil
 		case "load-buffer":
 			loadBufferUsed = true
 		case "send-keys":
-			// After cap exceeded, the load-buffer path drives this.
 			for i, a := range args {
-				if a == "-l" || a == "BSpace" {
-					_ = i
+				if a == "-l" && i+1 < len(args) && args[i+1] == tmuxio.QuietProbe {
+					probeCount++
+					return nil, nil
+				}
+				if a == "BSpace" {
+					bspaceCount++
+					return nil, nil
 				}
 			}
 		}
@@ -166,16 +192,16 @@ func TestServe_QuietGate_CapExceededLogsAndDelivers(t *testing.T) {
 	_ = s.UpsertAgent(ctx, "bob", "%3")
 
 	_, _ = s.InsertMessage(ctx, store.InsertParams{
-		FromAgent: "alice", ToAgent: "bob", Body: "always-activity",
+		FromAgent: "alice", ToAgent: "bob", Body: "always-noise",
 	})
 
 	opts := fastOpts("bob")
 	opts.QuietDisabled = false
 	opts.QuietOpts = tmuxio.QuietOpts{
-		ObserveWindow:   2 * time.Millisecond,
-		BackoffInterval: 2 * time.Millisecond,
-		MaxWait:         20 * time.Millisecond, // very short cap
-		CaptureLines:    5,
+		ObserveWindow:        2 * time.Millisecond,
+		InputActivityBackoff: 2 * time.Millisecond,
+		TUINoiseBackoff:      2 * time.Millisecond,
+		MaxWait:              30 * time.Millisecond,
 	}
 
 	stop, wait, logbuf := runServeInBackground(t, s, opts)
@@ -187,8 +213,6 @@ func TestServe_QuietGate_CapExceededLogsAndDelivers(t *testing.T) {
 		if len(all) >= 1 {
 			break
 		}
-		// Also accept marked-failed (verify token won't match here
-		// since the capture script doesn't include it).
 		failed, _ := s.ListMessages(ctx, store.ListFilter{
 			ToAgent: "bob", State: store.StateFailed, Limit: 10,
 		})
@@ -204,9 +228,18 @@ func TestServe_QuietGate_CapExceededLogsAndDelivers(t *testing.T) {
 	defer mu.Unlock()
 
 	if !loadBufferUsed {
-		t.Errorf("cap-exceeded path should still call load-buffer (deliver-anyway); log=%s", logbuf.String())
+		t.Errorf("cap-exceeded path should still call load-buffer; log=%s", logbuf.String())
 	}
 	if !strings.Contains(logbuf.String(), "quiet_cap_exceeded") {
 		t.Errorf("expected quiet_cap_exceeded WARN log; got %s", logbuf.String())
+	}
+	// Cap-exceeded cleanup: accumulated probes backspaced before delivery.
+	if probeCount == 0 || bspaceCount == 0 {
+		t.Errorf("expected probes + backspaces on cap-exceeded; got probes=%d bspaces=%d",
+			probeCount, bspaceCount)
+	}
+	if bspaceCount != probeCount {
+		t.Errorf("cap-exceeded should backspace exactly probeCount=%d; got %d",
+			probeCount, bspaceCount)
 	}
 }

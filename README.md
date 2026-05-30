@@ -308,20 +308,34 @@ delivery after queuing.
 
 Before each delivery the mailman checks whether the recipient pane is
 quiet: it injects a single `─` character (no Enter), waits 5 seconds,
-and re-captures the bottom of the pane. If the only change is that
-probe character, nobody was typing — the mailman backspaces the probe
-and delivers normally. If anything else changed (operator typed,
-deleted, pasted), the mailman backs off 60 seconds and retries.
+and re-captures the pane. The verdict is one of four:
 
-The probe is **not** backspaced on the backoff path. The operator will
-usually delete the stray dash themselves, or it lands harmlessly in
-the text they're already typing. Eating one of their real keystrokes
-with a guess-backspace would be worse.
+- **Quiet** — only the probe was added, on the input row. Backspace
+  any accumulated probes and deliver.
+- **Input activity** — the input row changed beyond the probe. The
+  operator typed, deleted the probe (the "I see you, hold on"
+  handshake), or otherwise edited. Back off the long
+  `InputActivityBackoff` (default 60s) so they get time to finish.
+- **TUI noise** — the input row is clean (probe added, nothing else)
+  but other rows differ. Claude Code's status-line tick, spinner
+  cycling, or streaming output. Not operator-driven; back off the
+  much shorter `TUINoiseBackoff` (default 5s) and retry sooner.
+- **Probe missing** — the probe didn't land on the captured input
+  row. Treated as activity (safe back off).
 
-Agent-streaming output doesn't trigger backoff because the input box
-sits below the response area; only changes to the input row itself
-count as activity. So this gate distinguishes operator vs Claude
-correctly without ever blocking on an agent's own work.
+The input row is identified per-iteration via `tmux display-message
+-p '#{cursor_y}'` — querying tmux directly for the cursor's row,
+rather than guessing from the captured-region bounds. This is what
+makes the "operator vs TUI" distinction reliable across agent-busy
+sessions (where the response area constantly re-renders) and pane
+layouts.
+
+On the input-activity backoff path, the probe is **not** backspaced.
+The operator will either notice the stray dash and remove it (the
+handshake), or it lands harmlessly in their text. Eating one of their
+real keystrokes with a guess-backspace would be worse. On all exit
+paths (quiet OR cap-exceeded), accumulated probes ARE backspaced so
+delivery starts with a clean input row.
 
 A total-time cap (default 5 min) sets the expectation honestly: a
 human who sees the probe appear typically needs 2-10 minutes to close
@@ -334,7 +348,8 @@ fragmented input happened.
 Flags on `claude-msg serve`:
 
 - `--quiet-observe-window` (default 5s)
-- `--quiet-backoff` (default 60s)
+- `--quiet-input-backoff` (default 60s, operator-detected)
+- `--quiet-tui-backoff` (default 5s, TUI-noise-detected)
 - `--quiet-max-wait` (default 5m)
 - `--quiet-disabled` (escape hatch)
 
