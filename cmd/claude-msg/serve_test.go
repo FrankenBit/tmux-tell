@@ -37,8 +37,15 @@ func fastOpts(agent string) serveOpts {
 // withSuccessfulDelivery installs a fake tmuxRunner that captures the body
 // passed via load-buffer and replays it on capture-pane, so the verify
 // token (the message's "id <public_id>") is found on the first attempt.
+//
+// Also collapses the package-level settle delay to a microsecond so
+// integration tests don't pay 500ms per delivery — the settle delay is
+// a real-keyboard timing concern, not a state-machine property to pin.
 func withSuccessfulDelivery(t *testing.T) {
 	t.Helper()
+	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
+
 	var mu sync.Mutex
 	var lastBody string
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {

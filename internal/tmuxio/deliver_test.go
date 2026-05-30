@@ -49,14 +49,22 @@ func withFakeRunner(t *testing.T, h func(args []string, stdin string) ([]byte, e
 
 // shortRetries replaces the default retry backoff with near-zero waits so
 // tests don't sleep 250 ms when they're meant to verify failure paths.
+// Also collapses the settle delay so paste→Enter tests don't pay the
+// production 500ms.
 func shortRetries(t *testing.T) {
 	t.Helper()
 	prev := retryDelays
 	retryDelays = []time.Duration{time.Microsecond, time.Microsecond}
-	t.Cleanup(func() { retryDelays = prev })
+	prevSettle := settleDelay
+	settleDelay = time.Microsecond
+	t.Cleanup(func() {
+		retryDelays = prev
+		settleDelay = prevSettle
+	})
 }
 
 func TestDeliver_HappyPath_PastesAndVerifies(t *testing.T) {
+	shortRetries(t)
 	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
 		if args[0] == "capture-pane" {
 			return []byte("...some preceding line...\nrendered body with id 7f3a marker\n"), nil
@@ -96,6 +104,7 @@ func TestDeliver_HappyPath_PastesAndVerifies(t *testing.T) {
 }
 
 func TestDeliver_UniqueBufferPerCall(t *testing.T) {
+	shortRetries(t)
 	calls := withFakeRunner(t, nil)
 	_ = Deliver(context.Background(), DeliverParams{Pane: "%1", Body: "x"})
 	_ = Deliver(context.Background(), DeliverParams{Pane: "%1", Body: "x"})
@@ -172,6 +181,7 @@ func TestDeliver_ReturnsUnverifiedSentinelAfterRetriesExhausted(t *testing.T) {
 }
 
 func TestDeliver_LoadBufferFailure(t *testing.T) {
+	shortRetries(t)
 	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
 		if args[0] == "load-buffer" {
 			return []byte("can't grab a lock on the buffer"), errors.New("exit 1")
@@ -185,6 +195,7 @@ func TestDeliver_LoadBufferFailure(t *testing.T) {
 }
 
 func TestDeliver_SkipsVerifyWhenTokenEmpty(t *testing.T) {
+	shortRetries(t)
 	calls := withFakeRunner(t, nil)
 	err := Deliver(context.Background(), DeliverParams{Pane: "%3", Body: "x"})
 	if err != nil {
@@ -193,6 +204,59 @@ func TestDeliver_SkipsVerifyWhenTokenEmpty(t *testing.T) {
 	for _, c := range *calls {
 		if c.args[0] == "capture-pane" {
 			t.Errorf("capture-pane should be skipped when VerifyToken=='', got call %v", c.args)
+		}
+	}
+}
+
+// TestDeliver_SettleDelay_ObservedBetweenPasteAndEnter pins the
+// 2026-05-30 fix: a sleep between paste-buffer and send-keys Enter so
+// Claude Code's TUI has time to ingest the paste before the submit
+// keystroke arrives. The test sets a measurable delay, runs Deliver,
+// and asserts the elapsed time covers it.
+func TestDeliver_SettleDelay_ObservedBetweenPasteAndEnter(t *testing.T) {
+	shortRetries(t)
+	// Override just the settle delay (retryDelays stays at micros from
+	// shortRetries) so the only meaningful wall clock cost is the settle.
+	prev := SetSettleDelayForTest(40 * time.Millisecond)
+	t.Cleanup(func() { SetSettleDelayForTest(prev) })
+
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		if args[0] == "capture-pane" {
+			return []byte("verified id 1\n"), nil
+		}
+		return nil, nil
+	})
+	start := time.Now()
+	if err := Deliver(context.Background(), DeliverParams{
+		Pane: "%1", Body: "x", VerifyToken: "id 1",
+	}); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 40*time.Millisecond {
+		t.Errorf("elapsed = %s, want >= 40ms (settle delay should have fired)", elapsed)
+	}
+}
+
+// Context cancellation during the settle delay should propagate
+// without sending Enter.
+func TestDeliver_SettleDelay_RespectsContextCancellation(t *testing.T) {
+	shortRetries(t)
+	prev := SetSettleDelayForTest(50 * time.Millisecond)
+	t.Cleanup(func() { SetSettleDelayForTest(prev) })
+
+	calls := withFakeRunner(t, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+
+	err := Deliver(ctx, DeliverParams{Pane: "%1", Body: "x"})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want DeadlineExceeded", err)
+	}
+	// Confirm we never reached send-keys Enter (the cancellation
+	// fired during the settle).
+	for _, c := range *calls {
+		if c.args[0] == "send-keys" {
+			t.Errorf("send-keys should NOT run when ctx fires during settle; got %v", c.args)
 		}
 	}
 }

@@ -54,6 +54,28 @@ func SetRetryDelaysForTest(delays []time.Duration) []time.Duration {
 	return prev
 }
 
+// settleDelay is the pause Deliver inserts between paste-buffer and
+// send-keys Enter. Without this, Enter can arrive while Claude Code's
+// TUI is still ingesting the pasted characters — the Enter gets
+// queued/eaten alongside the paste rather than processed as a
+// distinct "submit" event. 500ms is generous enough for multi-KB
+// bodies and below operator-perceptible delivery latency.
+//
+// Empirical: pre-#(this commit), every Surveyor/Pilot delivery with
+// 800-2000 byte bodies left the text in the input box without
+// submitting. The operator had to press Enter manually. Adding the
+// delay lets the TUI settle before the submit keystroke lands.
+var settleDelay = 500 * time.Millisecond
+
+// SetSettleDelayForTest swaps the settle delay. Tests using a fake
+// tmux runner want near-zero values so they don't sleep 500ms per
+// call. Returns the previous value for cleanup restoration.
+func SetSettleDelayForTest(d time.Duration) time.Duration {
+	prev := settleDelay
+	settleDelay = d
+	return prev
+}
+
 // retryDelays are the post-paste verification backoff window. Total
 // budget ~5s (100ms + 250ms + 500ms + 1s + 1.5s + 1.65s = 5s) so we
 // give Claude Code time to redraw and submit when it was mid-turn at
@@ -112,6 +134,18 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 	if out, err := tmuxRun(ctx, nil,
 		"paste-buffer", "-b", bufName, "-t", p.Pane, "-d"); err != nil {
 		return fmt.Errorf("tmuxio: paste-buffer: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	// 2.5. Settle. Let Claude Code's TUI finish ingesting the pasted
+	// characters before we ask it to submit. Without this, the Enter
+	// in step 3 frequently arrives before the input is fully populated
+	// and gets queued/eaten alongside the paste rather than processed
+	// as a submission event.
+	if settleDelay > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(settleDelay):
+		}
 	}
 	// 3. send-keys Enter
 	if out, err := tmuxRun(ctx, nil,
