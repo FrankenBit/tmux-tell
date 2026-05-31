@@ -54,6 +54,22 @@ Run `claude-msg --version` to see what's installed.
   - Promotes ADR-0001's "deliberate act" framing for adding a fifth
     slug from convention-only to mechanical gate.
 
+- **`claude-msg discover --apply-aliases` (#46).** Detects long
+  `--resume` values that contain an existing canonical short name as
+  a whitespace-bounded substring and ADDs them as aliases on the
+  existing canonical, rather than creating duplicate registry rows.
+  - Without the flag: alias proposals are surfaced as
+    `alias_proposed` status rows + a hint to re-run with the flag.
+    No changes made.
+  - With the flag: alias added via `store.AddAlias` AND the
+    canonical's pane_id rebound to the discovered pane so future
+    deliveries land correctly.
+  - Ambiguous cases (multiple canonicals match as whole-word tokens
+    inside the long name) are explicitly NOT proposed — those still
+    create new rows so the operator can manually disambiguate.
+  - Closes the post-tmux-restore duplication described in
+    `docs/operator-ux.md` §2.2.
+
 - **Host-level config file (#54).** `/etc/cli-semaphore/config.toml`
   (overridable via `CLAUDE_MSG_CONFIG` env var) carries per-host
   mailman settings — notification toggles, drift policy, quiet-gate
