@@ -291,7 +291,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				logger.Printf("drift_check_err id=%s err=%v", msg.PublicID, err)
 			case ambiguous:
 				driftFailReason = "drift_check_ambiguous"
-				logger.Printf("WARN drift_check_ambiguous id=%s agent=%s registered_pane=%s — multiple canonicals exact-or-substring-match the running --resume value",
+				logger.Printf("WARN drift_check_ambiguous id=%s agent=%s registered_pane=%s — multiple canonicals exact-or-substring-match the running --resume value (resolve via: semaphore.register name=<canonical> alias=<unique-suffix> force=true; #47)",
 					msg.PublicID, opts.Agent, paneForDelivery)
 			case running != "" && running != opts.Agent:
 				newPane, lambig, lerr := walker.LookupByNameWithCanonicals(opCtx, opts.Agent, canonicals)

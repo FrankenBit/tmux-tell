@@ -321,41 +321,93 @@ Both paths return the same shape (`state`, `created_at`,
 attempt time — so `track` is purely for confirming positive
 delivery after queuing.
 
+**Watch mode** (post-#49): `claude-msg track <id> --watch` polls
+every 5s (configurable via `--watch-interval`) and re-renders on each
+state change, exiting when state becomes terminal (`delivered` or
+`failed`). Useful for "I just sent a long autonomous task; ping me
+when it's been consumed". `--watch-timeout DURATION` bails out if no
+terminal state lands within the window; SIGINT exits cleanly.
+
+### Diagnosing a failed or unverified message
+
+When `claude-msg send` returns a message ID but the recipient never
+sees it, walk this flow:
+
+1. **Check the delivery state.** `claude-msg track <id>` (or
+   `--watch` if you want to wait for resolution) shows where the
+   message is in its lifecycle.
+2. **If state is `failed`** — grep the recipient's mailman journal
+   for the message ID:
+   ```bash
+   journalctl --user -u claude-mailman@<recipient>.service | grep <id>
+   ```
+   The hard-failure WARN line carries the reason.
+3. **If state is `delivered_unverified`** — the paste + Enter
+   sequence ran but the verify token didn't surface in the retry
+   budget. Typically means the recipient was mid-turn and Enter was
+   queued. The message text IS sitting in the input box; the
+   operator may need to submit it manually.
+4. **As of #53**, both `failed` and `delivered_unverified` also push
+   a `delivery_failure_notice` back to the original sender's
+   pane — so the diagnostic flow above is mainly for cases where
+   notifications are disabled or you want to dig deeper.
+
+Common cause patterns:
+
+- **`drift_check_ambiguous`** — multiple canonicals exact-or-substring
+  match the running `--resume` value. Fix: `semaphore.register name=X
+  alias=Y force=true` (the WARN line carries the exact recipe since
+  #47).
+- **`drift_detected_unrecoverable`** — `discover` couldn't find the
+  agent on any pane. Fix: respawn the agent in tmux + run
+  `claude-msg discover`.
+- **`quiet_cap_exceeded`** — the probe-and-watch gate's `MaxWait`
+  (default 5min) elapsed without finding an operator-quiet window.
+  Post-#52 this is rare — the two-dash gate doesn't trigger on
+  conversation-area streaming the way the v0.2.1 four-way verdict
+  did.
+- **Mailman not running** — check `systemctl --user status
+  claude-mailman@<recipient>.service`. Orphan-recovery on next
+  startup will re-queue any in-flight messages.
+
 ### Delivery semantics: probe-and-watch quiet-pane gate
 
-Before each delivery the mailman checks whether the recipient pane is
-quiet: it injects a single `─` character (no Enter), waits 5 seconds,
-and re-captures the pane. The verdict is one of four:
+Before each delivery the mailman checks whether the recipient pane's
+input row is operator-quiet. Per #52's redesign (2026-05-31), the
+gate is a **two-dash check** rather than the older four-way verdict:
 
-- **Quiet** — only the probe was added, on the input row. Backspace
-  any accumulated probes and deliver.
-- **Input activity** — the input row changed beyond the probe. The
-  operator typed, deleted the probe (the "I see you, hold on"
-  handshake), or otherwise edited. Back off the long
-  `InputActivityBackoff` (default 60s) so they get time to finish.
-- **TUI noise** — the input row is clean (probe added, nothing else)
-  but other rows differ. Claude Code's status-line tick, spinner
-  cycling, or streaming output. Not operator-driven; back off the
-  much shorter `TUINoiseBackoff` (default 5s) and retry sooner.
-- **Probe missing** — the probe didn't land on the captured input
-  row. Treated as activity (safe back off).
+1. Paste `─` (probe #1 — dismisses any ghost-text suggested prompt the
+   CLI may be showing).
+2. Wait `ObserveWindow` (default 3s) — gives the operator time to
+   react.
+3. Paste `─` (probe #2 — the actual quiet-state probe).
+4. Wait `ObserveWindow` again.
+5. Capture the pane. The verdict is binary:
+   - **Quiet** — the input row gained exactly the two probes we
+     pasted, with nothing else added or removed. Safe to deliver;
+     backspace accumulated probes and paste the message body.
+   - **Input activity** — the input row's content differs from
+     "before-state + N trailing probes" — operator typed, removed a
+     probe, or interfered. Back off `InputActivityBackoff` (default
+     60s) so they get time to finish, then restart from step 1 (a
+     fresh ghost-text prompt may have appeared between iterations).
 
-The input row is identified per-iteration via `tmux display-message
--p '#{cursor_y}'` — querying tmux directly for the cursor's row,
-rather than guessing from the captured-region bounds. This is what
-makes the "operator vs TUI" distinction reliable across agent-busy
-sessions (where the response area constantly re-renders) and pane
-layouts.
+What the gate explicitly does **not** protect against:
 
-On the input-activity backoff path, the probe is **not** backspaced.
-The operator will either notice the stray dash and remove it (the
-handshake), or it lands harmlessly in their text. Eating one of their
-real keystrokes with a guess-backspace would be worse. On all exit
-paths (quiet OR cap-exceeded), accumulated probes ARE backspaced so
-delivery starts with a clean input row.
+- Recipient mid-conversation. The bus doesn't gate on recipient-busy;
+  the recipient processes one message at a time anyway.
+- TUI animations, status-line ticks, streaming output above the input
+  row. All ignored — the gate cares only whether the operator is
+  typing on the input row.
+
+Probes are **never** backspaced between iterations — they accumulate
+in the input box as a visible "I see you" stack of dashes until the
+operator clears them or the gate exits (quiet OR cap-exceeded). Only
+the final pre-delivery cleanup or the cap-exit backspaces all
+accumulated probes so the recipient's input starts clean.
 
 A total-time cap (default 5 min) sets the expectation honestly: a
-human who sees the probe appear typically needs 2-10 minutes to close
+human who sees the probes appear typically needs 2-10 minutes to close
 a sentence or cut their in-progress message out of the input box.
 Beyond that they've usually walked away, so delaying further just buys
 nothing. Crossing the cap delivers anyway with a `WARN
@@ -364,11 +416,33 @@ fragmented input happened.
 
 Flags on `claude-msg serve`:
 
-- `--quiet-observe-window` (default 5s)
-- `--quiet-input-backoff` (default 60s, operator-detected)
-- `--quiet-tui-backoff` (default 5s, TUI-noise-detected)
+- `--quiet-observe-window` (default 3s; applied twice per iteration —
+  once after each probe)
+- `--quiet-input-backoff` (default 60s)
 - `--quiet-max-wait` (default 5m)
 - `--quiet-disabled` (escape hatch)
+- `--notify-on-failed` / `--notify-on-delivered-unverified` (default
+  on; see [Delivery-failure notifications](#delivery-failure-notifications) below)
+
+### Delivery-failure notifications
+
+Post-#53 (`[Unreleased]`): when a recipient's outbound message
+transitions to a terminal-failure state (`failed` or
+`delivered_unverified`), the mailman auto-inserts a
+`delivery_failure_notice` back to the original sender. The notice
+carries the original message id, the recipient, the failure class, the
+reason, and a 200-char body preview.
+
+Cap-exempt: notifications bypass `MaxRecipientQueue` and
+`MaxSenderBacklog` so they're never silently dropped. Loop-prevention
+by-kind: a notice that itself fails to deliver does NOT generate
+another notice (the wedged-pane cascade is avoided).
+
+The two toggles on `claude-msg serve` are independent and both
+default-on:
+
+- `--notify-on-failed` — hard failures
+- `--notify-on-delivered-unverified` — soft failures
 
 ### Identity precedence
 

@@ -6,6 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 )
@@ -72,12 +76,18 @@ func doTrack(ctx context.Context, s *store.Store, id string) (*trackResult, erro
 
 // runTrackCLI parses the track-subcommand flags and dispatches.
 //
-// Usage: claude-msg track <id> [--format text|json]
+// Usage: claude-msg track <id> [--format text|json] [--watch [--watch-interval D] [--watch-timeout D]]
 func runTrackCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("track", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
 	format := fs.String("format", "text", "text|json")
+	watch := fs.Bool("watch", false,
+		"poll until the message reaches a terminal state (delivered/failed); exits when state stops changing or timeout fires (#49)")
+	watchInterval := fs.Duration("watch-interval", 5*time.Second,
+		"poll cadence when --watch is set")
+	watchTimeout := fs.Duration("watch-timeout", 0,
+		"bail out after this duration without reaching a terminal state when --watch is set (0 = no timeout)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -94,6 +104,10 @@ func runTrackCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	defer s.Close()
 
+	if *watch {
+		return runTrackWatch(s, id, *format, *watchInterval, *watchTimeout, stdout, stderr)
+	}
+
 	ctx := context.Background()
 	res, err := doTrack(ctx, s, id)
 	if err != nil {
@@ -103,10 +117,23 @@ func runTrackCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
 
+	renderTrackResult(stdout, stderr, res, *format)
 	switch *format {
+	case "json", "text", "":
+		return exitOK
+	default:
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("unknown --format: %s", *format), exitUsage)
+	}
+}
+
+// renderTrackResult formats a trackResult into the requested output
+// shape. Extracted from runTrackCLI so runTrackWatch can reuse it on
+// each state change.
+func renderTrackResult(stdout, stderr io.Writer, res *trackResult, format string) {
+	switch format {
 	case "json":
 		_ = writeJSONResult(stdout, res)
-		return exitOK
 	case "text", "":
 		fmt.Fprintf(stdout, "ID\t%s\n", res.ID)
 		fmt.Fprintf(stdout, "FROM\t%s\n", res.From)
@@ -123,10 +150,67 @@ func runTrackCLI(args []string, stdout, stderr io.Writer) int {
 		if res.Error != "" {
 			fmt.Fprintf(stdout, "ERROR\t%s\n", res.Error)
 		}
-		return exitOK
-	default:
-		return writeJSONError(stdout, stderr,
-			fmt.Sprintf("unknown --format: %s", *format), exitUsage)
+	}
+}
+
+// isTerminalState reports whether a track state is one that won't
+// change further (delivered or failed). Used by --watch to know when
+// to exit.
+func isTerminalState(state string) bool {
+	return state == string(store.StateDelivered) || state == string(store.StateFailed)
+}
+
+// runTrackWatch polls the store every watchInterval and emits a render
+// of the trackResult each time the state changes. Exits when the state
+// becomes terminal (delivered or failed), when watchTimeout fires (if
+// > 0), or when the process receives SIGINT.
+//
+// Per #49: useful for the "I just sent a long autonomous task; ping me
+// when it's been consumed" pattern. The first render always emits
+// regardless of state — so the operator gets immediate feedback.
+func runTrackWatch(
+	s *store.Store, id, format string,
+	interval, timeout time.Duration,
+	stdout, stderr io.Writer,
+) int {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if timeout > 0 {
+		var tcancel context.CancelFunc
+		ctx, tcancel = context.WithTimeout(ctx, timeout)
+		defer tcancel()
+	}
+
+	var lastState string
+	first := true
+	for {
+		res, err := doTrack(ctx, s, id)
+		if err != nil {
+			if errors.Is(err, errTrackNotFound) {
+				return writeJSONError(stdout, stderr, err.Error(), exitUnavailable)
+			}
+			return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+		}
+		if first || res.State != lastState {
+			renderTrackResult(stdout, stderr, res, format)
+			lastState = res.State
+			first = false
+		}
+		if isTerminalState(res.State) {
+			return exitOK
+		}
+		select {
+		case <-ctx.Done():
+			// SIGINT or timeout. Emit a final render so the operator
+			// sees the last-known state on exit.
+			if !first {
+				return exitOK
+			}
+			return exitOK
+		case <-time.After(interval):
+			continue
+		}
 	}
 }
 

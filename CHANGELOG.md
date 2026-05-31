@@ -24,6 +24,32 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Added
+
+- **`claude-msg track --watch` (#49).** Polls the message state every
+  `--watch-interval` (default 5s) and re-renders on each transition.
+  Exits when the message reaches a terminal state (`delivered` /
+  `failed`) or `--watch-timeout` fires. Clean SIGINT handling. The
+  "I just sent a long autonomous task; ping me when it's been
+  consumed" pattern now needs no wrapper script.
+
+### Fixed
+
+- **`WARN drift_check_ambiguous` carries the fix recipe (#47).** The
+  log line now ends with `(resolve via: semaphore.register
+  name=<canonical> alias=<unique-suffix> force=true; #47)` so the
+  operator gets the actionable recipe inline without needing to grep
+  docs.
+
+### Changed
+
+- **README "Diagnosing a failed or unverified message" section added
+  (#48).** Walks through the `track` → journalctl → fix flow with
+  common cause patterns (`drift_check_ambiguous`,
+  `drift_detected_unrecoverable`, `quiet_cap_exceeded`, mailman
+  down). The probe-and-watch gate section is also updated to reflect
+  the post-#52 two-dash design + the post-#53 notification surface.
+
 ### Fixed
 
 - **CLI flag-ordering trap closed (#44).** Operator typing
