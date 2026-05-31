@@ -54,6 +54,29 @@ Run `claude-msg --version` to see what's installed.
   - Promotes ADR-0001's "deliberate act" framing for adding a fifth
     slug from convention-only to mechanical gate.
 
+- **Monitoring stack (#42, #45, #39, #41).** New `internal/healthscan`
+  package + `claude-msg health` subcommand + `--today` flag on
+  `claude-msg status`. Sources operational state from journalctl +
+  systemd rather than persistent in-process counters, so CLI tools and
+  mailmen stay decoupled.
+  - **`claude-msg health [--since DURATION] [AGENT...]`** (#42) —
+    one-command per-agent operational audit. Counts: delivered,
+    delivered_unverified, failed, quiet_cap_exceeded, drift_ambiguous,
+    drift_detected_unrecoverable. Deliver-time percentiles
+    (p50/p95/p99) computed from `delivering id=X` ↔ `delivered id=X`
+    pairs. systemd NRestarts surfaces as crash count. Defaults to
+    24-hour window across every registered agent. Highlights
+    actionable signals in a NOTES block below the table.
+  - **`claude-msg status --today`** (#45) — augments the per-agent
+    status output with a today block (since 00:00 local) covering the
+    same counters + crash count + deliver-time percentiles. Same
+    healthscan source.
+  - **Deliver-time histogram** (#39) — the percentile computation in
+    healthscan is the histogram primitive; surfaced via both health
+    and status --today.
+  - **Per-mailman crash counter** (#41) — sourced from systemd's
+    NRestarts property; surfaced via both subcommands.
+
 - **`claude-msg track --watch` (#49).** Polls the message state every
   `--watch-interval` (default 5s) and re-renders on each transition.
   Exits when the message reaches a terminal state (`delivered` /

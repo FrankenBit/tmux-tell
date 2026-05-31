@@ -5,19 +5,23 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"time"
 
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/healthscan"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 )
 
 // runStatusCLI parses status-subcommand flags and dispatches.
 //
-// Usage: claude-msg status [--format text|json]
+// Usage: claude-msg status [--format text|json] [--today]
 func runStatusCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
 	format := fs.String("format", "text", "text|json")
-	if err := fs.Parse(args); err != nil {
+	today := fs.Bool("today", false,
+		"include a per-agent today-block (deliveries / unverified / failed / crashes / cap-exceeded counts since 00:00 local) sourced from journalctl + systemd (#45)")
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
 
@@ -28,22 +32,27 @@ func runStatusCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	defer s.Close()
 
-	return runStatusWithStore(context.Background(), s, *format, stdout, stderr)
+	return runStatusWithStore(context.Background(), s, *format, *today, stdout, stderr)
 }
 
 // agentStatus is the per-agent summary status reports.
 type agentStatus struct {
-	Name             string `json:"name"`
-	Paused           bool   `json:"paused"`
-	Queued           int    `json:"queued"`
-	Delivering       int    `json:"delivering"`
-	Delivered        int    `json:"delivered"`
-	Failed           int    `json:"failed"`
-	OldestQueuedAge  string `json:"oldest_queued_age,omitempty"` // "-" if no queued
+	Name            string `json:"name"`
+	Paused          bool   `json:"paused"`
+	Queued          int    `json:"queued"`
+	Delivering      int    `json:"delivering"`
+	Delivered       int    `json:"delivered"`
+	Failed          int    `json:"failed"`
+	OldestQueuedAge string `json:"oldest_queued_age,omitempty"` // "-" if no queued
+
+	// Today is populated when --today is passed. Sourced from
+	// journalctl + systemd via the healthscan package. Pointer so
+	// JSON output cleanly omits it when not requested.
+	Today *healthscan.AgentHealth `json:"today,omitempty"`
 }
 
 func runStatusWithStore(ctx context.Context, s *store.Store,
-	format string, stdout, stderr io.Writer,
+	format string, includeToday bool, stdout, stderr io.Writer,
 ) int {
 	agents, err := s.ListAgents(ctx)
 	if err != nil {
@@ -87,6 +96,28 @@ func runStatusWithStore(ctx context.Context, s *store.Store,
 		rows = append(rows, st)
 	}
 
+	// Today block (#45): augment each row with healthscan data sourced
+	// from journalctl + systemd over the since-midnight window.
+	if includeToday {
+		names := make([]string, len(rows))
+		for i, r := range rows {
+			names[i] = r.Name
+		}
+		scanner := healthscan.New()
+		todayBlock, err := scanner.Scan(ctx, names, healthscan.SinceMidnight(time.Now()))
+		if err != nil {
+			// External-source failure shouldn't kill the core status
+			// table. Surface a non-fatal warning + proceed without
+			// the today block.
+			fmt.Fprintf(stderr, "warn: --today scan failed: %v\n", err)
+		} else if len(todayBlock) == len(rows) {
+			for i := range rows {
+				th := todayBlock[i]
+				rows[i].Today = &th
+			}
+		}
+	}
+
 	switch format {
 	case "json":
 		_ = writeJSONResult(stdout, rows)
@@ -106,11 +137,51 @@ func runStatusWithStore(ctx context.Context, s *store.Store,
 			})
 		}
 		renderTextTable(stdout, header, out)
+		if includeToday {
+			renderTodayBlock(stdout, rows)
+		}
 		return exitOK
 	default:
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("unknown --format: %s", format), exitUsage)
 	}
+}
+
+// renderTodayBlock prints the journalctl-sourced per-agent today
+// counts (#45). Skipped silently when no row has a Today field set
+// (scan failed; warning already emitted to stderr).
+func renderTodayBlock(stdout io.Writer, rows []agentStatus) {
+	hasAny := false
+	for _, r := range rows {
+		if r.Today != nil {
+			hasAny = true
+			break
+		}
+	}
+	if !hasAny {
+		return
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, "TODAY (since 00:00 local):")
+	header := []string{"NAME", "DELIVERED", "UNVERIFIED", "FAILED", "CAPHIT", "CRASHES", "P50ms", "P99ms"}
+	out := make([][]string, 0, len(rows))
+	for _, r := range rows {
+		if r.Today == nil {
+			out = append(out, []string{r.Name, "-", "-", "-", "-", "-", "-", "-"})
+			continue
+		}
+		out = append(out, []string{
+			r.Name,
+			itoa(r.Today.Delivered),
+			itoa(r.Today.DeliveredUnverified),
+			itoa(r.Today.Failed),
+			itoa(r.Today.QuietCapExceeded),
+			itoa(r.Today.CrashCount),
+			itoa(r.Today.DeliverP50Ms),
+			itoa(r.Today.DeliverP99Ms),
+		})
+	}
+	renderTextTable(stdout, header, out)
 }
 
 func yesNo(b bool) string {

@@ -13,7 +13,7 @@ import (
 func TestStatus_EmptyRegistry(t *testing.T) {
 	s := newCmdTestStore(t)
 	var stdout, stderr bytes.Buffer
-	exit := runStatusWithStore(context.Background(), s, "text", &stdout, &stderr)
+	exit := runStatusWithStore(context.Background(), s, "text", false, &stdout, &stderr)
 	if exit != exitOK {
 		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
 	}
@@ -30,7 +30,7 @@ func TestStatus_ReflectsQueueDepth(t *testing.T) {
 	_ = s.SetPaused(ctx, "alice", true)
 
 	var stdout, stderr bytes.Buffer
-	exit := runStatusWithStore(ctx, s, "json", &stdout, &stderr)
+	exit := runStatusWithStore(ctx, s, "json", false, &stdout, &stderr)
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
