@@ -133,6 +133,31 @@ func (w *Walker) LookupByName(ctx context.Context, name string) (string, error) 
 	return "", nil
 }
 
+// PaneAgentName returns the agent name running in the given pane, or
+// "" if no name could be derived. Used by the mailman's pre-delivery
+// silent-drift check (#37): before paste-buffer-and-Enter, verify
+// that the registered pane is still running the expected agent. The
+// "registered pane exists but holds a different agent" case is the
+// scenario that produced the 2026-05-31 misdelivery — auto-heal
+// only fires on "can't find pane" errors, so a pane that exists but
+// belongs to someone else slips through silently.
+//
+// The lookup goes via WalkAll so the resolution strategy stays the
+// same as LookupByName: cmdline → title → window_name. Cost: one
+// tmux list-panes + one /proc walk for the matched pane.
+func (w *Walker) PaneAgentName(ctx context.Context, paneID string) (string, error) {
+	all, err := w.WalkAll(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range all {
+		if r.PaneID == paneID {
+			return r.AgentName, nil
+		}
+	}
+	return "", nil
+}
+
 // cmdlineDescendantSearch walks pid + descendants up to MaxDepth looking
 // for `claude --resume <name>`. Returns the first match.
 func (w *Walker) cmdlineDescendantSearch(pid, depth int) (string, bool) {

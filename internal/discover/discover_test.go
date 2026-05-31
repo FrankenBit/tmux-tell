@@ -220,3 +220,49 @@ func TestLookupByName(t *testing.T) {
 		t.Errorf("ghost should not resolve, got %q", got)
 	}
 }
+
+// TestPaneAgentName is the inverse of LookupByName: given a pane id,
+// what agent is running there? Used by the mailman's silent-drift
+// check (#37) to confirm the registered pane still belongs to the
+// agent we expect before paste-buffer-and-Enter.
+func TestPaneAgentName(t *testing.T) {
+	prev := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		return []byte("%1\t100\t✳ Master Bosun of Nimbus\tclaude\n" +
+			"%5\t200\t✳ Pilot\tclaude\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prev) })
+
+	w := &Walker{
+		CmdlineReader: func(pid int) (string, error) {
+			switch pid {
+			case 100:
+				return "claude\x00--resume\x00Master\x00Bosun\x00of\x00Nimbus\x00", nil
+			case 200:
+				return "claude\x00--resume\x00Pilot\x00", nil
+			}
+			return "", errors.New("no fake")
+		},
+		ChildrenReader: func(int) []int { return nil },
+		MaxDepth:       3,
+	}
+
+	// Live pane → resolved agent.
+	got, err := w.PaneAgentName(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got != "Pilot" {
+		t.Errorf("got %q, want Pilot", got)
+	}
+
+	// Pane id that doesn't exist → empty + nil err. The mailman's
+	// silent-drift check interprets empty as "couldn't determine" and
+	// falls back to the existing auto-heal behaviour.
+	got, err = w.PaneAgentName(context.Background(), "%99")
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got != "" {
+		t.Errorf("missing pane should return empty, got %q", got)
+	}
+}

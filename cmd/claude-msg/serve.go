@@ -42,6 +42,11 @@ type serveOpts struct {
 	// tmux runner doesn't need to handle the probe sequence) and as an
 	// escape hatch if the probe pattern misbehaves with a future TUI.
 	QuietDisabled bool
+	// DriftCheckDisabled bypasses the pre-delivery silent-drift guard
+	// (#37). Production keeps it enabled. Tests that don't fake
+	// ListPanesWithPID + /proc readers should set this to true so the
+	// check doesn't hit real system state non-deterministically.
+	DriftCheckDisabled bool
 	// Walker resolves pane-id drift via the shared discover package. When
 	// nil, runServeWithStore constructs a discover.New() — tests can inject
 	// a fake walker that doesn't touch real tmux/proc.
@@ -223,6 +228,44 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			msg.PublicID, msg.Kind, msg.FromAgent, len(msg.Body))
 
 		paneForDelivery := a.PaneID
+
+		// Silent-drift guard (#37). Before the gate or the actual
+		// delivery, verify the registered pane is still running the
+		// expected agent. The 2026-05-31 incident was: tmux restored
+		// panes with new ids after a host reboot; admin's message to
+		// surveyor landed in Pilot's pane because surveyor's row
+		// still pointed at the pane that now belonged to Pilot. The
+		// verify-token check passed (the text was in that pane) and
+		// the message was marked delivered, but to the wrong agent.
+		// auto-heal couldn't catch it because the pane existed.
+		//
+		// This check uses discover.PaneAgentName to read the pane's
+		// own --resume argument and confirms it matches opts.Agent.
+		// On mismatch we run discover.LookupByName to find where the
+		// expected agent is now, UPDATE the registry, and retry on
+		// the new pane. If LookupByName can't find the agent either,
+		// we proceed with the registered (drifted) pane — the
+		// existing delivery + auto-heal paths take it from there.
+		if !opts.DriftCheckDisabled {
+			if walker == nil {
+				walker = discover.New()
+			}
+			if running, err := walker.PaneAgentName(opCtx, paneForDelivery); err == nil && running != "" && running != opts.Agent {
+				newPane, lerr := walker.LookupByName(opCtx, opts.Agent)
+				if lerr == nil && newPane != "" && newPane != paneForDelivery {
+					logger.Printf("drift_detected id=%s agent=%s registered_pane=%s runs=%s — rediscovered=%s",
+						msg.PublicID, opts.Agent, paneForDelivery, running, newPane)
+					if uerr := s.UpsertAgent(opCtx, opts.Agent, newPane); uerr != nil {
+						logger.Printf("drift_update_failed err=%v", uerr)
+					} else {
+						paneForDelivery = newPane
+					}
+				} else {
+					logger.Printf("WARN drift_detected_unrecoverable id=%s agent=%s registered_pane=%s runs=%s — discover couldn't find %s anywhere; delivering to drifted pane",
+						msg.PublicID, opts.Agent, paneForDelivery, running, opts.Agent)
+				}
+			}
+		}
 
 		// Pre-delivery quiet-pane gate (probe-and-watch). On any error
 		// other than a clean quiet exit, log and proceed — we'd rather

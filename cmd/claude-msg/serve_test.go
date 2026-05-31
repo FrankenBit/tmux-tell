@@ -31,6 +31,11 @@ func fastOpts(agent string) serveOpts {
 		// observing the same call shape. New gate-specific tests live
 		// in serve_quiet_test.go.
 		QuietDisabled: true,
+		// Same idea for the silent-drift guard (#37): existing tests
+		// don't fake ListPanesWithPID or /proc readers, so leave the
+		// check off here. Drift-specific tests opt in by setting
+		// DriftCheckDisabled=false and injecting a Walker.
+		DriftCheckDisabled: true,
 	}
 }
 
