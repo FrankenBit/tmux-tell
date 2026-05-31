@@ -103,23 +103,33 @@ func TestLookupByNameWithCanonicals_SubstringFallback(t *testing.T) {
 	}
 }
 
-// LookupByNameWithCanonicals: ambiguous match returns ambiguous=true,
-// paneID="". The mailman logs and falls through rather than guessing.
-func TestLookupByNameWithCanonicals_Ambiguous(t *testing.T) {
+// The substring-ambiguity discipline pin
+// (TestPin_CanonicalNoSilentGuess_SubstringAmbiguous) lives in
+// pin_test.go per ADR-0001.
+
+// Sanity: unambiguous exact matches still resolve correctly, even
+// when other canonicals have non-overlapping aliases. Regression-
+// shaped — the discipline-pin partner is in pin_test.go.
+func TestLookupByNameWithCanonicals_DistinctAliases_NoFalseAmbiguity(t *testing.T) {
 	canonicalFakes(t,
-		[]byte("%7\t700\t✳ Admin-Pilot-Hybrid\tclaude\n"),
+		[]byte("%5\t500\tsurveyor\tclaude\n"),
 		nil)
 	w := canonicalWalker(map[int]string{
-		700: "claude\x00--resume\x00admin\x00and\x00pilot\x00",
+		500: "claude\x00--resume\x00surveyor\x00",
 	})
 
-	got, ambiguous, _ := w.LookupByNameWithCanonicals(
-		context.Background(), "admin", canonicalSetup())
-	if !ambiguous {
-		t.Errorf("expected ambiguous=true (admin AND pilot both substring); got %q", got)
+	canonicals := []CanonicalAgent{
+		{Name: "admin", Aliases: []string{"Alcatraz Infra Admin"}},
+		{Name: "surveyor"},
+		{Name: "pilot", Aliases: []string{"Pilot"}},
 	}
-	if got != "" {
-		t.Errorf("ambiguous should return empty pane; got %q", got)
+	got, ambiguous, err := w.LookupByNameWithCanonicals(
+		context.Background(), "surveyor", canonicals)
+	if err != nil || ambiguous {
+		t.Fatalf("err=%v ambiguous=%v", err, ambiguous)
+	}
+	if got != "%5" {
+		t.Errorf("got %q, want %%5", got)
 	}
 }
 

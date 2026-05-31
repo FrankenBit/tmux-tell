@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -180,73 +179,7 @@ func TestMCP_MessageStatus_NotFound(t *testing.T) {
 	}
 }
 
-// Pins the omitempty contract on trackResult's optional fields. With
-// just OK/ID/From/To/State/Kind/CreatedAt populated and the three
-// state-dependent fields empty, the rendered JSON must NOT include
-// delivered_at, error, or reply_to as keys. Surveyor's #31 Q(d)
-// follow-up: the cross-CLI/MCP shape test verifies byte-identity
-// between the two callers, but not that the omitempty contract
-// itself holds — this test pins it.
-func TestTrackResult_OmitemptyContract(t *testing.T) {
-	res := &trackResult{
-		OK:        true,
-		ID:        "abcd",
-		From:      "alice",
-		To:        "bob",
-		State:     "queued",
-		Kind:      "message",
-		CreatedAt: "2026-05-30T11:00:00Z",
-		// DeliveredAt, Error, ReplyTo intentionally empty
-	}
-	raw, err := json.Marshal(res)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	for _, banned := range []string{"delivered_at", "error", "reply_to"} {
-		if strings.Contains(string(raw), banned) {
-			t.Errorf("omitempty contract: empty %q field should not appear in:\n%s",
-				banned, raw)
-		}
-	}
-
-	// Inverse pin: when all three are non-empty, they must appear.
-	res.DeliveredAt = "2026-05-30T11:01:00Z"
-	res.Error = "boom"
-	res.ReplyTo = "1234"
-	raw, _ = json.Marshal(res)
-	for _, required := range []string{"delivered_at", "error", "reply_to"} {
-		if !strings.Contains(string(raw), required) {
-			t.Errorf("populated %q field should appear in:\n%s", required, raw)
-		}
-	}
-}
-
-// Wire-shape contract: the CLI's --format json and the MCP tool's
-// response must serialise to the same JSON. Pins the single-source-
-// of-truth invariant (Surveyor's Q3 carry-over).
-func TestTrack_WireShape_CLIAndMCPMatch(t *testing.T) {
-	s := newCmdTestStore(t, "alice", "bob")
-	id := seedMessage(t, s)
-	t.Setenv("CLAUDE_MSG_DB", ":memory:")
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
-
-	// CLI shape.
-	var stdout bytes.Buffer
-	if exit := runTrackCLI([]string{"--format", "json", id}, &stdout, &bytes.Buffer{}); exit != exitOK {
-		t.Fatalf("cli exit = %d", exit)
-	}
-	cliMap := parseJSONResult(t, stdout.Bytes())
-
-	// MCP shape.
-	mcpMap := callMCPTool(t, s, "semaphore.message_status", map[string]any{"id": id})
-
-	// Strip MCP-private fields injected by the test harness.
-	delete(mcpMap, "_text")
-	delete(mcpMap, "_isError")
-
-	cliJSON, _ := json.Marshal(cliMap)
-	mcpJSON, _ := json.Marshal(mcpMap)
-	if string(cliJSON) != string(mcpJSON) {
-		t.Errorf("wire-shape drift:\n CLI: %s\n MCP: %s", cliJSON, mcpJSON)
-	}
-}
+// The two discipline pins on trackResult's wire shape
+// (TestPin_WireShapeSingleSoT_OmitemptyContract +
+// TestPin_WireShapeSingleSoT_CLIAndMCPByteIdentity) live in
+// pin_test.go per ADR-0001.

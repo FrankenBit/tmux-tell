@@ -170,62 +170,61 @@ at v0.2.1 shows **eight pinning tests across four architectural
 commitments**. The right ADR unit is **the commitment**, not the
 test — eight tests is implementation, four commitments is design.
 
+**Ratified as [ADR-0001](adr/0001-discipline-pins-as-test-category.md)
+(2026-05-31).** The conventions described in §4.3 below are now the
+authoritative discipline; the table below reflects the post-rename
+landing.
+
 | Architectural commitment | Pinning tests | Source review |
 |---|---|---|
-| **Wire shape is single SoT** (JSON-tag-driven; no manual map construction) | `TestTrackResult_OmitemptyContract`; `TestTrack_WireShape_CLIAndMCPMatch` | Surveyor #28 / #29 reviews |
-| **Atomic cap enforcement under concurrency** (caps are ceilings, never floors) | `TestInsertMessage_CapEnforcedUnderConcurrency` | Surveyor #29 round-3 review |
-| **Thread-structure precondition** (`linkP2ToP1` callers don't pass explicit `reply_to`) | `TestInsertMessagePair_LinkP2ToP1_RejectsExplicitReplyTo` | Surveyor #29 follow-up |
-| **Never silently guess between canonical-or-alias exact matches** | `TestLookupByNameWithCanonicals_ExactMatchAmbiguous_AliasCollision`; `_AliasIsAnotherCanonical`; `TestPaneAgentNameWithCanonicals_ExactMatchAmbiguous`; plus `TestLookupByNameWithCanonicals_Ambiguous` (v0.2.0 substring variant) | Surveyor v0.2.0 Q(a) + v0.2.1 |
+| **`WireShapeSingleSoT`** (JSON-tag-driven; no manual map construction) | `TestPin_WireShapeSingleSoT_OmitemptyContract`; `TestPin_WireShapeSingleSoT_CLIAndMCPByteIdentity` | Surveyor #28 / #29 reviews |
+| **`AtomicCapEnforcement`** (caps are ceilings, never floors) | `TestPin_AtomicCapEnforcement_CeilingUnderConcurrency` | Surveyor #29 round-3 review |
+| **`ThreadStructurePrecondition`** (`linkP2ToP1` callers don't pass explicit `reply_to`) | `TestPin_ThreadStructurePrecondition_RejectsExplicitReplyTo` | Surveyor #29 follow-up |
+| **`CanonicalNoSilentGuess`** (never silently guess between canonical-or-alias exact matches) | `TestPin_CanonicalNoSilentGuess_SubstringAmbiguous`; `_ExactMatchAliasCollision`; `_ExactMatchAliasIsAnotherCanonical`; `_ExactMatchPaneAgentName` | Surveyor v0.2.0 Q(a) + v0.2.1 |
 
-Proposed ADR scope (titled e.g. *Discipline pins as a test
-category*):
+ADR-0001 §Decision summary:
 
 - **Definition**: a discipline pin is a test pattern that asserts
   a **single architectural commitment**. The commitment is the
   load-bearing thing; multiple tests can implement the same
-  commitment (and frequently do — see the eight-tests-four-
-  commitments table above).
+  commitment (the table above shows the 8-to-4 mapping).
 - **Distinction from regression tests**: regression tests assert
   specific past behaviour; discipline pins assert a contract that
-  prevents a *class* of bugs (every test in the table above
-  prevents an entire class).
-- **Authoring discipline**: every pin's docstring opens with
-  `PIN: <architectural commitment>` so the commitment-to-test
-  traceability is mechanical via grep.
-- **Forward-compatibility**: the commitment-count tells you when
-  a fifth commitment surfaces (rather than "yet another test").
-  This is what makes the discipline durable across years vs. just
-  a hindsight label.
-
-The ADR is worth writing because the pattern has shown up
-unprompted across four distinct architectural commitments in two
-months. That's the threshold for naming a pattern as a discipline.
-**This ADR lives in cli-semaphore** (not Binnacle — different test
-discipline contexts).
+  prevents a *class* of bugs.
+- **Triage discipline**: pin failure is NOT automatically a fix-the-
+  code event. ADR-0001 §Triage partitions diagnosis into
+  (a) implementation regressed / (b) commitment retracted / (c) pin
+  miswrote, with strict gates on (c) to prevent silent erosion.
+- **Forward-compatibility**: the commitment-count tells you when a
+  fifth commitment surfaces (rather than "yet another test"). Adding
+  a fifth slug is a deliberate ADR amendment; CI-enforcement of the
+  register is tracked as #51.
 
 ### 4.3 Discipline-pin conventions — naming + location
 
-The ADR should pin three orthogonal grep handles:
+The conventions pinned by [ADR-0001](adr/0001-discipline-pins-as-test-category.md)
+provide **three orthogonal grep handles** for the discipline:
 
 - **Location**: in-package, in dedicated `pin_test.go` files. One
-  file per package surfaces the pinning surface at the package
-  level; grep `pin_test.go` lists the entire discipline surface
-  across the codebase. Where a commitment spans multiple files
-  (e.g. `internal/discover/canonical_ambiguity_test.go` today),
-  consolidating into `internal/discover/pin_test.go` is the
-  refactor for the ADR's first follow-up commit.
-- **Naming**: function names carry the commitment slug as
-  `TestPin_<commitment-slug>_<assertion>`. Example renames:
-  - `TestTrackResult_OmitemptyContract` →
-    `TestPin_WireShape_OmitemptyContract`
-  - `TestLookupByNameWithCanonicals_ExactMatchAmbiguous_AliasCollision` →
-    `TestPin_AliasResolution_NeverSilentlyGuess_OnCollision`
-  The `TestPin_` prefix makes mixed test files self-documenting
-  when a pin sits next to regression tests.
-- **Docstring**: opens with the line `// PIN: <one-sentence
-  architectural commitment>`. Three handles total — `pin_test.go`
-  file pattern + `TestPin_` function prefix + `// PIN:` docstring
-  prefix — orthogonal so any single one finds the discipline.
+  file per package; grep `pin_test.go` lists the entire discipline
+  surface across the codebase. Post-ADR landing: three files
+  (`cmd/claude-msg/pin_test.go`, `internal/store/pin_test.go`,
+  `internal/discover/pin_test.go`).
+- **Naming**: `TestPin_<CommitmentSlug>_<Variant>`. The `TestPin_`
+  prefix makes mixed-package test runs self-documenting when a pin
+  sits next to regression tests. The slug carries the commitment's
+  essence (Surveyor #43 sharpening): `WireShapeSingleSoT` not
+  `WireShape`; `CanonicalNoSilentGuess` not `CanonicalResolution`.
+- **Docstring + helper call**: each pin opens with `// PIN: <one-
+  sentence architectural commitment>` AND calls
+  `testpin.Triage(t, "<Slug>", "<commitment>")` as its first line.
+  The helper installs a `t.Cleanup` that emits the triage pointer
+  on failure — discipline surfaces at the failure site rather than
+  being aspirational.
+
+The helper lives at `internal/testpin/testpin.go`; the slug
+register lives in [ADR-0001 §Decision/Commitment slugs](adr/0001-discipline-pins-as-test-category.md#commitment-slugs-initial-register)
+(marker-block delimited for CI-enforcement tooling tracked as #51).
 
 ### 4.4 What's still untested
 

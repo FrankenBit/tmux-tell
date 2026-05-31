@@ -1,9 +1,10 @@
 # ADR-0001: Discipline pins as a test category
 
-> **Status**: Proposed
-> **Date**: 2026-05-31
+> **Status**: Accepted
+> **Date**: 2026-05-31 (proposed); 2026-05-31 (accepted on rename-pass landing)
 > **Authors**: Admin (author), Surveyor (by-commitment scope per
-> issue #34 comment 58662)
+> issue #34 comment 58662; structural-pass amendments per #43
+> comment 58874)
 
 ## Context
 
