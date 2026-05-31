@@ -1,11 +1,12 @@
 # ADR-0001: Discipline pins as a test category
 
 > **Status**: Accepted
-> **Date**: 2026-05-31 (proposed); 2026-05-31 (accepted on rename-pass landing); 2026-05-31 amended (OperatorInputRowGate + CapExemption slugs per #55)
+> **Date**: 2026-05-31 (proposed); 2026-05-31 (accepted on rename-pass landing); 2026-05-31 amended (OperatorInputRowGate + CapExemption slugs per #55); 2026-06-01 amended (HealthScanLatencyCeiling slug per Surveyor #42 retrospective)
 > **Authors**: Admin (author), Surveyor (by-commitment scope per
 > issue #34 comment 58662; structural-pass amendments per #43
 > comment 58874; #55 amendment carries the gate/cap-exemption
-> commitments surfaced during #52 and #53)
+> commitments surfaced during #52 and #53; HealthScanLatencyCeiling
+> slug surfaced from Surveyor's #42 retrospective comment 59249)
 
 ## Context
 
@@ -100,6 +101,21 @@ self-evident under review.
   (the "high failure rate" edge case in #53), the commitment
   retracts in favor of bounded-batching or per-kind caps. Surfaced
   during #53.
+- **`HealthScanLatencyCeiling`** — `internal/healthscan` Scan
+  completes in <100ms for the current mailman+delivery-rate
+  baseline (4 mailmen × ~500 deliveries/day each). The
+  external-source-on-demand architectural choice in #42 (read
+  journalctl + systemd rather than persistent in-process counters)
+  is correct **at this scale**; the migration trigger to persistent
+  counters is fleet growth, and growth is measurable. The pin
+  converts "we believe scans are fast enough" into a mechanical
+  check. Retraction triggers: (a) optimise the scan and keep the
+  external-source approach, (b) migrate to persistent counters per
+  the `CHANGELOG[Unreleased]` deferred-architecture flag, or
+  (c) retract the commitment entirely via superseding ADR. All
+  three are legitimate (c)-class diagnoses; raising the ceiling
+  without naming which one applies is not. Surfaced from Surveyor's
+  #42 retrospective (comment 59249).
 
 <!-- pin-slug-register-end -->
 

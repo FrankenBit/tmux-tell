@@ -22,7 +22,7 @@ change for the decision to be revisited.
 
 | #    | Title                                          | Status   | Landed |
 |------|------------------------------------------------|----------|--------|
-| 0001 | [Discipline pins as a test category](0001-discipline-pins-as-test-category.md) | Accepted (amended 2026-05-31 per #55) | 2026-05-31 |
+| 0001 | [Discipline pins as a test category](0001-discipline-pins-as-test-category.md) | Accepted (amended 2026-05-31 per #55; amended 2026-06-01 per Surveyor #42 retrospective) | 2026-05-31 |
 
 ## When to file an ADR
 

@@ -167,16 +167,18 @@ reduction (highest-leverage first):
 
 The pattern surfaced in Surveyor's #29 review and a codebase grep
 at v0.2.1 shows initially **eight pinning tests across four
-architectural commitments**. Post-#55 amendment: **eleven pinning
-tests across six architectural commitments**. The right ADR unit is
-**the commitment**, not the test — multiple tests can implement the
-same commitment; the commitment count is what tells you whether the
-discipline is earning its keep across time.
+architectural commitments**. Post-#55 amendment: eleven tests across
+six commitments. Post-Surveyor-#42-retrospective amendment (2026-06-01):
+**twelve pinning tests across seven architectural commitments**. The
+right ADR unit is **the commitment**, not the test — multiple tests
+can implement the same commitment; the commitment count is what
+tells you whether the discipline is earning its keep across time.
 
 **Ratified as [ADR-0001](adr/0001-discipline-pins-as-test-category.md)
-(2026-05-31; amended same day per #55).** The conventions described
-in §4.3 below are now the authoritative discipline; the table below
-reflects the post-rename + post-#55 landing.
+(2026-05-31; amended 2026-05-31 per #55; amended 2026-06-01 per
+Surveyor #42 retrospective adding `HealthScanLatencyCeiling`).** The
+conventions described in §4.3 below are now the authoritative
+discipline; the table below reflects the latest amendment state.
 
 | Architectural commitment | Pinning tests | Source review |
 |---|---|---|
@@ -186,6 +188,7 @@ reflects the post-rename + post-#55 landing.
 | **`CanonicalNoSilentGuess`** (never silently guess between canonical-or-alias exact matches) | `TestPin_CanonicalNoSilentGuess_SubstringAmbiguous`; `_ExactMatchAliasCollision`; `_ExactMatchAliasIsAnotherCanonical`; `_ExactMatchPaneAgentName` | Surveyor v0.2.0 Q(a) + v0.2.1 |
 | **`OperatorInputRowGate`** (gate on operator-input-row quiet, NOT pane-quiet; recipient-busy is out of scope) | `TestPin_OperatorInputRowGate_StreamingAboveInputIsIgnored`; `TestPin_OperatorInputRowGate_VerdictSurfaceIsBinary` | #52 redesign + #55 ratification |
 | **`CapExemption`** (operationally-critical signals bypass `MaxRecipientQueue` / `MaxSenderBacklog`) | `TestPin_CapExemption_NoticeBypassesRecipientCap` | #53 implementation + #55 ratification |
+| **`HealthScanLatencyCeiling`** (external-source `internal/healthscan` Scan completes in <100ms at the current mailman+delivery-rate baseline) | `TestPin_HealthScanLatencyCeiling_Under100ms` | Surveyor #42 retrospective (comment 59249) ratified 2026-06-01 |
 
 ADR-0001 §Decision summary:
 
