@@ -2,14 +2,68 @@
 
 All notable changes to cli-semaphore are recorded here. The format
 follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
-the project adheres to [Semantic Versioning](https://semver.org/) at
-the `0.x.y` cadence (minor bumps may break compatibility while we
-shake out the post-MVP shape; patch bumps are backward-compatible
-within a minor).
+the project adheres to [Semantic Versioning](https://semver.org/).
+
+Cadence (clarified per Surveyor review of v0.2.0):
+
+- **Minor bumps** (`0.1.0` → `0.2.0`) carry **feature batches**.
+  Strict semver would let backward-compatible additions ride patch
+  bumps; we lift them to minor so an operator reading the version
+  number knows "something genuinely new shipped." Minor bumps MAY
+  break compatibility while we settle the post-MVP shape; the
+  CHANGELOG entry calls out any break explicitly.
+- **Patch bumps** (`0.2.0` → `0.2.1`) carry **bug-only fixes and
+  policy corrections** — including default-behaviour changes that
+  fix a bug class (e.g. v0.2.1's fail-loud drift policy). Patch
+  bumps avoid removing or renaming existing fields/flags.
+- **`0.x.y`** signals pre-1.0 instability. See `[Unreleased]`'s
+  1.0 trigger discussion for the criteria we'd want before the
+  major bump.
 
 Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
+
+### Notes for 1.0 trigger (Surveyor review of v0.2.0)
+
+Before bumping to 1.0 we want **K=3 release stability across all
+public surfaces** — MCP tool schemas, CLI subcommand args/flags/exit
+codes, `--format json` shapes, the database schema, and the public
+Go API for `discover` / `store` / `tmuxio` packages — AND a
+deprecation policy committed (post-1.0 breaks require a deprecation
+cycle: deprecate in N.x, remove in N+1.0) AND the
+Binnacle-absorb-or-coexist decision settled. Tracked informally
+here until it becomes actionable.
+
+## [0.2.1] — 2026-05-31
+
+### Fixed
+
+- **Q(a): exact-match alias ambiguity in canonical resolution.** The
+  Pass-1 exact-match logic in
+  `discover.Walker.{LookupByName,PaneAgentName}WithCanonicals`
+  walked canonicals in slice order and returned the first hit. When
+  two canonicals shared an alias (or one canonical's name was
+  another's alias), the resolver silently picked by slice order
+  instead of flagging ambiguous. New `exactMatches` helper collects
+  ALL canonical matches; >1 returns ambiguous=true.
+- **Q(a): registration-time alias collision rejection.** New
+  `store.ErrAliasCollision`. `SetAliases` / `AddAlias` now reject
+  cross-canonical collisions at registration time (an alias already
+  claimed as another agent's name OR as another agent's alias). The
+  `semaphore.register` MCP handler surfaces the error verbatim so
+  the operator knows immediately. Self-rebind (re-adding the agent's
+  own alias) stays idempotent.
+
+### Changed
+
+- **Q(b): drift-ambiguous + drift-unrecoverable now MarkFailed by
+  default.** Previously these paths logged WARN and delivered to the
+  drifted (or ambiguous) pane — re-creating the silent-bad-delivery
+  class for autonomous receivers (the 2026-05-31 misdelivery
+  scenario). v0.2.1 changes the default: MarkFailed surfaces the
+  issue immediately to the sender. New `--drift-soft-fail` flag
+  preserves the pre-v0.2.1 behaviour for ops that need it.
 
 ## [0.2.0] — 2026-05-31
 
@@ -125,6 +179,7 @@ condensed — see git log for full audit.
   the existing recovery only fires on "can't find pane" errors.
   Tracked as #37.
 
-[Unreleased]: https://git.frankenbit.de/frankenbit/cli-semaphore/compare/v0.2.0...main
+[Unreleased]: https://git.frankenbit.de/frankenbit/cli-semaphore/compare/v0.2.1...main
+[0.2.1]: https://git.frankenbit.de/frankenbit/cli-semaphore/releases/tag/v0.2.1
 [0.2.0]: https://git.frankenbit.de/frankenbit/cli-semaphore/releases/tag/v0.2.0
 [0.1.0]: https://git.frankenbit.de/frankenbit/cli-semaphore/releases/tag/v0.1.0

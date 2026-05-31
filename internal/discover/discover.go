@@ -163,24 +163,38 @@ func (w *Walker) LookupByNameWithCanonicals(ctx context.Context, name string, ca
 	if err != nil {
 		return "", false, err
 	}
-	// Pass 1: exact match (canonical or alias) for the requested name.
+	// Pass 1: exact match (canonical name or any alias). Surveyor
+	// review of v0.2.0 — Q(a) — flagged that collecting only the
+	// first hit was wrong because two canonicals can both exact-match
+	// the same running value (e.g. canonical "admin" has alias
+	// "claude" AND canonical "pilot" has alias "claude"). The
+	// registration-time check in store.AddAlias should prevent that
+	// from ever being stored, but defence-in-depth: ambiguous=true
+	// even on exact matches when >1 canonical claims the running name.
 	for _, r := range all {
-		if matchesExact(r.AgentName, name, canonicalAliases(canonicals, name)) {
-			return r.PaneID, false, nil
+		matched := exactMatches(r.AgentName, canonicals)
+		switch len(matched) {
+		case 0:
+			continue
+		case 1:
+			if matched[0] == name {
+				return r.PaneID, false, nil
+			}
+			// Exact match exists, just not for the requested name.
+			// Keep scanning — maybe a later pane matches `name`.
+		default:
+			// >1 canonical exact-matches this running value. We can't
+			// decide; the caller should log + bail.
+			return "", true, nil
 		}
 	}
-	// Pass 2: substring match. We need to detect ambiguity across
-	// canonicals — two canonicals both substring-matching the same
-	// running value means we can't decide.
+	// Pass 2: substring match across canonicals. Same ambiguity rule.
 	for _, r := range all {
 		matched := substringMatches(r.AgentName, canonicals)
 		if len(matched) == 0 {
 			continue
 		}
 		if len(matched) > 1 {
-			// Ambiguous — multiple canonicals both substring-match
-			// this running value. Don't guess; let the caller log
-			// discover_ambiguous and either skip or fall through.
 			return "", true, nil
 		}
 		if matched[0] == name {
@@ -209,23 +223,23 @@ func (w *Walker) PaneAgentNameWithCanonicals(ctx context.Context, paneID string,
 		if r.PaneID != paneID {
 			continue
 		}
-		// Exact match wins, regardless of how many canonicals also
-		// substring-match (an exact match is unambiguous).
-		for _, c := range canonicals {
-			if r.AgentName == c.Name {
-				return c.Name, false, nil
-			}
-			for _, alias := range c.Aliases {
-				if r.AgentName == alias {
-					return c.Name, false, nil
-				}
-			}
+		// Exact match (canonical name or alias). Q(a) fix: collect
+		// ALL canonicals that exact-match, not just the first. If >1,
+		// caller bails rather than picking by slice order.
+		matched := exactMatches(r.AgentName, canonicals)
+		switch len(matched) {
+		case 1:
+			return matched[0], false, nil
+		case 0:
+			// Fall through to substring.
+		default:
+			return "", true, nil
 		}
-		matched := substringMatches(r.AgentName, canonicals)
+		matched = substringMatches(r.AgentName, canonicals)
 		switch len(matched) {
 		case 0:
 			// No canonical claims this — preserve the raw --resume
-			// value so callers that don't track canonicals (e.g.
+			// value so callers without a canonical registry (e.g.
 			// tests) still get something usable.
 			return r.AgentName, false, nil
 		case 1:
@@ -235,6 +249,26 @@ func (w *Walker) PaneAgentNameWithCanonicals(ctx context.Context, paneID string,
 		}
 	}
 	return "", false, nil
+}
+
+// exactMatches returns every canonical whose name OR any alias is
+// exactly `running`. Length is the ambiguity signal: 0 = no match,
+// 1 = unambiguous, >1 = ambiguous (Q(a) Surveyor review).
+func exactMatches(running string, canonicals []CanonicalAgent) []string {
+	var out []string
+	for _, c := range canonicals {
+		if c.Name == running {
+			out = append(out, c.Name)
+			continue
+		}
+		for _, alias := range c.Aliases {
+			if alias == running {
+				out = append(out, c.Name)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func matchesExact(running, name string, aliases []string) bool {

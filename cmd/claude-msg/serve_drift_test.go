@@ -240,11 +240,87 @@ func TestServe_SilentDriftDetectionAtDelivery(t *testing.T) {
 	}
 }
 
-// TestServe_DriftDetectedButUnrecoverable: registered pane is drifted
-// AND LookupByName can't find the agent anywhere (e.g. the operator
-// quit that session). The mailman logs a WARN and falls through to
-// the existing delivery + auto-heal paths.
-func TestServe_DriftDetectedButUnrecoverable(t *testing.T) {
+// TestServe_DriftUnrecoverable_FailLoud (v0.2.1 default): when drift
+// is detected but the agent can't be relocated, MarkFailed rather
+// than delivering to the wrong pane. The 2026-05-31 misdelivery
+// class (silent-bad-delivery to wrong agent) MUST surface to the
+// sender for autonomous receivers — Surveyor Q(b) review.
+func TestServe_DriftUnrecoverable_FailLoud(t *testing.T) {
+	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		// %4 runs Pilot; surveyor isn't running anywhere.
+		return []byte("%4\t400\t✳ Pilot\tclaude\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+	walker := &discover.Walker{
+		CmdlineReader: func(pid int) (string, error) {
+			if pid == 400 {
+				return "claude\x00--resume\x00Pilot\x00", nil
+			}
+			return "", errors.New("no fake")
+		},
+		ChildrenReader: func(int) []int { return nil },
+		MaxDepth:       1,
+	}
+
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "surveyor", "%4")
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "surveyor", Body: "hi",
+	})
+
+	opts := fastOpts("surveyor")
+	opts.DriftCheckDisabled = false
+	opts.DriftSoftFail = false // ← v0.2.1 default; fail-loud
+	opts.Walker = walker
+
+	stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		f, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+		})
+		if len(f) >= 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	failed, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+	})
+	if len(failed) != 1 {
+		t.Errorf("failed = %d, want 1; log=%s", len(failed), logbuf.String())
+	}
+	delivered, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "surveyor", State: store.StateDelivered, Limit: 10,
+	})
+	if len(delivered) != 0 {
+		t.Errorf("delivered = %d, want 0 (fail-loud should NOT deliver to wrong pane)",
+			len(delivered))
+	}
+	if !strings.Contains(logbuf.String(), "drift_detected_unrecoverable") {
+		t.Errorf("expected drift_detected_unrecoverable log; got %s", logbuf.String())
+	}
+	if len(failed) > 0 && !strings.Contains(failed[0].Error.String, "drift_detected_unrecoverable") {
+		t.Errorf("failed reason should name the drift class; got %q", failed[0].Error.String)
+	}
+}
+
+// TestServe_DriftUnrecoverable_SoftFailEscapeHatch: with --drift-soft-fail
+// the pre-v0.2.1 behaviour is preserved — log WARN and deliver to the
+// drifted pane.
+func TestServe_DriftUnrecoverable_SoftFailEscapeHatch(t *testing.T) {
 	// Live pane %4 runs Pilot; surveyor isn't running anywhere.
 	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
 		return []byte("%4\t400\t✳ Pilot\tclaude\n"), nil
@@ -291,13 +367,14 @@ func TestServe_DriftDetectedButUnrecoverable(t *testing.T) {
 
 	opts := fastOpts("surveyor")
 	opts.DriftCheckDisabled = false
+	opts.DriftSoftFail = true // ← escape hatch
 	opts.Walker = walker
 
 	stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		// Either delivered (verified or unverified) is fine — the
-		// point is we don't crash.
+		// point is we don't crash AND we don't fail-mark.
 		all, _ := s.ListMessages(ctx, store.ListFilter{
 			ToAgent: "surveyor", Limit: 10,
 		})
@@ -320,5 +397,11 @@ func TestServe_DriftDetectedButUnrecoverable(t *testing.T) {
 
 	if !strings.Contains(logbuf.String(), "drift_detected_unrecoverable") {
 		t.Errorf("expected drift_detected_unrecoverable WARN log; got %s", logbuf.String())
+	}
+	failed, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+	})
+	if len(failed) != 0 {
+		t.Errorf("soft-fail should NOT MarkFailed; got %d failed", len(failed))
 	}
 }

@@ -129,9 +129,21 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	return out, rows.Err()
 }
 
+// ErrAliasCollision is returned by SetAliases/AddAlias when the
+// requested alias is already claimed by another canonical agent (as
+// that agent's name or as one of its aliases). Surveyor #38-Q(a)
+// review: catch collisions at registration time so the resolver
+// never has to choose between two canonicals at delivery time.
+var ErrAliasCollision = errors.New("store: alias collides with an existing canonical agent")
+
 // SetAliases replaces the alias list for an agent. Empty slice removes
-// all aliases. Returns ErrNotFound if no agent with that name exists.
+// all aliases. Returns ErrNotFound if no agent with that name exists,
+// or ErrAliasCollision if any requested alias is already claimed by
+// another agent.
 func (s *Store) SetAliases(ctx context.Context, name string, aliases []string) error {
+	if err := s.checkAliasCollisions(ctx, name, aliases); err != nil {
+		return err
+	}
 	encoded, err := encodeAliases(aliases)
 	if err != nil {
 		return err
@@ -152,7 +164,9 @@ func (s *Store) SetAliases(ctx context.Context, name string, aliases []string) e
 }
 
 // AddAlias appends an alias to the agent's list (idempotent — duplicate
-// aliases are silently ignored). Returns ErrNotFound for missing agents.
+// aliases on the SAME agent are silently ignored). Returns ErrNotFound
+// for missing agents, ErrAliasCollision if another canonical agent
+// already claims the alias.
 func (s *Store) AddAlias(ctx context.Context, name, alias string) error {
 	a, err := s.GetAgent(ctx, name)
 	if err != nil {
@@ -164,6 +178,38 @@ func (s *Store) AddAlias(ctx context.Context, name, alias string) error {
 		}
 	}
 	return s.SetAliases(ctx, name, append(a.Aliases, alias))
+}
+
+// checkAliasCollisions returns ErrAliasCollision if any of `aliases`
+// collides with another agent's canonical name OR with one of another
+// agent's aliases. Self-collisions (the agent's own name/aliases) are
+// allowed — that's just rebinding.
+func (s *Store) checkAliasCollisions(ctx context.Context, name string, aliases []string) error {
+	if len(aliases) == 0 {
+		return nil
+	}
+	all, err := s.ListAgents(ctx)
+	if err != nil {
+		return err
+	}
+	for _, candidate := range aliases {
+		for _, other := range all {
+			if other.Name == name {
+				continue // self
+			}
+			if other.Name == candidate {
+				return fmt.Errorf("%w: alias %q is the canonical name of agent %q",
+					ErrAliasCollision, candidate, other.Name)
+			}
+			for _, otherAlias := range other.Aliases {
+				if otherAlias == candidate {
+					return fmt.Errorf("%w: alias %q is already an alias of agent %q",
+						ErrAliasCollision, candidate, other.Name)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func decodeAliases(raw string) []string {

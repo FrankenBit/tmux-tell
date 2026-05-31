@@ -545,3 +545,41 @@ func TestListAgents_IncludesAliases(t *testing.T) {
 		t.Errorf("bosun not in list")
 	}
 }
+
+func TestAddAlias_RejectsCrossCanonicalCollision(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "admin", "%5")
+	_ = s.UpsertAgent(ctx, "pilot", "%4")
+
+	// pilot tries to claim "Alcatraz Infra Admin" — but that's a
+	// fine non-collision starting point.
+	if err := s.AddAlias(ctx, "admin", "Alcatraz Infra Admin"); err != nil {
+		t.Fatalf("admin's own alias: %v", err)
+	}
+
+	// Now pilot tries to add "Alcatraz Infra Admin" as its alias.
+	err := s.AddAlias(ctx, "pilot", "Alcatraz Infra Admin")
+	if !errors.Is(err, ErrAliasCollision) {
+		t.Errorf("want ErrAliasCollision, got %v", err)
+	}
+
+	// And pilot tries to use admin's canonical name as an alias.
+	err = s.AddAlias(ctx, "pilot", "admin")
+	if !errors.Is(err, ErrAliasCollision) {
+		t.Errorf("want ErrAliasCollision (canonical name as alias), got %v", err)
+	}
+}
+
+func TestAddAlias_SelfRebindIsFine(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "admin", "%5")
+	if err := s.AddAlias(ctx, "admin", "Admin"); err != nil {
+		t.Fatalf("first add: %v", err)
+	}
+	// Re-adding the same alias is idempotent (not a collision).
+	if err := s.AddAlias(ctx, "admin", "Admin"); err != nil {
+		t.Errorf("re-adding own alias should not collide: %v", err)
+	}
+}

@@ -47,6 +47,14 @@ type serveOpts struct {
 	// ListPanesWithPID + /proc readers should set this to true so the
 	// check doesn't hit real system state non-deterministically.
 	DriftCheckDisabled bool
+	// DriftSoftFail keeps the pre-v0.2.1 behaviour where ambiguous
+	// and unrecoverable drift cases log WARN and deliver to the
+	// drifted (or ambiguous) pane. Surveyor Q(b) review of v0.2.0:
+	// silent-bad-delivery cascades on autonomous-Pilot receivers
+	// ("merge PR #X" landing on the wrong agent is real damage), so
+	// the new default is MarkFailed. Operators with operator-watched
+	// panes who prefer the old behaviour set this true.
+	DriftSoftFail bool
 	// Walker resolves pane-id drift via the shared discover package. When
 	// nil, runServeWithStore constructs a discover.New() — tests can inject
 	// a fake walker that doesn't touch real tmux/proc.
@@ -82,6 +90,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"total cap on the pre-delivery quiet wait; on cap we deliver anyway with a WARN log")
 	quietDisabled := fs.Bool("quiet-disabled", false,
 		"bypass the probe-and-watch gate (delivery happens immediately on every queue head)")
+	driftSoftFail := fs.Bool("drift-soft-fail", false,
+		"when pre-delivery drift detection hits ambiguous or unrecoverable, log WARN and deliver to the (potentially wrong) pane instead of marking the message failed. Default off — fail-loud is safer for autonomous receivers")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -119,6 +129,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 			MaxWait:              *quietMaxWait,
 		},
 		QuietDisabled: *quietDisabled,
+		DriftSoftFail: *driftSoftFail,
 	}, logger, stdout, stderr)
 }
 
@@ -252,12 +263,17 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			}
 			canonicals := buildCanonicals(opCtx, s)
 			running, ambiguous, err := walker.PaneAgentNameWithCanonicals(opCtx, paneForDelivery, canonicals)
+			driftFailReason := ""
 			switch {
 			case err != nil:
 				// Soft fail: log and proceed with the registered pane.
+				// Errors from /proc reads or tmux list-panes are
+				// system-level, not policy-level; don't punish the
+				// message for an environmental hiccup.
 				logger.Printf("drift_check_err id=%s err=%v", msg.PublicID, err)
 			case ambiguous:
-				logger.Printf("WARN drift_check_ambiguous id=%s agent=%s registered_pane=%s — multiple canonicals substring-match the running --resume value; not rerouting",
+				driftFailReason = "drift_check_ambiguous"
+				logger.Printf("WARN drift_check_ambiguous id=%s agent=%s registered_pane=%s — multiple canonicals exact-or-substring-match the running --resume value",
 					msg.PublicID, opts.Agent, paneForDelivery)
 			case running != "" && running != opts.Agent:
 				newPane, lambig, lerr := walker.LookupByNameWithCanonicals(opCtx, opts.Agent, canonicals)
@@ -265,7 +281,8 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				case lerr != nil:
 					logger.Printf("drift_lookup_err id=%s err=%v", msg.PublicID, lerr)
 				case lambig:
-					logger.Printf("WARN drift_lookup_ambiguous id=%s agent=%s — multiple canonicals substring-match a candidate pane",
+					driftFailReason = "drift_lookup_ambiguous"
+					logger.Printf("WARN drift_lookup_ambiguous id=%s agent=%s — multiple canonicals match a candidate pane",
 						msg.PublicID, opts.Agent)
 				case newPane != "" && newPane != paneForDelivery:
 					logger.Printf("drift_detected id=%s agent=%s registered_pane=%s runs=%s — rediscovered=%s",
@@ -276,9 +293,26 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 						paneForDelivery = newPane
 					}
 				default:
-					logger.Printf("WARN drift_detected_unrecoverable id=%s agent=%s registered_pane=%s runs=%s — discover couldn't find %s anywhere; delivering to drifted pane",
+					driftFailReason = "drift_detected_unrecoverable"
+					logger.Printf("WARN drift_detected_unrecoverable id=%s agent=%s registered_pane=%s runs=%s — discover couldn't find %s anywhere",
 						msg.PublicID, opts.Agent, paneForDelivery, running, opts.Agent)
 				}
+			}
+			if driftFailReason != "" && !opts.DriftSoftFail {
+				// Fail-loud default (Surveyor Q(b) review): silent
+				// delivery to the wrong agent cascades on autonomous
+				// receivers. MarkFailed surfaces the issue to the
+				// sender (and to operator monitoring) immediately.
+				// Operators who prefer the soft-fail behaviour set
+				// --drift-soft-fail.
+				reason := driftFailReason + ": delivery aborted under fail-loud default; set --drift-soft-fail to deliver-anyway"
+				if mferr := s.MarkFailed(opCtx, msg.PublicID, reason); mferr != nil {
+					logger.Printf("mark_failed_err id=%s err=%v", msg.PublicID, mferr)
+				}
+				if stopOrSleep(stopCtx, opts.InterMessageDelay) {
+					return exitOK
+				}
+				continue
 			}
 		}
 

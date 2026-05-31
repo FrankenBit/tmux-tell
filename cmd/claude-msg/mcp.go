@@ -456,10 +456,14 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 
-		// Optional alias append. AddAlias is idempotent — same alias
-		// twice is a no-op rather than an error.
+		// Optional alias append. AddAlias is idempotent on same-agent
+		// duplicates, but rejects cross-canonical collisions with
+		// ErrAliasCollision (Surveyor Q(a) review of v0.2.0).
 		if in.Alias != "" {
 			if err := s.AddAlias(ctx, in.Name, in.Alias); err != nil {
+				if errors.Is(err, store.ErrAliasCollision) {
+					return nil, fmt.Errorf("alias %q rejected: %w", in.Alias, err)
+				}
 				return nil, fmt.Errorf("add alias: %w", err)
 			}
 		}
