@@ -1,11 +1,15 @@
 # Trust boundaries + threat model
 
-> **Status: DRAFT.** Section 1 (boundary map) and Section 5 (open
-> questions) authored by Admin; Sections 2-4 marked `_(Surveyor
-> pass)_` await structural review per the lead/verify split in bus
-> message id 8117. Surveyor's three rounds of cross-project review
-> (commits `20d7c33`, `5178a81`, `3e16ba2`, `4c6171f`) carry most of
-> the structural framing this doc makes explicit.
+> **Status: DRAFT.** Structural review by Surveyor complete
+> (issue #35, comment 58666); this version applies the S1-S5 reshape
+> proposals + the two sweep findings. Promoted out of DRAFT when
+> #35 closes.
+>
+> Surveyor's three cross-project review rounds (the original
+> #28/#29/#30/#31 series on the message bus, plus the v0.2.1
+> Q(a)/Q(b) pass) carry most of the structural framing this doc
+> makes explicit; the response commits — `20d7c33`, `5178a81`,
+> `3e16ba2`, `4c6171f` — are the durable artifacts of those rounds.
 
 ## TL;DR — the trust model in one paragraph
 
@@ -129,8 +133,6 @@ Mapped against the code as of v0.2.1.
 
 ## 2. Threat model
 
-_(Surveyor pass)_
-
 Explicit framing of the assumed adversary surface for the
 single-operator homelab deployment on alcatraz.
 
@@ -181,12 +183,18 @@ single-operator homelab deployment on alcatraz.
 
 ## 3. Load-bearing assumptions
 
-_(Surveyor pass)_
-
 For each design choice that's safe ONLY under the single-operator
-homelab trust model, name it explicitly. Surveyor's per-commit
-reviews are the audit trail; this section makes them load-bearing
+homelab trust model, name it explicitly. Surveyor's cross-project
+review threads (on the message bus) plus Admin's response commits
+cited in §6 are the audit trail; this section makes them load-bearing
 in one place.
+
+> **Closed register as of v0.2.1.** The five entries below are the
+> complete set of load-bearing assumptions, not a sampling. Adding a
+> sixth requires a new §3.N subsection AND a cross-reference from §1's
+> relevant boundary diagram (in the same PR). PRs that touch
+> trust-boundary code must update §3 if they introduce a new
+> load-bearing assumption.
 
 ### 3.1 Whitelist source-code edits as the only control-command boundary (#24, #25, #28)
 
@@ -202,6 +210,13 @@ in one place.
   change.
 
 ### 3.2 `$TMUX_PANE` → registry as identity (#27)
+
+> **This is the load-bearing assumption that the rest of §3 implicitly
+> composes on top of.** Removing the homelab trust model means
+> replacing this assumption; the other four §3 entries either depend
+> on it (3.1, 3.4) or coexist independently (3.3, 3.5) but become
+> qualitatively different in the new identity model. §1.2, §2.3, and
+> §4 all single this out — §3.2 is where the dependency tree is named.
 
 - **Code**: `internal/identity/identity.go` — `Resolve` function.
 - **Trusted**: tmux + the operator-managed registry. Spoofable by
@@ -255,32 +270,58 @@ in one place.
 
 ## 4. What would change for non-homelab deployment
 
-_(Surveyor pass)_
-
 Concrete checklist if someone wanted to deploy beyond single-
 operator. NOT a roadmap — a scoping aid so the cost of widening
 the trust model is honest.
 
+**Sizing scale**: **Small** ≈ single PR; **Moderate** ≈ one
+milestone; **Substantial** ≈ one phase / major version; **Large** ≈
+multi-version effort. Sizes are intentionally cadence-relative so
+adopters can map them to their own project's release rhythm.
+
+The split below tells the architecture of widening, not just the
+cost. §4.1 entries gate the others — without authentication and the
+identity surface around it, nothing in §4.2 is meaningful. §4.2
+entries can land in any order, independently.
+
+### 4.1 Foundational (gate the others)
+
+These three compose into "agent identity is real". They need to
+land together or in close sequence; nothing in §4.2 is meaningful
+without them.
+
 | Domain                     | Today (homelab)                                                       | For non-homelab                                                                    | Sizing      |
 |----------------------------|-----------------------------------------------------------------------|------------------------------------------------------------------------------------|-------------|
 | Authentication             | `$TMUX_PANE` → registry                                               | Per-agent identity token (secret, mTLS, or signed JWT)                             | Substantial |
+| Sender identity guarantee  | `$TMUX_PANE` (trivially spoofable with shell)                         | Cryptographic binding between Claude session and identity token                    | Large       |
 | Authorization              | Binary self/peer scope on whitelist                                   | Per-tool capability ACLs ("agent X may call semaphore.control on agent Y")         | Substantial |
+
+### 4.2 Independent (can land separately)
+
+These don't gate one another and don't gate §4.1. Any subset can
+land before, after, or alongside the foundational pass.
+
+| Domain                     | Today (homelab)                                                       | For non-homelab                                                                    | Sizing      |
+|----------------------------|-----------------------------------------------------------------------|------------------------------------------------------------------------------------|-------------|
 | Auditing                   | journalctl                                                            | Structured audit log with tamper-evidence (append-only + signed)                   | Moderate    |
 | Rate limiting              | Per-call slot caps (5/2)                                              | Per-sender frequency caps + sliding-window limits                                  | Small       |
 | MCP tool scope             | "If you can call MCP, you can call any tool"                          | Per-tool ACLs at the MCP boundary                                                  | Moderate    |
 | Body content policy        | None                                                                  | MIME / pattern allowlist; per-recipient size limits                                | Moderate    |
 | Whitelist provenance       | Source-code edits                                                     | Signed policy file with operator-grant ceremony                                    | Moderate    |
-| Sender identity guarantee  | `$TMUX_PANE` (trivially spoofable with shell)                         | Cryptographic binding between Claude session and identity token                    | Large       |
 | Cross-host deployment      | Single tmux server, local SQLite                                      | Networked store + per-host mailmen + multi-host pane addressing                    | Large       |
 
-The single change that unlocks "use cli-semaphore beyond
-single-operator homelab" is #1 (authentication). Everything else
-either depends on it or is comparatively shallow.
+Authentication is the gate within §4.1; sender-identity guarantee
+and authorization are sized to land alongside it but lack meaning
+without it. Cross-host deployment in §4.2 technically composes on
+top of authentication but doesn't gate anything else, so it sits in
+the independent table to keep §4.1 minimal.
 
 ## 5. Open questions for future review
 
-Things that aren't urgent for v0.2.1 but should be on someone's
-radar:
+These are **watched but not actively tracked** — file a Forgejo
+issue if any becomes operationally relevant. Recording them here
+keeps the implicit-TODO ambiguity out of §1-§4 (which IS load-bearing
+and gets updated in lockstep with code).
 
 - **Control whitelist text-vs-sentinel ambiguity.** The
   `mcp-restart-semaphore` macro resolves to text
