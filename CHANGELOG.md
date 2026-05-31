@@ -11,6 +11,36 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Added
+
+- `--version` flag on `claude-msg` (with `-v` / `version` aliases).
+  Built-time stamping via `-ldflags` from `git describe`. Bare
+  `go build` reports `dev`.
+- Pre-delivery silent-drift detection (#37). The mailman now reads
+  the registered pane's `--resume` argument before delivery; if it
+  doesn't match the expected agent, runs discover to find where the
+  agent moved to, updates the registry, and retries on the new pane.
+  Closes the silent-misdelivery gap surfaced 2026-05-31.
+- Discover canonical-name + alias resolution (#38). `agents` table
+  gains an `aliases` column. `semaphore.register` accepts an optional
+  `alias` field. Resolution order: exact canonical → exact alias →
+  case-insensitive substring fallback. Ambiguous matches are logged
+  rather than guessed.
+- `store.SetAliases` / `store.AddAlias` (idempotent).
+- `discover.Walker.PaneAgentName` (raw, no canonicals).
+- `discover.Walker.LookupByNameWithCanonicals` and
+  `PaneAgentNameWithCanonicals` for canonical-aware lookup.
+
+### Changed
+
+- The mailman serve loop now opts into the silent-drift guard via
+  `serveOpts.DriftCheckDisabled` (default off in production, set
+  true by tests that don't fake `ListPanesWithPID`).
+- Probes are now backspaced on `DeltaTUINoise` so they don't
+  accumulate in the input box during long agent-busy stretches
+  (cd969ea — was visible to operator as "probe creep").
+
+
 ## [0.1.0] — 2026-05-31
 
 Initial tagged release. The repository contains the full MVP plus

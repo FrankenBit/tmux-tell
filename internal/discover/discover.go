@@ -118,6 +118,14 @@ func (w *Walker) WalkAll(ctx context.Context) ([]Resolved, error) {
 	return out, nil
 }
 
+// CanonicalAgent is one canonical (registered) agent name plus its
+// alias list. Callers supply a slice of these to LookupByName /
+// PaneAgentName when they want canonical-name resolution per #38.
+type CanonicalAgent struct {
+	Name    string
+	Aliases []string
+}
+
 // LookupByName returns the current pane id for an agent, or "" if no
 // pane matches. Used by the mailman's auto-heal path.
 func (w *Walker) LookupByName(ctx context.Context, name string) (string, error) {
@@ -131,6 +139,134 @@ func (w *Walker) LookupByName(ctx context.Context, name string) (string, error) 
 		}
 	}
 	return "", nil
+}
+
+// LookupByNameWithCanonicals finds a pane running the requested
+// canonical agent. Matching is:
+//
+//  1. Exact match on the canonical name.
+//  2. Exact match on any of the agent's aliases.
+//  3. Case-insensitive substring match: any canonical name appears
+//     in the running --resume value (e.g. `bosun` ↔ `Master Bosun
+//     of Nimbus`). Returns ambiguous=true if two canonicals both
+//     substring-match the same pane.
+//
+// `canonicals` is typically the result of `store.ListAgents` filtered
+// to just (Name, Aliases). The caller passes this so the discover
+// package stays storage-agnostic.
+//
+// Returns paneID, ambiguous, error. ambiguous=true with paneID="" tells
+// the caller "we found a pane but it could be more than one canonical;
+// skip rather than guess."
+func (w *Walker) LookupByNameWithCanonicals(ctx context.Context, name string, canonicals []CanonicalAgent) (string, bool, error) {
+	all, err := w.WalkAll(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	// Pass 1: exact match (canonical or alias) for the requested name.
+	for _, r := range all {
+		if matchesExact(r.AgentName, name, canonicalAliases(canonicals, name)) {
+			return r.PaneID, false, nil
+		}
+	}
+	// Pass 2: substring match. We need to detect ambiguity across
+	// canonicals — two canonicals both substring-matching the same
+	// running value means we can't decide.
+	for _, r := range all {
+		matched := substringMatches(r.AgentName, canonicals)
+		if len(matched) == 0 {
+			continue
+		}
+		if len(matched) > 1 {
+			// Ambiguous — multiple canonicals both substring-match
+			// this running value. Don't guess; let the caller log
+			// discover_ambiguous and either skip or fall through.
+			return "", true, nil
+		}
+		if matched[0] == name {
+			return r.PaneID, false, nil
+		}
+	}
+	return "", false, nil
+}
+
+// PaneAgentNameWithCanonicals is like PaneAgentName but resolves the
+// running pane's --resume value back to a canonical name via the
+// supplied canonicals. Used by the mailman's silent-drift check so
+// `bosun` matches a pane running `claude --resume "Master Bosun of
+// Nimbus"`.
+//
+// Returns the canonical name, ambiguous, error. Falls back to the
+// raw --resume value when no canonical matches — preserves the
+// existing PaneAgentName behaviour for callers that don't have
+// canonical data.
+func (w *Walker) PaneAgentNameWithCanonicals(ctx context.Context, paneID string, canonicals []CanonicalAgent) (string, bool, error) {
+	all, err := w.WalkAll(ctx)
+	if err != nil {
+		return "", false, err
+	}
+	for _, r := range all {
+		if r.PaneID != paneID {
+			continue
+		}
+		// Exact match wins, regardless of how many canonicals also
+		// substring-match (an exact match is unambiguous).
+		for _, c := range canonicals {
+			if r.AgentName == c.Name {
+				return c.Name, false, nil
+			}
+			for _, alias := range c.Aliases {
+				if r.AgentName == alias {
+					return c.Name, false, nil
+				}
+			}
+		}
+		matched := substringMatches(r.AgentName, canonicals)
+		switch len(matched) {
+		case 0:
+			// No canonical claims this — preserve the raw --resume
+			// value so callers that don't track canonicals (e.g.
+			// tests) still get something usable.
+			return r.AgentName, false, nil
+		case 1:
+			return matched[0], false, nil
+		default:
+			return "", true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func matchesExact(running, name string, aliases []string) bool {
+	if running == name {
+		return true
+	}
+	for _, a := range aliases {
+		if running == a {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalAliases(canonicals []CanonicalAgent, name string) []string {
+	for _, c := range canonicals {
+		if c.Name == name {
+			return c.Aliases
+		}
+	}
+	return nil
+}
+
+func substringMatches(running string, canonicals []CanonicalAgent) []string {
+	low := strings.ToLower(running)
+	var out []string
+	for _, c := range canonicals {
+		if strings.Contains(low, strings.ToLower(c.Name)) {
+			out = append(out, c.Name)
+		}
+	}
+	return out
 }
 
 // PaneAgentName returns the agent name running in the given pane, or

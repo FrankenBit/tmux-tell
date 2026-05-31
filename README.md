@@ -406,6 +406,42 @@ CI runs `go vet`, `go build`, and `go test -count=1` (without `-race`)
 race detector requires. Local runs catch data races; CI catches the
 rest. Push with `-race` clean.
 
+### Canonical names and aliases (post-restart resilience)
+
+The bus addresses agents by **canonical** short name: `bosun`, `surveyor`,
+`pilot`, `admin`. The discover walker, however, extracts the agent
+name from `claude --resume <name>` in the process tree — so a session
+launched with `claude --resume "Master Bosun of Nimbus"` produces a
+running name that doesn't match canonical `bosun`.
+
+Without help, this fails twice:
+
+1. After a tmux restore (or any restart that renumbers pane ids),
+   `claude-msg discover` would create new agent rows for the long
+   names instead of remapping the canonical short names.
+2. The mailman's auto-heal can't find `bosun` because the only
+   matching pane runs `Master Bosun of Nimbus`.
+
+**Solution: register an alias.**
+
+```text
+# from the bosun pane (MCP):
+semaphore.register name=bosun alias='Master Bosun of Nimbus'
+
+# from a shell (CLI; identity already resolved):
+claude-msg control ...  # alias support via register is MCP-only today
+```
+
+After this, discover and the mailman's drift check both resolve
+`Master Bosun of Nimbus` back to canonical `bosun`. Multiple aliases
+per canonical are supported (append-only via `AddAlias` in the store).
+
+If two canonicals both substring-match the same running value
+(`admin` and `pilot` both appearing in `--resume "admin pilot test"`),
+the resolver returns ambiguous and the mailman logs
+`drift_check_ambiguous` rather than guess. Add an explicit alias on
+the agent you actually meant.
+
 ## Roadmap
 
 Tracked in the epic + milestone sub-issues — see the [Issues tab](../../issues).

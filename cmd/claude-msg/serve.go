@@ -250,9 +250,24 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if walker == nil {
 				walker = discover.New()
 			}
-			if running, err := walker.PaneAgentName(opCtx, paneForDelivery); err == nil && running != "" && running != opts.Agent {
-				newPane, lerr := walker.LookupByName(opCtx, opts.Agent)
-				if lerr == nil && newPane != "" && newPane != paneForDelivery {
+			canonicals := buildCanonicals(opCtx, s)
+			running, ambiguous, err := walker.PaneAgentNameWithCanonicals(opCtx, paneForDelivery, canonicals)
+			switch {
+			case err != nil:
+				// Soft fail: log and proceed with the registered pane.
+				logger.Printf("drift_check_err id=%s err=%v", msg.PublicID, err)
+			case ambiguous:
+				logger.Printf("WARN drift_check_ambiguous id=%s agent=%s registered_pane=%s — multiple canonicals substring-match the running --resume value; not rerouting",
+					msg.PublicID, opts.Agent, paneForDelivery)
+			case running != "" && running != opts.Agent:
+				newPane, lambig, lerr := walker.LookupByNameWithCanonicals(opCtx, opts.Agent, canonicals)
+				switch {
+				case lerr != nil:
+					logger.Printf("drift_lookup_err id=%s err=%v", msg.PublicID, lerr)
+				case lambig:
+					logger.Printf("WARN drift_lookup_ambiguous id=%s agent=%s — multiple canonicals substring-match a candidate pane",
+						msg.PublicID, opts.Agent)
+				case newPane != "" && newPane != paneForDelivery:
 					logger.Printf("drift_detected id=%s agent=%s registered_pane=%s runs=%s — rediscovered=%s",
 						msg.PublicID, opts.Agent, paneForDelivery, running, newPane)
 					if uerr := s.UpsertAgent(opCtx, opts.Agent, newPane); uerr != nil {
@@ -260,7 +275,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					} else {
 						paneForDelivery = newPane
 					}
-				} else {
+				default:
 					logger.Printf("WARN drift_detected_unrecoverable id=%s agent=%s registered_pane=%s runs=%s — discover couldn't find %s anywhere; delivering to drifted pane",
 						msg.PublicID, opts.Agent, paneForDelivery, running, opts.Agent)
 				}
@@ -387,6 +402,23 @@ func deliverOne(ctx context.Context, pane string, msg *store.Message) error {
 		Body:        render.Message(*msg),
 		VerifyToken: "id " + msg.PublicID,
 	})
+}
+
+// buildCanonicals snapshots the agents registry into the
+// discover.CanonicalAgent shape so the walker can do canonical-name
+// + alias matching (#38). Returns nil on any error — the drift-check
+// path treats nil canonicals as "fall back to raw --resume value,"
+// which preserves the pre-#38 behaviour.
+func buildCanonicals(ctx context.Context, s *store.Store) []discover.CanonicalAgent {
+	agents, err := s.ListAgents(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make([]discover.CanonicalAgent, 0, len(agents))
+	for _, a := range agents {
+		out = append(out, discover.CanonicalAgent{Name: a.Name, Aliases: a.Aliases})
+	}
+	return out
 }
 
 // isCantFindPaneError detects the tmux delivery failure mode that means

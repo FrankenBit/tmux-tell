@@ -44,4 +44,8 @@ type Agent struct {
 	PaneID    string // empty when pane_id is NULL
 	Paused    bool
 	UpdatedAt string
+	// Aliases is the JSON-decoded list of alternative names the
+	// discover walker should accept for this canonical agent. Empty
+	// list when no aliases registered. See #38.
+	Aliases []string
 }

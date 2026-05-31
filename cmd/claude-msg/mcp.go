@@ -113,7 +113,8 @@ func newMCPServer(s *store.Store) *mcp.Server {
 				"name":          {"type": "string", "description": "Agent name (the new identity)"},
 				"pane":          {"type": "string", "description": "Pane id like %5 (default: $TMUX_PANE)"},
 				"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now claude-mailman@NAME (default true)"},
-				"force":         {"type": "boolean", "description": "Overwrite an existing row with the same name (default false)"}
+				"force":         {"type": "boolean", "description": "Overwrite an existing row with the same name (default false)"},
+				"alias":         {"type": "string", "description": "Optional alternative name discover should accept for this canonical agent (e.g. 'Master Bosun of Nimbus' for canonical 'bosun'). Append-only; existing aliases preserved."}
 			},
 			"required": ["name"]
 		}`),
@@ -423,6 +424,7 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		Pane         string `json:"pane"`
 		StartMailman *bool  `json:"start_mailman"`
 		Force        bool   `json:"force"`
+		Alias        string `json:"alias"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -452,6 +454,14 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 
 		if err := s.UpsertAgent(ctx, in.Name, pane); err != nil {
 			return nil, err
+		}
+
+		// Optional alias append. AddAlias is idempotent — same alias
+		// twice is a no-op rather than an error.
+		if in.Alias != "" {
+			if err := s.AddAlias(ctx, in.Name, in.Alias); err != nil {
+				return nil, fmt.Errorf("add alias: %w", err)
+			}
 		}
 
 		// Default start_mailman to true.

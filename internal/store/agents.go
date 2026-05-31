@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 )
@@ -77,13 +78,14 @@ func (s *Store) SetPausedAll(ctx context.Context, paused bool) (int64, error) {
 // GetAgent returns the agent by name, or ErrNotFound.
 func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 	var (
-		a      Agent
-		pane   sql.NullString
-		paused int
+		a       Agent
+		pane    sql.NullString
+		paused  int
+		aliases string
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt)
+		`SELECT name, pane_id, paused, updated_at, aliases FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -93,13 +95,14 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 		a.PaneID = pane.String
 	}
 	a.Paused = paused != 0
+	a.Aliases = decodeAliases(aliases)
 	return &a, nil
 }
 
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -108,18 +111,81 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	var out []Agent
 	for rows.Next() {
 		var (
-			a      Agent
-			pane   sql.NullString
-			paused int
+			a       Agent
+			pane    sql.NullString
+			paused  int
+			aliases string
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases); err != nil {
 			return nil, err
 		}
 		if pane.Valid {
 			a.PaneID = pane.String
 		}
 		a.Paused = paused != 0
+		a.Aliases = decodeAliases(aliases)
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// SetAliases replaces the alias list for an agent. Empty slice removes
+// all aliases. Returns ErrNotFound if no agent with that name exists.
+func (s *Store) SetAliases(ctx context.Context, name string, aliases []string) error {
+	encoded, err := encodeAliases(aliases)
+	if err != nil {
+		return err
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents
+		 SET aliases = ?,
+		     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		 WHERE name = ?`,
+		encoded, name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
+}
+
+// AddAlias appends an alias to the agent's list (idempotent — duplicate
+// aliases are silently ignored). Returns ErrNotFound for missing agents.
+func (s *Store) AddAlias(ctx context.Context, name, alias string) error {
+	a, err := s.GetAgent(ctx, name)
+	if err != nil {
+		return err
+	}
+	for _, existing := range a.Aliases {
+		if existing == alias {
+			return nil
+		}
+	}
+	return s.SetAliases(ctx, name, append(a.Aliases, alias))
+}
+
+func decodeAliases(raw string) []string {
+	if raw == "" || raw == "[]" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		// Corrupted aliases column shouldn't break callers; treat as
+		// empty so the rest of the row is usable.
+		return nil
+	}
+	return out
+}
+
+func encodeAliases(aliases []string) (string, error) {
+	if len(aliases) == 0 {
+		return "[]", nil
+	}
+	b, err := json.Marshal(aliases)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }

@@ -15,6 +15,99 @@ import (
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
 )
 
+// TestServe_DriftDetectionWithCanonicalAlias is the post-#38 form of
+// the silent-drift regression: registered short name `surveyor`,
+// drifted pane runs `--resume Surveyor` (capital S, treated here as
+// an alias on the canonical row). The mailman should resolve the
+// running name back to canonical via the alias and reroute.
+func TestServe_DriftDetectionWithCanonicalAlias(t *testing.T) {
+	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		// %3 runs `surveyor` (canonical match); %4 runs `Pilot`.
+		return []byte("%3\t300\t✳ Surveyor\tclaude\n" +
+			"%4\t400\t✳ Pilot\tclaude\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+	walker := &discover.Walker{
+		CmdlineReader: func(pid int) (string, error) {
+			switch pid {
+			case 300:
+				return "claude\x00--resume\x00surveyor\x00", nil
+			case 400:
+				return "claude\x00--resume\x00Pilot\x00", nil
+			}
+			return "", errors.New("no fake")
+		},
+		ChildrenReader: func(int) []int { return nil },
+		MaxDepth:       1,
+	}
+
+	var (
+		bodyMu   sync.Mutex
+		body     string
+		paneSeen atomic.Value
+	)
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "load-buffer":
+			if stdin != nil {
+				b, _ := io.ReadAll(stdin)
+				bodyMu.Lock()
+				body = string(b)
+				bodyMu.Unlock()
+			}
+		case "paste-buffer":
+			for i, a := range args {
+				if a == "-t" && i+1 < len(args) {
+					paneSeen.Store(args[i+1])
+				}
+			}
+		case "capture-pane":
+			bodyMu.Lock()
+			defer bodyMu.Unlock()
+			return []byte(body), nil
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "surveyor", "%4") // drifted; %4 is Pilot now
+	_ = s.UpsertAgent(ctx, "pilot", "%4")    // pilot registered correctly
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "surveyor", Body: "hello",
+	})
+
+	opts := fastOpts("surveyor")
+	opts.DriftCheckDisabled = false
+	opts.Walker = walker
+
+	stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		d, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "surveyor", State: store.StateDelivered, Limit: 10,
+		})
+		if len(d) == 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	if seen := paneSeen.Load(); seen != "%3" {
+		t.Errorf("paste-buffer pane = %v, want %%3 (drift should have rerouted via canonical); log=%s",
+			seen, logbuf.String())
+	}
+	if !strings.Contains(logbuf.String(), "drift_detected") {
+		t.Errorf("expected drift_detected log; got %s", logbuf.String())
+	}
+}
+
 // TestServe_SilentDriftDetectionAtDelivery is the regression for #37.
 // Scenario: the registry says surveyor → %4, but %4 is actually
 // Pilot's pane now (post-tmux-restore drift). With drift detection

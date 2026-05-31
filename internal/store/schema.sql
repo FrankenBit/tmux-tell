@@ -32,5 +32,6 @@ CREATE TABLE IF NOT EXISTS agents (
     name        TEXT PRIMARY KEY,
     pane_id     TEXT,                              -- "%3" — refreshed by boot-time discovery
     paused      INTEGER NOT NULL DEFAULT 0,        -- the kill switch
-    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    aliases     TEXT NOT NULL DEFAULT '[]'         -- #38: JSON-encoded list of alt names discover matches against
 );

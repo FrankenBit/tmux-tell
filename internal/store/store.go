@@ -106,6 +106,7 @@ func Open(path string) (*Store, error) {
 // fails with "duplicate column name" which Open() ignores).
 var migrations = []string{
 	`ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'`,
+	`ALTER TABLE agents ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'`,
 }
 
 // Close releases the underlying database handle.

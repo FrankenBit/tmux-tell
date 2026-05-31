@@ -476,3 +476,72 @@ func TestListAgents_NullPaneIDDecodesEmpty(t *testing.T) {
 		t.Errorf("pane_id = %q, want empty", a.PaneID)
 	}
 }
+
+func TestSetAliases_RoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.UpsertAgent(ctx, "bosun", "%2"); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if err := s.SetAliases(ctx, "bosun", []string{"Master Bosun of Nimbus"}); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+	a, err := s.GetAgent(ctx, "bosun")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(a.Aliases) != 1 || a.Aliases[0] != "Master Bosun of Nimbus" {
+		t.Errorf("aliases = %v, want one entry", a.Aliases)
+	}
+}
+
+func TestAddAlias_Idempotent(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "bosun", "%2")
+
+	if err := s.AddAlias(ctx, "bosun", "MBoN"); err != nil {
+		t.Fatalf("add 1: %v", err)
+	}
+	if err := s.AddAlias(ctx, "bosun", "MBoN"); err != nil {
+		t.Errorf("re-add should not error: %v", err)
+	}
+	a, _ := s.GetAgent(ctx, "bosun")
+	if len(a.Aliases) != 1 {
+		t.Errorf("alias count = %d, want 1 after dedup", len(a.Aliases))
+	}
+}
+
+func TestSetAliases_AgentMissing(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	err := s.SetAliases(ctx, "ghost", []string{"x"})
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("want ErrNotFound, got %v", err)
+	}
+}
+
+func TestListAgents_IncludesAliases(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "bosun", "%2")
+	_ = s.AddAlias(ctx, "bosun", "MBoN")
+	_ = s.UpsertAgent(ctx, "surveyor", "%3")
+
+	all, err := s.ListAgents(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found bool
+	for _, a := range all {
+		if a.Name == "bosun" {
+			if len(a.Aliases) != 1 || a.Aliases[0] != "MBoN" {
+				t.Errorf("bosun aliases = %v", a.Aliases)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("bosun not in list")
+	}
+}
