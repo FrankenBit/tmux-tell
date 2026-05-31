@@ -239,7 +239,52 @@ register lives in [ADR-0001 §Decision/Commitment slugs](adr/0001-discipline-pin
   Claude Code session under load would surface the next class of
   timing issues before they reach production.
 
-## 5. What this doc does NOT cover (out of scope)
+## 5. Post-v0.2.1 incident: probe-creep + two-dash gate redesign
+
+A debug-binary diagnostic on admin's mailman on 2026-05-31 evening
+(per-iteration verdict logging in `WaitForQuietPane`, captured ~30
+minutes of journal data) surfaced two distinct failure modes the
+audit window had aggregated under "probe creep":
+
+| Mode | Symptom | Cause | Frequency |
+|---|---|---|---|
+| 1 | First-probe `input_activity` false positive (70s wait, 2 dashes visible per delivery) | `analyzeDelta`'s strip-rightmost trick fails when the first probe into an idle Claude Code input box transitions the row from "ghost-text suggested prompt" to "typing state" — the row gains more than just the probe character | Every delivery to an idle pane |
+| 2 | Sustained `tui_noise` for 5 minutes → `quiet_cap_exceeded` WARN + fragmented delivery | Conversation area above input row streams during heavy Claude Code work; gate's TUI-noise branch sees rows-other-than-input changing | Heavy recipient-busy windows (msg 28ca, 2026-05-31 14:30-14:34) |
+
+Mode 2 wasn't an actual bug — the gate correctly identified TUI
+activity — but the design's *gate-on-recipient-busy* policy was
+expensive non-functional behavior. Recipient-busy was never a real
+reason to delay delivery; the recipient processes messages one at a
+time anyway.
+
+**Fix landed in #52: operator-only two-dash gate**:
+
+- Drop the four-way verdict (`DeltaQuiet` / `DeltaInputActivity` /
+  `DeltaTUINoise` / `DeltaProbeMissing`); replace with two-way
+  (`DeltaQuiet` / `DeltaInputActivity`).
+- Per iteration: paste `─` (dismisses ghost-text), wait, paste `─`
+  (the actual probe), wait, capture, verify the input row gained
+  exactly two trailing probes with nothing else changed on that row.
+- Conversation-area streaming is now invisible to the gate.
+- Probes accumulate across backoff iterations (no per-iter
+  backspacing); the only cleanup is the pre-delivery sweep.
+
+The empirical data informed two architectural commitments worth
+considering as discipline pins (per ADR-0001 §When a commitment
+surfaces):
+
+- **`OperatorInputRowGate`**: the gate's contract is
+  "input-row-quiet", not "pane-quiet". Recipient-busy is explicitly
+  not the bus's concern.
+- **`ProbeAccumulationDuringActivity`**: probes never get
+  backspaced during `DeltaInputActivity` iterations — they
+  accumulate visibly as the "I see you" handshake.
+
+Both could land as ADR-0001 amendments if the gate's behavior holds
+up across the next observation window. Deferred until the redesign
+has empirical data of its own.
+
+## 6. What this doc does NOT cover (out of scope)
 
 - Per-incident root-cause analysis. Each fix commit has its own
   message with context.

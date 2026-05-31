@@ -25,12 +25,16 @@ func TestServe_QuietGate_DeliversAfterInputActivity(t *testing.T) {
 		cursorIdx      int
 		captureScript  = []string{
 			// Each row pair = (before-probe, after-probe). Input row
-			// is index 1. Round 1: operator typed 'x' → activity.
+			// is the last "> " row. Round 1: operator typed 'x' between
+			// our two probes → activity (strip-2-trailing-probes fails
+			// because row ends with 'x').
 			"ctx\n> \n",
-			"ctx\n> ─x\n",
-			// Round 2: input row clean except for our probe → quiet.
-			"ctx\n> ─x\n",
-			"ctx\n> ─x─\n",
+			"ctx\n> ──x\n",
+			// Round 2: operator's x still there, our 2 prior probes
+			// accumulated, plus 2 new probes appended cleanly. Strip-2
+			// from "> ──x──" → "> ──x" matches before → quiet.
+			"ctx\n> ──x\n",
+			"ctx\n> ──x──\n",
 			// Delivery: capture-pane for verify-token of "id <id>".
 			"ctx\nid TEST verify\n",
 		}
@@ -98,7 +102,6 @@ func TestServe_QuietGate_DeliversAfterInputActivity(t *testing.T) {
 	opts.QuietOpts = tmuxio.QuietOpts{
 		ObserveWindow:        5 * time.Millisecond,
 		InputActivityBackoff: 5 * time.Millisecond,
-		TUINoiseBackoff:      2 * time.Millisecond,
 		MaxWait:              200 * time.Millisecond,
 	}
 
@@ -125,12 +128,12 @@ func TestServe_QuietGate_DeliversAfterInputActivity(t *testing.T) {
 	if len(delivered) != 1 {
 		t.Fatalf("delivered = %d, want 1", len(delivered))
 	}
-	if probeCount != 2 {
-		t.Errorf("probe injections = %d, want 2", probeCount)
+	if probeCount != 4 {
+		t.Errorf("probe injections = %d, want 4 (two iters of two probes each)", probeCount)
 	}
-	// Quiet exit backspaces the 2 accumulated probes.
-	if bspaceCount != 2 {
-		t.Errorf("backspaces = %d, want 2", bspaceCount)
+	// Quiet exit backspaces the 4 accumulated probes.
+	if bspaceCount != 4 {
+		t.Errorf("backspaces = %d, want 4 (all accumulated probes cleaned on quiet exit)", bspaceCount)
 	}
 	if !loadBufferUsed {
 		t.Errorf("load-buffer should run after the quiet exit")
@@ -207,7 +210,6 @@ func TestServe_UnverifiedDelivery_MarksDeliveredWithWarn(t *testing.T) {
 	opts.QuietOpts = tmuxio.QuietOpts{
 		ObserveWindow:        2 * time.Millisecond,
 		InputActivityBackoff: 2 * time.Millisecond,
-		TUINoiseBackoff:      2 * time.Millisecond,
 		MaxWait:              200 * time.Millisecond,
 	}
 
@@ -262,14 +264,15 @@ func TestServe_QuietGate_CapExceededLogsAndDelivers(t *testing.T) {
 		defer mu.Unlock()
 		switch args[0] {
 		case "capture-pane":
-			// Always alternate "before" and "after" with a status-line
-			// tick — DeltaTUINoise on every iteration so the loop
-			// never finds quiet.
+			// Alternate "before" and "after" where the operator typed
+			// 'x' between captures so the input row gains `──x`
+			// rather than `──`. analyzeDelta sees the trailing `x`,
+			// returns DeltaInputActivity every iteration → cap exceeded.
 			captureIdx++
 			if captureIdx%2 == 1 {
 				return []byte(fmt.Sprintf("tick %d\n> \n", captureIdx)), nil
 			}
-			return []byte(fmt.Sprintf("tick %d\n> ─\n", captureIdx)), nil
+			return []byte(fmt.Sprintf("tick %d\n> ──x\n", captureIdx)), nil
 		case "display-message":
 			cursorIdx++
 			return []byte("1\n"), nil
@@ -306,7 +309,6 @@ func TestServe_QuietGate_CapExceededLogsAndDelivers(t *testing.T) {
 	opts.QuietOpts = tmuxio.QuietOpts{
 		ObserveWindow:        2 * time.Millisecond,
 		InputActivityBackoff: 2 * time.Millisecond,
-		TUINoiseBackoff:      2 * time.Millisecond,
 		MaxWait:              30 * time.Millisecond,
 	}
 

@@ -24,6 +24,44 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Changed (behavioral break — pre-1.0 minor break per cadence rules)
+
+- **Probe-and-watch gate redesigned to operator-only two-dash check
+  (#52).** The v0.2.1 four-way verdict
+  (`DeltaQuiet`/`DeltaInputActivity`/`DeltaTUINoise`/`DeltaProbeMissing`)
+  is replaced by a simpler two-way verdict
+  (`DeltaQuiet`/`DeltaInputActivity`). The gate's contract is now
+  explicit: protect against operator-typing on the receiving pane,
+  ignore everything else.
+  - **Wire (per-iteration):** paste `─` (dismisses ghost-text
+    suggested prompt) → wait `ObserveWindow` → paste `─` (the actual
+    probe) → wait `ObserveWindow` → capture. Input row must end with
+    exactly `N` trailing probes (`prevAccumulated + 2`) AND the
+    `before` capture's matching row equals the stripped result.
+    Otherwise → `DeltaInputActivity` → back off.
+  - **Probes NEVER backspaced between iterations.** Probes accumulate
+    in the input box as a visible "I see you" stack until the operator
+    clears them or the gate exits (quiet or cap).
+  - **Conversation-area streaming no longer blocks delivery.** The
+    2026-05-31 28ca incident (30× `tui_noise` over 5 minutes during
+    heavy Claude Code work) would deliver on first cycle under the
+    redesign.
+  - **First-probe `input_activity` false positive fixed.** The
+    2026-05-31 3c0c / 496e pattern (70s wait per delivery on idle
+    panes) goes away because dash #1 dismisses the ghost-text
+    suggested prompt before dash #2 lands.
+  - **`QuietOpts.TUINoiseBackoff` removed.** No more TUI noise
+    verdict; no more separate backoff for it. `ObserveWindow` default
+    drops from 5s to 3s (now applied twice per iteration, between
+    dash #1 → dash #2 and dash #2 → after-capture).
+  - **CLI surface:** `--quiet-tui-backoff` flag removed from
+    `claude-msg serve`. `--quiet-observe-window` semantics updated
+    (now per-probe, not per-iteration).
+  - **Discipline-pin implications:** the gate's "input-row-only,
+    not pane-wide" claim is a real architectural commitment worth
+    considering for ADR-0001 amendment + an `OperatorInputRowGate`
+    slug. Deferred to a follow-up touch.
+
 ### Known limitations (recorded, not blocking)
 
 - **`store.AddAlias` / `SetAliases` cross-canonical collision check
