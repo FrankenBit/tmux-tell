@@ -12,12 +12,27 @@ import (
 	"syscall"
 	"time"
 
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/config"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/discover"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/render"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/sdnotify"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
 )
+
+// flagWasSet reports whether a flag was set via the CLI (vs. left at
+// its default). Used by the #54 precedence chain to decide when to
+// consult the host-level config file: CLI flags override config-file
+// values; absent CLI flags consult the config chain.
+func flagWasSet(fs *flag.FlagSet, name string) bool {
+	wasSet := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			wasSet = true
+		}
+	})
+	return wasSet
+}
 
 // serveOpts is the resolved configuration for runServeWithStore.
 type serveOpts struct {
@@ -109,8 +124,43 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"on a recipient's outbound message transitioning to `failed`, auto-insert a delivery-failure notice back to the original sender (#53)")
 	notifyOnDeliveredUnverified := fs.Bool("notify-on-delivered-unverified", true,
 		"on a recipient's outbound message transitioning to `delivered_unverified` (paste+Enter ran but verify token didn't surface), auto-insert a notice back to the original sender (#53)")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
+	}
+
+	// Load host-level config (#54). Missing-file → silent defaults;
+	// malformed-file → WARN + fall back to defaults so a bad config
+	// doesn't kill the mailman.
+	cfg, cfgErr := config.Load()
+	if cfgErr != nil {
+		fmt.Fprintf(stderr, "WARN config: %v — using defaults\n", cfgErr)
+	}
+	// Precedence: CLI flags > per-agent block > defaults block >
+	// hardcoded compile-time defaults. fs.Lookup("X").DefValue is the
+	// hardcoded default; fs.Lookup("X").Value.String() is the resolved
+	// flag value. If they differ, the flag was explicitly set (or the
+	// caller passed the same as default — indistinguishable in stdlib
+	// flag, accepted limitation per #54 AC).
+	if !flagWasSet(fs, "notify-on-failed") {
+		*notifyOnFailed = config.ResolveBool(cfg, *agent, "notify-on-failed", *notifyOnFailed)
+	}
+	if !flagWasSet(fs, "notify-on-delivered-unverified") {
+		*notifyOnDeliveredUnverified = config.ResolveBool(cfg, *agent, "notify-on-delivered-unverified", *notifyOnDeliveredUnverified)
+	}
+	if !flagWasSet(fs, "drift-soft-fail") {
+		*driftSoftFail = config.ResolveBool(cfg, *agent, "drift-soft-fail", *driftSoftFail)
+	}
+	if !flagWasSet(fs, "quiet-disabled") {
+		*quietDisabled = config.ResolveBool(cfg, *agent, "quiet-disabled", *quietDisabled)
+	}
+	if !flagWasSet(fs, "quiet-observe-window") {
+		*quietObserve = config.ResolveDuration(cfg, *agent, "quiet-observe-window", *quietObserve)
+	}
+	if !flagWasSet(fs, "quiet-input-backoff") {
+		*quietInputBackoff = config.ResolveDuration(cfg, *agent, "quiet-input-backoff", *quietInputBackoff)
+	}
+	if !flagWasSet(fs, "quiet-max-wait") {
+		*quietMaxWait = config.ResolveDuration(cfg, *agent, "quiet-max-wait", *quietMaxWait)
 	}
 	if *agent == "" {
 		fmt.Fprintln(stderr, "--agent required")

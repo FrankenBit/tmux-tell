@@ -54,6 +54,21 @@ Run `claude-msg --version` to see what's installed.
   - Promotes ADR-0001's "deliberate act" framing for adding a fifth
     slug from convention-only to mechanical gate.
 
+- **Host-level config file (#54).** `/etc/cli-semaphore/config.toml`
+  (overridable via `CLAUDE_MSG_CONFIG` env var) carries per-host
+  mailman settings — notification toggles, drift policy, quiet-gate
+  tuning. Per-agent override via `[agent.<name>]` sections.
+  - **Precedence chain (most specific wins)**: CLI flag > per-agent
+    block > [defaults] block > hardcoded compile-time default.
+  - **Missing-file**: silent fallback to hardcoded defaults (no
+    error on fresh-from-install setups).
+  - **Malformed-file**: WARN logged to stderr; mailman falls back to
+    hardcoded defaults so a bad config doesn't take the mailman down.
+  - **`claude-msg config show --agent NAME`** subcommand prints the
+    resolved config so the operator can debug precedence without
+    tracing through TOML manually. Both `--format text` and `--format
+    json` supported.
+
 - **Monitoring stack (#42, #45, #39, #41).** New `internal/healthscan`
   package + `claude-msg health` subcommand + `--today` flag on
   `claude-msg status`. Sources operational state from journalctl +

@@ -22,6 +22,7 @@ Subcommands:
   inbox   List queued messages for an agent
   status  Show paused state + queue depths across all agents (--today for journal-sourced today counts)
   health  One-command per-agent health audit from journalctl + systemd (#42)
+  config  Read/show the host-level config (#54). Subcommands: show
   agents  List registered agents with pane liveness
   whoami  Show this session's registration (auto-resolves identity)
   serve   Run the mailman daemon for one agent
@@ -65,6 +66,8 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runStatusCLI(args[1:], stdout, stderr)
 	case "health":
 		return runHealthCLI(args[1:], stdout, stderr)
+	case "config":
+		return runConfigCLI(args[1:], stdout, stderr)
 	case "agents":
 		return runAgentsCLI(args[1:], stdout, stderr)
 	case "whoami":
