@@ -27,7 +27,7 @@ func runPauseCLI(args []string, paused bool, stdout, stderr io.Writer) int {
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
 	all := fs.Bool("all", false, "apply to every registered agent")
 	format := fs.String("format", "text", "text|json")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
 

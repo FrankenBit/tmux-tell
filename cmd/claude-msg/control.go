@@ -189,8 +189,16 @@ func runControlCLI(args []string, stdout, stderr io.Writer) int {
 		"reject when the sender's queued backlog would exceed this")
 	maxBody := fs.Int("max-body-bytes", capBodyBytes,
 		"reject resume_with bodies larger than this many bytes")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
+	}
+	// If --to wasn't specified and exactly one positional remains, treat
+	// it as the recipient — operator's natural typing pattern
+	// `control alice --command compact` works without remembering that
+	// `--to` is a required flag. This is additive: the existing
+	// flag-only form keeps working unchanged.
+	if *to == "" && fs.NArg() == 1 {
+		*to = fs.Arg(0)
 	}
 	if *to == "" {
 		return writeJSONError(stdout, stderr, "--to required", exitUsage)

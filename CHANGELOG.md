@@ -24,6 +24,29 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Fixed
+
+- **CLI flag-ordering trap closed (#44).** Operator typing
+  `claude-msg control alice --command compact` (recipient-first, the
+  natural English order) used to silently drop `--command` because
+  Go's `flag.Parse` stops at the first non-flag positional. The
+  resulting "command required" error confused operators every time.
+  - New `reorderFlagsFirst(fs, args)` helper in
+    `cmd/claude-msg/flagorder.go` pre-reorders args so flag tokens
+    land at the front and positionals at the back, regardless of how
+    the operator typed them. The FlagSet is consulted (via
+    `Lookup` + the `IsBoolFlag()` interface) so the helper knows
+    whether a flag swallows the next token as its value.
+  - Applied to every subcommand that takes positional args: `send`,
+    `control`, `track`, `inbox`, `log`, `pause` (and therefore
+    `resume`, which shares the handler).
+  - `control` additionally auto-binds a trailing single positional to
+    `--to` when `--to` is empty — closes the operator's actual
+    friction case where the agent name was typed positionally.
+  - Handles `--flag value`, `--flag=value`, bool flags, the `--`
+    terminator, and unknown flags (which assume no value-swallow so
+    unknown-flag errors surface cleanly rather than eating positionals).
+
 ### Added
 
 - **Delivery-failure notification (#53).** The mailman now auto-inserts

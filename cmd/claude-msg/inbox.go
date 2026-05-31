@@ -25,7 +25,7 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 		"queued|delivering|delivered|failed (empty = all)")
 	limit := fs.Int("limit", 50, "maximum rows to return")
 	format := fs.String("format", "text", "text|json")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
 	if fs.NArg() > 1 {

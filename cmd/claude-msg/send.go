@@ -39,7 +39,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		"reject when the sender's queued backlog would exceed this")
 	maxBody := fs.Int("max-body-bytes", capBodyBytes,
 		"reject bodies larger than this many bytes")
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
 
