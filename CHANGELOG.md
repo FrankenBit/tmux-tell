@@ -26,6 +26,34 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **ADR-0001 amended with two new commitment slugs (#55):**
+  - **`OperatorInputRowGate`** — the pre-delivery probe-and-watch gate
+    gates on operator-input-row quiet, NOT pane-quiet (#52). Recipient
+    mid-conversation / TUI animations / streaming output above the
+    input row are explicitly out of scope. Two new pins in
+    `internal/tmuxio/pin_test.go`.
+  - **`CapExemption`** — operationally-critical signals (currently:
+    delivery-failure notices) bypass `MaxRecipientQueue` and
+    `MaxSenderBacklog` (#53). One new pin in
+    `internal/store/pin_test.go`.
+
+  Register grows 4 → 6 commitments / 8 → 11 pinning tests. The
+  marker-block parser anchor (`<!-- pin-slug-register-start -->` /
+  `-end`) is unchanged so #51's CI lint picks up the new slugs
+  automatically. `docs/failure-modes.md` §4.2 table updated.
+
+- **`check-pin-slugs` CI lint (#51).** Enforces ADR-0001's
+  discipline-pin slug register against the slugs actually in use
+  across the codebase. The lint parses the marker-block-delimited
+  slug list from `docs/adr/0001-discipline-pins-as-test-category.md`
+  + scans every `_test.go` file for `testpin.Triage(t, "<slug>", ...)`
+  calls; any slug in use that isn't registered fails the lint with a
+  clear pointer to the ADR for amendment vs typo-correction.
+  - `make check-pin-slugs` runs the check locally
+  - `.forgejo/workflows/test.yml` runs it on every CI pass
+  - Promotes ADR-0001's "deliberate act" framing for adding a fifth
+    slug from convention-only to mechanical gate.
+
 - **`claude-msg track --watch` (#49).** Polls the message state every
   `--watch-interval` (default 5s) and re-renders on each transition.
   Exits when the message reaches a terminal state (`delivered` /

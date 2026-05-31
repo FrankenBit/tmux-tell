@@ -135,3 +135,85 @@ func TestPin_AtomicCapEnforcement_CeilingUnderConcurrency(t *testing.T) {
 		t.Errorf("post-test queue depth = %d, want %d", depth, cap)
 	}
 }
+
+// PIN: operationally-critical signals (currently delivery-failure
+// notices) bypass MaxRecipientQueue and MaxSenderBacklog. Losing such
+// a signal because a queue is congested would defeat the signal's
+// whole point. Store.InsertNotice MUST land regardless of cap state.
+//
+// Surfaced during #53. The retraction trigger is the "high failure
+// rate" edge case — if notice-flood becomes a real problem at homelab
+// scale, the commitment retracts in favor of bounded-batching or
+// per-kind caps via superseding ADR.
+//
+// This pin saturates the recipient's queue + inserts a notice and
+// verifies the notice lands. A regression that re-introduced
+// cap-checks on InsertNotice would silently drop notices in exactly
+// the cases the operator needs to know about most.
+func TestPin_CapExemption_NoticeBypassesRecipientCap(t *testing.T) {
+	testpin.Triage(t, "CapExemption",
+		"operationally-critical signals (failure notices) bypass MaxRecipientQueue/MaxSenderBacklog")
+
+	s := openFileStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%2")
+
+	// Saturate alice's queue with 5 regular messages at cap=5.
+	const cap = 5
+	for i := 0; i < cap; i++ {
+		if _, err := s.InsertMessage(ctx, store.InsertParams{
+			FromAgent: "bob", ToAgent: "alice",
+			Body: "filler", MaxRecipientQueue: cap,
+		}); err != nil {
+			t.Fatalf("filler %d: %v", i, err)
+		}
+	}
+
+	// Confirm a regular InsertMessage with the same cap NOW fails —
+	// proves the queue is genuinely saturated. Without this guard,
+	// the test could pass on a cap-not-enforced regression.
+	if _, err := s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "bob", ToAgent: "alice",
+		Body: "should be rejected", MaxRecipientQueue: cap,
+	}); !errors.Is(err, store.ErrRecipientQueueFull) {
+		t.Fatalf("regular insert at cap should fail with ErrRecipientQueueFull; got %v", err)
+	}
+
+	// Now insert a notice via InsertNotice. Even with the caller
+	// passing a cap of `cap`, the notice MUST land — InsertNotice
+	// zeroes the cap fields internally so callers can't accidentally
+	// re-cap notices.
+	res, err := s.InsertNotice(ctx, store.InsertParams{
+		FromAgent: "bob", ToAgent: "alice",
+		Body: ":warning: Delivery failure for X",
+		Kind: store.KindDeliveryFailureNotice,
+		// Caller-supplied caps that would normally block at depth==cap
+		MaxRecipientQueue: cap,
+		MaxSenderBacklog:  1,
+	})
+	if err != nil {
+		t.Fatalf("notice insert must succeed even at recipient cap: %v", err)
+	}
+	if res.PublicID == "" {
+		t.Errorf("notice insert returned empty public id")
+	}
+
+	// Verify the notice landed in alice's inbox.
+	inbox, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "alice", State: store.StateQueued, Limit: 10,
+	})
+	if len(inbox) != cap+1 {
+		t.Errorf("inbox = %d, want %d (cap fillers + 1 notice)", len(inbox), cap+1)
+	}
+	var foundNotice bool
+	for _, m := range inbox {
+		if m.Kind == store.KindDeliveryFailureNotice {
+			foundNotice = true
+			break
+		}
+	}
+	if !foundNotice {
+		t.Errorf("expected KindDeliveryFailureNotice in inbox; got %d messages, none of that kind", len(inbox))
+	}
+}

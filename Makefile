@@ -10,10 +10,17 @@ PREFIX ?= /usr/local
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS = -X git.frankenbit.de/frankenbit/cli-semaphore/internal/version.Version=$(VERSION)
 
-.PHONY: build test vet install clean version
+.PHONY: build test vet install clean version check-pin-slugs
 
 version:
 	@echo $(VERSION)
+
+# check-pin-slugs enforces ADR-0001's discipline-pin slug register
+# against the slugs actually in use across the codebase (#51). Runs
+# as part of CI; surface here so the operator can run it locally
+# before pushing.
+check-pin-slugs:
+	$(GO) run ./tools/check-pin-slugs/
 
 build: $(BIN)
 

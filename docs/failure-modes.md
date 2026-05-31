@@ -166,14 +166,17 @@ reduction (highest-leverage first):
 ### 4.2 Discipline-pin pattern: by architectural commitment, not by test
 
 The pattern surfaced in Surveyor's #29 review and a codebase grep
-at v0.2.1 shows **eight pinning tests across four architectural
-commitments**. The right ADR unit is **the commitment**, not the
-test — eight tests is implementation, four commitments is design.
+at v0.2.1 shows initially **eight pinning tests across four
+architectural commitments**. Post-#55 amendment: **eleven pinning
+tests across six architectural commitments**. The right ADR unit is
+**the commitment**, not the test — multiple tests can implement the
+same commitment; the commitment count is what tells you whether the
+discipline is earning its keep across time.
 
 **Ratified as [ADR-0001](adr/0001-discipline-pins-as-test-category.md)
-(2026-05-31).** The conventions described in §4.3 below are now the
-authoritative discipline; the table below reflects the post-rename
-landing.
+(2026-05-31; amended same day per #55).** The conventions described
+in §4.3 below are now the authoritative discipline; the table below
+reflects the post-rename + post-#55 landing.
 
 | Architectural commitment | Pinning tests | Source review |
 |---|---|---|
@@ -181,6 +184,8 @@ landing.
 | **`AtomicCapEnforcement`** (caps are ceilings, never floors) | `TestPin_AtomicCapEnforcement_CeilingUnderConcurrency` | Surveyor #29 round-3 review |
 | **`ThreadStructurePrecondition`** (`linkP2ToP1` callers don't pass explicit `reply_to`) | `TestPin_ThreadStructurePrecondition_RejectsExplicitReplyTo` | Surveyor #29 follow-up |
 | **`CanonicalNoSilentGuess`** (never silently guess between canonical-or-alias exact matches) | `TestPin_CanonicalNoSilentGuess_SubstringAmbiguous`; `_ExactMatchAliasCollision`; `_ExactMatchAliasIsAnotherCanonical`; `_ExactMatchPaneAgentName` | Surveyor v0.2.0 Q(a) + v0.2.1 |
+| **`OperatorInputRowGate`** (gate on operator-input-row quiet, NOT pane-quiet; recipient-busy is out of scope) | `TestPin_OperatorInputRowGate_StreamingAboveInputIsIgnored`; `TestPin_OperatorInputRowGate_VerdictSurfaceIsBinary` | #52 redesign + #55 ratification |
+| **`CapExemption`** (operationally-critical signals bypass `MaxRecipientQueue` / `MaxSenderBacklog`) | `TestPin_CapExemption_NoticeBypassesRecipientCap` | #53 implementation + #55 ratification |
 
 ADR-0001 §Decision summary:
 

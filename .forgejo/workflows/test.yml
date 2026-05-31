@@ -30,3 +30,6 @@ jobs:
         # pre-commit should still use `go test -race -count=1 ./...`
         # — see README "Development" for the full pre-commit recipe.
         run: go test -count=1 ./...
+
+      - name: check-pin-slugs (#51 — enforce ADR-0001 slug register)
+        run: go run ./tools/check-pin-slugs/

@@ -1,10 +1,11 @@
 # ADR-0001: Discipline pins as a test category
 
 > **Status**: Accepted
-> **Date**: 2026-05-31 (proposed); 2026-05-31 (accepted on rename-pass landing)
+> **Date**: 2026-05-31 (proposed); 2026-05-31 (accepted on rename-pass landing); 2026-05-31 amended (OperatorInputRowGate + CapExemption slugs per #55)
 > **Authors**: Admin (author), Surveyor (by-commitment scope per
 > issue #34 comment 58662; structural-pass amendments per #43
-> comment 58874)
+> comment 58874; #55 amendment carries the gate/cap-exemption
+> commitments surfaced during #52 and #53)
 
 ## Context
 
@@ -84,6 +85,21 @@ self-evident under review.
   explicit `reply_to`.
 - **`CanonicalNoSilentGuess`** — never silently guess between
   canonical-or-alias exact matches.
+- **`OperatorInputRowGate`** — the pre-delivery probe-and-watch gate
+  gates on operator-input-row quiet, NOT pane-quiet. Recipient mid-
+  conversation / TUI animations / streaming output above the input
+  row are explicitly out of scope. Retraction trigger: if recipient-
+  busy ever becomes a legitimate reason to delay delivery (e.g., a
+  new TUI client that can't ingest paste while rendering), the
+  commitment retracts via superseding ADR. Surfaced during #52.
+- **`CapExemption`** — operationally-critical signals (currently:
+  delivery-failure notices) bypass `MaxRecipientQueue` and
+  `MaxSenderBacklog`. Losing such a signal because a queue is
+  congested would defeat the signal's whole point. Retraction
+  trigger: if notice-flood becomes a real problem at homelab scale
+  (the "high failure rate" edge case in #53), the commitment
+  retracts in favor of bounded-batching or per-kind caps. Surfaced
+  during #53.
 
 <!-- pin-slug-register-end -->
 
