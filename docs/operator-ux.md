@@ -1,8 +1,10 @@
 # Operator UX audit — cli-semaphore at v0.2.1
 
 > **Status: DRAFT.** Admin-led per the lead/verify split in bus
-> message id 8117. Surveyor verifies shape (not content) when
-> available.
+> message id 8117. Surveyor shape-verify complete (issue #36,
+> comment 58673 — approved shape with four formatting/dimensional
+> notes plus the §4 `message_status` 1.0-candidate verdict). This
+> version applies N1-N4 + the §7 ordering disclosure.
 >
 > **Scope**: catalog rough edges from heavy operator use across two
 > days of running the bus for four agents. Each finding has a
@@ -40,7 +42,7 @@ actionable` (says what's wrong, not what's next).
 | `no such message: ghost`                                                                                  | clear, not actionable         | paper-cut  | Could suggest `claude-msg log --limit 20` to find a recent id                                                 |
 | `WARN delivered_unverified id=X — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); marking delivered, operator may need to submit manually` | clear, actionable | — | Exemplary; explains what happened AND what to do |
 | `WARN quiet_cap_exceeded id=X pane=Y — delivering anyway`                                                 | clear, not-quite-actionable   | paper-cut  | What does the operator do with this WARN? Add: "rerun `claude-msg discover` if frequent" or similar           |
-| `WARN drift_check_ambiguous ... multiple canonicals exact-or-substring-match the running --resume value`  | clear but jargon-heavy        | friction   | Operator needs to know the term "canonical" to triage. Inline: "(set explicit alias via `semaphore.register name=X alias=Y`)" |
+| `WARN drift_check_ambiguous ... multiple canonicals exact-or-substring-match the running --resume value`  | clear but jargon-heavy        | friction   | Operator needs to know the term "canonical" to triage. Inline: "(set explicit alias via `semaphore.register name=X alias=Y`)". WARN string is generic enough to cover both the post-v0.2.1 Q(a) exact-collision path and the substring path — not split per-path; verified against `serve.go:275` |
 | `WARN drift_detected_unrecoverable ... discover couldn't find X anywhere`                                 | clear, half-actionable        | paper-cut  | Add a hint: "(is the agent running? `claude-msg agents` shows current panes)"                                 |
 | `store: alias %q is the canonical name of agent %q` (ErrAliasCollision)                                   | clear, actionable             | —          | Names both colliding agents; operator can fix the alias directly                                              |
 
@@ -132,15 +134,20 @@ Consistency observations:
 
 - **Naming inconsistency: `message_status` vs `whoami`.** The
   former is `<noun>_<state>`; the latter is `<verb>`. Both
-  internally consistent; not consistent with each other. Probably
-  not worth a breaking rename. _(Surveyor pass on whether this is
-  paper-cut or worth a rename for 1.0)_
+  internally consistent; not consistent with each other. **Verdict
+  (Surveyor pass on #36): 1.0-candidate, not paper-cut.** Rationale:
+  the CLI/MCP naming asymmetry is internal noise that doesn't trip
+  operators in practice (they use one surface at a time — Claude
+  calls MCP, operator calls CLI). The fix cost is real (deprecation
+  cycle + tooling muscle memory), so it fits the 1.0-break window
+  per `CHANGELOG.md`'s 1.0-trigger criteria.
 - **Verb-noun split: `agents` (list) vs `register` / `unregister`
   (mutate).** Acceptable; `agents` reads as a noun-as-list which is
   the convention for many MCP tool suites. No change recommended.
 - **`message_status` could be `track` to match the CLI subcommand
-  name.** Symmetry would be nice. Probably defer to a 1.0 break
-  rather than introducing it now.
+  name.** Symmetry would be nice. Defer to the 1.0 break window
+  rather than introducing it now (same reasoning as the
+  `message_status`/`whoami` verdict above).
 
 **Recommendation:** record these in the project's "1.0 break
 candidates" list (when that list exists; CHANGELOG `[Unreleased]`'s
@@ -156,10 +163,13 @@ A new operator picking up the bus tomorrow: what would they hit?
 | Register the first pane             | Yes             | README "## Use from Claude Code (MCP)" section is clear                                                     |
 | Send the first message              | Yes             | Quick-start example near top of README                                                                       |
 | Understand the mailman model        | Partial         | README mentions "per-recipient mailman"; the design rationale (single-writer-per-recipient to avoid races) is in `docker/...` design notes. Could be on the README itself for 1.0 |
-| Recover after a tmux restore        | Yes (post-v0.2.0) | README's "Canonical names and aliases" section explicitly explains the recipe                              |
+| Recover after a tmux restore        | Yes¹            | README's "Canonical names and aliases" section explicitly explains the recipe                              |
 | Investigate a failed message        | Partial         | `claude-msg track <id>` is documented; the WARN log discovery flow ("grep journalctl") is folklore           |
 | Tune the probe-and-watch gate       | Yes             | `serve --quiet-*` flags are self-documenting via `--help`; rationale in README                              |
-| Add a new agent                     | Yes (post-v0.2.1) | `semaphore.register name=X alias=Y` recipe                                                                  |
+| Add a new agent                     | Yes²            | `semaphore.register name=X alias=Y` recipe                                                                  |
+
+¹ Supported since v0.2.0 (silent-drift detection + canonical-name resolution).
+² Supported since v0.2.1 (alias collision detection + fail-loud drift).
 
 ### Proposed README improvements
 
@@ -196,24 +206,34 @@ follow-ups").
   the bus shouldn't be able to fire this by accident; the literal
   flag is the right safety. Stays.
 
-## 7. Severity-tagged follow-up checklist
+## 7. Follow-up checklist
 
-For the operator (Alex) to batch into Forgejo issues:
+For the operator (Alex) to batch into Forgejo issues. The three
+buckets below are on **two orthogonal axes**: severity (friction /
+paper-cut / blocker — how badly it stings) and timing (file-now vs
+defer-to-break-window — when the fix should land). A friction-class
+item that requires a breaking change defers to the 1.0 bucket
+regardless of severity. The buckets reflect timing first, then
+severity-within-timing.
 
-**friction** (most impactful first):
+Friction-class items ordered most-impactful-first per Admin's
+operator-side intuition; future operators may prioritize
+differently. The ordering is informative, not canonical.
+
+**Friction (file now):**
 - `control` flag-ordering trap
 - `status` augmentation: per-day counters + crash count
 - `discover` operator-mode improvements
 - `drift_check_ambiguous` WARN: add registration recipe inline
 - README: "Diagnosing a failed/unverified message" section
 
-**paper-cut** (batchable):
+**Paper-cut (batchable; file when one becomes worth a dedicated PR):**
 - Error-message next-step hints (single PR covering several)
 - `track --watch`
 - Promote mailman-design rationale to README
 - CHANGELOG cross-reference
 
-**1.0-candidate** (record only; no immediate action):
+**1.0-candidate (defer to the 1.0 break window regardless of severity):**
 - `message_status` → `track` rename for CLI/MCP symmetry
 - Naming consistency review for the full `semaphore.*` surface
 
@@ -230,7 +250,7 @@ For the operator (Alex) to batch into Forgejo issues:
 
 | Term           | Meaning                                                                                              |
 |----------------|------------------------------------------------------------------------------------------------------|
-| Paper-cut      | A minor annoyance the operator routes around; doesn't block work. Batchable.                          |
-| Friction       | A repeated annoyance; the operator builds workarounds or memos. Worth a dedicated fix.               |
-| Blocker        | The operator can't proceed without a fix. None of those at v0.2.1 (the friction items are workable). |
-| 1.0-candidate  | Worth fixing in the 1.0 break window per `CHANGELOG.md`'s 1.0-trigger criteria; not before.          |
+| Paper-cut      | **Severity axis.** A minor annoyance the operator routes around; doesn't block work. Batchable.       |
+| Friction       | **Severity axis.** A repeated annoyance; the operator builds workarounds or memos. Worth a dedicated fix. |
+| Blocker        | **Severity axis.** The operator can't proceed without a fix. None of those at v0.2.1.                |
+| 1.0-candidate  | **Timing axis** (orthogonal to severity). Worth fixing in the 1.0 break window per `CHANGELOG.md`'s 1.0-trigger criteria; not before. A friction-class item can still be 1.0-candidate if the fix involves a break. |
