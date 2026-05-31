@@ -24,6 +24,32 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Added
+
+- **Delivery-failure notification (#53).** The mailman now auto-inserts
+  a `delivery_failure_notice` back to the original sender when one of
+  its outbound messages transitions to a terminal-failure state. The
+  notice carries the original message id, recipient, failure class,
+  reason, and a body preview. Closes the "Bosun spent half a day
+  waiting" failure mode where senders had no push-signal of dropped
+  messages.
+  - New message `Kind`: `KindDeliveryFailureNotice` in
+    `internal/store/types.go`.
+  - New store method: `Store.InsertNotice` — bypasses
+    `MaxRecipientQueue` and `MaxSenderBacklog` caps. Notifications are
+    operationally critical; losing them on cap would defeat the point.
+  - Two independent CLI toggles on `claude-msg serve`:
+    - `--notify-on-failed` (default `true`) — hard `failed` state
+      transitions (drift unrecoverable, MarkFailed, paste error, etc.)
+    - `--notify-on-delivered-unverified` (default `true`) — soft
+      `delivered_unverified` state (paste+Enter completed but verify
+      token didn't surface).
+  - **Loop prevention**: a notice that itself fails to deliver does
+    NOT generate another notice. Check by kind at the failure hook
+    site (`maybeInsertFailureNotice`).
+  - Cap-exemption commitment is worth pinning as ADR-0001 amendment
+    if/when the discipline matters across the codebase's life.
+
 ### Changed (behavioral break — pre-1.0 minor break per cadence rules)
 
 - **Probe-and-watch gate redesigned to operator-only two-dash check

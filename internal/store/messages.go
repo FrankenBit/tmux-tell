@@ -86,6 +86,49 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 	return res, nil
 }
 
+// InsertNotice inserts a system-generated notice message bypassing
+// the recipient-queue and sender-backlog caps. Used by the mailman's
+// delivery-failure hook (#53) to surface failed deliveries back to
+// the original sender even when the recipient's pane is congested.
+//
+// Operationally-critical signals shouldn't be silently dropped on cap;
+// losing a failure-notice because the sender's queue is full would
+// defeat the point. The cap-exemption is a deliberate commitment
+// worth pinning if the discipline matters across the codebase's life.
+//
+// The caller is responsible for setting p.Kind to a notice-shaped
+// value (typically KindDeliveryFailureNotice). This method does NOT
+// validate the kind — the kind discipline lives at the call site,
+// not at the store boundary.
+func (s *Store) InsertNotice(ctx context.Context, p InsertParams) (InsertResult, error) {
+	if err := validateInsertParams(p); err != nil {
+		return InsertResult{}, err
+	}
+	if err := s.validateReplyTo(ctx, p.ReplyTo); err != nil {
+		return InsertResult{}, err
+	}
+	// Force cap-bypass: zero MaxRecipientQueue and MaxSenderBacklog
+	// so checkCapsInTx is a no-op. Callers can't accidentally cap
+	// notices by passing non-zero values.
+	p.MaxRecipientQueue = 0
+	p.MaxSenderBacklog = 0
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return InsertResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := insertOneInTx(ctx, tx, p)
+	if err != nil {
+		return InsertResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return InsertResult{}, err
+	}
+	return res, nil
+}
+
 // InsertMessagePair inserts two messages in a single BEGIN IMMEDIATE
 // transaction. Both rows land or neither does — the atomicity guarantee
 // the restart macro and resume_with sugar need so neither can leave the

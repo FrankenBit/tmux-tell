@@ -55,6 +55,21 @@ type serveOpts struct {
 	// the new default is MarkFailed. Operators with operator-watched
 	// panes who prefer the old behaviour set this true.
 	DriftSoftFail bool
+	// NotifyOnFailed enables the auto-generated delivery-failure notice
+	// when one of the recipient's outbound messages transitions to
+	// `failed` state (#53). The notice is inserted as
+	// KindDeliveryFailureNotice from this agent back to the original
+	// sender, bypassing recipient/sender caps. Loop prevention: notices
+	// that themselves fail to deliver do NOT generate further notices.
+	// Default on (the operator's half-day waiting incident on
+	// 2026-05-31 motivated this; silent-doesn't-know was the failure
+	// mode).
+	NotifyOnFailed bool
+	// NotifyOnDeliveredUnverified enables the same notice path for the
+	// `delivered_unverified` soft-failure case (paste+Enter completed
+	// but the verify token didn't surface). Independent toggle from
+	// NotifyOnFailed; both default on.
+	NotifyOnDeliveredUnverified bool
 	// Walker resolves pane-id drift via the shared discover package. When
 	// nil, runServeWithStore constructs a discover.New() — tests can inject
 	// a fake walker that doesn't touch real tmux/proc.
@@ -90,6 +105,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"bypass the probe-and-watch gate (delivery happens immediately on every queue head)")
 	driftSoftFail := fs.Bool("drift-soft-fail", false,
 		"when pre-delivery drift detection hits ambiguous or unrecoverable, log WARN and deliver to the (potentially wrong) pane instead of marking the message failed. Default off — fail-loud is safer for autonomous receivers")
+	notifyOnFailed := fs.Bool("notify-on-failed", true,
+		"on a recipient's outbound message transitioning to `failed`, auto-insert a delivery-failure notice back to the original sender (#53)")
+	notifyOnDeliveredUnverified := fs.Bool("notify-on-delivered-unverified", true,
+		"on a recipient's outbound message transitioning to `delivered_unverified` (paste+Enter ran but verify token didn't surface), auto-insert a notice back to the original sender (#53)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -125,8 +144,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 			InputActivityBackoff: *quietInputBackoff,
 			MaxWait:              *quietMaxWait,
 		},
-		QuietDisabled: *quietDisabled,
-		DriftSoftFail: *driftSoftFail,
+		QuietDisabled:               *quietDisabled,
+		DriftSoftFail:               *driftSoftFail,
+		NotifyOnFailed:              *notifyOnFailed,
+		NotifyOnDeliveredUnverified: *notifyOnDeliveredUnverified,
 	}, logger, stdout, stderr)
 }
 
@@ -306,6 +327,8 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				if mferr := s.MarkFailed(opCtx, msg.PublicID, reason); mferr != nil {
 					logger.Printf("mark_failed_err id=%s err=%v", msg.PublicID, mferr)
 				}
+				maybeInsertFailureNotice(opCtx, s, logger,
+					opts.NotifyOnFailed, opts.Agent, msg, "failed", reason)
 				if stopOrSleep(stopCtx, opts.InterMessageDelay) {
 					return exitOK
 				}
@@ -407,17 +430,91 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if err := s.MarkDelivered(opCtx, msg.PublicID); err != nil {
 				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
 			}
+			maybeInsertFailureNotice(opCtx, s, logger,
+				opts.NotifyOnDeliveredUnverified, opts.Agent, msg,
+				"delivered_unverified",
+				"paste+Enter completed but verify token didn't surface in time")
 		default:
 			logger.Printf("deliver_failed id=%s err=%v", msg.PublicID, derr)
 			if err := s.MarkFailed(opCtx, msg.PublicID, derr.Error()); err != nil {
 				logger.Printf("mark_failed_err id=%s err=%v", msg.PublicID, err)
 			}
+			maybeInsertFailureNotice(opCtx, s, logger,
+				opts.NotifyOnFailed, opts.Agent, msg, "failed", derr.Error())
 		}
 
 		if stopOrSleep(stopCtx, opts.InterMessageDelay) {
 			return exitOK
 		}
 	}
+}
+
+// maybeInsertFailureNotice generates a delivery-failure notice back to
+// the original sender when the relevant config toggle is on (#53).
+//
+// Loop prevention: if the failed message is itself a notice
+// (msg.Kind == KindDeliveryFailureNotice), this is a no-op. Otherwise
+// a wedged sender pane would compound notice-on-notice-on-notice and
+// burn the queue.
+//
+// The notice is inserted via store.InsertNotice which bypasses the
+// recipient-queue and sender-backlog caps — failure notifications are
+// operationally critical and shouldn't be silently dropped on cap.
+//
+// `failureKind` is the human-readable failure-class label ("failed"
+// or "delivered_unverified") used in the notice body.
+// `reason` is the underlying error message or WARN reason.
+func maybeInsertFailureNotice(
+	ctx context.Context,
+	s *store.Store,
+	logger *log.Logger,
+	enabled bool,
+	this string,
+	msg *store.Message,
+	failureKind string,
+	reason string,
+) {
+	if !enabled {
+		return
+	}
+	// Loop prevention: don't notify on a notice's own failure.
+	if msg.Kind == store.KindDeliveryFailureNotice {
+		return
+	}
+	body := renderFailureNoticeBody(msg, failureKind, reason)
+	res, err := s.InsertNotice(ctx, store.InsertParams{
+		FromAgent: this,           // the mailman's own agent (original recipient)
+		ToAgent:   msg.FromAgent,  // the original sender
+		Body:      body,
+		Kind:      store.KindDeliveryFailureNotice,
+	})
+	if err != nil {
+		logger.Printf("notify_insert_err orig_id=%s to=%s err=%v",
+			msg.PublicID, msg.FromAgent, err)
+		return
+	}
+	logger.Printf("notify_inserted notice_id=%s orig_id=%s class=%s to=%s",
+		res.PublicID, msg.PublicID, failureKind, msg.FromAgent)
+}
+
+// renderFailureNoticeBody formats the human-readable body of a
+// delivery-failure notice. The shape is stable enough for both
+// human reading in the recipient's pane AND simple grep-based parsing
+// by future tools.
+func renderFailureNoticeBody(msg *store.Message, failureKind, reason string) string {
+	preview := msg.Body
+	const maxPreview = 200
+	if len(preview) > maxPreview {
+		preview = preview[:maxPreview] + "...(truncated)"
+	}
+	return fmt.Sprintf(`:warning: Delivery failure
+  Original message id: %s
+  Recipient: %s
+  Failure class: %s
+  Reason: %s
+  Original body preview:
+    %s`,
+		msg.PublicID, msg.ToAgent, failureKind, reason, preview)
 }
 
 // deliverOne dispatches a single message to a pane based on its Kind:

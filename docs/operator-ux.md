@@ -116,6 +116,26 @@ metric exposed via `status`."** A `claude-msg health` subcommand
 that does this scan-and-report once would close the biggest gap.
 Worth its own issue.
 
+### Delivery-failure notifications (post-#53)
+
+The "Bosun spent half a day waiting" scenario on 2026-05-31 surfaced
+a blind spot the per-verdict metrics don't fix: the **sender** doesn't
+get a push-signal when their outbound message hits `failed` or
+`delivered_unverified`. Polling `claude-msg track <id>` works but
+requires the sender to remember to check.
+
+Post-#53 (currently `[Unreleased]`), the mailman auto-generates a
+`delivery_failure_notice` back to the original sender on every
+terminal-failure transition. Two toggles control the behavior:
+
+- `--notify-on-failed` (default on) — hard failures
+- `--notify-on-delivered-unverified` (default on) — soft failures
+
+The notice carries the original message id, the recipient, the
+failure class, the reason, and a 200-char body preview. Loop
+prevention: a notice that itself fails to deliver does NOT generate
+another notice.
+
 ## 4. MCP tool naming + discoverability
 
 Current surface:
