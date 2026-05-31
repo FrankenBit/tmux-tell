@@ -35,10 +35,10 @@ test functions** (status as of v0.2.1):
 
 | Architectural commitment                                                              | Existing pin tests                                                                                                                                                                                                  | Source                                              |
 |---------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------|
-| **Wire shape is single source-of-truth** (JSON-tag-driven; no manual map construction) | `TestTrackResult_OmitemptyContract`; `TestTrack_WireShape_CLIAndMCPMatch`                                                                                                                                            | Surveyor #28 / #29 reviews                          |
-| **Atomic cap enforcement under concurrency** (caps are ceilings, never floors)         | `TestInsertMessage_CapEnforcedUnderConcurrency`                                                                                                                                                                      | Surveyor #29 round-3 review                         |
-| **Thread-structure precondition** (`linkP2ToP1` callers don't pass explicit `reply_to`) | `TestInsertMessagePair_LinkP2ToP1_RejectsExplicitReplyTo`                                                                                                                                                            | Surveyor #29 follow-up                              |
-| **Never silently guess between canonical-or-alias exact matches**                      | `TestLookupByNameWithCanonicals_Ambiguous` (substring variant); `_ExactMatchAmbiguous_AliasCollision`; `_ExactMatchAmbiguous_AliasIsAnotherCanonical`; `TestPaneAgentNameWithCanonicals_ExactMatchAmbiguous`         | Surveyor v0.2.0 Q(a) + v0.2.1 review                |
+| **`WireShapeSingleSoT`** — wire shape is single source-of-truth (JSON-tag-driven; no manual map construction) | `TestTrackResult_OmitemptyContract`; `TestTrack_WireShape_CLIAndMCPMatch`                                                                                                                                            | Surveyor #28 / #29 reviews                          |
+| **`AtomicCapEnforcement`** — caps are ceilings, never floors (atomic under concurrency)                       | `TestInsertMessage_CapEnforcedUnderConcurrency`                                                                                                                                                                      | Surveyor #29 round-3 review                         |
+| **`ThreadStructurePrecondition`** — `linkP2ToP1` callers don't pass explicit `reply_to`                       | `TestInsertMessagePair_LinkP2ToP1_RejectsExplicitReplyTo`                                                                                                                                                            | Surveyor #29 follow-up                              |
+| **`CanonicalNoSilentGuess`** — never silently guess between canonical-or-alias exact matches                  | `TestLookupByNameWithCanonicals_Ambiguous` (substring variant); `_ExactMatchAmbiguous_AliasCollision`; `_ExactMatchAmbiguous_AliasIsAnotherCanonical`; `TestPaneAgentNameWithCanonicals_ExactMatchAmbiguous`         | Surveyor v0.2.0 Q(a) + v0.2.1 review                |
 
 The right unit of account for this ADR is **the architectural
 commitment, not the individual test**. Four commitments exist; eight
@@ -73,17 +73,31 @@ self-evident under review.
 
 ### Commitment slugs (initial register)
 
-- **`WireShape`** — wire shape is single source-of-truth.
-- **`AtomicCapEnforcement`** — caps are ceilings, never floors.
+<!-- pin-slug-register-start -->
+
+- **`WireShapeSingleSoT`** — wire shape is single source-of-truth
+  (JSON-tag-driven; no manual map construction).
+- **`AtomicCapEnforcement`** — caps are ceilings, never floors
+  (atomic under concurrency).
 - **`ThreadStructurePrecondition`** — `linkP2ToP1` callers don't pass
   explicit `reply_to`.
-- **`CanonicalResolution`** — never silently guess between
+- **`CanonicalNoSilentGuess`** — never silently guess between
   canonical-or-alias exact matches.
+
+<!-- pin-slug-register-end -->
+
+The slug carries the commitment's essence, not just a label: a
+reader of just the slug + test name should be able to infer the
+load-bearing claim without consulting the docstring. The marker
+comments around the register are a parser anchor for the
+CI-enforcement tooling tracked as #51.
 
 Adding a fifth slug is a deliberate act, not an accidental side
 effect of writing another test. The slug should be added to this
 ADR (via amendment) at the same time the first pin for the new
-commitment lands.
+commitment lands. Until #51 ships, the discipline is convention-only
+and rests on reviewer attention; #51 promotes the "deliberate act"
+framing from convention to gate.
 
 ### Triage discipline
 
@@ -99,15 +113,68 @@ When a discipline pin fails:
      ADR). The pin's removal needs the same gate as adding one: an
      explicit decision, not an accidental delete.
    - **(c) The commitment is intact but the pin's assertion is
-     wrong.** Fix the assertion; document why the prior shape
-     misspecified. Likely indicates the pin should also be
-     strengthened (the regression class slipped through).
+     wrong.** The assertion is part of the commitment's expression;
+     fixing it requires the strengthenings below to prevent silent
+     erosion of the discipline.
+
+3. **Strengthenings on diagnosis (c)** — both required:
+    - **(c.1) Co-require a regression test demonstrating the new
+      assertion strictly improves coverage.** If (c) loosens the
+      assertion (false-positive failure under intact commitment), the
+      new pin needs a counter-test showing the loosened pin still
+      catches a real commitment violation. If (c) tightens the
+      assertion (the prior pin was too loose and let a real bug
+      through), the strengthening needs the test case that motivated
+      it. Either way: (c) must demonstrate the new assertion
+      strictly improves the commitment's coverage. This is the
+      operational floor.
+    - **(c.2) Co-require an ADR amendment on (c), not just a
+      commit-message rationale.** Rationale: if the assertion was
+      wrong, the commitment-as-encoded was wrong somewhere — even if
+      just at the encoding layer. The ADR's commitment statement may
+      itself need clarification (sometimes the slug or one-sentence
+      commitment hides an ambiguity that the broken assertion
+      exposes). Treating the assertion as part of the commitment's
+      expression makes (c) a deliberate act, parallel to adding a
+      new commitment slug.
+
+   Without (c.1), (c) becomes "I weakened the assertion until it
+   passed and wrote a sentence explaining why." Without (c.2), the
+   discipline ceremony is invisible across project history. Both
+   gates closed = the discipline holds.
+
+4. **Flake / non-determinism is a (c) variant.** Pin tests should be
+   deterministic by construction; a flaking pin means the assertion
+   encodes the commitment in a non-deterministic shape (e.g., a
+   concurrency pin using a timing window instead of a deterministic
+   driver). The right response is **strengthen toward determinism**,
+   not retry-into-noise. Triage as (c); apply (c.1) by demonstrating
+   the deterministic-rewrite catches the original commitment
+   violation; apply (c.2) since the assertion's shape needed
+   clarification. A common pattern: replace timing-based concurrency
+   checks with deterministic schedulers or barriers.
+
+5. **Failure-site triage hint**. Each pin test must call
+   `testpin.Triage(t, "<Slug>", "<one-sentence commitment>")` as
+   its first line. This installs a `t.Cleanup` that logs the triage
+   pointer when the pin fails:
+
+   ```
+   PIN FAILURE [WireShapeSingleSoT] — wire shape is single source-of-truth
+     Triage per ADR-0001 §Triage before fixing the assertion.
+     Diagnoses: (a) implementation regressed / (b) commitment retracted / (c) pin miswrote.
+   ```
+
+   The helper's source-of-truth on the slug (machine-readable) is
+   what the CI-enforcement tooling (#51) parses. The `// PIN:`
+   docstring marker stays as a human-readable adjacent view.
 
 The triage step lives in the pre-commit flow as a discussion
-artifact (commit message rationale; PR description; or, for
-non-trivial cases, an explicit Surveyor consultation). The cost is
-small per pin; the value is that a pin's removal is a deliberate
-decision rather than a silent deletion.
+artifact (commit message rationale; PR description; ADR amendment
+on (c) per (c.2); or, for non-trivial cases, an explicit Surveyor
+consultation). The cost is small per pin; the value is that a
+pin's removal or assertion-change is a deliberate decision rather
+than a silent deletion or weakening.
 
 ## Alternatives considered
 
@@ -115,6 +182,12 @@ decision rather than a silent deletion.
   triage drift cost is real and recurring. Surveyor's reviews have
   named four commitments distinct from "what does this code
   compute"; flattening the category loses that signal.
+- **Documentation-only convention (CONTRIBUTING.md only, no code
+  conventions).** Rejected because docs drift from code:
+  convention-encoded-in-test-naming and convention-encoded-in-helper-
+  call survives the next refactor; convention-encoded-in-prose
+  doesn't. This is the lightest-weight alternative and the closest
+  competitor; rejection rests on durability under churn.
 - **Build-tag based separation (`//go:build pin`).** Rejected because
   pins should run in every CI pass, not opt-in. The category is a
   semantic distinction, not a runtime distinction.
@@ -126,6 +199,11 @@ decision rather than a silent deletion.
   per Surveyor's #34 / S4 framing: the right unit of account is
   the **commitment**, not the test. The commitment count is what
   tells you whether discipline-pin is earning its keep across time.
+- **External test framework with native pin-class support.**
+  Rejected because no such framework exists in the Go ecosystem
+  today; standardising on one would be a bet on something
+  hypothetical. Recorded as a watch in §What would change the
+  decision.
 
 ## Consequences
 
@@ -174,15 +252,23 @@ Reasons to retract or supersede ADR-0001:
 - **Tooling absorbs the discipline.** If a future test framework
   natively distinguishes pin-class from regression-class tests
   with built-in triage gates, the manual conventions can retire
-  in favor of the framework's. Likely never happens; recorded
-  for completeness.
+  in favor of the framework's. Open watch — no plausible candidate
+  in the Go ecosystem today.
 
 ## References
 
 - Issue #43 (this ADR's tracking issue + AC list)
 - Issue #34 (audit doc — `docs/failure-modes.md` §4.2 sourced
   the eight-tests-four-commitments table verbatim)
+- Issue #51 (CI-enforce the slug register — the gate that promotes
+  the "deliberate act" framing from convention to mechanical check)
 - `docs/failure-modes.md` §4.3 (the conventions section that
   this ADR ratifies)
+- `internal/testpin/testpin.go` (the `Triage` helper that wires
+  the failure-site triage hint)
 - Surveyor review threads carried in the references of
   `docs/failure-modes.md` §6 (the per-commitment pin origins)
+- Surveyor #43 structural review (comment 58874) — by-commitment
+  scope ratification, (c) strengthenings (c.1)+(c.2), flake-as-(c),
+  failure-site triage hint, slug sharpening, alternatives
+  completeness

@@ -14,7 +14,9 @@ change for the decision to be revisited.
 - **Status**: one of `Proposed`, `Accepted`, `Superseded by ADR-NNNN`,
   `Retracted`. Status flips happen in the same PR that lands the
   decision (or its retraction).
-- **Structure**: each ADR follows the template in `0000-template.md`.
+- **Structure**: each ADR follows the template in `template.md` (the
+  template is not itself an ADR and has no number — real ADRs start at
+  `0001`).
 
 ## Index
 
@@ -31,6 +33,12 @@ File an ADR when the decision:
 - Constrains future work meaningfully (the decision narrows what
   later code is allowed to do).
 - Has reasonable alternatives that were considered and rejected.
+
+**Symmetric direction**: every commitment slug in the discipline-pin
+register MUST have an ADR establishing the commitment. The ADR may be
+ADR-0001 itself (for slugs in the initial register) or a dedicated ADR
+for new commitments. Adding a pin without a corresponding ADR is
+silently violating ADR-0001's discipline.
 
 Decisions that DON'T need an ADR:
 
