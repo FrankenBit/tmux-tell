@@ -22,9 +22,10 @@ c521515 (v0.2.1 + AddAlias TOCTOU note)**.
 
 ## 1. Incidents
 
-Six incidents, in landing order. Each row's "Assumption that failed"
-is the one-sentence version of the design decision that production
-later overturned.
+Ten issues, in landing order — eight production incidents (rows
+1-8) plus two caught in the v0.2.0 review pass (rows 9-10). Each
+row's "Assumption that failed" is the one-sentence version of the
+design decision that production (or review) later overturned.
 
 | # | Incident                                                                    | Assumption that failed                                                                              | Fix commit             | How we'd catch it earlier                                                                              |
 |---|-----------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------|------------------------|--------------------------------------------------------------------------------------------------------|
@@ -145,8 +146,6 @@ reduction (highest-leverage first):
   acting weird".
 
 ## 4. Test-architecture observations
-
-_(Surveyor pass)_
 
 ### 4.1 Where the existing test suite missed these
 
