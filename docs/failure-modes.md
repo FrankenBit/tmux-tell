@@ -1,17 +1,20 @@
 # Failure modes — what we got wrong in the first 48h post-MVP
 
-> **Status: DRAFT.** Co-authored by Admin (audit trail) and Surveyor
-> (discipline-pins framing) pending the lead/verify split agreed in
-> bus message id 8117. Sections marked `_(Surveyor pass)_` await
-> structural review.
+> **Status: DRAFT (incorporates Surveyor structural review per
+> comment 58662 on issue #34, 2026-05-31).** Author: Admin per
+> posture (b)-with-substance agreed on bus id 8d2f. Structural-
+> reshape proposals S1-S5 from the review are merged into this
+> revision; sweep finding on §1 row 5/6 fix-commit-sharing is
+> clarified in the table notes.
 
 ## Why this doc exists
 
 cli-semaphore shipped end-of-MVP on 2026-05-29 and within 48h
-produced six production incidents. Each fix was small. The
-cumulative pattern was "production discovered the assumption, we
-patched." This doc distills the pattern — assumptions that failed,
-what would have caught each earlier, what to invest in so the next
+produced ten issues — **eight in production, two via the v0.2.0
+review pass**. Each fix was small. The cumulative pattern was
+"production (or review) discovered the assumption, we patched."
+This doc distills the pattern — assumptions that failed, what
+would have caught each earlier, what to invest in so the next
 class of incident is observable instead of surprising.
 
 The audit window: **2026-05-29 cf72ed (MVP cut) through 2026-05-31
@@ -45,6 +48,10 @@ Notes:
   Bosun rendering-cursor case (incident 6) forced the simpler
   probe-position-based identification we should have had from the
   start.
+- **Rows 5 and 6 share fix commit `a7a0f25`**: that single commit
+  closed both bug classes in one merge ("mailman: find input row
+  by probe position + watchdog ping on short sleeps"). Not a paste
+  artifact; the commit's title carries both.
 - Incidents 9, 10 are the only ones that hit the audit trail *via
   Surveyor's review* rather than production observation — meaningful
   data point on review-vs-production coverage.
@@ -88,33 +95,54 @@ incident. A rate-of-WARN-per-mailman counter, exposed via a new
 The non-obvious + review-only categories together suggest that the
 project's actual robustness ceiling is not "no incidents" but
 "incidents caught early enough that the WARN trail tells the story."
-Investing in **observability** (metrics, log-rate dashboards) pays
-better than investing in pre-prod hardening at this maturity level.
+
+**Three tools, three failure-class fits**:
+
+- **Observability** (metrics, log-rate dashboards) catches the
+  everyday-WARN-trail class — the steady-stream incidents that
+  produce repeated symptoms before the diagnosis (deliver-time
+  spikes, ProbeMissing rates, restart counts).
+- **Structural review** catches the blast-radius class — the
+  one-shot incidents where production discovery is too late
+  because the first occurrence is the catastrophic one. Incidents
+  9 and 10 (silent-bad-delivery to autonomous receivers) are the
+  worked examples; both were caught in the v0.2.0 cross-project
+  review, neither would have shown up in a WARN trail before
+  hitting prod.
+- **Pre-prod hardening** (in the absence of either) yields least
+  at this maturity level — the test-suite gaps documented in §4.1
+  show that pre-prod tests missed every incident that observability
+  or review did catch.
+
+Investing in observability + structural review **compounds** at
+this stage; investing in pre-prod hardening alone does not.
 
 ## 3. Monitoring / observability recommendations
 
-_(Surveyor pass)_
+Filed as separate Forgejo issues so each is tracked, sized, and
+resolvable on its own cadence. Ordered by expected operator pain
+reduction (highest-leverage first):
 
-Filed as separate issues, ordered by expected operator pain
-reduction:
-
-- [ ] **Deliver-time histogram per recipient** (95th / 99th
-  percentile). Exposed via `claude-msg status` or a new
-  `claude-msg metrics`. Would have flagged incident 3 immediately.
-  Cost: small; the timestamps are already on the `messages` table.
-- [ ] **Per-verdict count from `WaitForQuietPane`** (DeltaQuiet /
-  InputActivity / TUINoise / ProbeMissing). High ProbeMissing rate
-  is a strong signal of input-row identification failures (would
-  have caught incident 6 within an hour, not a day).
-- [ ] **Crash counter per mailman.** systemd already tracks restart
-  count; surface in `status`. Would have flagged incidents 1 and 5
-  the moment they happened.
-- [ ] **`claude-msg health` subcommand.** Scans the last N hours of
-  journalctl and reports rates of `delivered_unverified`,
-  `quiet_cap_exceeded`, `drift_detected`, `drift_check_ambiguous`.
-  One command for the operator's morning-coffee health check.
-
-To file as separate Forgejo issues so they're tracked individually.
+- [x] [#42 — `claude-msg health` subcommand](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/42)
+  (priority/high, size/M). One-command scan-and-report of WARN
+  rates + crash counts + stale registry entries; replaces the
+  morning-coffee `journalctl ... | grep` ritual. The single
+  biggest blind-spot collapse.
+- [x] [#39 — deliver-time histogram per recipient (95th/99th)](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/39)
+  (priority/medium, size/S). Would have flagged incidents 3
+  (unverified delivery) and 4 (Enter-not-firing) immediately
+  via 99th-percentile spike. Data already on the `messages`
+  table; no schema change.
+- [x] [#40 — per-verdict count from `WaitForQuietPane`](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/40)
+  (priority/medium, size/S). DeltaQuiet / InputActivity /
+  TUINoise / ProbeMissing aggregated per recipient. High
+  ProbeMissing rate is the smoking gun for input-row
+  identification failures (incident 6).
+- [x] [#41 — per-mailman crash counter in status](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/41)
+  (priority/low, size/S). Reads `systemctl --user show
+  ... NRestarts`. Would have flagged incidents 1 and 5 at the
+  moment of each crash, not after operator-reported "panes
+  acting weird".
 
 ## 4. Test-architecture observations
 
@@ -136,37 +164,71 @@ _(Surveyor pass)_
   contract at all. The Ping callback pattern shipped in `5a0f0ee`
   added one; before that, the watchdog was operator-trust.
 
-### 4.2 Discipline-pin pattern: time to name it?
+### 4.2 Discipline-pin pattern: by architectural commitment, not by test
 
-The pattern surfaced in Surveyor's #29 review and has been applied
-three times since: `TestTrackResult_OmitemptyContract`,
-`TestInsertMessage_CapEnforcedUnderConcurrency`, and the
-v0.2.1-Q(a) `TestLookupByNameWithCanonicals_ExactMatchAmbiguous_*`
-family. Plus the `linkP2ToP1` precondition guard from the #29
-follow-up. **Four instances of the same pattern; time to write the
-ADR.**
+The pattern surfaced in Surveyor's #29 review and a codebase grep
+at v0.2.1 shows **eight pinning tests across four architectural
+commitments**. The right ADR unit is **the commitment**, not the
+test — eight tests is implementation, four commitments is design.
 
-Proposed scope for the ADR (titled e.g. *Discipline pins as a test
+| Architectural commitment | Pinning tests | Source review |
+|---|---|---|
+| **Wire shape is single SoT** (JSON-tag-driven; no manual map construction) | `TestTrackResult_OmitemptyContract`; `TestTrack_WireShape_CLIAndMCPMatch` | Surveyor #28 / #29 reviews |
+| **Atomic cap enforcement under concurrency** (caps are ceilings, never floors) | `TestInsertMessage_CapEnforcedUnderConcurrency` | Surveyor #29 round-3 review |
+| **Thread-structure precondition** (`linkP2ToP1` callers don't pass explicit `reply_to`) | `TestInsertMessagePair_LinkP2ToP1_RejectsExplicitReplyTo` | Surveyor #29 follow-up |
+| **Never silently guess between canonical-or-alias exact matches** | `TestLookupByNameWithCanonicals_ExactMatchAmbiguous_AliasCollision`; `_AliasIsAnotherCanonical`; `TestPaneAgentNameWithCanonicals_ExactMatchAmbiguous`; plus `TestLookupByNameWithCanonicals_Ambiguous` (v0.2.0 substring variant) | Surveyor v0.2.0 Q(a) + v0.2.1 |
+
+Proposed ADR scope (titled e.g. *Discipline pins as a test
 category*):
 
-- Definition: a discipline pin asserts an **architectural
-  commitment** (a design rule), not a behaviour. Failing means the
-  design rule was violated.
-- Distinction from regression tests: regression tests assert
+- **Definition**: a discipline pin is a test pattern that asserts
+  a **single architectural commitment**. The commitment is the
+  load-bearing thing; multiple tests can implement the same
+  commitment (and frequently do — see the eight-tests-four-
+  commitments table above).
+- **Distinction from regression tests**: regression tests assert
   specific past behaviour; discipline pins assert a contract that
-  prevents a *class* of bugs.
-- Authoring discipline: each discipline pin's docstring should
-  state the architectural commitment in one sentence and the bug
-  class it prevents.
-- Where they live: alongside regression tests in the same package,
-  but conventionally named (e.g. `_pin_test.go` or a docstring
-  marker). _(Surveyor pass on convention)_
+  prevents a *class* of bugs (every test in the table above
+  prevents an entire class).
+- **Authoring discipline**: every pin's docstring opens with
+  `PIN: <architectural commitment>` so the commitment-to-test
+  traceability is mechanical via grep.
+- **Forward-compatibility**: the commitment-count tells you when
+  a fifth commitment surfaces (rather than "yet another test").
+  This is what makes the discipline durable across years vs. just
+  a hindsight label.
 
-This ADR is worth writing because the pattern has shown up
-unprompted in four distinct reviews now; that's the threshold I'd
-want to see before naming a pattern as a discipline.
+The ADR is worth writing because the pattern has shown up
+unprompted across four distinct architectural commitments in two
+months. That's the threshold for naming a pattern as a discipline.
+**This ADR lives in cli-semaphore** (not Binnacle — different test
+discipline contexts).
 
-### 4.3 What's still untested
+### 4.3 Discipline-pin conventions — naming + location
+
+The ADR should pin three orthogonal grep handles:
+
+- **Location**: in-package, in dedicated `pin_test.go` files. One
+  file per package surfaces the pinning surface at the package
+  level; grep `pin_test.go` lists the entire discipline surface
+  across the codebase. Where a commitment spans multiple files
+  (e.g. `internal/discover/canonical_ambiguity_test.go` today),
+  consolidating into `internal/discover/pin_test.go` is the
+  refactor for the ADR's first follow-up commit.
+- **Naming**: function names carry the commitment slug as
+  `TestPin_<commitment-slug>_<assertion>`. Example renames:
+  - `TestTrackResult_OmitemptyContract` →
+    `TestPin_WireShape_OmitemptyContract`
+  - `TestLookupByNameWithCanonicals_ExactMatchAmbiguous_AliasCollision` →
+    `TestPin_AliasResolution_NeverSilentlyGuess_OnCollision`
+  The `TestPin_` prefix makes mixed test files self-documenting
+  when a pin sits next to regression tests.
+- **Docstring**: opens with the line `// PIN: <one-sentence
+  architectural commitment>`. Three handles total — `pin_test.go`
+  file pattern + `TestPin_` function prefix + `// PIN:` docstring
+  prefix — orthogonal so any single one finds the discipline.
+
+### 4.4 What's still untested
 
 - **Cross-process race for cap enforcement.** Issue #33 captured
   this honestly; not yet implemented. The single-process concurrent
