@@ -101,6 +101,23 @@ looking now, ETA 3 min
 ────────────────────────────────────────────────
 ```
 
+## Versioning
+
+cli-semaphore follows [Semantic Versioning](https://semver.org/) at
+the `0.x.y` cadence. Minor bumps (`0.1.0` → `0.2.0`) may break
+compatibility while the post-MVP shape settles; patch bumps are
+backward-compatible within a minor. See `CHANGELOG.md` for what's
+shipped per release.
+
+```bash
+$ claude-msg --version
+claude-msg v0.1.0
+```
+
+A binary built via `make build` (not bare `go build`) stamps the
+version from `git describe --tags --always --dirty`. Bare-`go build`
+binaries report `dev`.
+
 ## Install
 
 On a Linux host that has tmux, sqlite3, and Go (≥ 1.24):

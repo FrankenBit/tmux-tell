@@ -2,13 +2,24 @@ GO ?= go
 BIN ?= bin/claude-msg
 PREFIX ?= /usr/local
 
-.PHONY: build test vet install clean
+# Version stamping. VERSION defaults to `git describe` so an untagged
+# build between releases shows e.g. v0.1.0-3-g4f5e6d7 (dirty if there
+# are uncommitted changes). Override at build time:
+#   make build VERSION=v0.2.0-rc1
+# Plain `go build` (no Makefile) picks up the source default ("dev").
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS = -X git.frankenbit.de/frankenbit/cli-semaphore/internal/version.Version=$(VERSION)
+
+.PHONY: build test vet install clean version
+
+version:
+	@echo $(VERSION)
 
 build: $(BIN)
 
 $(BIN): $(shell find . -name '*.go' -not -name '*_test.go' -not -path './bin/*') go.mod go.sum
 	@mkdir -p $(dir $(BIN))
-	$(GO) build -o $(BIN) ./cmd/claude-msg
+	$(GO) build -ldflags "$(LDFLAGS)" -o $(BIN) ./cmd/claude-msg
 
 vet:
 	$(GO) vet ./...

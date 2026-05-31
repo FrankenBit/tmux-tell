@@ -9,6 +9,8 @@ package main
 import (
 	"fmt"
 	"os"
+
+	"git.frankenbit.de/frankenbit/cli-semaphore/internal/version"
 )
 
 const usage = `usage: claude-msg <subcommand> [args]
@@ -46,6 +48,9 @@ func run(args []string, stdout, stderr *os.File) int {
 	switch args[0] {
 	case "-h", "--help", "help":
 		fmt.Fprint(stdout, usage)
+		return exitOK
+	case "-v", "--version", "version":
+		fmt.Fprintf(stdout, "claude-msg %s\n", version.Version)
 		return exitOK
 	case "send":
 		return runSendCLI(args[1:], stdout, stderr)
