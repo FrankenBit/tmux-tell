@@ -24,6 +24,23 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Known limitations (recorded, not blocking)
+
+- **`store.AddAlias` / `SetAliases` cross-canonical collision check
+  has a TOCTOU window.** The check (`checkAliasCollisions`) reads
+  the agent registry outside the UPDATE transaction. Concurrent
+  registrations could both pass the check before either's UPDATE
+  commits, allowing a collision that the runtime ambiguity-detection
+  then has to catch. Mitigated in practice by:
+  1. The `_txlock=immediate` DSN setting (#29) — each writer's
+     `BEGIN IMMEDIATE` blocks until prior writers commit, so the
+     window is microseconds, not seconds.
+  2. The alex-as-sole-registrar reality on alcatraz — concurrent
+     registers don't happen in practice.
+  Worth tightening (pull the check inside the UPDATE transaction)
+  if/when concurrent register becomes a real pattern. Per Surveyor
+  v0.2.1 review acknowledgment.
+
 ### Notes for 1.0 trigger (Surveyor review of v0.2.0)
 
 Before bumping to 1.0 we want **K=3 release stability across all
