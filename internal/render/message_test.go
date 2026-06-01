@@ -4,21 +4,39 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"time"
 
 	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
 )
 
+// localClockFromUTC converts an ISO 8601 UTC timestamp into the
+// expected "HH:MM:SS" local-clock substring the renderer should
+// produce. Lets the tests pass regardless of which timezone the
+// build runs in (CI may be UTC; the alcatraz host is Europe/Berlin).
+func localClockFromUTC(t *testing.T, iso string) string {
+	t.Helper()
+	parsed, err := time.Parse("2006-01-02T15:04:05.000Z", iso)
+	if err != nil {
+		parsed, err = time.Parse("2006-01-02T15:04:05Z", iso)
+		if err != nil {
+			t.Fatalf("parse fixture %q: %v", iso, err)
+		}
+	}
+	return parsed.Local().Format("15:04:05")
+}
+
 func TestMessage_Regular(t *testing.T) {
+	const fixtureUTC = "2026-05-29T11:04:12.000Z"
 	got := Message(store.Message{
 		PublicID:  "7f3a",
 		FromAgent: "bosun",
 		ToAgent:   "surveyor",
 		Body:      "please check CI on PR 1234",
-		CreatedAt: "2026-05-29T11:04:12.000Z",
+		CreatedAt: fixtureUTC,
 	})
 	wantSubstrings := []string{
 		"Message from Bosun",
-		"11:04:12",
+		localClockFromUTC(t, fixtureUTC),
 		"id 7f3a",
 		"please check CI on PR 1234",
 		"────",
@@ -63,11 +81,16 @@ func TestFormatClock_FallsBackOnBadInput(t *testing.T) {
 }
 
 func TestFormatClock_AcceptsBothLayouts(t *testing.T) {
-	if got := formatClock("2026-05-29T11:04:12.000Z"); got != "11:04:12" {
-		t.Errorf("subsecond format: %q", got)
-	}
-	if got := formatClock("2026-05-29T11:04:12Z"); got != "11:04:12" {
-		t.Errorf("plain format: %q", got)
+	// Expected output is local-tz; compute it from the input so the test
+	// passes in any timezone (CI = UTC, alcatraz host = Europe/Berlin).
+	for _, iso := range []string{
+		"2026-05-29T11:04:12.000Z",
+		"2026-05-29T11:04:12Z",
+	} {
+		want := localClockFromUTC(t, iso)
+		if got := formatClock(iso); got != want {
+			t.Errorf("formatClock(%q) = %q, want %q", iso, got, want)
+		}
 	}
 }
 

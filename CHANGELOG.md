@@ -125,6 +125,16 @@ Run `claude-msg --version` to see what's installed.
 
 ### Changed
 
+- **Message-header clock is now local time (was UTC).** The rendered
+  header timestamp at `internal/render/message.go:formatClock` calls
+  `t.Local().Format(...)` instead of formatting UTC directly. The
+  stored `CreatedAt` remains ISO 8601 UTC — only the operator-facing
+  rendered presentation is local. Tests rewritten to compute the
+  expected substring from input so they pass in any timezone (CI =
+  UTC, alcatraz host = Europe/Berlin). Operator call 2026-06-01: the
+  rendered header is operator-facing convenience and should be wall-
+  clock-comparable + correlate with journalctl's local-time prefix.
+
 - **Probe-and-watch quiet-pane gate is now opt-in (default OFF).**
   `--quiet-disabled` default flipped from `false` to `true`; the
   hardcoded fallback in `internal/config/config.go` for unconfigured

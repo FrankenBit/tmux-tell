@@ -25,16 +25,24 @@ func titleCase(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// formatClock returns "HH:MM:SS" from an ISO 8601 UTC timestamp string.
-// Returns "??:??:??" if the input doesn't parse — we'd rather render with
-// a placeholder than block delivery on a format mismatch.
+// formatClock returns "HH:MM:SS" in the host's local timezone from an
+// ISO 8601 UTC timestamp string. Returns "??:??:??" if the input doesn't
+// parse — we'd rather render with a placeholder than block delivery on a
+// format mismatch.
+//
+// Local-time (not UTC) since 2026-06-01: the rendered header is
+// operator-facing convenience and should be wall-clock-comparable.
+// journalctl logs already use local time; this keeps the two correlated.
+// The stored CreatedAt remains ISO 8601 UTC — only the rendered
+// presentation is local. Cross-timezone unambiguity is not a concern in
+// the single-host single-operator deployment shape.
 func formatClock(iso string) string {
 	for _, layout := range []string{
 		"2006-01-02T15:04:05.000Z",
 		"2006-01-02T15:04:05Z",
 	} {
 		if t, err := time.Parse(layout, iso); err == nil {
-			return t.Format("15:04:05")
+			return t.Local().Format("15:04:05")
 		}
 	}
 	return "??:??:??"
