@@ -125,6 +125,22 @@ Run `claude-msg --version` to see what's installed.
 
 ### Changed
 
+- **Probe-and-watch quiet-pane gate is now opt-in (default OFF).**
+  `--quiet-disabled` default flipped from `false` to `true`; the
+  hardcoded fallback in `internal/config/config.go` for unconfigured
+  agents also flipped. Empirical use during the Binnacle M2.11
+  exchange showed the gate adding up to 5 min worst-case latency
+  while not preventing the mid-turn collisions it was designed to
+  guard against — the post-#53 verify-token retry +
+  `delivered_unverified` notice path (independent toggle, on by
+  default) is the load-bearing transparency safety net. Re-enable
+  per agent with TOML `quiet-disabled = false` or
+  `--quiet-disabled=false` if the polite-wait shape is wanted for a
+  specific recipient. README + flag-help text record the decision
+  context. Operator call 2026-06-01 after Surveyor's
+  `delivered_unverified` triage surfaced two timeouts in ~6h of
+  moderate-traffic exchange.
+
 - **README "Diagnosing a failed or unverified message" section added
   (#48).** Walks through the `track` → journalctl → fix flow with
   common cause patterns (`drift_check_ambiguous`,

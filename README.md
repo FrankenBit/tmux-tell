@@ -300,9 +300,12 @@ tool into a running pane, restart its Claude session.
 
 ### Tracking delivery
 
-With the probe-and-watch gate the bus is no longer instantaneous —
-a message can dwell minutes waiting for the recipient pane to go
-quiet. To check whether a sent message has actually landed:
+When the probe-and-watch gate is enabled (opt-in since 2026-06-01)
+the bus is no longer instantaneous — a message can dwell minutes
+waiting for the recipient pane to go quiet. With the gate off
+(default) delivery happens immediately and the `delivered_unverified`
+notice is the load-bearing transparency signal. To check whether a
+sent message has actually landed:
 
 ```bash
 # From any shell:
@@ -370,11 +373,20 @@ Common cause patterns:
   claude-mailman@<recipient>.service`. Orphan-recovery on next
   startup will re-queue any in-flight messages.
 
-### Delivery semantics: probe-and-watch quiet-pane gate
+### Delivery semantics: probe-and-watch quiet-pane gate (opt-in)
 
-Before each delivery the mailman checks whether the recipient pane's
-input row is operator-quiet. Per #52's redesign (2026-05-31), the
-gate is a **two-dash check** rather than the older four-way verdict:
+**Default state since 2026-06-01: OFF.** Empirical use during M2.11
+exchange showed the gate added up to 5 min worst-case latency without
+preventing mid-turn collisions in practice — the verify-token retry
++ `delivered_unverified` notice path (always on by default) is the
+load-bearing safety net. Re-enable per agent via TOML
+`quiet-disabled = false` or `--quiet-disabled=false` if a polite-wait
+shape is wanted for a specific recipient.
+
+When enabled, the gate checks whether the recipient pane's input row
+is operator-quiet before each delivery. Per #52's redesign
+(2026-05-31), the gate is a **two-dash check** rather than the older
+four-way verdict:
 
 1. Paste `─` (probe #1 — dismisses any ghost-text suggested prompt the
    CLI may be showing).
@@ -420,7 +432,8 @@ Flags on `claude-msg serve`:
   once after each probe)
 - `--quiet-input-backoff` (default 60s)
 - `--quiet-max-wait` (default 5m)
-- `--quiet-disabled` (escape hatch)
+- `--quiet-disabled` (default `true` since 2026-06-01; set
+  `--quiet-disabled=false` to re-enable the gate for an agent)
 - `--notify-on-failed` / `--notify-on-delivered-unverified` (default
   on; see [Delivery-failure notifications](#delivery-failure-notifications) below)
 

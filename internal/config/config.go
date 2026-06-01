@@ -203,7 +203,7 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		NotifyOnFailed:              ResolveBool(file, agent, "notify-on-failed", true),
 		NotifyOnDeliveredUnverified: ResolveBool(file, agent, "notify-on-delivered-unverified", true),
 		DriftSoftFail:               ResolveBool(file, agent, "drift-soft-fail", false),
-		QuietDisabled:               ResolveBool(file, agent, "quiet-disabled", false),
+		QuietDisabled:               ResolveBool(file, agent, "quiet-disabled", true),
 		QuietObserveWindow:          ResolveDuration(file, agent, "quiet-observe-window", 3*time.Second),
 		QuietInputBackoff:           ResolveDuration(file, agent, "quiet-input-backoff", 60*time.Second),
 		QuietMaxWait:                ResolveDuration(file, agent, "quiet-max-wait", 5*time.Minute),

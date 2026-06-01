@@ -116,8 +116,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"how long to wait before re-probing after detecting operator activity in the input row")
 	quietMaxWait := fs.Duration("quiet-max-wait", 5*time.Minute,
 		"total cap on the pre-delivery quiet wait; on cap we deliver anyway with a WARN log")
-	quietDisabled := fs.Bool("quiet-disabled", false,
-		"bypass the probe-and-watch gate (delivery happens immediately on every queue head)")
+	quietDisabled := fs.Bool("quiet-disabled", true,
+		"bypass the probe-and-watch gate (delivery happens immediately on every queue head). Default true since 2026-06-01: empirical use showed the gate added 5-min worst-case latency without preventing mid-turn collisions in practice — the verify-token retry + delivered_unverified notice path (independent toggle, on by default) is the load-bearing safety net. Re-enable per-agent via TOML `quiet-disabled = false` if a polite-wait shape is wanted")
 	driftSoftFail := fs.Bool("drift-soft-fail", false,
 		"when pre-delivery drift detection hits ambiguous or unrecoverable, log WARN and deliver to the (potentially wrong) pane instead of marking the message failed. Default off — fail-loud is safer for autonomous receivers")
 	notifyOnFailed := fs.Bool("notify-on-failed", true,
