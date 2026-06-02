@@ -126,6 +126,58 @@ func TestResolve_PeerScope_EdgeRule(t *testing.T) {
 	}
 }
 
+// TestResolve_SelfScope_ErrorWording pins the three-branch
+// differentiation introduced in Surveyor's S1 absorb on PR #61.
+// Pre-#60 every Self=false entry also had Peer=true, so the historical
+// "is peer-only" wording was always accurate. /clear is the first
+// entry to break that invariant (Self=false AND Peer=false). The
+// switch in Resolve's ScopeSelf branch now picks the wording based on
+// what WOULD have let the caller through:
+//
+//  1. cmd.Peer == true → "is peer-only" (genuine peer-only, e.g. a
+//     hypothetical peer-only command — none today but the wording
+//     stays accurate when one lands).
+//  2. cmd.Peer == false AND PeerEdges[n] non-empty → "is restricted
+//     to specific peer (sender, recipient) edges" — the /clear shape.
+//  3. cmd.Peer == false AND PeerEdges[n] empty → "is not invokable in
+//     any scope" — theoretical entry that exists in Allowed but is
+//     denied everywhere; no command has this shape today but the
+//     branch covers it for completeness.
+func TestResolve_SelfScope_ErrorWording(t *testing.T) {
+	// (2) /clear with self scope hits the edge-restricted wording.
+	_, err := Resolve("clear", ScopeSelf, "bosun", "bosun")
+	if err == nil {
+		t.Fatal("Resolve(clear, self): want error, got nil")
+	}
+	if !errors.Is(err, ErrScopeDenied) {
+		t.Errorf("Resolve(clear, self): want ErrScopeDenied wrapping, got %v", err)
+	}
+	want := "is restricted to specific peer (sender, recipient) edges; not self-invokable"
+	if !contains(err.Error(), want) {
+		t.Errorf("Resolve(clear, self) wording = %q, want substring %q", err.Error(), want)
+	}
+	notWant := "is peer-only"
+	if contains(err.Error(), notWant) {
+		t.Errorf("Resolve(clear, self) wording = %q, must NOT contain %q (the pre-#60 wording was wrong for this shape)", err.Error(), notWant)
+	}
+}
+
+// contains is a tiny helper to avoid importing strings just for one
+// test substring check. (The package's other tests don't use strings
+// either.)
+func contains(s, sub string) bool {
+	return len(s) >= len(sub) && indexOf(s, sub) >= 0
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestNames_SortedAndComplete(t *testing.T) {
 	names := Names()
 	want := []string{

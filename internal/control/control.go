@@ -120,6 +120,13 @@ type Edge struct {
 // for a single sender/recipient pair: it grants peer invocation, just
 // narrowly. New edges require a code change so the policy expansion is
 // reviewable.
+//
+// Maintenance: From/To values are matched against canonical agent
+// names from the semaphore registry. When a chamber is renamed (e.g.,
+// the 2026-06-02 Admin → Quartermaster rename), every PeerEdges entry
+// referencing the old name MUST be updated in lockstep — otherwise
+// the edge silently stops matching and the rescue path goes dark.
+// Surveyor S2 forward-watch on PR #61.
 var PeerEdges = map[string][]Edge{
 	// Bosun → Pilot rescue path: Pilot occasionally hits token
 	// exhaustion where /compact can't recover, and only /clear
@@ -167,7 +174,21 @@ func Resolve(name string, scope Scope, sender, recipient string) (string, error)
 	switch scope {
 	case ScopeSelf:
 		if !cmd.Self {
-			return "", fmt.Errorf("%w: %q is peer-only", ErrScopeDenied, n)
+			// Pre-#60 every Self=false entry had Peer=true, so the
+			// historical "is peer-only" wording was always accurate.
+			// /clear breaks that: Self=false AND Peer=false (the edge
+			// layer is the only path through). Differentiate so the
+			// error tells the caller what WOULD have let it through.
+			// Surveyor S1 absorb on PR #61.
+			switch {
+			case cmd.Peer:
+				return "", fmt.Errorf("%w: %q is peer-only", ErrScopeDenied, n)
+			case len(PeerEdges[n]) > 0:
+				return "", fmt.Errorf("%w: %q is restricted to specific peer (sender, recipient) edges; not self-invokable",
+					ErrScopeDenied, n)
+			default:
+				return "", fmt.Errorf("%w: %q is not invokable in any scope", ErrScopeDenied, n)
+			}
 		}
 	case ScopePeer:
 		if cmd.Peer {
