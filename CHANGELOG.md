@@ -26,6 +26,37 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **Asymmetric quick-presence probe — partial coverage for #63 (Part 1).**
+  Adds `tmuxio.QuickPresenceProbe` — a one-shot variant of the existing
+  probe-and-watch gate that completes in ~50ms instead of multi-second
+  observe windows. New opt-in flag `--quick-presence-probe` (also
+  `quick-presence-probe` TOML knob, default false) lights up an
+  asymmetric pre-check: when BOTH `--quiet-disabled=true` (the default)
+  AND `--quick-presence-probe=true`, the mailman runs the cheap probe
+  before each delivery; on `DeltaInputActivity` it falls back to the
+  full `WaitForQuietPane` gate; on `DeltaQuiet` it delivers
+  immediately. The speed win of the default-off gate is preserved for
+  the common idle-pane case while the safety of the full gate is
+  restored when the operator is actively typing during the probe
+  window.
+
+  **Coverage caveat**: the probe detects *operator-typing-right-now*
+  (operator keystrokes interleave with the probe inject). It does NOT
+  yet detect *operator-drafts-sitting-in-the-buffer* (a passive
+  non-typing operator whose unsent draft would be clobbered by a bus
+  delivery's trailing Enter). The latter is the headline case from
+  #63's reproduction and requires prompt-sentinel detection (capturing
+  the input row and checking for content past the prompt marker).
+  That's deferred to #63 Part 2; this Part 1 lands the function + the
+  asymmetric gate scaffold + the opt-in flag so Part 2 can plug into
+  an established surface rather than redesigning from scratch.
+
+  Tests pin both branches (`TestQuickPresenceProbe_QuietWhenIdle`,
+  `TestQuickPresenceProbe_DetectsActiveTyping`,
+  `TestQuickPresenceProbe_PaneRequired`). Existing default-off
+  behaviour is preserved by the opt-in gate — no behavioural change
+  unless an operator explicitly sets the flag.
+
 - **`/clear` whitelist entry + PeerEdges per-edge exception layer (#60).**
   Adds `clear` to `internal/control/control.go`'s `Allowed` map with
   `Self: false, Peer: false` (globally denied), then adds a third

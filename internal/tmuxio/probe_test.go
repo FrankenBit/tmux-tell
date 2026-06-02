@@ -177,6 +177,78 @@ func (f *fakeProbeRunner) run(_ context.Context, _ io.Reader, args ...string) ([
 	return nil, nil
 }
 
+// quickOpts gives a QuickPresenceProbe paint-wait that completes
+// within microseconds for tests.
+func quickOpts() QuickPresenceOpts {
+	return QuickPresenceOpts{PaintWait: 1 * time.Millisecond}
+}
+
+// TestQuickPresenceProbe_QuietWhenIdle pins the speed-win common case:
+// pane is idle, two probes land cleanly, analyzeDelta returns
+// DeltaQuiet, both probes get backspaced before return.
+func TestQuickPresenceProbe_QuietWhenIdle(t *testing.T) {
+	fr := newFakeProbeRunner([]string{
+		"ctx\n> \n",   // before — empty input row
+		"ctx\n> ──\n", // after — two probes appended cleanly
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	verdict, err := QuickPresenceProbe(context.Background(), "%5", quickOpts())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verdict != DeltaQuiet {
+		t.Errorf("verdict = %v, want DeltaQuiet (probes landed cleanly on idle pane)", verdict)
+	}
+	if fr.probeChars != 2 {
+		t.Errorf("probe chars sent = %d, want 2", fr.probeChars)
+	}
+	if fr.backspaces != 2 {
+		t.Errorf("backspaces = %d, want 2 (probes must always be cleaned up)", fr.backspaces)
+	}
+}
+
+// TestQuickPresenceProbe_DetectsActiveTyping pins the safety case:
+// operator types during the probe window, probes don't land cleanly
+// (operator's keystroke landed after the probes), analyzeDelta
+// returns DeltaInputActivity. Cleanup still backspaces the probes.
+func TestQuickPresenceProbe_DetectsActiveTyping(t *testing.T) {
+	fr := newFakeProbeRunner([]string{
+		"ctx\n> \n",    // before
+		"ctx\n> ──x\n", // after — operator typed 'x' after our probes
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	verdict, err := QuickPresenceProbe(context.Background(), "%5", quickOpts())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verdict != DeltaInputActivity {
+		t.Errorf("verdict = %v, want DeltaInputActivity (typing detected)", verdict)
+	}
+	if fr.backspaces != 2 {
+		t.Errorf("backspaces = %d, want 2 (probes cleaned up on activity branch too)", fr.backspaces)
+	}
+}
+
+// TestQuickPresenceProbe_PaneRequired pins the input-validation guard:
+// empty pane returns an error WITHOUT firing any tmux calls.
+func TestQuickPresenceProbe_PaneRequired(t *testing.T) {
+	fr := newFakeProbeRunner([]string{"ctx\n", "ctx\n"})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	_, err := QuickPresenceProbe(context.Background(), "", quickOpts())
+	if err == nil {
+		t.Fatal("expected error for empty pane, got nil")
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("tmux was called %d times, want 0 (validation should reject before any tmux call)", len(fr.calls))
+	}
+}
+
 // shortOpts gives a probe-and-watch loop that completes within
 // milliseconds — production defaults (3s/60s/5min) are unsuitable for
 // tests.
