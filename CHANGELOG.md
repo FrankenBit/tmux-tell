@@ -26,6 +26,33 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`/clear` whitelist entry + PeerEdges per-edge exception layer (#60).**
+  Adds `clear` to `internal/control/control.go`'s `Allowed` map with
+  `Self: false, Peer: false` (globally denied), then adds a third
+  `PeerEdges` tier that lifts the denial narrowly for specific
+  (sender, recipient) pairs.
+
+  The first edge is **Bosun → Pilot** — when Pilot hits token
+  exhaustion in a state where `/compact` can't recover, Bosun can
+  send `/clear` as a rescue path (loses in-flight work but restores a
+  usable session). Any other sender / recipient combination remains
+  denied; the same goes for `clear` on self scope.
+
+  **Surface changes**:
+  - `control.Resolve(name, scope)` → `control.Resolve(name, scope, sender, recipient)`.
+    Required signature change so the edge-rule can match on identities.
+  - `control.NamesForScope(scope)` → `control.NamesForScope(scope, sender, recipient)`.
+    Edge-allowed commands now appear in the listing when the caller is on a matching edge,
+    so the `peer-invokable: [...]` error context stays accurate.
+  - New `control.Edge` struct + `control.PeerEdges` map (keyed by command name).
+
+  **Policy expansion noted**: the package doc previously cited
+  `/clear another agent's history` as the canonical example of what
+  the audit surface protects against. The new edge layer keeps that
+  protection in place by default — only a hardcoded, reviewable
+  exception flips the denial for a specific pair. New edges and new
+  whitelist entries still require a code change.
+
 - **ADR-0001 amended with two new commitment slugs (#55):**
   - **`OperatorInputRowGate`** — the pre-delivery probe-and-watch gate
     gates on operator-input-row quiet, NOT pane-quiet (#52). Recipient

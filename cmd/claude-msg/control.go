@@ -71,10 +71,10 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 	if p.To == p.From {
 		scope = control.ScopeSelf
 	}
-	text, err := control.Resolve(p.Command, scope)
+	text, err := control.Resolve(p.Command, scope, p.From, p.To)
 	if err != nil {
 		return nil, fmt.Errorf("%w; %s-invokable: %v",
-			err, scope, control.NamesForScope(scope))
+			err, scope, control.NamesForScope(scope, p.From, p.To))
 	}
 	if _, err := s.GetAgent(ctx, p.To); err != nil {
 		if errors.Is(err, store.ErrNotFound) {

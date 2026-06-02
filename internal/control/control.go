@@ -10,9 +10,18 @@
 // peer-denied" and only flip peer=true for commands whose effect on the
 // recipient is benign or actively useful (e.g. rename, help).
 //
-// New commands and new scope-flips require a code change — the goal is
-// to keep the audit surface tiny so an agent can never, say, /clear
-// another agent's history or shell out via /bash.
+// A third tier — per-edge allowlist — sits between "peer-denied" and
+// "peer-allowed-to-all": some commands are too destructive for global
+// peer permission but are legitimately useful between specific
+// (sender, recipient) pairs. PeerEdges encodes those exceptions:
+// `/clear` is denied by default, but Bosun→Pilot is allowed because
+// Pilot occasionally hits token exhaustion where /compact can't
+// recover and only /clear restores a usable session (#60).
+//
+// New commands, scope-flips, AND edge rules all require a code change
+// — the goal is to keep the audit surface tiny so an agent can never,
+// e.g., /clear another agent's history without an explicit, reviewed
+// exception or shell out via /bash.
 package control
 
 import (
@@ -55,12 +64,19 @@ type Command struct {
 
 // Allowed lists every recognised command. Keys are the bare name (no
 // leading slash). Defaults are intentionally conservative: peer flips
-// to true only where the recipient-side effect is benign.
+// to true only where the recipient-side effect is benign. Per-edge
+// exceptions for destructive commands live in PeerEdges below.
 var Allowed = map[string]Command{
 	"compact": {Text: "/compact", Self: true, Peer: false},
 	"rename":  {Text: "/rename", Self: true, Peer: true},
 	"cost":    {Text: "/cost", Self: true, Peer: false},
 	"help":    {Text: "/help", Self: true, Peer: true},
+	// /clear discards all session state. Globally denied (Self: false
+	// because a token-exhausted pane can't reach the MCP to call it
+	// anyway; Peer: false because anyone-to-anyone clearing is a
+	// blast-radius nightmare). The Bosun→Pilot rescue case is allowed
+	// via PeerEdges instead — see #60.
+	"clear": {Text: "/clear", Self: false, Peer: false},
 	// MCP-server lifecycle: useful after deploying a new semaphore tool
 	// so a running agent can refresh its tool surface without losing
 	// session context.
@@ -84,21 +100,60 @@ var Allowed = map[string]Command{
 	"mcp-restart-semaphore": {Text: "/mcp restart semaphore", Self: true, Peer: true},
 }
 
+// Edge identifies a specific (sender → recipient) pair for which a
+// per-edge exception applies. From/To are matched against the canonical
+// agent names from the semaphore registry — exact match, no wildcards
+// in this first cut (#60).
+type Edge struct {
+	From string // sender agent name
+	To   string // recipient agent name
+}
+
+// PeerEdges is the per-edge exception layer for commands whose global
+// Peer flag is false. Keys are the bare command name (matching Allowed).
+// When Resolve encounters a peer scope and the command's Peer flag is
+// false, it falls through to a PeerEdges lookup before returning
+// ErrScopeDenied — if any edge in the slice matches (sender, recipient)
+// exactly, the command is permitted.
+//
+// Adding an edge is the same audit-surface event as flipping Peer=true
+// for a single sender/recipient pair: it grants peer invocation, just
+// narrowly. New edges require a code change so the policy expansion is
+// reviewable.
+var PeerEdges = map[string][]Edge{
+	// Bosun → Pilot rescue path: Pilot occasionally hits token
+	// exhaustion where /compact can't recover, and only /clear
+	// restores a usable session. The destructive cost (loses
+	// in-flight work) is accepted because the alternative is a
+	// dead session. Bosun is the one chamber routed to make this
+	// call. See #60 for the design + acceptance criteria.
+	"clear": {
+		{From: "bosun", To: "pilot"},
+	},
+}
+
 // ErrNotAllowed is returned by Resolve when the requested command is
 // not on the whitelist at all.
 var ErrNotAllowed = errors.New("control: command not on whitelist")
 
 // ErrScopeDenied is returned by Resolve when the command exists but is
 // not permitted in the requested scope (e.g. peer-invoking a self-only
-// command).
+// command, or peer-invoking a globally-denied command from a sender
+// that has no PeerEdge to the recipient).
 var ErrScopeDenied = errors.New("control: command not allowed in this scope")
 
 // Resolve normalises name (trim, lowercase, strip leading slash),
 // verifies the command is whitelisted in scope, and returns the literal
-// text to send. Two distinct errors so callers can craft a precise
-// message: ErrNotAllowed for "unknown command", ErrScopeDenied for
-// "exists, but you can't aim it that way".
-func Resolve(name string, scope Scope) (string, error) {
+// text to send. The (sender, recipient) names are matched against
+// PeerEdges when the requested scope is peer and the command's global
+// Peer flag is false — they MUST be passed even for self-scope (where
+// they're identical) so the function signature stays uniform.
+//
+// Two distinct errors so callers can craft a precise message:
+// ErrNotAllowed for "unknown command", ErrScopeDenied for "exists, but
+// you can't aim it that way (or you specifically aren't on the
+// per-edge allowlist)".
+func Resolve(name string, scope Scope, sender, recipient string) (string, error) {
 	n := strings.TrimSpace(name)
 	n = strings.TrimPrefix(n, "/")
 	n = strings.ToLower(n)
@@ -115,9 +170,29 @@ func Resolve(name string, scope Scope) (string, error) {
 			return "", fmt.Errorf("%w: %q is peer-only", ErrScopeDenied, n)
 		}
 	case ScopePeer:
-		if !cmd.Peer {
+		if cmd.Peer {
+			return cmd.Text, nil
+		}
+		// Global peer-denied — fall through to PeerEdges. An exact
+		// (sender, recipient) match grants the invocation narrowly.
+		edges := PeerEdges[n]
+		for _, e := range edges {
+			if e.From == sender && e.To == recipient {
+				return cmd.Text, nil
+			}
+		}
+		if len(edges) == 0 {
+			// No edge layer at all → command is unconditionally
+			// self-only. Keep the historical wording so callers'
+			// error rendering stays stable.
 			return "", fmt.Errorf("%w: %q is self-only", ErrScopeDenied, n)
 		}
+		// Edge layer exists but this (sender, recipient) pair isn't
+		// on it. The more specific wording surfaces the routing
+		// context so the caller knows it's an edge-mismatch, not a
+		// scope mismatch.
+		return "", fmt.Errorf("%w: %q not invokable from %q to %q",
+			ErrScopeDenied, n, sender, recipient)
 	}
 	return cmd.Text, nil
 }
@@ -134,13 +209,33 @@ func Names() []string {
 }
 
 // NamesForScope returns the subset of whitelisted commands invokable in
-// the given scope.
-func NamesForScope(scope Scope) []string {
+// the given scope for the given (sender, recipient) pair. For peer
+// scope, this includes both globally peer-allowed commands AND any
+// commands granted via a matching PeerEdge — so the error message
+// listing "what you CAN invoke" stays accurate when the caller is on
+// an edge-exception path. (sender, recipient) are ignored for self
+// scope.
+func NamesForScope(scope Scope, sender, recipient string) []string {
 	out := []string{}
 	for k, c := range Allowed {
-		ok := (scope == ScopeSelf && c.Self) || (scope == ScopePeer && c.Peer)
-		if ok {
-			out = append(out, k)
+		switch scope {
+		case ScopeSelf:
+			if c.Self {
+				out = append(out, k)
+			}
+		case ScopePeer:
+			if c.Peer {
+				out = append(out, k)
+				continue
+			}
+			// Per-edge exceptions are also "invokable in peer scope"
+			// for callers who match an edge — surface those names too.
+			for _, e := range PeerEdges[k] {
+				if e.From == sender && e.To == recipient {
+					out = append(out, k)
+					break
+				}
+			}
 		}
 	}
 	sort.Strings(out)

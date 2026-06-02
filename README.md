@@ -220,10 +220,13 @@ pane (for benign peer nudges like retitling). The string is typed
 directly (no chat header, no buffer) so Claude Code parses it exactly
 as if the operator had typed it.
 
-The whitelist is two-axis: every command opts in to *self* and/or
-*peer* independently. Self-only commands are rejected at the MCP
-boundary when targeted at another agent, so a peer can never wipe your
-working context.
+The whitelist is three-axis: every command opts in to *self*, *peer*,
+and — for destructive commands that need narrow exceptions to a
+blanket peer-deny — a per-edge allowlist of specific (sender,
+recipient) pairs. Self-only commands are rejected at the MCP boundary
+when targeted at another agent; peer-denied commands are rejected
+across the board unless a `PeerEdges` entry matches the caller's
+identity exactly.
 
 | command | self | peer | note |
 |---|---|---|---|
@@ -231,6 +234,7 @@ working context.
 | `rename`  | ✓ | ✓ | Useful for `<Project> #<Issue>` automation |
 | `cost`    | ✓ | ✗ | Self-only — output goes to recipient |
 | `help`    | ✓ | ✓ | Harmless either way |
+| `clear`   | ✗ | ✗ | **Edge-only**: Bosun→Pilot rescue path when `/compact` can't recover from token exhaustion (#60). Loses in-flight work. |
 | `mcp-enable-semaphore`  | ✓ | ✓ | Refresh tool surface after deploying a new `semaphore.*` tool — no context loss |
 | `mcp-disable-semaphore` | ✓ | ✗ | Self-only: raw peer-disable is a DoS surface; use the restart macro instead |
 | `mcp-restart-semaphore` | ✓ | ✓ | Macro: the handler synthesises `disable` + `enable` as two control rows for a peer-safe reconnect cycle |
@@ -241,11 +245,15 @@ semaphore.control to=bosun command=compact   # invoked from the bosun pane
 
 # Peer: Bosun retitles Pilot's tab
 semaphore.control to=pilot command=rename
+
+# Edge-allowed: Bosun rescues a token-exhausted Pilot
+semaphore.control to=pilot command=clear     # only works when sender == bosun
 ```
 
-Adding a command or flipping a scope flag requires a code change
-(`internal/control/control.go`) — the audit surface is intentionally
-small.
+Adding a command, flipping a scope flag, OR adding a new edge entry
+requires a code change (`internal/control/control.go`) — the audit
+surface is intentionally small, and edge exceptions are reviewable as
+explicit code rather than runtime configuration.
 
 #### From a shell
 
