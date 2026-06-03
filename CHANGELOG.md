@@ -26,6 +26,46 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **Prompt-sentinel gate — completes coverage for #63 (Part 2).**
+  Adds `tmuxio.InputRowHasContent` — a read-only-observe variant of
+  the asymmetric gate that inspects the receiver's input row via a
+  single `capture-pane` call (no probe injection, no paint-wait, no
+  pane disturbance). Detects the operator-draft-sitting-in-the-buffer
+  case that QuickPresenceProbe structurally cannot catch (a sitting
+  draft + two appended probes still look like a clean append to
+  `analyzeDelta`'s strip-N machinery).
+
+  New opt-in flag `--prompt-sentinel-gate` (also `prompt-sentinel-gate`
+  TOML knob, default false). When `--quiet-disabled=true` (default)
+  AND this flag is set, the mailman runs the read-only check before
+  each delivery; if the input row shows the Claude Code prompt
+  sentinel (`❯ `) followed by ANY non-whitespace content (operator's
+  draft, an agent's chosen-text narration, a selection-menu echo),
+  falls back to the full `WaitForQuietPane` gate. If the sentinel is
+  missing entirely (Claude Code in a non-prompt state — mid-stream
+  output, menu overlay, search dialog), also falls back per the
+  safer-default contract.
+
+  **Composable with `--quick-presence-probe`.** Sentinel runs FIRST
+  (read-only, ~5ms); if sentinel says quiet, QuickPresenceProbe runs
+  next (write+observe, ~50ms) to catch active-typing during the brief
+  paint window between sentinel-check and delivery. Net cost on the
+  fast path is ~5ms (sentinel only), ~55ms (both), or 0ms (both off)
+  — identical to pre-#63 when neither flag is set.
+
+  Tests cover the operator-draft case, agent-narration-in-input-area
+  (worked example from the cli-semaphore#63 Part 2 design pass with
+  Surveyor), no-sentinel-found safer-default, empty input row,
+  pane-required validation, and the substrate-class property that
+  read-only-observe makes exactly one tmux call with zero send-keys
+  (the distinguishing property vs QuickPresenceProbe's
+  write+observe). Existing default-off behaviour preserved.
+
+  **Constant `tmuxio.PromptSentinel`** is the Claude-Code-version-
+  dependent prompt prefix (U+276F + space). Forward-watch: re-verify
+  during major Claude Code version updates; the prompt-sentinel
+  tests would surface a paint-format change.
+
 - **Asymmetric quick-presence probe — partial coverage for #63 (Part 1).**
   Adds `tmuxio.QuickPresenceProbe` — a one-shot variant of the existing
   probe-and-watch gate that completes in ~50ms instead of multi-second

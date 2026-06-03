@@ -16,6 +16,19 @@ import (
 // operator interference.
 const QuietProbe = "─"
 
+// PromptSentinel is the Claude Code TUI's input-row prefix — U+276F
+// (Heavy Right-Pointing Angle Quotation Mark Ornament) followed by a
+// space. Empirically verified as the marker for the current input row,
+// bounded by horizontal-rule separators above and below the input area.
+//
+// FORWARD-WATCH: this constant is Claude-Code-version-dependent. If
+// the Claude Code TUI's prompt character changes (theme update, version
+// bump, customization), InputRowHasContent silently degrades to "no
+// sentinel found" on every pane → over-gate. The prompt-sentinel tests
+// would surface a paint-format change, but re-verify the constant
+// during any major Claude Code version update.
+const PromptSentinel = "❯ "
+
 // ErrCapExceeded means the quiet-pane wait hit its total-time cap
 // without finding an operator-quiet window. The mailman's policy on
 // this is "deliver anyway with a WARN" — `journalctl` shows why the
@@ -405,6 +418,74 @@ func QuickPresenceProbe(ctx context.Context, pane string, opts QuickPresenceOpts
 	}
 
 	return verdict, nil
+}
+
+// InputRowHasContent classifies the receiving pane's CURRENT absolute
+// state by inspecting the painted input row directly — no probe
+// injection, no paint-wait, no pane disturbance. Returns DeltaQuiet
+// only when the input area is found AND empty; DeltaInputActivity
+// otherwise (content present, sentinel not found, or capture error).
+//
+// Substrate-class: read-only-observe (single capture-pane call).
+// Distinct from WaitForQuietPane / QuickPresenceProbe which are
+// write+observe (inject probes, observe paint, backspace). This makes
+// InputRowHasContent the cheapest variant in the asymmetric-gate
+// family: ~5ms, no pane mutation, safe to call before every delivery
+// without any operational footprint on the receiver.
+//
+// Heuristic: scan capture-pane output for any row beginning with
+// PromptSentinel ("❯ "). If found AND non-whitespace content follows
+// the sentinel, return DeltaInputActivity — the input buffer is
+// non-empty (operator's draft, an agent's chosen-text narration, a
+// selection-menu echo, etc.) and a bus delivery's trailing Enter would
+// be consumed as submit on that content. If found AND only whitespace
+// follows, return DeltaQuiet — bare prompt, safe to deliver. If NO
+// row begins with PromptSentinel, return DeltaInputActivity — Claude
+// Code is in some non-prompt state (mid-stream output, menu overlay,
+// search dialog, …) and the conservative default per the gate's
+// contract is to fall back to the full gate.
+//
+// Known limitation — multi-line drafts with continuation rows: if
+// Claude Code paints a multi-line draft as one PromptSentinel row
+// plus continuation rows without the sentinel, the heuristic
+// false-negatives on content past row 1 if row 1 is empty. The cli-
+// semaphore#63 reproduction was a single-line draft; the strengthened
+// region-based scan (scan all rows between the input area's bounding
+// separators) is forward-watch to upgrade when an empirical multi-
+// line paint sample is captured.
+//
+// Atomicity assumption: tmux capture-pane returns a single coherent
+// pane snapshot (tmux serializes pane operations). No torn-read
+// concern between rows of the captured output.
+//
+// Errors propagate up; the function returns DeltaInputActivity
+// alongside any non-nil error so the safer-default-on-uncertainty is
+// natural at the call site (treat any error as "fall back to full
+// gate").
+func InputRowHasContent(ctx context.Context, pane string) (DeltaKind, error) {
+	if pane == "" {
+		return DeltaInputActivity, errors.New("tmuxio: pane required")
+	}
+	out, err := tmuxRun(ctx, nil, "capture-pane", "-p", "-t", pane)
+	if err != nil {
+		return DeltaInputActivity, fmt.Errorf("tmuxio: input-row capture-pane: %w: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+	sawSentinel := false
+	for _, row := range strings.Split(string(out), "\n") {
+		rest, found := strings.CutPrefix(row, PromptSentinel)
+		if !found {
+			continue
+		}
+		sawSentinel = true
+		if strings.TrimSpace(rest) != "" {
+			return DeltaInputActivity, nil
+		}
+	}
+	if !sawSentinel {
+		return DeltaInputActivity, nil
+	}
+	return DeltaQuiet, nil
 }
 
 // sleepWithPing blocks for d, returning early when ctx cancels. When

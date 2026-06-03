@@ -73,6 +73,26 @@ type serveOpts struct {
 	// consulted when QuickPresenceProbe is true. Zero values pick the
 	// aggressive defaults sized for fast empty-buffer delivery.
 	QuickPresenceOpts tmuxio.QuickPresenceOpts
+	// PromptSentinelGate (opt-in, #63 Part 2) activates the read-only
+	// pre-check that handles the operator-draft-sitting collision —
+	// the headline #63 failure mode that QuickPresenceProbe cannot
+	// catch (a sitting draft + two appended probes still look like a
+	// clean append). When BOTH QuietDisabled=true AND this flag=true:
+	// the mailman inspects the receiver's input row via a single
+	// capture-pane (no inject, no paint-wait); if the row shows the
+	// Claude Code prompt sentinel followed by ANY non-whitespace
+	// content (operator's draft, an agent's narration, a selection
+	// menu echo), falls back to the full gate. If the sentinel is
+	// missing entirely (Claude Code in a non-prompt state — mid-stream
+	// output, menu overlay), also falls back (safer default).
+	//
+	// Composable with QuickPresenceProbe: sentinel runs FIRST (read-
+	// only, ~5ms); if sentinel says quiet, the QuickPresenceProbe
+	// runs next (write+observe, ~50ms) to catch active-typing during
+	// the brief paint window between sentinel-check and delivery.
+	//
+	// Defaults to false. Per-agent TOML knob: `prompt-sentinel-gate`.
+	PromptSentinelGate bool
 	// DriftCheckDisabled bypasses the pre-delivery silent-drift guard
 	// (#37). Production keeps it enabled. Tests that don't fake
 	// ListPanesWithPID + /proc readers should set this to true so the
@@ -135,7 +155,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	quietDisabled := fs.Bool("quiet-disabled", true,
 		"bypass the probe-and-watch gate (delivery happens immediately on every queue head). Default true since 2026-06-01: empirical use showed the gate added 5-min worst-case latency without preventing mid-turn collisions in practice — the verify-token retry + delivered_unverified notice path (independent toggle, on by default) is the load-bearing safety net. Re-enable per-agent via TOML `quiet-disabled = false` if a polite-wait shape is wanted")
 	quickPresenceProbe := fs.Bool("quick-presence-probe", false,
-		"opt-in asymmetric pre-check (#63): when --quiet-disabled is also true, run a ~50ms one-shot probe before each delivery; if it detects operator typing during the probe window, fall back to the full probe-and-watch gate; if quiet, deliver immediately. Catches the active-typing collision class without paying the full gate's latency on idle panes. Defaults to false (preserves v0.2.x ship-fast). Per-agent TOML knob: `quick-presence-probe = true`. Caveat: does NOT yet detect operator-drafts-sitting-in-the-buffer (a passive non-typing operator with an unsent draft) — that requires the prompt-sentinel detection deferred to #63 Part 2.")
+		"opt-in asymmetric pre-check (#63): when --quiet-disabled is also true, run a ~50ms one-shot probe before each delivery; if it detects operator typing during the probe window, fall back to the full probe-and-watch gate; if quiet, deliver immediately. Catches the active-typing collision class without paying the full gate's latency on idle panes. Defaults to false (preserves v0.2.x ship-fast). Per-agent TOML knob: `quick-presence-probe = true`. Caveat: does NOT detect operator-drafts-sitting-in-the-buffer (a passive non-typing operator with an unsent draft) — that's the prompt-sentinel-gate's territory (#63 Part 2).")
+	promptSentinelGate := fs.Bool("prompt-sentinel-gate", false,
+		"opt-in read-only pre-check (#63 Part 2): when --quiet-disabled is also true, inspect the receiver's input row via a single capture-pane (no probe injection, no paint-wait) BEFORE attempting delivery; if the input area shows the Claude Code prompt sentinel followed by ANY non-whitespace content, fall back to the full gate. Catches the operator-drafts-sitting-in-the-buffer class (the headline #63 failure mode) AND the agent-narration-in-input-area class, at ~5ms cost vs the ~50ms QuickPresenceProbe + ~6s+ full gate. Composable with --quick-presence-probe: sentinel runs first (cheap), probe runs only if sentinel says quiet (catches active-typing during the probe window). Defaults to false (preserves v0.2.x ship-fast). Per-agent TOML knob: `prompt-sentinel-gate = true`.")
 	driftSoftFail := fs.Bool("drift-soft-fail", false,
 		"when pre-delivery drift detection hits ambiguous or unrecoverable, log WARN and deliver to the (potentially wrong) pane instead of marking the message failed. Default off — fail-loud is safer for autonomous receivers")
 	notifyOnFailed := fs.Bool("notify-on-failed", true,
@@ -173,6 +195,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if !flagWasSet(fs, "quick-presence-probe") {
 		*quickPresenceProbe = config.ResolveBool(cfg, *agent, "quick-presence-probe", *quickPresenceProbe)
+	}
+	if !flagWasSet(fs, "prompt-sentinel-gate") {
+		*promptSentinelGate = config.ResolveBool(cfg, *agent, "prompt-sentinel-gate", *promptSentinelGate)
 	}
 	if !flagWasSet(fs, "quiet-observe-window") {
 		*quietObserve = config.ResolveDuration(cfg, *agent, "quiet-observe-window", *quietObserve)
@@ -217,6 +242,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		},
 		QuietDisabled:               *quietDisabled,
 		QuickPresenceProbe:          *quickPresenceProbe,
+		PromptSentinelGate:          *promptSentinelGate,
 		DriftSoftFail:               *driftSoftFail,
 		NotifyOnFailed:              *notifyOnFailed,
 		NotifyOnDeliveredUnverified: *notifyOnDeliveredUnverified,
@@ -408,16 +434,43 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			}
 		}
 
-		// Asymmetric quick-presence pre-check (#63). When QuietDisabled
-		// is the default (skip full gate), an opt-in cheap probe still
-		// catches the mid-typing case: if the operator is currently
-		// drafting, the quick probe detects activity and we promote to
-		// the full gate; if the input row is quiet, we proceed straight
-		// to delivery without paying the multi-second observe windows.
-		// Net cost ~50ms when the gate isn't needed, identical to the
-		// pre-#63 fast path when QuickPresenceProbe is false.
+		// Asymmetric pre-checks (#63). When QuietDisabled is the default
+		// (skip full gate), opt-in cheap pre-checks still catch the
+		// collision classes the v0.2.x ship-fast path misses. Two
+		// independent gate flags compose serially:
+		//
+		//   1. PromptSentinelGate (#63 Part 2, read-only-observe, ~5ms):
+		//      capture-pane + parse for the Claude Code prompt sentinel
+		//      followed by non-whitespace content. Catches operator
+		//      drafts sitting in the buffer (the headline #63 case),
+		//      agent narration in the input row, and selection-menu
+		//      echoes. No pane disturbance.
+		//   2. QuickPresenceProbe (#63 Part 1, write+observe, ~50ms):
+		//      one-shot probe-and-watch. Catches active-typing during
+		//      the brief paint window after the sentinel check.
+		//
+		// Either flag triggering DeltaInputActivity or an error promotes
+		// to the full gate. The sentinel runs first so its cheaper
+		// failure path can skip the probe entirely; the probe runs only
+		// if the sentinel says quiet (or PromptSentinelGate is off) AND
+		// QuickPresenceProbe is on AND we haven't already promoted.
+		// Net cost on the fast path is ~5ms (sentinel only), ~55ms
+		// (both), or 0ms (both off) — identical to pre-#63 when neither
+		// flag is set.
 		runFullGate := !opts.QuietDisabled
-		if opts.QuietDisabled && opts.QuickPresenceProbe {
+		if opts.QuietDisabled && opts.PromptSentinelGate && !runFullGate {
+			sCtx, sCancel := context.WithTimeout(stopCtx, 1*time.Second)
+			verdict, serr := tmuxio.InputRowHasContent(sCtx, paneForDelivery)
+			sCancel()
+			if serr != nil || verdict == tmuxio.DeltaInputActivity {
+				if serr != nil {
+					logger.Printf("prompt-sentinel check error on pane %s: %v; falling back to full gate",
+						paneForDelivery, serr)
+				}
+				runFullGate = true
+			}
+		}
+		if opts.QuietDisabled && opts.QuickPresenceProbe && !runFullGate {
 			qCtx, qCancel := context.WithTimeout(stopCtx,
 				200*time.Millisecond+opts.QuickPresenceOpts.PaintWait)
 			verdict, qerr := tmuxio.QuickPresenceProbe(qCtx, paneForDelivery,
@@ -582,8 +635,8 @@ func maybeInsertFailureNotice(
 	}
 	body := renderFailureNoticeBody(msg, failureKind, reason)
 	res, err := s.InsertNotice(ctx, store.InsertParams{
-		FromAgent: this,           // the mailman's own agent (original recipient)
-		ToAgent:   msg.FromAgent,  // the original sender
+		FromAgent: this,          // the mailman's own agent (original recipient)
+		ToAgent:   msg.FromAgent, // the original sender
 		Body:      body,
 		Kind:      store.KindDeliveryFailureNotice,
 	})
