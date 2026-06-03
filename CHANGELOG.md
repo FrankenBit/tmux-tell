@@ -24,6 +24,25 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Fixed
+
+- **TOML knobs `quick-presence-probe` + `prompt-sentinel-gate` now
+  actually take effect.** Both knobs were documented in serve.go's
+  flag help and ResolveBool calls but silently no-op'd because
+  `config.Block`'s struct + `blockBoolField`'s switch had never been
+  extended to know about them. Operators setting either field in
+  `/etc/cli-semaphore/config.toml` got hardcoded-default behavior with
+  no diagnostic. The gap shipped with PR #64 (`quick-presence-probe`,
+  v0.3.0) and was inherited by PR #66 (`prompt-sentinel-gate`).
+
+  Adds the missing fields to `Block` + `ResolvedView` + `Resolve()` +
+  the `config show` text/JSON output + the `blockBoolField` switch.
+  TOML resolution test pin
+  (`TestLoadFrom_ParsesQuickPresenceProbeAndPromptSentinelGate`) and
+  precedence-chain test pin
+  (`TestResolveBool_PrecedenceChain_QuickPresenceProbeAndPromptSentinelGate`)
+  catch any future field-vs-switch drift.
+
 ### Added
 
 - **Prompt-sentinel gate — completes coverage for #63 (Part 2).**

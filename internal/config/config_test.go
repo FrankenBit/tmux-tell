@@ -85,6 +85,95 @@ func TestResolveBool_PrecedenceChain(t *testing.T) {
 	}
 }
 
+// TestLoadFrom_ParsesQuickPresenceProbeAndPromptSentinelGate pins the
+// gap-fix for the #63 Part 1 + Part 2 config knobs. Before this fix,
+// the Block struct didn't include QuickPresenceProbe or
+// PromptSentinelGate fields, so the TOML decoder silently dropped
+// those keys — operators setting them in /etc/cli-semaphore/config.toml
+// got no behavior change. The CLI flag was the only working path.
+//
+// This test pins both per-agent + defaults parsing for both fields so
+// the gap-fix can't silently regress.
+func TestLoadFrom_ParsesQuickPresenceProbeAndPromptSentinelGate(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "gate.toml")
+	content := `
+[defaults]
+quick-presence-probe = true
+
+[agent.quartermaster]
+prompt-sentinel-gate = true
+quick-presence-probe = false
+`
+	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	f, err := LoadFrom(tmp)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if f.Defaults.QuickPresenceProbe == nil || !*f.Defaults.QuickPresenceProbe {
+		t.Errorf("Defaults.QuickPresenceProbe should be true; got %v",
+			f.Defaults.QuickPresenceProbe)
+	}
+	if f.Agent == nil || f.Agent["quartermaster"].PromptSentinelGate == nil {
+		t.Fatalf("agent.quartermaster.PromptSentinelGate missing — TOML decoder dropped the key (Block struct lacks the field)")
+	}
+	if !*f.Agent["quartermaster"].PromptSentinelGate {
+		t.Errorf("agent.quartermaster.PromptSentinelGate should be true; got false")
+	}
+	if f.Agent["quartermaster"].QuickPresenceProbe == nil || *f.Agent["quartermaster"].QuickPresenceProbe {
+		t.Errorf("agent.quartermaster.QuickPresenceProbe should be false (per-agent override of defaults); got %v",
+			f.Agent["quartermaster"].QuickPresenceProbe)
+	}
+}
+
+// TestResolveBool_PrecedenceChain_QuickPresenceProbeAndPromptSentinelGate
+// pins the precedence chain for the gap-fix fields. Before the fix,
+// blockBoolField's switch didn't cover these field names, so
+// ResolveBool fell through to the hardcoded default regardless of what
+// the TOML config said. This test ensures the agent-override + defaults
+// + hardcoded chain works for both new fields.
+func TestResolveBool_PrecedenceChain_QuickPresenceProbeAndPromptSentinelGate(t *testing.T) {
+	tr := true
+	fa := false
+	file := &File{
+		Defaults: Block{QuickPresenceProbe: &tr, PromptSentinelGate: &fa},
+		Agent: map[string]Block{
+			"bosun":         {PromptSentinelGate: &tr},
+			"quartermaster": {QuickPresenceProbe: &fa, PromptSentinelGate: &tr},
+		},
+	}
+
+	// Per-agent override wins for both fields.
+	if !ResolveBool(file, "bosun", "prompt-sentinel-gate", false) {
+		t.Errorf("agent.bosun.prompt-sentinel-gate should be true (agent override)")
+	}
+	if ResolveBool(file, "quartermaster", "quick-presence-probe", true) {
+		t.Errorf("agent.quartermaster.quick-presence-probe should be false (agent override of defaults true)")
+	}
+	if !ResolveBool(file, "quartermaster", "prompt-sentinel-gate", false) {
+		t.Errorf("agent.quartermaster.prompt-sentinel-gate should be true (agent override of defaults false)")
+	}
+
+	// Defaults wins when no agent override.
+	if !ResolveBool(file, "engineer", "quick-presence-probe", false) {
+		t.Errorf("defaults.quick-presence-probe should win for engineer (no agent block); got false")
+	}
+	if ResolveBool(file, "engineer", "prompt-sentinel-gate", true) {
+		t.Errorf("defaults.prompt-sentinel-gate should win for engineer (no agent block); got true")
+	}
+
+	// Hardcoded wins when neither agent nor defaults set the field. Test
+	// with a fresh file that has neither.
+	empty := &File{}
+	if !ResolveBool(empty, "quartermaster", "quick-presence-probe", true) {
+		t.Errorf("hardcoded should win for empty file; got false")
+	}
+	if !ResolveBool(empty, "quartermaster", "prompt-sentinel-gate", true) {
+		t.Errorf("hardcoded should win for empty file; got false")
+	}
+}
+
 func TestResolveBool_NilFileReturnsHardcoded(t *testing.T) {
 	if !ResolveBool(nil, "admin", "notify-on-failed", true) {
 		t.Errorf("nil File should return hardcoded; got false")
