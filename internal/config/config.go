@@ -54,6 +54,8 @@ type Block struct {
 	NotifyOnDeliveredUnverified *bool          `toml:"notify-on-delivered-unverified"`
 	DriftSoftFail               *bool          `toml:"drift-soft-fail"`
 	QuietDisabled               *bool          `toml:"quiet-disabled"`
+	QuickPresenceProbe          *bool          `toml:"quick-presence-probe"`
+	PromptSentinelGate          *bool          `toml:"prompt-sentinel-gate"`
 	QuietObserveWindow          *time.Duration `toml:"quiet-observe-window"`
 	QuietInputBackoff           *time.Duration `toml:"quiet-input-backoff"`
 	QuietMaxWait                *time.Duration `toml:"quiet-max-wait"`
@@ -147,6 +149,10 @@ func blockBoolField(b *Block, field string) *bool {
 		return b.DriftSoftFail
 	case "quiet-disabled":
 		return b.QuietDisabled
+	case "quick-presence-probe":
+		return b.QuickPresenceProbe
+	case "prompt-sentinel-gate":
+		return b.PromptSentinelGate
 	}
 	return nil
 }
@@ -189,6 +195,8 @@ type ResolvedView struct {
 	NotifyOnDeliveredUnverified bool          `json:"notify_on_delivered_unverified"`
 	DriftSoftFail               bool          `json:"drift_soft_fail"`
 	QuietDisabled               bool          `json:"quiet_disabled"`
+	QuickPresenceProbe          bool          `json:"quick_presence_probe"`
+	PromptSentinelGate          bool          `json:"prompt_sentinel_gate"`
 	QuietObserveWindow          time.Duration `json:"quiet_observe_window"`
 	QuietInputBackoff           time.Duration `json:"quiet_input_backoff"`
 	QuietMaxWait                time.Duration `json:"quiet_max_wait"`
@@ -204,6 +212,8 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		NotifyOnDeliveredUnverified: ResolveBool(file, agent, "notify-on-delivered-unverified", true),
 		DriftSoftFail:               ResolveBool(file, agent, "drift-soft-fail", false),
 		QuietDisabled:               ResolveBool(file, agent, "quiet-disabled", true),
+		QuickPresenceProbe:          ResolveBool(file, agent, "quick-presence-probe", false),
+		PromptSentinelGate:          ResolveBool(file, agent, "prompt-sentinel-gate", false),
 		QuietObserveWindow:          ResolveDuration(file, agent, "quiet-observe-window", 3*time.Second),
 		QuietInputBackoff:           ResolveDuration(file, agent, "quiet-input-backoff", 60*time.Second),
 		QuietMaxWait:                ResolveDuration(file, agent, "quiet-max-wait", 5*time.Minute),
