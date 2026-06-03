@@ -5,11 +5,82 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+// --- PromptSentinel encoding canary tests ---
+//
+// These tests anchor the PromptSentinel constant to the actual byte
+// encoding Claude Code emits in production pane output. Per
+// cli-semaphore#69 substrate-discovery 2026-06-04: PR #66 + PR #77
+// shipped with the regular-space variant ("❯ "), but tmux + Claude
+// Code actually paint with NBSP (U+00A0, hex c2 a0). The bug was
+// invisible to unit tests because the test fixtures themselves used
+// the regular-space variant — a spec-derived fixture rather than a
+// capture-derived one (Surveyor's O69 discipline-class). These canary
+// tests close that gap.
+
+// TestPromptSentinel_BytesMatchNBSP pins the byte-level encoding of
+// PromptSentinel against the empirically-captured production bytes.
+// If a future contributor changes the constant to use a regular space
+// (U+0020) instead of NBSP (U+00A0), this test catches it before
+// merge.
+func TestPromptSentinel_BytesMatchNBSP(t *testing.T) {
+	// The Claude Code TUI emits ❯ (U+276F, hex e2 9d af) followed by
+	// NBSP (U+00A0, hex c2 a0). Empirically captured across all 6
+	// chambers on 2026-06-04 via `tmux capture-pane | od -An -tx1`.
+	want := []byte{0xe2, 0x9d, 0xaf, 0xc2, 0xa0}
+	got := []byte(PromptSentinel)
+	if !bytesEqual(got, want) {
+		t.Errorf("PromptSentinel bytes = % x, want % x (❯ + U+00A0 NBSP)", got, want)
+	}
+}
+
+// bytesEqual is a tiny helper so the canary test doesn't import
+// "bytes" just for one Equal call.
+func bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestPromptSentinel_MatchesGoldenCapture pins PromptSentinel against
+// a real `tmux capture-pane` output frozen as testdata. This is the
+// capture-derived (vs spec-derived) anchor per Surveyor's O69
+// discipline-class — if Claude Code's emission encoding changes
+// (theme update, terminal switch, version bump), the golden fixture
+// stops matching and surfaces the divergence loudly.
+//
+// Forward-watch: re-capture the golden file when Claude Code TUI
+// changes, or when this test fails after a Claude Code version bump.
+// The capture command is documented in PromptSentinel's doc-comment.
+func TestPromptSentinel_MatchesGoldenCapture(t *testing.T) {
+	golden, err := os.ReadFile("testdata/golden_bosun_idle_2026-06-04.txt")
+	if err != nil {
+		t.Fatalf("read golden capture: %v", err)
+	}
+	found := false
+	for _, line := range strings.Split(string(golden), "\n") {
+		if strings.HasPrefix(line, PromptSentinel) {
+			found = true
+			t.Logf("matched sentinel on golden line: %q", line[:min(50, len(line))])
+			break
+		}
+	}
+	if !found {
+		t.Errorf("golden capture has NO line starting with PromptSentinel %q (% x) — Claude Code emission encoding may have drifted; re-verify via tmux capture-pane | od -An -tx1 on a live chamber + update PromptSentinel + re-capture the golden fixture", PromptSentinel, []byte(PromptSentinel))
+	}
+}
 
 // --- analyzeDelta unit tests ---
 
@@ -254,7 +325,7 @@ func TestQuickPresenceProbe_PaneRequired(t *testing.T) {
 // DeltaQuiet, single capture-pane call, zero pane mutations.
 func TestInputRowHasContent_QuietWhenSentinelEmpty(t *testing.T) {
 	fr := newFakeProbeRunner([]string{
-		"history line A\nhistory line B\n──── Chamber ──\n❯ \n────────\n  status line\n",
+		"history line A\nhistory line B\n──── Chamber ──\n❯\u00a0\n────────\n  status line\n",
 	})
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -281,7 +352,7 @@ func TestInputRowHasContent_QuietWhenSentinelEmpty(t *testing.T) {
 // DeltaInputActivity so the gate is engaged.
 func TestInputRowHasContent_DetectsOperatorDraftSitting(t *testing.T) {
 	fr := newFakeProbeRunner([]string{
-		"history\n──── Chamber ──\n❯ Thank you for handling this and \n────────\n  status\n",
+		"history\n──── Chamber ──\n❯\u00a0Thank you for handling this and \n────────\n  status\n",
 	})
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -297,14 +368,14 @@ func TestInputRowHasContent_DetectsOperatorDraftSitting(t *testing.T) {
 
 // TestInputRowHasContent_DetectsAgentNarration pins the worked-example
 // from the cli-semaphore#63 Part 2 design pass: Surveyor's pane showed
-// `❯ <Silence — standing by ...>` (agent-side narration), and the
+// `❯\u00a0<Silence — standing by ...>` (agent-side narration), and the
 // heuristic correctly classifies it as DeltaInputActivity because the
 // text IS in the input buffer (Enter would submit it). Non-typed
 // content in the input row is substrate-equivalent to operator-typed
 // content for gate purposes.
 func TestInputRowHasContent_DetectsAgentNarration(t *testing.T) {
 	fr := newFakeProbeRunner([]string{
-		"history\n──── Surveyor ──\n❯ <Silence — standing by per close-out.>\n────────\n  status\n",
+		"history\n──── Surveyor ──\n❯\u00a0<Silence — standing by per close-out.>\n────────\n  status\n",
 	})
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -381,7 +452,7 @@ func TestInputRowHasContent_KnownLimitation_MultiLineContinuationFalseNegative(t
 		// content with no sentinel prefix (indent-style continuation
 		// is one plausible paint format Claude Code might use for
 		// multi-line drafts).
-		"history line\n──── Chamber ──\n❯ \n  continuation line with operator content\n────────\n  status\n",
+		"history line\n──── Chamber ──\n❯\u00a0\n  continuation line with operator content\n────────\n  status\n",
 	})
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -404,7 +475,7 @@ func TestInputRowHasContent_KnownLimitation_MultiLineContinuationFalseNegative(t
 // safe to call before every delivery without operational footprint.
 func TestInputRowHasContent_NoPaneMutationOnQuiet(t *testing.T) {
 	fr := newFakeProbeRunner([]string{
-		"history\n──── Chamber ──\n❯ \n────────\n  status\n",
+		"history\n──── Chamber ──\n❯\u00a0\n────────\n  status\n",
 	})
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })

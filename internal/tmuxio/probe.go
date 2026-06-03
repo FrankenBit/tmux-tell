@@ -17,17 +17,32 @@ import (
 const QuietProbe = "─"
 
 // PromptSentinel is the Claude Code TUI's input-row prefix — U+276F
-// (Heavy Right-Pointing Angle Quotation Mark Ornament) followed by a
-// space. Empirically verified as the marker for the current input row,
-// bounded by horizontal-rule separators above and below the input area.
+// (Heavy Right-Pointing Angle Quotation Mark Ornament) followed by
+// U+00A0 (NO-BREAK SPACE). Empirically verified across all six
+// chambers on 2026-06-04 (post-PR-#77 deploy smoke test, hex
+// `e2 9d af c2 a0`). The NBSP separator (not a regular U+0020 space)
+// is what Claude Code actually paints; PR #66 + PR #77 shipped with
+// the regular-space variant and the sentinel never matched in
+// production — the bug was silently absorbed by the safer-default-on-
+// uncertainty contract (no-sentinel-found → over-gate), making the
+// prompt-sentinel-gate operationally invisible until the PR #77
+// deploy smoke test surfaced 4/5 idle chambers returning Unknown
+// even after the cursor-aware algorithm landed.
+//
+// The string-literal uses `\u00a0` so the NBSP is explicit in the
+// source code (mixing a visually-identical NBSP into the literal
+// would silently fool future readers into thinking it's a regular
+// space).
 //
 // FORWARD-WATCH: this constant is Claude-Code-version-dependent. If
-// the Claude Code TUI's prompt character changes (theme update, version
-// bump, customization), InputRowHasContent silently degrades to "no
-// sentinel found" on every pane → over-gate. The prompt-sentinel tests
-// would surface a paint-format change, but re-verify the constant
-// during any major Claude Code version update.
-const PromptSentinel = "❯ "
+// the Claude Code TUI's prompt character changes (theme update,
+// version bump, customization), the cursor-aware ChamberState branch
+// silently degrades to "cursor not at input row" and InputRowHasContent
+// degrades to "no sentinel found" → over-gate. The prompt-sentinel
+// tests would surface a paint-format change, but re-verify the
+// constant during any major Claude Code version update via
+// `tmux capture-pane | od -An -tx1` on the input row.
+const PromptSentinel = "❯\u00a0"
 
 // ErrCapExceeded means the quiet-pane wait hit its total-time cap
 // without finding an operator-quiet window. The mailman's policy on
