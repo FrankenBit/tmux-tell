@@ -26,6 +26,51 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **Cursor-position-aware ChamberState — v2 algorithm (#69 design
+  call 2026-06-04).** PR #76's deploy smoke test surfaced that v1
+  classified all idle chambers (with Claude Code's slash-command
+  auto-suggestion ghost-text in their input row) as `unknown`. The
+  operator's design call resolved the gap: distinguish "cursor at
+  prompt sentinel" (auto-suggestion or empty prompt — both idle)
+  from "cursor past prompt sentinel" (operator mid-typing —
+  awaiting-operator).
+
+  v2 adds a third tmux read-only call (`display-message -p -t pane
+  '#{cursor_x}/#{cursor_y}'`) for cursor position. The substrate-class
+  property updates from "2 capture-pane + 0 send-keys" to "2
+  capture-pane + 1 display-message + 0 send-keys" — all three calls
+  are read-only at the tmux layer; the "knock at the door without
+  waking" framing is preserved. `TestChamberState_NoPaneMutation` is
+  updated to assert the new shape.
+
+  Algorithm precedence:
+  1. Captures fail → `unknown` + wrapped error
+  2. CompactionMarker matches → `at-rest-in-compaction`
+  3. Captures differ across temporal delta → `working`
+  4. **Cursor query + input-row classification** (new):
+     - Cursor at sentinel position (col == sentinel width) →
+       `idle` (clean prompt OR Claude Code auto-suggestion ghost-text)
+     - Cursor past sentinel position → `awaiting-operator`
+       (operator mid-typing)
+  5. AwaitingOperatorMarker matches → `awaiting-operator` (backup
+     for non-`❯`-painting UIs)
+  6. Cursor-less fallback via `classifyInputRow` → `idle` if sentinel
+     found empty; `unknown` otherwise
+  7. Otherwise → `unknown` with accurate sub-case reason
+
+  Failure paths gracefully degrade: cursor query failures fall back
+  to the v1 cursor-less heuristic; the algorithm still classifies
+  using the available substrate. The Unknown branch's evidence
+  message is now accurate (split into "sentinel found but cursor
+  not at input row" vs "sentinel not found at all" — the v1 message
+  said "no prompt sentinel" even when the sentinel WAS in the pane,
+  which was misleading).
+
+  Five new tests pin the cursor-aware branches: clean-prompt-idle,
+  auto-suggestion-idle (the operational-fixture from Pilot's
+  `❯ /nimbus-board` smoke evidence), operator-mid-typing-awaiting-
+  operator, cursor-less-fallback, and unknown-with-accurate-reason.
+
 - **Chamber-state consumer surfaces (#72 + #73).** Both the operator
   CLI and the autonomous-agent MCP path now consume `tmuxio.ChamberState`
   via a single shared `resolveChamberState` helper so the JSON schema

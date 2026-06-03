@@ -2,6 +2,8 @@ package tmuxio
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -135,14 +137,19 @@ func TestChamberState_PaneRequired(t *testing.T) {
 
 // TestChamberState_NoPaneMutation pins the substrate-class property:
 // ChamberState is read-only-observe. A successful classification makes
-// EXACTLY 2 tmux calls (both capture-pane) and ZERO send-keys. This is
-// the distinguishing property vs QuickPresenceProbe (write+observe)
-// and is the load-bearing claim that ChamberState honors the "knock at
-// the door without waking" framing from cli-semaphore#69.
+// EXACTLY 2 capture-pane calls + 1 display-message call (the cursor
+// query added in cli-semaphore#69's v2 algorithm per operator's
+// design call 2026-06-04) and ZERO send-keys. All three calls are
+// read-only at the tmux layer — capture-pane reads the visible
+// buffer; display-message reads internal pane state. This is the
+// load-bearing claim that ChamberState honors the "knock at the door
+// without waking" framing from #69; the v2 substrate-class extension
+// from PR #75's 2-call shape preserves the no-mutation property
+// while gaining cursor-position awareness.
 func TestChamberState_NoPaneMutation(t *testing.T) {
 	fastTemporalDelta(t)
 	pane := "history\n──── Chamber ──\n❯ \n────────\n  status\n"
-	fr := newFakeProbeRunner([]string{pane, pane})
+	fr := newChamberStateRunner([]string{pane, pane}, 2, 5) // cursor at sentinel position
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
@@ -150,19 +157,228 @@ func TestChamberState_NoPaneMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(fr.calls) != 2 {
-		t.Errorf("tmux call count = %d, want 2 (read-only-observe = exactly two capture-pane calls)", len(fr.calls))
+	if len(fr.calls) != 3 {
+		t.Errorf("tmux call count = %d, want 3 (read-only-observe = 2 capture-pane + 1 display-message)", len(fr.calls))
 	}
+	capturePaneCount := 0
+	displayMessageCount := 0
 	for i, call := range fr.calls {
-		if !strings.HasPrefix(call, "capture-pane") {
-			t.Errorf("call[%d] = %q, want capture-pane prefix (no send-keys in read-only-observe)", i, call)
+		switch {
+		case strings.HasPrefix(call, "capture-pane"):
+			capturePaneCount++
+		case strings.HasPrefix(call, "display-message"):
+			displayMessageCount++
+		default:
+			t.Errorf("call[%d] = %q, want capture-pane or display-message prefix (no send-keys in read-only-observe)", i, call)
 		}
+	}
+	if capturePaneCount != 2 {
+		t.Errorf("capture-pane count = %d, want 2", capturePaneCount)
+	}
+	if displayMessageCount != 1 {
+		t.Errorf("display-message count = %d, want 1", displayMessageCount)
 	}
 	if fr.probeChars != 0 {
 		t.Errorf("probe chars sent = %d, want 0 (no inject)", fr.probeChars)
 	}
 	if fr.backspaces != 0 {
 		t.Errorf("backspaces = %d, want 0 (no cleanup needed in read-only-observe)", fr.backspaces)
+	}
+}
+
+// chamberStateRunner extends fakeProbeRunner with cursor-position
+// responses for the display-message call ChamberState makes in v2.
+// Returns capture-pane content from the captures slice + cursor
+// position as "X/Y" for display-message.
+type chamberStateRunner struct {
+	*fakeProbeRunner
+	cursorX int
+	cursorY int
+}
+
+func newChamberStateRunner(captures []string, cursorX, cursorY int) *chamberStateRunner {
+	return &chamberStateRunner{
+		fakeProbeRunner: newFakeProbeRunner(captures),
+		cursorX:         cursorX,
+		cursorY:         cursorY,
+	}
+}
+
+func (c *chamberStateRunner) run(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+	// Intercept display-message; delegate everything else to the
+	// underlying fakeProbeRunner.
+	c.mu.Lock()
+	c.calls = append(c.calls, strings.Join(args, " "))
+	c.mu.Unlock()
+	if args[0] == "display-message" {
+		return []byte(fmt.Sprintf("%d/%d\n", c.cursorX, c.cursorY)), nil
+	}
+	// Re-dispatch but skip the call-recording in the underlying runner
+	// (we already recorded above to avoid double-counting).
+	c.mu.Lock()
+	// Temporarily pop the call we just added so the underlying runner
+	// can re-add it via its own path. (Cleaner alternative: skip the
+	// add and call the underlying run directly.)
+	if len(c.calls) > 0 {
+		c.calls = c.calls[:len(c.calls)-1]
+	}
+	c.mu.Unlock()
+	return c.fakeProbeRunner.run(ctx, stdin, args...)
+}
+
+// TestChamberState_IdleWhenCursorAtSentinelEmpty pins the cursor-aware
+// happy path for the clean-prompt case: cursor at the position right
+// after `❯ ` AND empty content past it → StateIdle with
+// Evidence.PromptEmpty=true. v2 algorithm per cli-semaphore#69
+// operator's design call 2026-06-04.
+func TestChamberState_IdleWhenCursorAtSentinelEmpty(t *testing.T) {
+	fastTemporalDelta(t)
+	// Cursor row (index 3, 0-indexed) is `❯ ` with no content past it.
+	pane := "history\n──── Chamber ──\n  recap line\n❯ \n────────\n  status\n"
+	// cursorX=2 (right after "❯ "); cursorY=3 (the ❯ row)
+	fr := newChamberStateRunner([]string{pane, pane}, 2, 3)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := ChamberState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (cursor at sentinel + empty)", state)
+	}
+	if !ev.PromptEmpty {
+		t.Errorf("Evidence.PromptEmpty should be true for the clean-prompt case")
+	}
+	if !strings.Contains(ev.Reason, "cursor at prompt sentinel") {
+		t.Errorf("Evidence.Reason should mention cursor at sentinel; got %q", ev.Reason)
+	}
+}
+
+// TestChamberState_IdleWhenCursorAtSentinelWithAutoSuggestion pins the
+// v2 fix for the smoke-test gap: when the input row is `❯ <content>`
+// but the cursor is still at the sentinel position (col == sentinel
+// width), the content is Claude Code's auto-suggested ghost-text and
+// the operator hasn't engaged. Classify as StateIdle with
+// Evidence.PromptEmpty=false + descriptive Reason.
+//
+// Empirical fixture: Pilot's pane in the 2026-06-04 smoke test showed
+// `❯ /nimbus-board` with cursor at col 2 — Claude Code's slash-command
+// auto-suggestion. Operator had not typed the suggestion; it was a
+// ghost-text proposal.
+func TestChamberState_IdleWhenCursorAtSentinelWithAutoSuggestion(t *testing.T) {
+	fastTemporalDelta(t)
+	// Row 3 (0-indexed): `❯ /nimbus-board` — Claude Code auto-suggested.
+	pane := "history\n──── Chamber ──\n  recap line\n❯ /nimbus-board\n────────\n  status\n"
+	// cursorX=2 (right after "❯ ", before "/"); cursorY=3 (the ❯ row).
+	// Operator has NOT engaged — cursor would be past the suggestion if they had.
+	fr := newChamberStateRunner([]string{pane, pane}, 2, 3)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := ChamberState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (cursor at sentinel + auto-suggestion ghost-text)", state)
+	}
+	if ev.PromptEmpty {
+		t.Errorf("Evidence.PromptEmpty should be false (there IS content, just not operator-typed)")
+	}
+	if !strings.Contains(ev.Reason, "auto-suggestion") {
+		t.Errorf("Evidence.Reason should mention auto-suggestion; got %q", ev.Reason)
+	}
+}
+
+// TestChamberState_AwaitingOperatorWhenCursorPastSentinel pins the
+// operator-mid-typing case: cursor is past the sentinel position,
+// meaning content past `❯ ` is operator-typed (not ghost-text).
+// Chamber is blocked on operator finishing the draft → return
+// StateAwaitingOperator so consumers (Bosun) gate their dispatch.
+func TestChamberState_AwaitingOperatorWhenCursorPastSentinel(t *testing.T) {
+	fastTemporalDelta(t)
+	// Row 3 (0-indexed): `❯ Thank you for handling this and ` (#63 reproduction shape).
+	pane := "history\n──── Chamber ──\n  recap line\n❯ Thank you for handling this and \n────────\n  status\n"
+	// cursorX=37 (past the typed content); cursorY=3.
+	fr := newChamberStateRunner([]string{pane, pane}, 37, 3)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := ChamberState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateAwaitingOperator {
+		t.Errorf("state = %v, want StateAwaitingOperator (cursor past sentinel = operator mid-typing)", state)
+	}
+	if !strings.Contains(ev.Reason, "operator mid-typing") {
+		t.Errorf("Evidence.Reason should mention operator mid-typing; got %q", ev.Reason)
+	}
+}
+
+// TestChamberState_FallbackWhenCursorRowNotSentinel pins the cursor-
+// less fallback path: when the cursor sits on a row that doesn't start
+// with `❯ ` (e.g., chamber is mid-spinner and cursor is on the spinner
+// row), the v2 algorithm falls back to v1's classifyInputRow heuristic.
+//
+// Smoke evidence: Surveyor pane during PR review showed cursor at the
+// title-separator row, not the ❯ input row (the chamber was working).
+// The fallback lets the algorithm still classify cleanly when cursor
+// position doesn't help.
+func TestChamberState_FallbackWhenCursorRowNotSentinel(t *testing.T) {
+	fastTemporalDelta(t)
+	// Cursor at row 1 (not the ❯ row at row 3). Pane is otherwise stable
+	// + has the sentinel with empty content; fallback to v1 heuristic
+	// → StateIdle.
+	pane := "history\n──── Chamber ──\n  recap line\n❯ \n────────\n  status\n"
+	fr := newChamberStateRunner([]string{pane, pane}, 0, 1)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := ChamberState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (cursor-less fallback finds empty sentinel)", state)
+	}
+	if !strings.Contains(ev.Reason, "cursor-less fallback") {
+		t.Errorf("Evidence.Reason should mention cursor-less fallback; got %q", ev.Reason)
+	}
+}
+
+// TestChamberState_UnknownWithAccurateReason_SentinelFoundCursorOff pins
+// the accurate-reason cleanup (the "C" item from the operator's
+// 2026-06-04 discussion): when the sentinel IS in the pane but the
+// cursor isn't at the input row AND the cursor-less fallback didn't
+// match (DeltaInputActivity on the input row), the Unknown branch
+// reports "sentinel found but cursor not at input row" rather than the
+// misleading v1 "no prompt sentinel" message.
+func TestChamberState_UnknownWithAccurateReason_SentinelFoundCursorOff(t *testing.T) {
+	fastTemporalDelta(t)
+	// Pane has the sentinel but with content past it. Cursor on row 1
+	// (a non-sentinel row). classifyInputRow returns DeltaInputActivity
+	// (sentinel + content) → not DeltaQuiet → fallback doesn't classify
+	// as Idle. Falls through to Unknown — and the reason should name
+	// the actual situation, not "no prompt sentinel".
+	pane := "history\n  spinner-ish content\n❯ <agent-narration>\n────────\n  status\n"
+	fr := newChamberStateRunner([]string{pane, pane}, 0, 1)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := ChamberState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateUnknown {
+		t.Errorf("state = %v, want StateUnknown", state)
+	}
+	if strings.Contains(ev.Reason, "no prompt sentinel") {
+		t.Errorf("Evidence.Reason should NOT say 'no prompt sentinel' when sentinel IS in pane; got %q", ev.Reason)
+	}
+	if !strings.Contains(ev.Reason, "sentinel found") {
+		t.Errorf("Evidence.Reason should accurately name that sentinel was found; got %q", ev.Reason)
 	}
 }
 
