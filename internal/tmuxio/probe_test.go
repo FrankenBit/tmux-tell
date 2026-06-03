@@ -249,6 +249,178 @@ func TestQuickPresenceProbe_PaneRequired(t *testing.T) {
 	}
 }
 
+// TestInputRowHasContent_QuietWhenSentinelEmpty pins the happy path:
+// pane shows the prompt sentinel followed by an empty input row →
+// DeltaQuiet, single capture-pane call, zero pane mutations.
+func TestInputRowHasContent_QuietWhenSentinelEmpty(t *testing.T) {
+	fr := newFakeProbeRunner([]string{
+		"history line A\nhistory line B\n──── Chamber ──\n❯ \n────────\n  status line\n",
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	verdict, err := InputRowHasContent(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verdict != DeltaQuiet {
+		t.Errorf("verdict = %v, want DeltaQuiet (empty input row past sentinel)", verdict)
+	}
+	if fr.probeChars != 0 {
+		t.Errorf("probe chars sent = %d, want 0 (no inject in read-only-observe)", fr.probeChars)
+	}
+	if fr.backspaces != 0 {
+		t.Errorf("backspaces = %d, want 0 (no cleanup needed in read-only-observe)", fr.backspaces)
+	}
+}
+
+// TestInputRowHasContent_DetectsOperatorDraftSitting pins the headline
+// #63 case: the operator's draft is sitting in the input row when a
+// delivery would land. A bus delivery's trailing Enter would chain the
+// draft + the delivery body as one submission. Heuristic returns
+// DeltaInputActivity so the gate is engaged.
+func TestInputRowHasContent_DetectsOperatorDraftSitting(t *testing.T) {
+	fr := newFakeProbeRunner([]string{
+		"history\n──── Chamber ──\n❯ Thank you for handling this and \n────────\n  status\n",
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	verdict, err := InputRowHasContent(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verdict != DeltaInputActivity {
+		t.Errorf("verdict = %v, want DeltaInputActivity (draft sitting in input row)", verdict)
+	}
+}
+
+// TestInputRowHasContent_DetectsAgentNarration pins the worked-example
+// from the cli-semaphore#63 Part 2 design pass: Surveyor's pane showed
+// `❯ <Silence — standing by ...>` (agent-side narration), and the
+// heuristic correctly classifies it as DeltaInputActivity because the
+// text IS in the input buffer (Enter would submit it). Non-typed
+// content in the input row is substrate-equivalent to operator-typed
+// content for gate purposes.
+func TestInputRowHasContent_DetectsAgentNarration(t *testing.T) {
+	fr := newFakeProbeRunner([]string{
+		"history\n──── Surveyor ──\n❯ <Silence — standing by per close-out.>\n────────\n  status\n",
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	verdict, err := InputRowHasContent(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verdict != DeltaInputActivity {
+		t.Errorf("verdict = %v, want DeltaInputActivity (agent narration in input row is gate-equivalent)", verdict)
+	}
+}
+
+// TestInputRowHasContent_NoSentinelFallsBackToGate pins the safer
+// default: when the pane has no PromptSentinel row at all (mid-stream
+// output, menu overlay, search dialog, …), the heuristic returns
+// DeltaInputActivity so the asymmetric gate falls back to the full
+// gate rather than delivering into an unknown UI state.
+func TestInputRowHasContent_NoSentinelFallsBackToGate(t *testing.T) {
+	fr := newFakeProbeRunner([]string{
+		"streaming output line 1\nstreaming output line 2\n[cursor mid-stream]\n",
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	verdict, err := InputRowHasContent(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verdict != DeltaInputActivity {
+		t.Errorf("verdict = %v, want DeltaInputActivity (no PromptSentinel found → safer default)", verdict)
+	}
+}
+
+// TestInputRowHasContent_PaneRequired pins the input-validation guard:
+// empty pane returns an error WITHOUT firing any tmux calls. Mirrors
+// the QuickPresenceProbe / WaitForQuietPane validation discipline.
+func TestInputRowHasContent_PaneRequired(t *testing.T) {
+	fr := newFakeProbeRunner([]string{"ctx\n"})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	_, err := InputRowHasContent(context.Background(), "")
+	if err == nil {
+		t.Fatal("expected error for empty pane, got nil")
+	}
+	if len(fr.calls) != 0 {
+		t.Errorf("tmux was called %d times, want 0 (validation should reject before any tmux call)", len(fr.calls))
+	}
+}
+
+// TestInputRowHasContent_KnownLimitation_MultiLineContinuationFalseNegative
+// pins the multi-line-continuation false-negative documented in
+// InputRowHasContent's doc-comment. Today this returns DeltaQuiet even
+// though the input buffer holds content on a continuation row — because
+// the heuristic scans rows beginning with PromptSentinel and the
+// continuation row lacks the sentinel prefix.
+//
+// This test exists as test-pinned contract for the documented limitation
+// (sibling to the doc-comment claim). When the upgrade to a region-based
+// scan lands (the input area is bounded by horizontal-rule separators
+// per the empirical capture; scanning all rows between those separators
+// catches continuation content regardless of sentinel prefix), THIS TEST
+// WILL INTENTIONALLY FLIP — the expected verdict becomes
+// DeltaInputActivity. At that point this test should be renamed / removed
+// and the corresponding known-limitation paragraph in
+// InputRowHasContent's doc-comment removed alongside, in the same commit
+// that strengthens the heuristic. The intentional-flip is the regression-
+// protection for "we said we'd fix this and we did" landing as a single
+// atomic substrate-change.
+func TestInputRowHasContent_KnownLimitation_MultiLineContinuationFalseNegative(t *testing.T) {
+	fr := newFakeProbeRunner([]string{
+		// Row 1 has PromptSentinel + empty; row 2 is continuation
+		// content with no sentinel prefix (indent-style continuation
+		// is one plausible paint format Claude Code might use for
+		// multi-line drafts).
+		"history line\n──── Chamber ──\n❯ \n  continuation line with operator content\n────────\n  status\n",
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	verdict, err := InputRowHasContent(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verdict != DeltaQuiet {
+		t.Errorf("verdict = %v, want DeltaQuiet (multi-line-continuation false-negative — known limitation per InputRowHasContent's doc-comment). If this assertion fails because the heuristic now correctly classifies continuation content, REMOVE this test and the corresponding known-limitation paragraph from InputRowHasContent's doc-comment in the same commit that strengthens the heuristic.", verdict)
+	}
+}
+
+// TestInputRowHasContent_NoPaneMutationOnQuiet pins the substrate-class
+// property: InputRowHasContent is read-only-observe. A successful
+// classification (either DeltaQuiet or DeltaInputActivity) makes
+// exactly ONE tmux call — a capture-pane — and no send-keys for either
+// probes or cleanup. This is the distinguishing property vs the
+// QuickPresenceProbe (write+observe) and is the reason this gate is
+// safe to call before every delivery without operational footprint.
+func TestInputRowHasContent_NoPaneMutationOnQuiet(t *testing.T) {
+	fr := newFakeProbeRunner([]string{
+		"history\n──── Chamber ──\n❯ \n────────\n  status\n",
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	_, err := InputRowHasContent(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fr.calls) != 1 {
+		t.Errorf("tmux call count = %d, want 1 (read-only-observe = single capture-pane)", len(fr.calls))
+	}
+	if !strings.HasPrefix(fr.calls[0], "capture-pane") {
+		t.Errorf("first call = %q, want capture-pane (no send-keys in read-only-observe)", fr.calls[0])
+	}
+}
+
 // shortOpts gives a probe-and-watch loop that completes within
 // milliseconds — production defaults (3s/60s/5min) are unsuitable for
 // tests.
@@ -288,8 +460,8 @@ func TestWaitForQuietPane_QuietFirstAttempt(t *testing.T) {
 func TestWaitForQuietPane_ConversationStreamingStillDelivers(t *testing.T) {
 	fr := newFakeProbeRunner(
 		[]string{
-			"old line\n> \n",                  // before
-			"old line\nNEW STREAM\n> ──\n",    // after — conversation grew but input row clean
+			"old line\n> \n",               // before
+			"old line\nNEW STREAM\n> ──\n", // after — conversation grew but input row clean
 		},
 	)
 	prev := SetTmuxRunner(fr.run)
@@ -311,8 +483,8 @@ func TestWaitForQuietPane_OperatorTypedThenQuiet(t *testing.T) {
 	fr := newFakeProbeRunner(
 		[]string{
 			// Iter 1: operator typed 'x' after our two probes
-			"ctx\n> \n",     // before #1
-			"ctx\n> ──x\n",  // after #1 — operator interfered
+			"ctx\n> \n",    // before #1
+			"ctx\n> ──x\n", // after #1 — operator interfered
 			// Iter 2: operator cleared their x, our 2 probes still there
 			"ctx\n> ──\n",   // before #2 (sees the 2 accumulated probes)
 			"ctx\n> ────\n", // after #2 (2 more probes pasted)
@@ -342,8 +514,8 @@ func TestWaitForQuietPane_CapExceededCleansAccumulatedProbes(t *testing.T) {
 	captures := []string{}
 	for i := 0; i < 30; i++ {
 		captures = append(captures,
-			fmt.Sprintf("ctx %d\n> \n", i),       // before
-			fmt.Sprintf("ctx %d\n> ──x\n", i),    // after — interfered
+			fmt.Sprintf("ctx %d\n> \n", i),    // before
+			fmt.Sprintf("ctx %d\n> ──x\n", i), // after — interfered
 		)
 	}
 	fr := newFakeProbeRunner(captures)
@@ -373,7 +545,7 @@ func TestWaitForQuietPane_PingsDuringBackoff(t *testing.T) {
 	fr := newFakeProbeRunner(
 		[]string{
 			"ctx\n> \n",
-			"ctx\n> ──x\n",  // input activity → backoff
+			"ctx\n> ──x\n", // input activity → backoff
 			"ctx\n> ──x\n",
 			"ctx\n> ──x──\n", // x still there + 2 probes; stripped = `> ──x`; matches before. Quiet.
 		},
