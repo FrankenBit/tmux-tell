@@ -171,15 +171,16 @@ func TestMCP_ToolsListContract(t *testing.T) {
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
 	want := map[string]bool{
-		"semaphore.send":       true,
-		"semaphore.agents":     true,
-		"semaphore.whoami":     true,
-		"semaphore.inbox":      true,
-		"semaphore.status":     true,
+		"semaphore.send":           true,
+		"semaphore.agents":         true,
+		"semaphore.whoami":         true,
+		"semaphore.inbox":          true,
+		"semaphore.status":         true,
 		"semaphore.register":       true,
 		"semaphore.unregister":     true,
 		"semaphore.control":        true,
 		"semaphore.message_status": true,
+		"semaphore.chamber_state":  true,
 	}
 	if len(tools) != len(want) {
 		t.Errorf("tools = %d, want %d", len(tools), len(want))
