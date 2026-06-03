@@ -356,6 +356,45 @@ func TestInputRowHasContent_PaneRequired(t *testing.T) {
 	}
 }
 
+// TestInputRowHasContent_KnownLimitation_MultiLineContinuationFalseNegative
+// pins the multi-line-continuation false-negative documented in
+// InputRowHasContent's doc-comment. Today this returns DeltaQuiet even
+// though the input buffer holds content on a continuation row — because
+// the heuristic scans rows beginning with PromptSentinel and the
+// continuation row lacks the sentinel prefix.
+//
+// This test exists as test-pinned contract for the documented limitation
+// (sibling to the doc-comment claim). When the upgrade to a region-based
+// scan lands (the input area is bounded by horizontal-rule separators
+// per the empirical capture; scanning all rows between those separators
+// catches continuation content regardless of sentinel prefix), THIS TEST
+// WILL INTENTIONALLY FLIP — the expected verdict becomes
+// DeltaInputActivity. At that point this test should be renamed / removed
+// and the corresponding known-limitation paragraph in
+// InputRowHasContent's doc-comment removed alongside, in the same commit
+// that strengthens the heuristic. The intentional-flip is the regression-
+// protection for "we said we'd fix this and we did" landing as a single
+// atomic substrate-change.
+func TestInputRowHasContent_KnownLimitation_MultiLineContinuationFalseNegative(t *testing.T) {
+	fr := newFakeProbeRunner([]string{
+		// Row 1 has PromptSentinel + empty; row 2 is continuation
+		// content with no sentinel prefix (indent-style continuation
+		// is one plausible paint format Claude Code might use for
+		// multi-line drafts).
+		"history line\n──── Chamber ──\n❯ \n  continuation line with operator content\n────────\n  status\n",
+	})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	verdict, err := InputRowHasContent(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if verdict != DeltaQuiet {
+		t.Errorf("verdict = %v, want DeltaQuiet (multi-line-continuation false-negative — known limitation per InputRowHasContent's doc-comment). If this assertion fails because the heuristic now correctly classifies continuation content, REMOVE this test and the corresponding known-limitation paragraph from InputRowHasContent's doc-comment in the same commit that strengthens the heuristic.", verdict)
+	}
+}
+
 // TestInputRowHasContent_NoPaneMutationOnQuiet pins the substrate-class
 // property: InputRowHasContent is read-only-observe. A successful
 // classification (either DeltaQuiet or DeltaInputActivity) makes
