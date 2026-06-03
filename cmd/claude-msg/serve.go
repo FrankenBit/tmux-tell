@@ -57,6 +57,22 @@ type serveOpts struct {
 	// tmux runner doesn't need to handle the probe sequence) and as an
 	// escape hatch if the probe pattern misbehaves with a future TUI.
 	QuietDisabled bool
+	// QuickPresenceProbe (opt-in, #63) activates the asymmetric
+	// pre-check that handles mid-typing collisions when the full gate
+	// is disabled. When BOTH QuietDisabled=true AND this flag=true:
+	// the mailman runs a one-shot ~50ms probe before delivery; if it
+	// detects operator activity, it falls back to the full gate; if
+	// quiet, it delivers immediately. The speed win of QuietDisabled
+	// is preserved for the common empty-buffer case, while the safety
+	// of the gate is restored when the operator is mid-draft.
+	// Defaults to false to preserve the v0.2.x ship-fast default; an
+	// operator opts in per-mailman via --quick-presence-probe or the
+	// quick-presence-probe config knob.
+	QuickPresenceProbe bool
+	// QuickPresenceOpts configures the asymmetric pre-check. Only
+	// consulted when QuickPresenceProbe is true. Zero values pick the
+	// aggressive defaults sized for fast empty-buffer delivery.
+	QuickPresenceOpts tmuxio.QuickPresenceOpts
 	// DriftCheckDisabled bypasses the pre-delivery silent-drift guard
 	// (#37). Production keeps it enabled. Tests that don't fake
 	// ListPanesWithPID + /proc readers should set this to true so the
@@ -118,6 +134,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"total cap on the pre-delivery quiet wait; on cap we deliver anyway with a WARN log")
 	quietDisabled := fs.Bool("quiet-disabled", true,
 		"bypass the probe-and-watch gate (delivery happens immediately on every queue head). Default true since 2026-06-01: empirical use showed the gate added 5-min worst-case latency without preventing mid-turn collisions in practice — the verify-token retry + delivered_unverified notice path (independent toggle, on by default) is the load-bearing safety net. Re-enable per-agent via TOML `quiet-disabled = false` if a polite-wait shape is wanted")
+	quickPresenceProbe := fs.Bool("quick-presence-probe", false,
+		"opt-in asymmetric pre-check (#63): when --quiet-disabled is also true, run a ~50ms one-shot probe before each delivery; if it detects operator typing during the probe window, fall back to the full probe-and-watch gate; if quiet, deliver immediately. Catches the active-typing collision class without paying the full gate's latency on idle panes. Defaults to false (preserves v0.2.x ship-fast). Per-agent TOML knob: `quick-presence-probe = true`. Caveat: does NOT yet detect operator-drafts-sitting-in-the-buffer (a passive non-typing operator with an unsent draft) — that requires the prompt-sentinel detection deferred to #63 Part 2.")
 	driftSoftFail := fs.Bool("drift-soft-fail", false,
 		"when pre-delivery drift detection hits ambiguous or unrecoverable, log WARN and deliver to the (potentially wrong) pane instead of marking the message failed. Default off — fail-loud is safer for autonomous receivers")
 	notifyOnFailed := fs.Bool("notify-on-failed", true,
@@ -152,6 +170,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if !flagWasSet(fs, "quiet-disabled") {
 		*quietDisabled = config.ResolveBool(cfg, *agent, "quiet-disabled", *quietDisabled)
+	}
+	if !flagWasSet(fs, "quick-presence-probe") {
+		*quickPresenceProbe = config.ResolveBool(cfg, *agent, "quick-presence-probe", *quickPresenceProbe)
 	}
 	if !flagWasSet(fs, "quiet-observe-window") {
 		*quietObserve = config.ResolveDuration(cfg, *agent, "quiet-observe-window", *quietObserve)
@@ -195,6 +216,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 			MaxWait:              *quietMaxWait,
 		},
 		QuietDisabled:               *quietDisabled,
+		QuickPresenceProbe:          *quickPresenceProbe,
 		DriftSoftFail:               *driftSoftFail,
 		NotifyOnFailed:              *notifyOnFailed,
 		NotifyOnDeliveredUnverified: *notifyOnDeliveredUnverified,
@@ -386,6 +408,33 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			}
 		}
 
+		// Asymmetric quick-presence pre-check (#63). When QuietDisabled
+		// is the default (skip full gate), an opt-in cheap probe still
+		// catches the mid-typing case: if the operator is currently
+		// drafting, the quick probe detects activity and we promote to
+		// the full gate; if the input row is quiet, we proceed straight
+		// to delivery without paying the multi-second observe windows.
+		// Net cost ~50ms when the gate isn't needed, identical to the
+		// pre-#63 fast path when QuickPresenceProbe is false.
+		runFullGate := !opts.QuietDisabled
+		if opts.QuietDisabled && opts.QuickPresenceProbe {
+			qCtx, qCancel := context.WithTimeout(stopCtx,
+				200*time.Millisecond+opts.QuickPresenceOpts.PaintWait)
+			verdict, qerr := tmuxio.QuickPresenceProbe(qCtx, paneForDelivery,
+				opts.QuickPresenceOpts)
+			qCancel()
+			if qerr != nil || verdict == tmuxio.DeltaInputActivity {
+				// Probe error → conservative: gate. Operator activity
+				// → safety: gate. Both paths converge on the existing
+				// full-gate behaviour.
+				if qerr != nil {
+					logger.Printf("quick-presence probe error on pane %s: %v; falling back to full gate",
+						paneForDelivery, qerr)
+				}
+				runFullGate = true
+			}
+		}
+
 		// Pre-delivery quiet-pane gate (probe-and-watch). On any error
 		// other than a clean quiet exit, log and proceed — we'd rather
 		// risk a fragmented delivery than starve the queue. The
@@ -398,7 +447,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		// should stop. The ClaimNext above already transitioned the
 		// row to 'delivering'; on SIGTERM exit, RecoverDelivering at
 		// the next startup resets it to 'queued' for a clean retry.
-		if !opts.QuietDisabled {
+		if runFullGate {
 			quietCtx, qcancel := context.WithTimeout(stopCtx,
 				opts.QuietOpts.MaxWait+5*time.Second)
 			qerr := tmuxio.WaitForQuietPane(quietCtx, paneForDelivery, opts.QuietOpts)

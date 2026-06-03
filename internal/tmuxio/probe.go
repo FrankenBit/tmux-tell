@@ -299,6 +299,114 @@ func stripTrailingProbes(s, probe string, n int) (string, bool) {
 	return s, true
 }
 
+// QuickPresenceOpts configures QuickPresenceProbe — the asymmetric
+// pre-check that gates whether to run the full WaitForQuietPane gate.
+// Zero values pick aggressive defaults sized for the "buffer is
+// empty" common case where the probe should finish in well under a
+// second.
+//
+// The gate's contract (#63): a one-shot variant of the probe pattern
+// — inject two dashes, wait briefly, capture, analyze, clean up. NO
+// retry loop. The caller decides what to do with the verdict:
+// DeltaQuiet → deliver immediately; DeltaInputActivity → fall back
+// to the full WaitForQuietPane with its longer observe windows.
+type QuickPresenceOpts struct {
+	// PaintWait is how long to wait after pasting the two probes
+	// before capturing the after-state. Sized to "long enough for
+	// tmux to flush the paste into the visible buffer" — not enough
+	// time for the operator to react to a probe they see. Default
+	// 50ms.
+	PaintWait time.Duration
+}
+
+func (o QuickPresenceOpts) withDefaults() QuickPresenceOpts {
+	if o.PaintWait <= 0 {
+		o.PaintWait = 50 * time.Millisecond
+	}
+	return o
+}
+
+// QuickPresenceProbe runs a single-cycle probe to classify the input
+// row's current state. Returns DeltaQuiet when the input row had only
+// previously-accumulated content (typical empty-prompt case);
+// DeltaInputActivity when the operator has uncommitted content there.
+//
+// Compared to WaitForQuietPane: same probe-character + analyzeDelta
+// machinery, but no observe windows past PaintWait and no retry loop.
+// Adds two dashes that ARE backspaced before return (the caller never
+// sees them) — unlike WaitForQuietPane's accumulating-probes design,
+// QuickPresenceProbe leaves no visible artifact for the operator.
+//
+// Use case: gating whether to run the full WaitForQuietPane. When the
+// quick probe says quiet, deliver immediately (~50ms overhead vs.
+// ~6s+ for the full gate). When it says active, fall back to the
+// full gate so the operator's draft is protected (#63 mitigation d).
+//
+// Errors from tmux propagate up. Callers should treat a probe error
+// as conservative "fall back to full gate" rather than "deliver
+// immediately" — the gate-when-uncertain default protects the same
+// failure mode the quick probe was added to catch.
+func QuickPresenceProbe(ctx context.Context, pane string, opts QuickPresenceOpts) (DeltaKind, error) {
+	if pane == "" {
+		return DeltaInputActivity, errors.New("tmuxio: pane required")
+	}
+	opts = opts.withDefaults()
+
+	before, err := tmuxRun(ctx, nil, "capture-pane", "-p", "-t", pane)
+	if err != nil {
+		return DeltaInputActivity, fmt.Errorf("tmuxio: quick probe capture before: %w: %s",
+			err, strings.TrimSpace(string(before)))
+	}
+
+	// Paste two dashes via -l to keep the probe-char shape consistent
+	// with WaitForQuietPane (the analyzeDelta strip-N logic expects
+	// exactly N trailing probes).
+	for i := 0; i < 2; i++ {
+		if out, perr := tmuxRun(ctx, nil,
+			"send-keys", "-t", pane, "-l", QuietProbe); perr != nil {
+			// Cleanup any partial probes before returning.
+			for j := 0; j < i; j++ {
+				_, _ = tmuxRun(ctx, nil, "send-keys", "-t", pane, "BSpace")
+			}
+			return DeltaInputActivity, fmt.Errorf("tmuxio: quick probe send-keys #%d: %w: %s",
+				i+1, perr, strings.TrimSpace(string(out)))
+		}
+	}
+
+	// Short paint window so tmux has time to flush the paste into the
+	// visible buffer before we capture. NOT long enough for the
+	// operator to react — the whole point of the quick probe is to
+	// avoid the multi-second observe windows of the full gate.
+	select {
+	case <-time.After(opts.PaintWait):
+	case <-ctx.Done():
+		for j := 0; j < 2; j++ {
+			_, _ = tmuxRun(ctx, nil, "send-keys", "-t", pane, "BSpace")
+		}
+		return DeltaInputActivity, ctx.Err()
+	}
+
+	after, err := tmuxRun(ctx, nil, "capture-pane", "-p", "-t", pane)
+	if err != nil {
+		for j := 0; j < 2; j++ {
+			_, _ = tmuxRun(ctx, nil, "send-keys", "-t", pane, "BSpace")
+		}
+		return DeltaInputActivity, fmt.Errorf("tmuxio: quick probe capture after: %w: %s",
+			err, strings.TrimSpace(string(after)))
+	}
+
+	verdict := analyzeDelta(string(before), string(after), QuietProbe, 2)
+
+	// Always clean up the two dashes we added. The quick probe leaves
+	// no visible artifact, unlike WaitForQuietPane's accumulating
+	// "I see you" stack — this is a silent pre-check.
+	for j := 0; j < 2; j++ {
+		_, _ = tmuxRun(ctx, nil, "send-keys", "-t", pane, "BSpace")
+	}
+
+	return verdict, nil
+}
+
 // sleepWithPing blocks for d, returning early when ctx cancels. When
 // ping is non-nil, it's called at the end of every chunk AND at the
 // end of every short sleep, so the systemd watchdog stays happy even
