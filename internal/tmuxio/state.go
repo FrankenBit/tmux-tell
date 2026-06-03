@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // State classifies a chamber's current activity from the cli-semaphore
@@ -136,46 +138,65 @@ func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
 }
 
 // ChamberState classifies the receiving pane's current activity by
-// inspecting two consecutive capture-pane snapshots taken
-// chamberStateTemporalDelta apart and applying a precedence-ordered
-// heuristic.
+// inspecting two consecutive capture-pane snapshots + the tmux cursor
+// position and applying a precedence-ordered heuristic.
 //
 // Substrate-class: read-only-observe. Exactly two capture-pane calls,
-// zero send-keys, zero pane mutation. This is the load-bearing property
-// that distinguishes ChamberState from QuickPresenceProbe and
-// WaitForQuietPane (write+observe via probe-and-watch). Pinned by
-// TestChamberState_NoPaneMutation in the test suite. "Knock at the door
-// without waking the inhabitant" per the cli-semaphore#69 framing.
+// one display-message call, zero send-keys, zero pane mutation. This
+// is the load-bearing property that distinguishes ChamberState from
+// QuickPresenceProbe and WaitForQuietPane (write+observe via probe-
+// and-watch). Pinned by TestChamberState_NoPaneMutation in the test
+// suite. "Knock at the door without waking the inhabitant" per
+// cli-semaphore#69's framing — all three tmux calls are read-only
+// (capture-pane reads the visible buffer; display-message reads
+// tmux's internal pane state).
 //
-// Heuristic v1 (per cli-semaphore#71's algorithm spec):
+// Heuristic v2 (cli-semaphore#69 smoke test surfaced the v1 gap on
+// cursor-less classification; operator's design call 2026-06-04
+// resolved it via cursor-position awareness):
 //
 //  1. If either capture fails → StateUnknown + the wrapped error.
 //  2. If CompactionMarker is non-empty AND found in capture B →
 //     StateAtRestInCompaction. (Constant empty in v1 pending #70.)
 //  3. If capture A != capture B → StateWorking. Any substantive change
 //     across the temporal-delta window means the chamber is painting.
-//  4. If capture B has the PromptSentinel with no content past it →
-//     StateIdle. (Reuses InputRowHasContent's classification logic via
-//     the shared classifyInputRow helper.)
+//  4. **Cursor-position-aware input-row classification** (the v2 gap-fix):
+//     query the cursor position via display-message; identify the row
+//     the cursor sits on; if that row starts with PromptSentinel:
+//     - Cursor at sentinel position (col == sentinel-width): the
+//     input area's input position. If row is empty past the
+//     sentinel → StateIdle (clean prompt). If row has content past
+//     the sentinel → StateIdle as well (Claude Code auto-suggestion
+//     ghost text; operator hasn't engaged — cursor would have moved
+//     past the content if they had).
+//     - Cursor past sentinel position: operator is mid-typing →
+//     StateAwaitingOperator (chamber blocked on operator finishing
+//     their draft).
+//     - Cursor before sentinel position: unusual; treat as Unknown.
 //  5. If AwaitingOperatorMarker is non-empty AND found in capture B →
-//     StateAwaitingOperator. (Constant empty in v1 pending #70.)
-//  6. Otherwise → StateUnknown.
+//     StateAwaitingOperator. (Backup detection for non-`❯`-painting
+//     UIs — AskUserQuestion popups, search dialogs, etc. Constant
+//     empty in v1 pending #70.)
+//  6. If the cursor query failed or the cursor row doesn't start with
+//     PromptSentinel, fall back to the cursor-less heuristic
+//     (classifyInputRow == DeltaQuiet → Idle; else Unknown). This
+//     preserves the v1 behavior when the cursor substrate is
+//     unreachable.
+//  7. Otherwise → StateUnknown with an accurate reason naming the
+//     sub-case that fired (vs the v1's misleading "no prompt sentinel"
+//     blanket message).
 //
-// The (B) /proc-inspection hybrid named on #69 is NOT implemented in
-// v1; if (A)-only proves insufficient empirically, (B) lands as a
-// follow-up sub-issue.
-//
-// Substrate-reuse: the Idle branch consumes classifyInputRow which is
-// the parse-only sibling of PR #66's InputRowHasContent. PromptSentinel
-// is the Claude-Code-version-pinned constant; same forward-watch as
-// documented there.
+// Substrate-reuse: the cursor-less fallback path consumes
+// classifyInputRow which is the parse-only sibling of PR #66's
+// InputRowHasContent. PromptSentinel is the Claude-Code-version-
+// pinned constant; same forward-watch as documented there.
 //
 // Errors: capture-pane failures propagate via the error return value
 // paired with StateUnknown — the safer-default-on-uncertainty contract
 // from the cli-semaphore#65 playbook applied at the detection layer.
-// Callers should treat any error as advisory (the unknown classification
-// is honest about probe-failure rather than rolling up to a known state
-// silently).
+// Cursor query failures are non-fatal (the heuristic gracefully
+// degrades to the cursor-less path); only capture-pane failures bubble
+// up as errors.
 func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 	if pane == "" {
 		return StateUnknown, Evidence{Reason: "pane required"},
@@ -227,16 +248,54 @@ func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 			}, nil
 	}
 
-	// Precedence 3: idle (prompt sentinel + empty input row + pane stable).
-	if classifyInputRow(capBStr) == DeltaQuiet {
-		return StateIdle,
-			Evidence{
-				Reason:      "prompt sentinel found with empty input row + pane stable",
-				PromptEmpty: true,
-			}, nil
+	// Cursor-position-aware classification (the v2 substrate per
+	// cli-semaphore#69 operator's design call 2026-06-04). Query the
+	// cursor; if it sits on a row that starts with PromptSentinel,
+	// distinguish auto-suggestion (cursor at sentinel) from operator-
+	// drafting (cursor past sentinel) — the two cases the v1 heuristic
+	// conflated as "non-empty input row".
+	cursorX, cursorY, cursorErr := chamberCursor(ctx, pane)
+	if cursorErr == nil {
+		lines := strings.Split(capBStr, "\n")
+		if cursorY >= 0 && cursorY < len(lines) {
+			row := lines[cursorY]
+			rest, hasSentinel := strings.CutPrefix(row, PromptSentinel)
+			if hasSentinel {
+				sentinelCol := utf8.RuneCountInString(PromptSentinel)
+				switch {
+				case cursorX == sentinelCol:
+					// Cursor right after `❯ ` — either a clean idle
+					// prompt or an auto-suggestion ghost-text. Both
+					// classify as Idle because the operator hasn't
+					// engaged (cursor would have moved past content
+					// if they had been typing).
+					ev := Evidence{
+						Reason:      "cursor at prompt sentinel position; pane stable",
+						PromptEmpty: strings.TrimSpace(rest) == "",
+					}
+					if !ev.PromptEmpty {
+						ev.Reason = fmt.Sprintf("cursor at prompt sentinel position with auto-suggestion ghost-text (%q); pane stable", strings.TrimSpace(rest))
+					}
+					return StateIdle, ev, nil
+				case cursorX > sentinelCol:
+					// Cursor past the sentinel — operator is mid-
+					// typing. Chamber is blocked on operator finishing
+					// the draft (or clearing it). Same consumer-side
+					// semantics as AskUserQuestion popup: don't
+					// dispatch into this state.
+					return StateAwaitingOperator,
+						Evidence{
+							Reason: fmt.Sprintf("cursor past prompt sentinel (col %d > %d); operator mid-typing", cursorX, sentinelCol),
+						}, nil
+				}
+				// Cursor before sentinel position on the sentinel row
+				// is unusual; fall through to marker / unknown checks.
+			}
+		}
 	}
 
-	// Precedence 4: awaiting-operator marker.
+	// Precedence 5: awaiting-operator marker (backup for non-`❯`
+	// painting UIs — AskUserQuestion popups, search dialogs, etc.).
 	if AwaitingOperatorMarker != "" && strings.Contains(capBStr, AwaitingOperatorMarker) {
 		return StateAwaitingOperator,
 			Evidence{
@@ -245,12 +304,61 @@ func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 			}, nil
 	}
 
-	// Default: unknown. Pane is stable but neither the prompt sentinel
-	// nor any marker fired — chamber is in some non-prompt non-menu UI
-	// state the v1 heuristic doesn't classify.
+	// Cursor-less fallback (cursor query failed or cursor row doesn't
+	// have the sentinel): the v1 heuristic via classifyInputRow. Used
+	// when display-message isn't available or the cursor is somewhere
+	// other than the input row (e.g., chamber paused mid-spinner).
+	if classifyInputRow(capBStr) == DeltaQuiet {
+		return StateIdle,
+			Evidence{
+				Reason:      "prompt sentinel found with empty input row (cursor-less fallback); pane stable",
+				PromptEmpty: true,
+			}, nil
+	}
+
+	// Default: unknown. Distinguish two sub-cases for accurate evidence:
+	//   - sentinel found with content past it (but cursor not at input row)
+	//   - sentinel not found at all
+	hasSentinelInPane := strings.Contains(capBStr, PromptSentinel)
+	cursorNote := ""
+	if cursorErr != nil {
+		cursorNote = fmt.Sprintf(" (cursor query failed: %v)", cursorErr)
+	}
+	if hasSentinelInPane {
+		return StateUnknown,
+			Evidence{Reason: "pane stable; prompt sentinel found but cursor not at input row + no recognized marker" + cursorNote},
+			nil
+	}
 	return StateUnknown,
-		Evidence{Reason: "pane stable + no recognized marker + no prompt sentinel"},
+		Evidence{Reason: "pane stable; prompt sentinel not found in any row + no recognized marker" + cursorNote},
 		nil
+}
+
+// chamberCursor queries the tmux cursor position for the pane. Returns
+// (cursorX, cursorY, error). tmux's cursor_x is column 0-indexed,
+// cursor_y is row 0-indexed from the top of the visible pane. A single
+// display-message call returns both values as "X/Y" for parse-once
+// efficiency.
+//
+// Errors here are non-fatal at the ChamberState layer — the algorithm
+// gracefully degrades to the cursor-less heuristic when the cursor
+// substrate is unreachable.
+func chamberCursor(ctx context.Context, pane string) (int, int, error) {
+	out, err := tmuxRun(ctx, nil, "display-message", "-p", "-t", pane, "#{cursor_x}/#{cursor_y}")
+	if err != nil {
+		return 0, 0, fmt.Errorf("tmuxio: chamber-state cursor query: %w: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(out)), "/", 2)
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("tmuxio: chamber-state cursor parse: unexpected format %q", string(out))
+	}
+	x, errX := strconv.Atoi(parts[0])
+	y, errY := strconv.Atoi(parts[1])
+	if errX != nil || errY != nil {
+		return 0, 0, fmt.Errorf("tmuxio: chamber-state cursor parse: %q", string(out))
+	}
+	return x, y, nil
 }
 
 // countChangedLines returns the number of lines that differ between
