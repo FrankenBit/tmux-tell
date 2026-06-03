@@ -29,7 +29,7 @@ const QuietProbe = "─"
 // deploy smoke test surfaced 4/5 idle chambers returning Unknown
 // even after the cursor-aware algorithm landed.
 //
-// The string-literal uses ` ` so the NBSP is explicit in the
+// The string-literal uses `\u00a0` so the NBSP is explicit in the
 // source code (mixing a visually-identical NBSP into the literal
 // would silently fool future readers into thinking it's a regular
 // space).
@@ -42,7 +42,7 @@ const QuietProbe = "─"
 // tests would surface a paint-format change, but re-verify the
 // constant during any major Claude Code version update via
 // `tmux capture-pane | od -An -tx1` on the input row.
-const PromptSentinel = "❯ "
+const PromptSentinel = "❯\u00a0"
 
 // ErrCapExceeded means the quiet-pane wait hit its total-time cap
 // without finding an operator-quiet window. The mailman's policy on
