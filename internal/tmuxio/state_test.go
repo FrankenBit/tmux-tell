@@ -46,7 +46,7 @@ func fastTemporalDelta(t *testing.T) {
 // classifyInputRow helper from PR #66's substrate.
 func TestChamberState_IdleWhenSentinelEmpty(t *testing.T) {
 	fastTemporalDelta(t)
-	pane := "history line A\nhistory line B\n──── Chamber ──\n❯ \n────────\n  status\n"
+	pane := "history line A\nhistory line B\n──── Chamber ──\n❯\u00a0\n────────\n  status\n"
 	fr := newFakeProbeRunner([]string{pane, pane})
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -71,8 +71,8 @@ func TestChamberState_IdleWhenSentinelEmpty(t *testing.T) {
 // working. ChangedLineCount is populated in Evidence for observability.
 func TestChamberState_WorkingWhenPaneChanges(t *testing.T) {
 	fastTemporalDelta(t)
-	paneA := "history\n● Bash(slow command)\n  ⎿ Running…\n✻ Crunched for 5s\n❯ \n  status\n"
-	paneB := "history\n● Bash(slow command)\n  ⎿ Running…\n✻ Crunched for 6s\n❯ \n  status\n"
+	paneA := "history\n● Bash(slow command)\n  ⎿ Running…\n✻ Crunched for 5s\n❯\u00a0\n  status\n"
+	paneB := "history\n● Bash(slow command)\n  ⎿ Running…\n✻ Crunched for 6s\n❯\u00a0\n  status\n"
 	fr := newFakeProbeRunner([]string{paneA, paneB})
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -96,7 +96,7 @@ func TestChamberState_WorkingWhenPaneChanges(t *testing.T) {
 // roll up to a known classification.
 func TestChamberState_UnknownWhenStableNonPromptUI(t *testing.T) {
 	fastTemporalDelta(t)
-	// Pane shows streaming output with no `❯ ` row in view + no marker.
+	// Pane shows streaming output with no `❯\u00a0` row in view + no marker.
 	pane := "● Some response line\n  ⎿  Tool output line 1\n  ⎿  Tool output line 2\n  status line\n"
 	fr := newFakeProbeRunner([]string{pane, pane})
 	prev := SetTmuxRunner(fr.run)
@@ -148,7 +148,7 @@ func TestChamberState_PaneRequired(t *testing.T) {
 // while gaining cursor-position awareness.
 func TestChamberState_NoPaneMutation(t *testing.T) {
 	fastTemporalDelta(t)
-	pane := "history\n──── Chamber ──\n❯ \n────────\n  status\n"
+	pane := "history\n──── Chamber ──\n❯\u00a0\n────────\n  status\n"
 	fr := newChamberStateRunner([]string{pane, pane}, 2, 5) // cursor at sentinel position
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -228,14 +228,14 @@ func (c *chamberStateRunner) run(ctx context.Context, stdin io.Reader, args ...s
 
 // TestChamberState_IdleWhenCursorAtSentinelEmpty pins the cursor-aware
 // happy path for the clean-prompt case: cursor at the position right
-// after `❯ ` AND empty content past it → StateIdle with
+// after `❯\u00a0` AND empty content past it → StateIdle with
 // Evidence.PromptEmpty=true. v2 algorithm per cli-semaphore#69
 // operator's design call 2026-06-04.
 func TestChamberState_IdleWhenCursorAtSentinelEmpty(t *testing.T) {
 	fastTemporalDelta(t)
-	// Cursor row (index 3, 0-indexed) is `❯ ` with no content past it.
-	pane := "history\n──── Chamber ──\n  recap line\n❯ \n────────\n  status\n"
-	// cursorX=2 (right after "❯ "); cursorY=3 (the ❯ row)
+	// Cursor row (index 3, 0-indexed) is `❯\u00a0` with no content past it.
+	pane := "history\n──── Chamber ──\n  recap line\n❯\u00a0\n────────\n  status\n"
+	// cursorX=2 (right after "❯\u00a0"); cursorY=3 (the ❯\u00a0row)
 	fr := newChamberStateRunner([]string{pane, pane}, 2, 3)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -256,21 +256,21 @@ func TestChamberState_IdleWhenCursorAtSentinelEmpty(t *testing.T) {
 }
 
 // TestChamberState_IdleWhenCursorAtSentinelWithAutoSuggestion pins the
-// v2 fix for the smoke-test gap: when the input row is `❯ <content>`
+// v2 fix for the smoke-test gap: when the input row is `❯\u00a0<content>`
 // but the cursor is still at the sentinel position (col == sentinel
 // width), the content is Claude Code's auto-suggested ghost-text and
 // the operator hasn't engaged. Classify as StateIdle with
 // Evidence.PromptEmpty=false + descriptive Reason.
 //
 // Empirical fixture: Pilot's pane in the 2026-06-04 smoke test showed
-// `❯ /nimbus-board` with cursor at col 2 — Claude Code's slash-command
+// `❯\u00a0/nimbus-board` with cursor at col 2 — Claude Code's slash-command
 // auto-suggestion. Operator had not typed the suggestion; it was a
 // ghost-text proposal.
 func TestChamberState_IdleWhenCursorAtSentinelWithAutoSuggestion(t *testing.T) {
 	fastTemporalDelta(t)
-	// Row 3 (0-indexed): `❯ /nimbus-board` — Claude Code auto-suggested.
-	pane := "history\n──── Chamber ──\n  recap line\n❯ /nimbus-board\n────────\n  status\n"
-	// cursorX=2 (right after "❯ ", before "/"); cursorY=3 (the ❯ row).
+	// Row 3 (0-indexed): `❯\u00a0/nimbus-board` — Claude Code auto-suggested.
+	pane := "history\n──── Chamber ──\n  recap line\n❯\u00a0/nimbus-board\n────────\n  status\n"
+	// cursorX=2 (right after "❯\u00a0", before "/"); cursorY=3 (the ❯\u00a0row).
 	// Operator has NOT engaged — cursor would be past the suggestion if they had.
 	fr := newChamberStateRunner([]string{pane, pane}, 2, 3)
 	prev := SetTmuxRunner(fr.run)
@@ -293,13 +293,13 @@ func TestChamberState_IdleWhenCursorAtSentinelWithAutoSuggestion(t *testing.T) {
 
 // TestChamberState_AwaitingOperatorWhenCursorPastSentinel pins the
 // operator-mid-typing case: cursor is past the sentinel position,
-// meaning content past `❯ ` is operator-typed (not ghost-text).
+// meaning content past `❯\u00a0` is operator-typed (not ghost-text).
 // Chamber is blocked on operator finishing the draft → return
 // StateAwaitingOperator so consumers (Bosun) gate their dispatch.
 func TestChamberState_AwaitingOperatorWhenCursorPastSentinel(t *testing.T) {
 	fastTemporalDelta(t)
-	// Row 3 (0-indexed): `❯ Thank you for handling this and ` (#63 reproduction shape).
-	pane := "history\n──── Chamber ──\n  recap line\n❯ Thank you for handling this and \n────────\n  status\n"
+	// Row 3 (0-indexed): `❯\u00a0Thank you for handling this and ` (#63 reproduction shape).
+	pane := "history\n──── Chamber ──\n  recap line\n❯\u00a0Thank you for handling this and \n────────\n  status\n"
 	// cursorX=37 (past the typed content); cursorY=3.
 	fr := newChamberStateRunner([]string{pane, pane}, 37, 3)
 	prev := SetTmuxRunner(fr.run)
@@ -319,19 +319,19 @@ func TestChamberState_AwaitingOperatorWhenCursorPastSentinel(t *testing.T) {
 
 // TestChamberState_FallbackWhenCursorRowNotSentinel pins the cursor-
 // less fallback path: when the cursor sits on a row that doesn't start
-// with `❯ ` (e.g., chamber is mid-spinner and cursor is on the spinner
+// with `❯\u00a0` (e.g., chamber is mid-spinner and cursor is on the spinner
 // row), the v2 algorithm falls back to v1's classifyInputRow heuristic.
 //
 // Smoke evidence: Surveyor pane during PR review showed cursor at the
-// title-separator row, not the ❯ input row (the chamber was working).
+// title-separator row, not the ❯\u00a0input row (the chamber was working).
 // The fallback lets the algorithm still classify cleanly when cursor
 // position doesn't help.
 func TestChamberState_FallbackWhenCursorRowNotSentinel(t *testing.T) {
 	fastTemporalDelta(t)
-	// Cursor at row 1 (not the ❯ row at row 3). Pane is otherwise stable
+	// Cursor at row 1 (not the ❯\u00a0row at row 3). Pane is otherwise stable
 	// + has the sentinel with empty content; fallback to v1 heuristic
 	// → StateIdle.
-	pane := "history\n──── Chamber ──\n  recap line\n❯ \n────────\n  status\n"
+	pane := "history\n──── Chamber ──\n  recap line\n❯\u00a0\n────────\n  status\n"
 	fr := newChamberStateRunner([]string{pane, pane}, 0, 1)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -362,7 +362,7 @@ func TestChamberState_UnknownWithAccurateReason_SentinelFoundCursorOff(t *testin
 	// (sentinel + content) → not DeltaQuiet → fallback doesn't classify
 	// as Idle. Falls through to Unknown — and the reason should name
 	// the actual situation, not "no prompt sentinel".
-	pane := "history\n  spinner-ish content\n❯ <agent-narration>\n────────\n  status\n"
+	pane := "history\n  spinner-ish content\n❯\u00a0<agent-narration>\n────────\n  status\n"
 	fr := newChamberStateRunner([]string{pane, pane}, 0, 1)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -392,7 +392,7 @@ func TestChamberState_ContextCancelledDuringTemporalDelta(t *testing.T) {
 	prev := SetChamberStateTemporalDeltaForTest(100 * time.Millisecond)
 	t.Cleanup(func() { SetChamberStateTemporalDeltaForTest(prev) })
 
-	pane := "history\n❯ \n  status\n"
+	pane := "history\n❯\u00a0\n  status\n"
 	fr := newFakeProbeRunner([]string{pane, pane})
 	prevRunner := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prevRunner) })

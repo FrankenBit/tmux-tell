@@ -24,6 +24,64 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Fixed
+
+- **PromptSentinel NBSP encoding bug — silent since PR #66.**
+  PR #66 (prompt-sentinel gate) + PR #77 (cursor-aware ChamberState
+  v2) shipped with `PromptSentinel = "❯ "` using a regular space
+  (U+0020). Empirical pane capture across all 6 chambers on
+  2026-06-04 (post-PR-#77 deploy smoke test) revealed Claude Code
+  actually emits `❯` + NBSP (U+00A0, hex `c2 a0`), not a regular
+  space. The sentinel constant never matched any real Claude Code
+  pane in production — both PR #66's `InputRowHasContent` and PR
+  #77's cursor-aware classification silently fell through to their
+  fallback branches, making the prompt-sentinel-gate (deployed for
+  Bosun + QM since 2026-06-03) operationally invisible (full
+  WaitForQuietPane handled all traffic; sentinel never matched).
+
+  The defect was invisible because:
+  - Unit-test fixtures used the regular-space variant (spec-derived
+    rather than capture-derived); tests passed against a fiction of
+    production substrate
+  - The safer-default-on-uncertainty contract made the always-falls-
+    through behavior operationally indistinguishable from a working
+    gate (over-gate is harmless; under-gate would have been caught)
+  - Cycle 6 PR #77's smoke test was the first time the algorithm
+    was expected to classify chambers as `idle` post-deploy; 4/5
+    chambers returning `unknown` surfaced the substrate-defect at
+    a layer below the cursor-aware algorithm
+
+  Fix:
+  - `internal/tmuxio/probe.go`: `PromptSentinel` constant updated to
+    `"❯ "` (explicit NBSP escape) with extensive doc-comment
+    naming the empirical-capture verification + the substrate-discovery
+    timeline.
+  - `internal/tmuxio/testdata/golden_bosun_idle_2026-06-04.txt` (new):
+    real `tmux capture-pane` output from Bosun's idle pane, frozen
+    as a capture-derived test fixture. Pins the production encoding
+    against future drift.
+  - Two new canary tests in `internal/tmuxio/probe_test.go`:
+    `TestPromptSentinel_BytesMatchNBSP` (asserts the constant's byte
+    encoding matches the empirically-captured production bytes) and
+    `TestPromptSentinel_MatchesGoldenCapture` (loads the golden file
+    + verifies PromptSentinel matches a sentinel row).
+  - All inline test fixtures in `probe_test.go`, `state_test.go`,
+    and `cmd/claude-msg/state_test.go` updated from `"❯ "` (regular
+    space) to `"❯ "` (NBSP escape) — 35 occurrences across
+    three files. The escape sequence keeps the NBSP visible in
+    source code; using a literal NBSP would silently fool future
+    readers into thinking it's a regular space.
+
+  Forward-watch: any future Claude Code TUI version that changes
+  the prompt character or separator will surface as a golden-capture
+  mismatch. The canary tests catch it loudly.
+
+  Sibling discipline: Surveyor's O28 (integration-config-wiring) had
+  the closest existing shape; this is its sibling
+  **substrate-constant-byte-encoding** class — verify the byte
+  encoding of constants that reference external-tool emissions
+  against the actual tool emission, not the spec.
+
 ### Added
 
 - **Cursor-position-aware ChamberState — v2 algorithm (#69 design

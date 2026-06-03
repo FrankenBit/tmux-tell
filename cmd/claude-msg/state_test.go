@@ -35,7 +35,7 @@ func installFakeChamberState(t *testing.T, captureContent string) {
 // idle-classification case. The schema is the durable shape that
 // Binnacle's M6b will consume verbatim per cli-semaphore#74.
 func TestStateCLI_HappyPathJSON(t *testing.T) {
-	installFakeChamberState(t, "history\n──── Chamber ──\n❯ \n────────\n  status\n")
+	installFakeChamberState(t, "history\n──── Chamber ──\n❯\u00a0\n────────\n  status\n")
 	s := newCmdTestStore(t, "bosun")
 
 	var stdout, stderr bytes.Buffer
@@ -68,7 +68,7 @@ func TestStateCLI_HappyPathJSON(t *testing.T) {
 // TestStateCLI_HappyPathText pins the text-format output structure
 // (the labeled-columns shape sibling to `claude-msg config show`).
 func TestStateCLI_HappyPathText(t *testing.T) {
-	installFakeChamberState(t, "history\n❯ \n  status\n")
+	installFakeChamberState(t, "history\n❯\u00a0\n  status\n")
 	s := newCmdTestStore(t, "bosun")
 
 	var stdout, stderr bytes.Buffer
@@ -143,7 +143,7 @@ func TestStateCLI_AgentHasNoPane(t *testing.T) {
 // TestStateCLI_UnknownFormat pins the validation guard for an
 // unrecognized --format value.
 func TestStateCLI_UnknownFormat(t *testing.T) {
-	installFakeChamberState(t, "❯ \n")
+	installFakeChamberState(t, "❯\u00a0\n")
 	s := newCmdTestStore(t, "bosun")
 
 	var stdout, stderr bytes.Buffer
@@ -157,7 +157,7 @@ func TestStateCLI_UnknownFormat(t *testing.T) {
 // schema MUST match the CLI's JSON output byte-for-byte (modulo
 // timestamps) — Binnacle consumes one schema, not two.
 func TestMCP_ChamberState(t *testing.T) {
-	installFakeChamberState(t, "history\n❯ \n  status\n")
+	installFakeChamberState(t, "history\n❯\u00a0\n  status\n")
 	s := newCmdTestStore(t, "bosun")
 
 	got := callMCPTool(t, s, "semaphore.chamber_state", map[string]any{"agent": "bosun"})
