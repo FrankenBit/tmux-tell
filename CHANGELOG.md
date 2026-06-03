@@ -24,6 +24,61 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Added
+
+- **`tmuxio.ChamberState` — read-only-observe chamber-state probe (#71).**
+  Adds a "knock at the door without waking the inhabitant" primitive
+  for `cli-semaphore#69`'s chamber-state visibility campaign. Returns
+  one of five states — `unknown` / `idle` / `working` /
+  `at-rest-in-compaction` / `awaiting-operator` — by inspecting two
+  consecutive `capture-pane` snapshots taken 200ms apart.
+
+  Substrate-class: read-only-observe. Exactly two capture-pane calls,
+  zero send-keys, zero pane mutation. Pinned by
+  `TestChamberState_NoPaneMutation`. Distinct from `QuickPresenceProbe`
+  and `WaitForQuietPane` (write+observe via probe-and-watch); the new
+  function deliberately avoids any pane disturbance so Bosun (or any
+  caller) can poll chamber state without affecting the chamber's
+  workflow.
+
+  **v1 load-bearing branches** (Idle / Working / Unknown) are fully
+  detected:
+  - `working` when the two captures differ across the temporal-delta
+    window (streaming output, spinner animations, any pane paint)
+  - `idle` when the pane is stable AND the `❯ ` PromptSentinel is
+    found with no content past it (reuses PR #66's
+    `classifyInputRow` helper, newly extracted as a parse-only
+    sibling of `InputRowHasContent`)
+  - `unknown` when capture fails, when the pane is stable but no
+    sentinel + no marker fires, or when context cancels mid-probe
+
+  **TODO branches** (AtRestInCompaction / AwaitingOperator) are
+  structurally wired but currently disabled — `CompactionMarker` and
+  `AwaitingOperatorMarker` are empty-string placeholders until
+  `cli-semaphore#70` lands the empirical capture of the
+  compaction-in-progress + AskUserQuestion-popup UIs. Once #70 ships
+  the marker strings + test fixtures, the constants populate in the
+  same commit and both branches activate. Same
+  Claude-Code-version-dependent forward-watch as `PromptSentinel`.
+
+  **Optional (B) /proc-inspection hybrid** named in #69 is NOT
+  implemented in v1 per the issue's "impl-time judgment" framing — if
+  pane-capture alone proves insufficient empirically, the hybrid
+  lands as a follow-up sub-issue.
+
+  `Evidence` struct ships alongside `State` carrying the observation
+  that led to the classification (always-populated `Reason` plus
+  per-state fields like `PromptEmpty`, `ChangedLineCount`, `Marker`).
+  Consumers — the CLI surface (#72) and the MCP tool (#73), both
+  pending — wrap this struct verbatim in their response schema; the
+  shape is durable per the Binnacle-carry-forward framing on #74.
+
+  Tests cover: `State.String()` for all 5 values + out-of-range
+  default, Idle classification, Working classification (with
+  `ChangedLineCount` populated), Unknown classification, pane-required
+  validation, the substrate-class no-pane-mutation property, and the
+  context-cancellation-mid-temporal-delta contract.
+
 ### Fixed
 
 - **TOML knobs `quick-presence-probe` + `prompt-sentinel-gate` now

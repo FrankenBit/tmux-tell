@@ -471,21 +471,37 @@ func InputRowHasContent(ctx context.Context, pane string) (DeltaKind, error) {
 		return DeltaInputActivity, fmt.Errorf("tmuxio: input-row capture-pane: %w: %s",
 			err, strings.TrimSpace(string(out)))
 	}
+	return classifyInputRow(string(out)), nil
+}
+
+// classifyInputRow inspects already-captured pane content for the
+// PromptSentinel + content-past-sentinel pattern. Sibling to
+// InputRowHasContent but without the capture-pane call — exists so
+// callers that already have the pane content (e.g., ChamberState
+// captures twice for temporal-delta and wants to classify the second
+// capture without re-running capture-pane) can reuse the heuristic.
+//
+// Returns DeltaQuiet only when the sentinel is found AND the row past
+// it is whitespace-only; DeltaInputActivity in every other case (any
+// content past the sentinel, or sentinel not found anywhere). See
+// InputRowHasContent's doc-comment for the full heuristic rationale +
+// known limitations.
+func classifyInputRow(paneContent string) DeltaKind {
 	sawSentinel := false
-	for _, row := range strings.Split(string(out), "\n") {
+	for _, row := range strings.Split(paneContent, "\n") {
 		rest, found := strings.CutPrefix(row, PromptSentinel)
 		if !found {
 			continue
 		}
 		sawSentinel = true
 		if strings.TrimSpace(rest) != "" {
-			return DeltaInputActivity, nil
+			return DeltaInputActivity
 		}
 	}
 	if !sawSentinel {
-		return DeltaInputActivity, nil
+		return DeltaInputActivity
 	}
-	return DeltaQuiet, nil
+	return DeltaQuiet
 }
 
 // sleepWithPing blocks for d, returning early when ctx cancels. When
