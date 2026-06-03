@@ -46,7 +46,9 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
-// newMCPServer wires the five semaphore.* tools onto an mcp.Server.
+// newMCPServer wires the semaphore.* tools onto an mcp.Server.
+// Tools registered: send / agents / whoami / inbox / message_status /
+// status / register / control / unregister / chamber_state.
 func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("semaphore", "0.1.0")
 
@@ -146,7 +148,46 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpUnregisterHandler(s))
 
+	srv.RegisterTool("semaphore.chamber_state",
+		"Probe an agent's chamber-state via read-only capture-pane (#71). Returns one of five states: idle / working / at-rest-in-compaction / awaiting-operator / unknown. 'Knock at the door without waking the inhabitant' — exactly two capture-pane calls, zero pane mutation, ~200ms latency. Consumers should treat 'unknown' as advisory-not-authoritative per cli-semaphore#65's substrate-class-of-claim convention (don't silently roll up an unknown classification to a known state). v1 detects idle/working/unknown reliably; at-rest-in-compaction and awaiting-operator land when cli-semaphore#70's empirical capture populates the marker constants.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"agent": {"type": "string", "description": "Agent name to probe"}
+			},
+			"required": ["agent"]
+		}`),
+		mcpChamberStateHandler(s))
+
 	return srv
+}
+
+// mcpChamberStateHandler returns the handler for the
+// semaphore.chamber_state MCP tool. Wraps resolveChamberState (shared
+// with the CLI subcommand `claude-msg state`) so both surfaces emit
+// the same JSON schema — durable shape that Binnacle's M6b can
+// consume verbatim per cli-semaphore#74's carry-forward spec.
+func mcpChamberStateHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		Agent string `json:"agent"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("parse args: %w", err)
+		}
+		if in.Agent == "" {
+			return nil, fmt.Errorf("agent required")
+		}
+		res, err := resolveChamberState(ctx, s, in.Agent)
+		// Return the result regardless of error — the consumer sees
+		// the Evidence.Reason and can decide. Error surfaces via the
+		// MCP error channel for callers that want to gate on success.
+		if err != nil {
+			return res, err
+		}
+		return res, nil
+	}
 }
 
 // --- tool handlers ---
@@ -477,12 +518,12 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		if start {
 			if err := startMailman(ctx, in.Name); err != nil {
 				return map[string]any{
-					"ok":             true,
-					"name":           in.Name,
-					"pane":           pane,
-					"mailman":        "failed",
-					"mailman_error":  err.Error(),
-					"registered":     true,
+					"ok":            true,
+					"name":          in.Name,
+					"pane":          pane,
+					"mailman":       "failed",
+					"mailman_error": err.Error(),
+					"registered":    true,
 				}, nil
 			}
 			mailmanState = "active"
@@ -499,9 +540,9 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 
 func mcpUnregisterHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
-		Name           string `json:"name"`
-		StopMailman    *bool  `json:"stop_mailman"`
-		PurgeMessages  bool   `json:"purge_messages"`
+		Name          string `json:"name"`
+		StopMailman   *bool  `json:"stop_mailman"`
+		PurgeMessages bool   `json:"purge_messages"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -543,11 +584,11 @@ func mcpUnregisterHandler(s *store.Store) mcp.ToolHandler {
 		}
 
 		return map[string]any{
-			"ok":              true,
-			"name":            in.Name,
-			"mailman":         mailmanState,
-			"deleted":         deleted,
-			"unregistered":    true,
+			"ok":           true,
+			"name":         in.Name,
+			"mailman":      mailmanState,
+			"deleted":      deleted,
+			"unregistered": true,
 		}, nil
 	}
 }

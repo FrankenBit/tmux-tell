@@ -31,6 +31,7 @@ Subcommands:
   reset   Purge messages (requires --confirm)
   log     Inspect message threads
   discover Re-derive agents.pane_id from current tmux state
+  state   Probe a chamber's current activity via read-only capture-pane (#71)
   mcp     Speak MCP over stdio (Claude Code tools)
 
 See https://git.frankenbit.de/frankenbit/cli-semaphore for the design notes.
@@ -84,6 +85,8 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runLogCLI(args[1:], stdout, stderr)
 	case "discover":
 		return runDiscoverCLI(args[1:], stdout, stderr)
+	case "state":
+		return runStateCLI(args[1:], stdout, stderr)
 	case "mcp":
 		return runMCPCLI(args[1:], os.Stdin, stdout, stderr)
 	default:

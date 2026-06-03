@@ -26,6 +26,43 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **Chamber-state consumer surfaces (#72 + #73).** Both the operator
+  CLI and the autonomous-agent MCP path now consume `tmuxio.ChamberState`
+  via a single shared `resolveChamberState` helper so the JSON schema
+  is byte-identical across surfaces — durable shape per
+  `cli-semaphore#74`'s carry-forward spec.
+
+  **CLI (#72)**: new `claude-msg state --agent NAME [--format text|json]`
+  subcommand. Text format mirrors `claude-msg config show`'s
+  AGENT/STATE/EVIDENCE/CAPTURED labeled-columns shape. JSON format
+  emits `{agent, state, evidence, captured_at}` matching the MCP
+  tool exactly. Non-zero exit on probe failure (agent-not-registered,
+  no-pane, capture-pane error) so shell scripts can branch; the result
+  is always emitted to stdout regardless, with `evidence.reason`
+  describing what happened.
+
+  **MCP (#73)**: new `semaphore.chamber_state` tool. Input
+  `{agent: string}`, output `{agent, state, evidence, captured_at}`.
+  Tool description names the substrate-class (read-only-observe), the
+  five-state vocabulary, the advisory-not-authoritative convention for
+  `unknown`, and the v1 detection coverage (idle/working/unknown
+  reliable; at-rest-in-compaction + awaiting-operator land when #70
+  populates the markers). Brings the MCP tool count to 10; the
+  `TestMCP_ToolsListContract` pin is updated to include it.
+
+  Both surfaces honor the safer-default-on-uncertainty contract:
+  when `chamber_state` returns `unknown` or errors, the consumer
+  surface still emits the structured result with the descriptive
+  Reason field so the caller can decide. Bosun can call
+  `semaphore.chamber_state` before dispatching to avoid waking an
+  idle chamber unnecessarily, or to check whether a target is
+  awaiting-operator before queueing a message that would chain into
+  the popup-corruption case from #58/#59.
+
+  Tests pin: CLI happy-path JSON + text, agent-not-registered error
+  path, agent-no-pane error path, unknown-format validation guard,
+  MCP happy-path schema match, MCP missing-agent validation.
+
 - **`tmuxio.ChamberState` — read-only-observe chamber-state probe (#71).**
   Adds a "knock at the door without waking the inhabitant" primitive
   for `cli-semaphore#69`'s chamber-state visibility campaign. Returns
