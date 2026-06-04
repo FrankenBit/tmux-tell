@@ -96,6 +96,16 @@ func TestPromptSentinel_MatchesGoldenCapture(t *testing.T) {
 // separators with keybinding hints. Catches single-select and multi-
 // select popups (both end with the same footer).
 func TestAwaitingOperatorMarker_MatchesGoldenCapture(t *testing.T) {
+	// Guard against the empty-marker regression: strings.Contains(g, "")
+	// returns true for any g, so an accidentally-emptied constant
+	// would silently pass the substring check below. The empty value
+	// is the pre-#79 placeholder; a future revert (intentional or via
+	// merge conflict) needs to surface loudly here, not just in the
+	// e2e classification pin in state_test.go. Pattern retrofitted
+	// from TestCompactionMarker_MatchesGoldenCapture per #89.
+	if AwaitingOperatorMarker == "" {
+		t.Fatal("AwaitingOperatorMarker is empty — the StateAwaitingOperator branch is disabled; re-populate from a re-captured golden fixture (see AwaitingOperatorMarker doc-comment)")
+	}
 	golden, err := os.ReadFile("testdata/golden_quartermaster_askuserquestion_2026-06-04.txt")
 	if err != nil {
 		t.Fatalf("read golden capture: %v", err)
