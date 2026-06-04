@@ -84,6 +84,27 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **Discipline-pin: cross-process cap-as-ceiling invariant (#33).**
+  The existing `TestPin_AtomicCapEnforcement_CeilingUnderConcurrency`
+  in `internal/store/pin_test.go` exercises BeginTx atomicity inside
+  one `*Store` via N goroutines sharing one `*sql.DB`. Surveyor's #29
+  round-3 review flagged the missing axis: SQLite's file-level
+  RESERVED lock + `_txlock=immediate` + `busy_timeout` are what
+  actually make the cap hold across **distinct OS-level processes**
+  (mailman daemons + `claude-msg` CLI invocations + MCP server
+  children all hit the same `messages.db` from separate processes).
+  Two new sibling pins under the same `AtomicCapEnforcement` slug
+  close the gap: a probe binary at
+  `internal/store/cmd/concurrency-probe/` opens the store and
+  exits 0/2/1 per the cap-rejection contract; the parent test in
+  `internal/store/messages_xprocess_test.go` spawns N=20 children for
+  single-insert + N=8 for InsertMessagePair and asserts exactly
+  cap-many succeed. Mutation experiment confirmed: dropping
+  `_txlock=immediate` from the DSN trips both pins with `SQLITE_BUSY`
+  on the contending probes. Slug reuse (same architectural
+  commitment, different concurrency axis) — no ADR amendment needed.
+  `make check-pin-slugs`: 7 slugs registered, 7 in use, aligned.
+
 - **Uninstall path: `uninstall.sh` + README "Removal" section (#80).**
   The M6 install issue (#14) shipped with an un-ticked "Uninstall path
   documented" AC; #80 captured the gap. The new script is idempotent,
