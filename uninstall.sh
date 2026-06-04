@@ -46,7 +46,7 @@ also want to wipe the host config.
 
 What --purge does NOT touch:
   - /etc/cli-semaphore/        (operator-edited config; remove by hand)
-  - Per-pane MCP entries in ~/.claude.json (remove with claude mcp
+  - Semaphore MCP entry in ~/.claude.json (remove with claude mcp
     remove semaphore -s user)
   - loginctl enable-linger     (other services on the host may rely on it)
 EOF
