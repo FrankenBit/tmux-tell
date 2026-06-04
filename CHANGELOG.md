@@ -84,6 +84,24 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **Bulk MCP refresh: `claude-msg refresh-all-mcps` (#62).** Replaces
+  the per-chamber `/mcp restart semaphore` typing tax after binary
+  deploys. Iterates the registered `agents` table and fires the
+  existing `mcp-restart-semaphore` macro (#28) per chamber via the
+  shared `doControl` path. Reports per-chamber success/cap-rejected
+  outcome in text or JSON; exits non-zero if any chamber failed so
+  scripts can detect partial fan-out. Operator-only (CLI surface; no
+  MCP tool variant — peer-invokable bulk-restart would be a DoS
+  amplification class). Sender backlog cap is raised to the exact
+  upper bound `2*N + capSenderBacklog` for the duration of the
+  fan-out (operation-scoped cap-raising, not cap-exemption; per-
+  recipient cap stays at 5 to protect each chamber individually).
+  README "New tools require a session restart" section names the
+  convenience surface + the size/M follow-up trigger for state-gating
+  if mid-tool-call disruption becomes recurring felt-pain
+  (post-#69 chamber-state primitive enables `state in [idle,
+  awaiting-operator]` as the natural gate).
+
 - **Discipline-pin: cross-process cap-as-ceiling invariant (#33).**
   The existing `TestPin_AtomicCapEnforcement_CeilingUnderConcurrency`
   in `internal/store/pin_test.go` exercises BeginTx atomicity inside
