@@ -46,8 +46,11 @@ const (
 	// structurally distinct from idle: the chamber has an open turn
 	// awaiting human response, and the next bus message can't drive the
 	// turn forward without first being treated by the operator.
-	// Detection relies on AwaitingOperatorMarker; per #70 the marker is
-	// currently a placeholder pending empirical capture.
+	// Detection relies on AwaitingOperatorMarker, an empirically-captured
+	// substring of Claude Code's popup footer (cli-semaphore#79, PR #87).
+	// Lit up 2026-06-04 from an operator-coordinated AskUserQuestion
+	// capture; canary + classification pins in probe_test.go and
+	// state_test.go protect the substring against Claude Code UI drift.
 	StateAwaitingOperator
 )
 
@@ -111,10 +114,25 @@ const CompactionMarker = ""
 // AwaitingOperatorMarker is the substring that identifies a chamber in
 // StateAwaitingOperator (AskUserQuestion popups, selection menus, …).
 //
-// PLACEHOLDER per cli-semaphore#70 — same shape + same forward-watch
-// as CompactionMarker. While empty, the StateAwaitingOperator branch
-// in ChamberState is disabled.
-const AwaitingOperatorMarker = ""
+// Empirically captured 2026-06-04 from a Quartermaster pane displaying
+// a live AskUserQuestion popup (cli-semaphore#79). The captured pane
+// content is frozen as testdata/golden_quartermaster_askuserquestion_
+// 2026-06-04.txt so future Claude Code UI drift surfaces as a golden-
+// match failure on the canary test in probe_test.go.
+//
+// The substring is the popup's bottom-line keybinding hint —
+// "↑/↓ to navigate · Esc to cancel" — combined with the middle-dot
+// separator. The combination is structurally unique to Claude Code's
+// popup UI: regular chat / response text never emits keybinding hints
+// with U+00B7 middle-dot separators. Catches both single-select and
+// multi-select popup variants because both end with the same footer.
+//
+// FORWARD-WATCH (same shape as PromptSentinel + CompactionMarker):
+// Claude-Code-version-dependent. If the popup UI's footer changes
+// across a Claude Code version update, this constant + the golden
+// fixture both need re-verification. The canary test surfaces the
+// drift loudly.
+const AwaitingOperatorMarker = "↑/↓ to navigate · Esc to cancel"
 
 // chamberStateTemporalDelta is the wait between the two capture-pane
 // calls in ChamberState. 200ms is long enough to catch typical

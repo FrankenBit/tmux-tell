@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -438,5 +439,57 @@ func TestCountChangedLines_DiffShape(t *testing.T) {
 				t.Errorf("countChangedLines(%q, %q) = %d, want %d", c.a, c.b, got, c.want)
 			}
 		})
+	}
+}
+
+// TestChamberState_AwaitingOperatorOnAskUserQuestionGolden pins the
+// end-to-end classification for the AskUserQuestion popup scenario
+// (cli-semaphore#79). Loads the capture-derived golden fixture as
+// both capture-pane responses (the pane is stable across the temporal
+// delta — operator is reading the popup; nothing's animating), and
+// asserts ChamberState returns StateAwaitingOperator with the marker
+// surfaced in Evidence.
+//
+// The state.go classifier reaches the AwaitingOperatorMarker check
+// (precedence 5) because:
+//   - No CompactionMarker match (capture is a popup, not compaction)
+//   - capA == capB (stable pane)
+//   - Cursor lookup finds no PromptSentinel row (the popup overlays
+//     the input area), so the cursor-aware classification falls
+//     through to the marker check
+//   - AwaitingOperatorMarker matches the popup footer
+//
+// Without this pin, a future refactor could silently break the
+// AwaitingOperatorMarker path while the canary in probe_test.go
+// (which only checks the substring is in the golden) would still pass.
+// This test pins the load-bearing *classification*, not just the
+// constant-vs-golden alignment.
+func TestChamberState_AwaitingOperatorOnAskUserQuestionGolden(t *testing.T) {
+	fastTemporalDelta(t)
+	golden, err := os.ReadFile("testdata/golden_quartermaster_askuserquestion_2026-06-04.txt")
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	pane := string(golden)
+	fr := newChamberStateRunner([]string{pane, pane}, 0, 0)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := ChamberState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateAwaitingOperator {
+		t.Errorf("state = %v, want StateAwaitingOperator (popup golden + non-empty AwaitingOperatorMarker should hit precedence 5)",
+			state)
+	}
+	if ev.Marker == "" {
+		t.Errorf("Evidence.Marker is empty; expected the matched AwaitingOperatorMarker substring")
+	}
+	if ev.Marker != AwaitingOperatorMarker {
+		t.Errorf("Evidence.Marker = %q, want %q", ev.Marker, AwaitingOperatorMarker)
+	}
+	if ev.Reason == "" {
+		t.Errorf("Evidence.Reason should name the awaiting-operator marker match")
 	}
 }

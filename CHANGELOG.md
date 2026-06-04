@@ -84,6 +84,26 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **AwaitingOperator detection: AskUserQuestion popup capture (#79).**
+  The chamber-state primitive's `AwaitingOperatorMarker` constant
+  flips from placeholder `""` to `"↑/↓ to navigate · Esc to cancel"`,
+  populated from an empirically-captured AskUserQuestion popup. The
+  popup overlays the input area (no `❯` row visible), so the cursor-
+  aware classification falls through to the marker check at
+  precedence 5 — the popup footer's keybinding hint combined with
+  U+00B7 middle-dot separators is structurally unique to Claude
+  Code's popup UI. Capture-derived golden fixture at
+  `internal/tmuxio/testdata/golden_quartermaster_askuserquestion_
+  2026-06-04.txt` pins the encoding against future drift; two new
+  tests in `probe_test.go` + `state_test.go` enforce the constant-
+  vs-golden alignment AND the end-to-end `ChamberState` classification
+  (`StateAwaitingOperator` with marker surfaced in Evidence). Mutation
+  experiment verified: reverting the marker to placeholder makes
+  ChamberState return `StateUnknown` and the pin fires with an
+  explanatory error pointing at AwaitingOperatorMarker. Pre-#79 the
+  Quartermaster pane during an AskUserQuestion popup classified as
+  `unknown`; post-#79 it correctly classifies as `awaiting-operator`.
+
 - **Bulk MCP refresh: `claude-msg refresh-all-mcps` (#62).** Replaces
   the per-chamber `/mcp restart semaphore` typing tax after binary
   deploys. Iterates the registered `agents` table and fires the

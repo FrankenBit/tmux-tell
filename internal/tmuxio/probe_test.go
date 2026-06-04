@@ -82,6 +82,30 @@ func TestPromptSentinel_MatchesGoldenCapture(t *testing.T) {
 	}
 }
 
+// TestAwaitingOperatorMarker_MatchesGoldenCapture is the sibling-shape
+// canary for the AwaitingOperatorMarker constant — same capture-
+// derived-vs-spec-derived discipline as the PromptSentinel canary
+// above. The golden file is a real `tmux capture-pane` output frozen
+// from a Quartermaster pane displaying a live AskUserQuestion popup
+// (cli-semaphore#79, captured 2026-06-04). If Claude Code's popup UI
+// drifts (footer keybinding text changes, separator character flips),
+// this test fails loudly + names the re-capture recipe.
+//
+// The substring is structurally unique to Claude Code's popup UI —
+// regular chat / response text never combines U+00B7 middle-dot
+// separators with keybinding hints. Catches single-select and multi-
+// select popups (both end with the same footer).
+func TestAwaitingOperatorMarker_MatchesGoldenCapture(t *testing.T) {
+	golden, err := os.ReadFile("testdata/golden_quartermaster_askuserquestion_2026-06-04.txt")
+	if err != nil {
+		t.Fatalf("read golden capture: %v", err)
+	}
+	if !strings.Contains(string(golden), AwaitingOperatorMarker) {
+		t.Errorf("golden capture does NOT contain AwaitingOperatorMarker %q — Claude Code popup UI may have drifted; re-verify via `tmux capture-pane -p -t <pane>` on a live AskUserQuestion popup + update AwaitingOperatorMarker + re-capture the golden fixture",
+			AwaitingOperatorMarker)
+	}
+}
+
 // --- analyzeDelta unit tests ---
 
 func TestAnalyzeDelta_Quiet_TwoTrailingProbes(t *testing.T) {
