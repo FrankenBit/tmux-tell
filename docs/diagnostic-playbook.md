@@ -47,7 +47,7 @@ convert from local if needed.
 
 ```bash
 sudo sqlite3 /var/lib/cli-semaphore/messages.db -header -column "
-  SELECT public_id, to_agent, state, kind,
+  SELECT public_id, from_agent, to_agent, state, kind,
          length(body) AS body_len,
          created_at, delivered_at,
          COALESCE(error, '') AS err
@@ -58,6 +58,10 @@ sudo sqlite3 /var/lib/cli-semaphore/messages.db -header -column "
   ORDER BY created_at;
 "
 ```
+
+`from_agent` is included in the projection (not just the WHERE clause)
+so each row is self-describing when the operator copies it into an
+incident report or bug filing.
 
 Decision tree on the result:
 
@@ -80,6 +84,12 @@ journalctl --user-unit=claude-mailman@<receiver> \
   --until="<T+2min local>" \
   --no-pager
 ```
+
+**Time-zone note**: `journalctl`'s `--since` / `--until` default to
+**local time** (not UTC like §1's SQL bounds). If you mentally shifted
+into UTC for §1, shift back to local here. The two layers store
+timestamps in their respective conventions and the playbook follows
+each layer's default rather than forcing one into the other's frame.
 
 Look for `delivering id=<public_id>` / `delivered id=<public_id>` /
 `WARN delivered_unverified` / `WARN drift_detected` lines for the
