@@ -84,6 +84,20 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **Discipline-pin: perf-skip composition for the asymmetric gate
+  (#67).** PR #66's mutation-experiment table called out one un-pinned
+  branch: removing the `!runFullGate` guard from the QuickPresenceProbe
+  block (`cmd/claude-msg/serve.go:473`) would make both pre-checks run
+  unconditionally when both were enabled, wasting ~50ms on the
+  expensive probe path whenever the sentinel had already promoted.
+  Perf regression, not a correctness break — but invisible to today's
+  CI. `TestPin_OperatorInputRowGate_QuickProbeSkippedWhenSentinelPromotes`
+  in `cmd/claude-msg/pin_test.go` closes the gap. Slug
+  `OperatorInputRowGate` (already in ADR-0001's register — no
+  amendment needed). The pin asserts probeCount == 2 (WaitForQuietPane's
+  single iteration only); mutation experiment verified that dropping
+  the guard yields probeCount = 4 (both pre-checks fire). See #67.
+
 - **Cursor-position-aware ChamberState — v2 algorithm (#69 design
   call 2026-06-04).** PR #76's deploy smoke test surfaced that v1
   classified all idle chambers (with Claude Code's slash-command
