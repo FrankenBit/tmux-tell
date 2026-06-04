@@ -84,6 +84,19 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **Sender-outbox-first diagnostic playbook
+  (`docs/diagnostic-playbook.md`, #65).** Captures the triage flow
+  for when a chamber reports a missed bus message — three checks in
+  order: (1) the SQLite store says whether the sender actually
+  reached the bus, (2) the receiver's mailman journal says whether
+  delivery was attempted, (3) the external system the message was
+  *about* cross-checks the chamber's flow against reality. Surfaced
+  by the 2026-06-03 incident where a "bus is broken" hypothesis was
+  forwarded as recovered substrate before the DB was checked. README
+  cross-links from the existing "Diagnosing a failed or unverified
+  message" section. Operational-coordination-layer expression of the
+  broader filed-bug-rootcause-is-hypothesis discipline.
+
 - **Discipline-pin: perf-skip composition for the asymmetric gate
   (#67).** PR #66's mutation-experiment table called out one un-pinned
   branch: removing the `!runFullGate` guard from the QuickPresenceProbe
