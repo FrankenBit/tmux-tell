@@ -165,6 +165,45 @@ export CLAUDE_AGENT_NAME=bosun
 After that, `claude-msg send --to surveyor "…"`, `claude-msg whoami`, and
 the rest of the read-side subcommands work without flags.
 
+## Removal
+
+To uninstall:
+
+```bash
+sudo -A ./uninstall.sh                # stops mailmen, removes binary,
+                                      # leaves the SQLite DB alone
+sudo -A ./uninstall.sh --purge        # also wipes /var/lib/cli-semaphore/
+                                      # (interactive confirmation when run
+                                      # from a TTY)
+```
+
+`uninstall.sh` is idempotent — re-running it on a partial state is safe.
+The script:
+
+- Stops + disables every running `claude-mailman@*.service` user unit
+  under the operator's session.
+- Removes the systemd user template from
+  `~/.config/systemd/user/claude-mailman@.service` and reloads the user
+  manager.
+- Removes the `claude-msg` binary from `${PREFIX}/bin/`.
+
+What `uninstall.sh` does **NOT** touch (remove by hand if you want them
+gone):
+
+- `/etc/cli-semaphore/` — host-level config (#54); the operator may
+  have hand-edited it.
+- The semaphore MCP entry in `~/.claude.json` — remove with
+  `claude mcp remove semaphore -s user`.
+- `loginctl enable-linger` — other services on the host may rely on
+  the user manager continuing to run at boot.
+- `/var/lib/cli-semaphore/` — message history. Default-preserved so
+  an accidental re-install can pick up where the previous one left off.
+  Pass `--purge` to wipe it after an interactive confirmation.
+
+For safety, the script refuses to run from inside
+`/var/lib/cli-semaphore/` (so a sloppy `cd` + `./uninstall.sh` can't
+delete the very directory it's running from with `--purge`).
+
 ## Use from Claude Code (MCP)
 
 The same binary speaks MCP over stdio under `claude-msg mcp`, exposing
