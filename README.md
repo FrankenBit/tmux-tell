@@ -345,6 +345,30 @@ sessions that started before the upgrade stay pinned to the tool
 surface they were initialized with. To propagate a new `semaphore.*`
 tool into a running pane, restart its Claude session.
 
+The `mcp-restart-semaphore` macro (#28) re-initializes one chamber's
+MCP stdio without losing in-session context. For deploys that need
+EVERY chamber refreshed, the bulk shortcut collapses the per-chamber
+typing tax:
+
+```bash
+claude-msg refresh-all-mcps                 # text summary
+claude-msg refresh-all-mcps --format json   # per-chamber outcome rows
+```
+
+Iterates the registered `agents` table and fires
+`mcp-restart-semaphore` per chamber, then reports each chamber's
+success or cap-rejected failure. Cap-protected by the existing 5-slot
+per-recipient queue ceiling — a busy chamber gets a `failed` entry
+rather than queue-bypass. Operator-only (no MCP tool variant; that
+would be a DoS amplification class).
+
+> **Forward-watch**: v1 fires the macro unconditionally per chamber.
+> If a chamber is mid-tool-call at restart time, that single tool-call
+> is disrupted (the chamber session itself is unaffected). If this
+> becomes recurring felt-pain, the post-#69 chamber-state primitive
+> enables a `state in [idle, awaiting-operator]` gate as a size/M
+> follow-up — file an issue citing the friction.
+
 ### Tracking delivery
 
 When the probe-and-watch gate is enabled (opt-in since 2026-06-01)
