@@ -464,6 +464,66 @@ func TestCountChangedLines_DiffShape(t *testing.T) {
 // (which only checks the substring is in the golden) would still pass.
 // This test pins the load-bearing *classification*, not just the
 // constant-vs-golden alignment.
+// TestChamberState_AtRestInCompactionOnGolden pins the end-to-end
+// classification for the /compact-in-progress scenario (cli-semaphore
+// #70). Loads BOTH capture-derived goldens — at 8% and 68% — and feeds
+// them as capA and capB. This shape is load-bearing:
+//
+//   - The pane animates during compaction (spinner glyph cycles ✻↔✢,
+//     percentage ticks, elapsed time changes), so capA != capB. Without
+//     the CompactionMarker check at precedence 1, ChamberState would
+//     hit the precedence-2 "working" check and mis-classify.
+//   - The marker matches BOTH captures despite the different spinner
+//     glyphs, pinning the spinner-frame robustness end-to-end (the
+//     canary in probe_test.go pins it at the substring level; this
+//     test pins it at the classification level).
+//
+// The state.go classifier reaches the CompactionMarker check
+// (precedence 1) on capture B, returns StateAtRestInCompaction with
+// the marker surfaced in Evidence, and never reaches the working
+// check that would otherwise fire on the animating pane.
+//
+// Without this pin, a future refactor that flipped precedence — or
+// removed the spinner-cycling-aware substring scoping — would
+// silently break the AtRestInCompaction path while the canary
+// (substring-in-golden) still passed.
+func TestChamberState_AtRestInCompactionOnGolden(t *testing.T) {
+	fastTemporalDelta(t)
+	earlyGolden, err := os.ReadFile("testdata/golden_quartermaster_compaction_2026-06-04.txt")
+	if err != nil {
+		t.Fatalf("read early golden: %v", err)
+	}
+	advancedGolden, err := os.ReadFile("testdata/golden_quartermaster_compaction_advanced_2026-06-04.txt")
+	if err != nil {
+		t.Fatalf("read advanced golden: %v", err)
+	}
+	// Sanity-check the spinner glyphs actually differ across the two
+	// goldens — if a future capture re-frame normalizes them to the
+	// same glyph this test's load-bearing claim about precedence-
+	// over-working evaporates.
+	if string(earlyGolden) == string(advancedGolden) {
+		t.Fatalf("the two compaction goldens are byte-identical; the test's precedence-over-working claim requires capA != capB")
+	}
+	fr := newChamberStateRunner([]string{string(earlyGolden), string(advancedGolden)}, 0, 0)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := ChamberState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateAtRestInCompaction {
+		t.Errorf("state = %v, want StateAtRestInCompaction (compaction marker found in capture B — precedence 1 should beat precedence-2-working even when capA != capB)",
+			state)
+	}
+	if ev.Marker != CompactionMarker {
+		t.Errorf("Evidence.Marker = %q, want %q", ev.Marker, CompactionMarker)
+	}
+	if ev.Reason == "" {
+		t.Errorf("Evidence.Reason should name the compaction marker match")
+	}
+}
+
 func TestChamberState_AwaitingOperatorOnAskUserQuestionGolden(t *testing.T) {
 	fastTemporalDelta(t)
 	golden, err := os.ReadFile("testdata/golden_quartermaster_askuserquestion_2026-06-04.txt")

@@ -37,9 +37,13 @@ const (
 	// change across the temporal-delta window.
 	StateWorking
 	// StateAtRestInCompaction means the chamber is mid-`/compact`
-	// sequence. Detection relies on CompactionMarker; per cli-semaphore
-	// #70 the marker is currently a placeholder pending empirical
-	// capture of the compaction-in-progress UI.
+	// sequence. Detection relies on CompactionMarker, an empirically-
+	// captured substring of Claude Code's compaction-in-progress UI
+	// (cli-semaphore#70, PR #88). Lit up 2026-06-04 from two operator-
+	// coordinated captures of the Quartermaster pane at distinct
+	// progress points (8% and 68%) across the same /compact event;
+	// canary + classification pins in probe_test.go and state_test.go
+	// protect the substring against Claude Code UI drift.
 	StateAtRestInCompaction
 	// StateAwaitingOperator means the chamber is paused on an
 	// AskUserQuestion popup or other operator-input-required UI —
@@ -97,19 +101,34 @@ type Evidence struct {
 // CompactionMarker is the substring that identifies a chamber in
 // StateAtRestInCompaction via pane-capture inspection.
 //
-// PLACEHOLDER per cli-semaphore#70 — empirical capture of the
-// compaction-in-progress UI is pending. While this constant is empty,
-// the StateAtRestInCompaction branch is effectively disabled (the
-// emptiness-guard in ChamberState skips the check). When #70 lands the
-// fixture with the actual paint format, populate this constant in the
-// same commit that adds the corresponding state-AtRestInCompaction
-// test fixture.
+// Empirically captured 2026-06-04 from a Quartermaster pane mid-
+// `/compact` (cli-semaphore#70). Two captures from the same compaction
+// event — at 8% and 68% progress — are frozen as
+// testdata/golden_quartermaster_compaction_2026-06-04.txt and
+// testdata/golden_quartermaster_compaction_advanced_2026-06-04.txt so
+// future Claude Code UI drift surfaces as a golden-match failure on the
+// canary test in probe_test.go.
 //
-// FORWARD-WATCH (same shape as PromptSentinel): Claude-Code-version-
-// dependent. If the compaction UI paint changes across a Claude Code
-// version update, this constant needs re-verification + the
-// corresponding test fixture updated.
-const CompactionMarker = ""
+// The substring intentionally EXCLUDES the leading spinner glyph: the
+// 8% capture shows `✻ Compacting conversation…` (U+273B six-pointed
+// black star) while the 68% capture shows `✢ Compacting conversation…`
+// (U+2722 four teardrops-spoked asterisk). The glyph cycles across
+// spinner frames; the trailing phrase is the stable load-bearing
+// substring. The ellipsis is U+2026, painted as a single codepoint.
+//
+// Precedence in ChamberState: this check runs BEFORE the pane-equality
+// "working" check (precedence 1 vs 2) so a chamber mid-compaction — a
+// pane whose spinner is animating across the temporal-delta window and
+// would otherwise classify as Working — is correctly identified as
+// AtRestInCompaction. The two captures at different progress points
+// pin this precedence in TestChamberState_AtRestInCompactionOnGolden.
+//
+// FORWARD-WATCH (same shape as PromptSentinel + AwaitingOperatorMarker):
+// Claude-Code-version-dependent. If the compaction UI's phrase changes
+// across a Claude Code version update, this constant + both golden
+// fixtures need re-verification. The canary test surfaces the drift
+// loudly.
+const CompactionMarker = "Compacting conversation…"
 
 // AwaitingOperatorMarker is the substring that identifies a chamber in
 // StateAwaitingOperator (AskUserQuestion popups, selection menus, …).
@@ -175,7 +194,11 @@ func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //
 //  1. If either capture fails → StateUnknown + the wrapped error.
 //  2. If CompactionMarker is non-empty AND found in capture B →
-//     StateAtRestInCompaction. (Constant empty in v1 pending #70.)
+//     StateAtRestInCompaction. Lit up 2026-06-04 (#70, PR #88). This
+//     precedence over working is load-bearing: a chamber mid-compaction
+//     is animating (spinner glyph cycles, percentage ticks) so capA
+//     != capB; without the marker check firing first, the chamber
+//     would mis-classify as Working.
 //  3. If capture A != capture B → StateWorking. Any substantive change
 //     across the temporal-delta window means the chamber is painting.
 //  4. **Cursor-position-aware input-row classification** (the v2 gap-fix):
@@ -193,8 +216,7 @@ func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //     - Cursor before sentinel position: unusual; treat as Unknown.
 //  5. If AwaitingOperatorMarker is non-empty AND found in capture B →
 //     StateAwaitingOperator. (Backup detection for non-`❯`-painting
-//     UIs — AskUserQuestion popups, search dialogs, etc. Constant
-//     empty in v1 pending #70.)
+//     UIs — AskUserQuestion popups, search dialogs, etc.)
 //  6. If the cursor query failed or the cursor row doesn't start with
 //     PromptSentinel, fall back to the cursor-less heuristic
 //     (classifyInputRow == DeltaQuiet → Idle; else Unknown). This
