@@ -371,12 +371,13 @@ would be a DoS amplification class).
 
 ### Tracking delivery
 
-When the probe-and-watch gate is enabled (opt-in since 2026-06-01)
-the bus is no longer instantaneous — a message can dwell minutes
-waiting for the recipient pane to go quiet. With the gate off
-(default) delivery happens immediately and the `delivered_unverified`
-notice is the load-bearing transparency signal. To check whether a
-sent message has actually landed:
+Since v0.3.0 the **observe-gate** (on by default) holds each delivery
+until the recipient pane is ready — typically ~3–5s in the idle case,
+with a ~5 min `MaxWait` safety cap as the worst case. The gate is
+read-only, so it never mutates the recipient's pane while it waits; the
+`delivered_unverified` notice remains the load-bearing post-hoc signal
+for the residual observe-then-paste race. To check whether a sent
+message has actually landed:
 
 ```bash
 # From any shell:
@@ -435,11 +436,13 @@ Common cause patterns:
 - **`drift_detected_unrecoverable`** — `discover` couldn't find the
   agent on any pane. Fix: respawn the agent in tmux + run
   `claude-msg discover`.
-- **`quiet_cap_exceeded`** — the probe-and-watch gate's `MaxWait`
-  (default 5min) elapsed without finding an operator-quiet window.
-  Post-#52 this is rare — the two-dash gate doesn't trigger on
-  conversation-area streaming the way the v0.2.1 four-way verdict
-  did.
+- **`gate_max_wait`** — the observe-gate's `MaxWait` (default 5min)
+  elapsed without the recipient reaching `idle` or the operator's
+  draft going stale. The mailman delivers anyway (fail-loud, not
+  fail-stop) and logs the WARN so the operator can see why a delivery
+  landed onto a busy pane. Rare in practice — the gate only waits this
+  long when the recipient is continuously `working` for the full
+  window.
 - **Mailman not running** — check `systemctl --user status
   claude-mailman@<recipient>.service`. Orphan-recovery on next
   startup will re-queue any in-flight messages.
@@ -451,69 +454,94 @@ Common cause patterns:
 > instead — it starts from the SQLite store rather than the receiver's
 > mailman journal.
 
-### Delivery semantics: probe-and-watch quiet-pane gate (opt-in)
+### Delivery semantics: the observe-gate
 
-**Default state since 2026-06-01: OFF.** Empirical use during M2.11
-exchange showed the gate added up to 5 min worst-case latency without
-preventing mid-turn collisions in practice — the verify-token retry
-+ `delivered_unverified` notice path (always on by default) is the
-load-bearing safety net. Re-enable per agent via TOML
-`quiet-disabled = false` or `--quiet-disabled=false` if a polite-wait
-shape is wanted for a specific recipient.
+**Default since v0.3.0: ON** (read-only, ~3–5s typical). Before each
+delivery the mailman runs `ObserveGate` — a *read-only-observe-only*
+check that decides when the recipient pane is ready to receive a paste.
+It replaces the probe-and-watch quiet-pane gate retired in v0.3.0: no
+`─` probe dashes are injected into the recipient's input row, and
+typical-case latency drops from ~72s (the legacy gate's single backoff
+cycle) to ~3–5s.
 
-When enabled, the gate checks whether the recipient pane's input row
-is operator-quiet before each delivery. Per #52's redesign
-(2026-05-31), the gate is a **two-dash check** rather than the older
-four-way verdict:
+The gate polls the recipient's `ChamberState` (two read-only
+`capture-pane` snapshots plus a cursor query — zero pane mutation) and
+decides per state:
 
-1. Paste `─` (probe #1 — dismisses any ghost-text suggested prompt the
-   CLI may be showing).
-2. Wait `ObserveWindow` (default 3s) — gives the operator time to
-   react.
-3. Paste `─` (probe #2 — the actual quiet-state probe).
-4. Wait `ObserveWindow` again.
-5. Capture the pane. The verdict is binary:
-   - **Quiet** — the input row gained exactly the two probes we
-     pasted, with nothing else added or removed. Safe to deliver;
-     backspace accumulated probes and paste the message body.
-   - **Input activity** — the input row's content differs from
-     "before-state + N trailing probes" — operator typed, removed a
-     probe, or interfered. Back off `InputActivityBackoff` (default
-     60s) so they get time to finish, then restart from step 1 (a
-     fresh ghost-text prompt may have appeared between iterations).
+| Recipient state | Gate decision |
+|---|---|
+| **idle** — cursor at the `❯ ` prompt sentinel (empty prompt or auto-suggestion ghost-text) | deliver immediately (fast path) |
+| **awaiting-operator** — cursor past the sentinel (operator is drafting) | hash the input-row content; if it stays unchanged for `input-stale-threshold` (default 2m), treat the draft as abandoned and flush-then-deliver (see below); otherwise keep polling |
+| **working** / **at-rest-in-compaction** / **unknown** | safer-default wait — re-poll with progressive backoff |
 
-What the gate explicitly does **not** protect against:
+Polling backs off multiplicatively (3s → 4.5s → 6.75s → … → 15s cap)
+and resets to the floor whenever the operator's input content changes
+(fresh activity → fresh cadence). A total `MaxWait` cap (default 5min)
+bounds the loop: on expiry the mailman delivers anyway and logs `WARN
+gate_max_wait` — fail-loud, not fail-stop.
 
-- Recipient mid-conversation. The bus doesn't gate on recipient-busy;
-  the recipient processes one message at a time anyway.
-- TUI animations, status-line ticks, streaming output above the input
-  row. All ignored — the gate cares only whether the operator is
-  typing on the input row.
+The gate does **not** try to eliminate the race between
+"observe-decides-idle" and "caller-pastes" — that residual window is
+covered by the same verify-token + `delivered_unverified` post-hoc
+safety net as before. What the observe-gate eliminates is the *pane
+mutation* the probe-and-watch gate used to inflict while observing.
 
-Probes are **never** backspaced between iterations — they accumulate
-in the input box as a visible "I see you" stack of dashes until the
-operator clears them or the gate exits (quiet OR cap-exceeded). Only
-the final pre-delivery cleanup or the cap-exit backspaces all
-accumulated probes so the recipient's input starts clean.
+#### Stale-draft flush — recovering operator content
 
-A total-time cap (default 5 min) sets the expectation honestly: a
-human who sees the probes appear typically needs 2-10 minutes to close
-a sentence or cut their in-progress message out of the input box.
-Beyond that they've usually walked away, so delaying further just buys
-nothing. Crossing the cap delivers anyway with a `WARN
-quiet_cap_exceeded` line in journalctl so the operator can see why
-fragmented input happened.
+When the gate flushes a stale draft (the operator typed something, then
+left it untouched for ≥ `input-stale-threshold`), it does **not**
+silently discard the typed content. The flush is a three-path decision:
 
-Flags on `claude-msg serve`:
+1. **(c) Clear-paste-archive (primary).** The gate snapshots the
+   operator's input-row content into the bus as a `kind=stranded_draft`
+   row — **self-addressed to the recipient chamber** (cap-bypass, so a
+   congested inbox can't drop it) — then sends `Ctrl+U` to clear the
+   input and pastes the message.
+2. **(a) Append (fallback).** If the archive write fails, the mailman
+   skips the clear and pastes onto the operator's content (a compound
+   message) rather than risk losing the draft.
+3. **(b) Clear-and-discard is rejected** in code and comments: the
+   content sitting in the input row might be a *half-delivered bus
+   message* from a previous failed delivery, so a blind `Ctrl+U` could
+   destroy bus content, not just operator content. The safe paths above
+   always archive before clearing.
 
-- `--quiet-observe-window` (default 3s; applied twice per iteration —
-  once after each probe)
-- `--quiet-input-backoff` (default 60s)
-- `--quiet-max-wait` (default 5m)
-- `--quiet-disabled` (default `true` since 2026-06-01; set
-  `--quiet-disabled=false` to re-enable the gate for an agent)
-- `--notify-on-failed` / `--notify-on-delivered-unverified` (default
-  on; see [Delivery-failure notifications](#delivery-failure-notifications) below)
+To recover a flushed draft, read the recipient chamber's inbox — the
+snapshot row carries the cleared content verbatim plus the public_id of
+the delivery that triggered the flush:
+
+```bash
+claude-msg inbox <chamber>     # the kind=stranded_draft row holds the draft
+claude-msg track <id>          # cross-reference the triggering delivery
+```
+
+#### Tuning knobs
+
+All four are CLI flags on `claude-msg serve` and TOML knobs (per-agent
+or `[defaults]`), composable through the standard precedence chain
+(CLI flag > per-agent block > `[defaults]` > compiled default):
+
+| Knob (flag / TOML) | Default | Meaning |
+|---|---|---|
+| `--gate-disabled` / `gate-disabled` | `false` | bypass the gate entirely; deliver immediately on every queue head |
+| `--poll-interval-min` / `poll-interval-min` | `3s` | initial sleep between observe iterations |
+| `--poll-interval-max` / `poll-interval-max` | `15s` | backoff ceiling per iteration |
+| `--input-stale-threshold` / `input-stale-threshold` | `2m` | how long an operator draft must sit unchanged before it's flushed |
+
+The notification toggles (`--notify-on-failed` /
+`--notify-on-delivered-unverified`) are independent of the gate — see
+[Delivery-failure notifications](#delivery-failure-notifications) below.
+
+#### Migration from v0.2.x
+
+The observe-gate is on for every chamber with no per-agent config. If
+you carried `[agent.<name>]` blocks that only set the old probe-and-watch
+knobs — `quiet-disabled`, `prompt-sentinel-gate`, `quick-presence-probe`,
+`quiet-observe-window`, `quiet-input-backoff`, `quiet-max-wait` — those
+are now **no-ops**: the mailman logs a startup `WARN` naming any that
+are set, and you can delete the blocks at your convenience. A block that
+existed only to hold `prompt-sentinel-gate = true` can be removed
+entirely.
 
 ### Delivery-failure notifications
 
