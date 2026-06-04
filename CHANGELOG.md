@@ -84,6 +84,17 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **Uninstall path: `uninstall.sh` + README "Removal" section (#80).**
+  The M6 install issue (#14) shipped with an un-ticked "Uninstall path
+  documented" AC; #80 captured the gap. The new script is idempotent,
+  default-safe (leaves the SQLite DB at `/var/lib/cli-semaphore/`
+  alone), and supports `--purge` to wipe the data dir after an
+  interactive confirmation when stdin is a TTY. Foot-gun guard:
+  refuses to run from inside the data directory itself. README's new
+  "Removal" section sits between Install and Use from Claude Code,
+  naming what the script does NOT touch (`/etc/cli-semaphore/`,
+  `~/.claude.json`, `loginctl enable-linger`).
+
 - **Sender-outbox-first diagnostic playbook
   (`docs/diagnostic-playbook.md`, #65).** Captures the triage flow
   for when a chamber reports a missed bus message — three checks in
