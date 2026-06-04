@@ -10,4 +10,4 @@ package version
 
 // Version is the running build's version string. Override via
 // `-ldflags "-X .../internal/version.Version=..."` at link time.
-var Version = "dev"
+var Version = "v0.3.0"

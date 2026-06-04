@@ -24,6 +24,8 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-04
+
 ### Fixed
 
 - **PromptSentinel NBSP encoding bug — silent since PR #66.**
