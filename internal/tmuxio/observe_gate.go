@@ -247,9 +247,32 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 }
 
 // extractInputContent captures the receiver pane and returns the
-// trimmed content past PromptSentinel on the first row that has it.
-// Returns "" with nil error when no sentinel row is found (e.g.,
-// chamber paused mid-spinner — the input area isn't visible).
+// operator's full multi-line input content. Walks from the first
+// sentinel-prefixed row downward, joining each continuation row with
+// "\n", until it hits a row recognized as outside the input area
+// (the below-input separator or the status line). Returns "" with
+// nil error when no sentinel row is found (e.g., chamber paused
+// mid-spinner — the input area isn't visible).
+//
+// Multi-line handling per #96: the legacy implementation captured
+// only the first sentinel-row's content, so multi-line drafts got
+// silently truncated at flush time (Ctrl+U cleared everything but
+// the archived stranded_draft only held line 1). The walk-until-
+// boundary shape matches Claude Code's TUI layout:
+//
+//	─────── <chamber title> ──     ← title separator (above input)
+//	❯ first line of draft           ← sentinel row + content
+//	  continuation row              ← continuation (no sentinel prefix)
+//	  another continuation row
+//	─────────────────────────…      ← below-input separator (boundary)
+//	  ⏵⏵ bypass permissions on …    ← status line (boundary)
+//
+// Boundary detection (isInputAreaBoundary): a row whose trimmed
+// content starts with ⏵⏵ (U+23F5, the status-line marker) OR
+// contains 20+ consecutive ─ (U+2500) characters. Edge case
+// acknowledged: an operator who literally types 20+ ─ characters
+// into their input would have it treated as a boundary. Vanishingly
+// rare in practice.
 //
 // Read-only: one capture-pane call, zero pane mutation. Used by the
 // observe-gate to compute the hash for stale-detection and to surface
@@ -260,12 +283,49 @@ func extractInputContent(ctx context.Context, pane string) (string, error) {
 		return "", fmt.Errorf("tmuxio: observe-gate input-content capture: %w: %s",
 			err, strings.TrimSpace(string(out)))
 	}
+	var inputLines []string
+	inInput := false
 	for _, line := range strings.Split(string(out), "\n") {
-		if rest, ok := strings.CutPrefix(line, PromptSentinel); ok {
-			return strings.TrimRight(rest, " "), nil
+		if !inInput {
+			if rest, ok := strings.CutPrefix(line, PromptSentinel); ok {
+				inputLines = append(inputLines, strings.TrimRight(rest, " "))
+				inInput = true
+			}
+			continue
 		}
+		if isInputAreaBoundary(line) {
+			break
+		}
+		inputLines = append(inputLines, strings.TrimRight(line, " "))
 	}
-	return "", nil
+	if len(inputLines) == 0 {
+		return "", nil
+	}
+	return strings.Join(inputLines, "\n"), nil
+}
+
+// isInputAreaBoundary reports whether a captured row marks the
+// boundary between the input area and the chrome below it (the
+// below-input separator or the status line). Used by
+// extractInputContent's walk-until-boundary multi-line capture (#96).
+//
+// Two recognizers:
+//   - status-line marker: ⏵⏵ (U+23F5) — present on the bottom row
+//     of every Claude Code pane in production
+//   - separator detection: 20+ consecutive ─ (U+2500) characters —
+//     covers the below-input separator. The threshold is tuned to
+//     avoid false-positives on operator-typed content (an operator
+//     who types 20 box-drawing horizontals in a row is doing
+//     something unusual).
+func isInputAreaBoundary(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "⏵⏵") {
+		return true
+	}
+	if strings.Contains(trimmed, strings.Repeat("─", 20)) {
+		return true
+	}
+	return false
 }
 
 // hashContent returns a short hex SHA-256 prefix of the content. Used

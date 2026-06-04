@@ -58,9 +58,14 @@ func (r *observeGateRunner) run(ctx context.Context, stdin io.Reader, args ...st
 			// Synthesize a pane whose only sentinel-row content is
 			// step.inputContent so extractInputContent recovers it
 			// verbatim. If empty, no sentinel row → empty content.
+			// The 80-char ─ separator + ⏵⏵ status line below the
+			// sentinel bound the walk-until-boundary capture per
+			// #96 so the synthetic "footer" content isn't slurped
+			// into the extracted input.
 			out := step.paneB
 			if step.inputContent != "" {
-				out = "header\n" + PromptSentinel + step.inputContent + "\nfooter\n"
+				out = "header\n" + PromptSentinel + step.inputContent + "\n" +
+					strings.Repeat("─", 80) + "\n  ⏵⏵ chrome\n"
 			}
 			// Advance to next step after the third capture (closes one
 			// iteration's worth of calls).
@@ -329,7 +334,8 @@ func TestObserveGate_PingFires(t *testing.T) {
 // pane has a row starting with PromptSentinel, the content past it
 // (trimmed of trailing spaces) is returned.
 func TestExtractInputContent_SentinelRowFound(t *testing.T) {
-	pane := "ctx\n" + PromptSentinel + "Hello there   \nfooter\n"
+	pane := "ctx\n" + PromptSentinel + "Hello there   \n" +
+		strings.Repeat("─", 80) + "\n  ⏵⏵ chrome\n"
 	runner := newObserveGateRunner([]observeStep{
 		{paneA: pane, paneB: pane, cursorX: 0, cursorY: 0, inputContent: "Hello there"},
 	})
@@ -372,6 +378,121 @@ func TestExtractInputContent_NoSentinelRow(t *testing.T) {
 	}
 	if got != "" {
 		t.Errorf("extracted = %q, want empty (no sentinel row)", got)
+	}
+}
+
+// TestExtractInputContent_MultilineDraftCapturedToStatusBoundary pins
+// the #96 fix: a multi-line operator draft (sentinel row + continuation
+// rows) is captured in full, not truncated at the first sentinel-row.
+// The walk stops at the below-input separator (20+ ─ chars) so the
+// status line isn't slurped into the archived draft.
+//
+// Pre-#96, this test would have returned just "first line of draft"
+// (the legacy single-row extraction); the silent-truncation gap was
+// the (c) flush correctness bug the multi-line capture issue tracked.
+func TestExtractInputContent_MultilineDraftCapturedToStatusBoundary(t *testing.T) {
+	pane := "history line\n" +
+		"───────────────────────── Chamber ──\n" +
+		PromptSentinel + "first line of draft\n" +
+		"  second line of draft\n" +
+		"  third line of draft\n" +
+		strings.Repeat("─", 80) + "\n" +
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
+	prev := SetTmuxRunner(func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		if args[0] == "capture-pane" {
+			return []byte(pane), nil
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	got, err := extractInputContent(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "first line of draft\n  second line of draft\n  third line of draft"
+	if got != want {
+		t.Errorf("multi-line extract = %q,\nwant %q", got, want)
+	}
+}
+
+// TestExtractInputContent_StopsAtBelowInputSeparator pins the
+// separator-recognizer half of the walk: a multi-line draft followed
+// by the below-input ─-separator is correctly bounded — the separator
+// row is NOT included in the captured content.
+func TestExtractInputContent_StopsAtBelowInputSeparator(t *testing.T) {
+	pane := PromptSentinel + "draft line 1\n" +
+		"  draft line 2\n" +
+		strings.Repeat("─", 80) + "\n" +
+		"more chrome below\n"
+	prev := SetTmuxRunner(func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		if args[0] == "capture-pane" {
+			return []byte(pane), nil
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	got, err := extractInputContent(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "draft line 1\n  draft line 2"
+	if got != want {
+		t.Errorf("extract = %q, want %q (separator row must not be included)", got, want)
+	}
+}
+
+// TestExtractInputContent_StopsAtStatusLine pins the status-line
+// recognizer: a sentinel row immediately followed by the ⏵⏵ status
+// line (no below-input separator visible, e.g., narrow pane or
+// scroll position) still bounds the input correctly.
+func TestExtractInputContent_StopsAtStatusLine(t *testing.T) {
+	pane := PromptSentinel + "single line draft\n" +
+		"  ⏵⏵ bypass permissions on\n"
+	prev := SetTmuxRunner(func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		if args[0] == "capture-pane" {
+			return []byte(pane), nil
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	got, err := extractInputContent(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "single line draft" {
+		t.Errorf("extract = %q, want %q", got, "single line draft")
+	}
+}
+
+// TestIsInputAreaBoundary_RecognizerCases unit-tests the boundary
+// detector. The walk's correctness depends on these recognitions, so
+// pin them at the function-level so a future refactor that breaks the
+// recognizer is caught even if the walk itself is fine.
+func TestIsInputAreaBoundary_RecognizerCases(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want bool
+	}{
+		{"empty", "", false},
+		{"plain text", "hello world", false},
+		{"single dash", "─", false},
+		{"twenty dashes (threshold)", strings.Repeat("─", 20), true},
+		{"long separator", strings.Repeat("─", 80), true},
+		{"separator with leading whitespace", "  " + strings.Repeat("─", 80), true},
+		{"status line", "  ⏵⏵ bypass permissions on (shift+tab to cycle)", true},
+		{"status line at line start", "⏵⏵ stuff", true},
+		{"short run of dashes plus text", "── Title ──", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isInputAreaBoundary(c.line); got != c.want {
+				t.Errorf("isInputAreaBoundary(%q) = %v, want %v", c.line, got, c.want)
+			}
+		})
 	}
 }
 
