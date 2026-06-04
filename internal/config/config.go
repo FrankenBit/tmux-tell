@@ -64,6 +64,10 @@ type Block struct {
 	PollIntervalMin     *time.Duration `toml:"poll-interval-min"`
 	PollIntervalMax     *time.Duration `toml:"poll-interval-max"`
 	InputStaleThreshold *time.Duration `toml:"input-stale-threshold"`
+	// NotifyEmojiDisabled disables the operator-typing 📫 visibility
+	// notification (#95). Default false (notification on). Operator
+	// escape hatch for the truly inject-averse.
+	NotifyEmojiDisabled *bool `toml:"notify-emoji-disabled"`
 }
 
 // Load reads the config from the path resolved by:
@@ -172,6 +176,8 @@ func blockBoolField(b *Block, field string) *bool {
 		return b.DriftSoftFail
 	case "gate-disabled":
 		return b.GateDisabled
+	case "notify-emoji-disabled":
+		return b.NotifyEmojiDisabled
 	}
 	return nil
 }
@@ -217,6 +223,7 @@ type ResolvedView struct {
 	PollIntervalMin             time.Duration `json:"poll_interval_min"`
 	PollIntervalMax             time.Duration `json:"poll_interval_max"`
 	InputStaleThreshold         time.Duration `json:"input_stale_threshold"`
+	NotifyEmojiDisabled         bool          `json:"notify_emoji_disabled"`
 }
 
 // Resolve builds the resolved snapshot. Hardcoded defaults mirror
@@ -232,5 +239,6 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		PollIntervalMin:             ResolveDuration(file, agent, "poll-interval-min", 3*time.Second),
 		PollIntervalMax:             ResolveDuration(file, agent, "poll-interval-max", 15*time.Second),
 		InputStaleThreshold:         ResolveDuration(file, agent, "input-stale-threshold", 2*time.Minute),
+		NotifyEmojiDisabled:         ResolveBool(file, agent, "notify-emoji-disabled", false),
 	}
 }

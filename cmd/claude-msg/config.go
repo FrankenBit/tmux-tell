@@ -86,6 +86,7 @@ func runConfigShowCLI(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "poll-interval-min\t%s\n", view.PollIntervalMin)
 		fmt.Fprintf(stdout, "poll-interval-max\t%s\n", view.PollIntervalMax)
 		fmt.Fprintf(stdout, "input-stale-threshold\t%s\n", view.InputStaleThreshold)
+		fmt.Fprintf(stdout, "notify-emoji-disabled\t%t\n", view.NotifyEmojiDisabled)
 		return exitOK
 	default:
 		return writeJSONError(stdout, stderr,

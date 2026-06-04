@@ -43,6 +43,17 @@ type ObserveGateOpts struct {
 	// WatchdogSec) alive during long observe loops. May be nil.
 	// Mailman wires this to sdnotify.Watchdog at startup.
 	Ping func()
+	// OnOperatorTyping is an optional callback fired ONCE per delivery
+	// cycle the first time the gate observes StateAwaitingOperator
+	// (cursor past sentinel = operator drafting). Mailman wires this
+	// to NotifyPendingMessage so the operator sees a 📫 emoji land in
+	// their input row as a visibility signal that a bus message is
+	// waiting (#95). Subsequent iterations in the same cycle do not
+	// re-fire; once the gate returns and a new delivery cycle starts,
+	// a fresh ObserveGate call gets a fresh callback opportunity.
+	// May be nil — when nil, the gate is a no-op on the visibility
+	// concern.
+	OnOperatorTyping func()
 }
 
 // GateOutcome reports the gate's decision and the evidence that
@@ -140,11 +151,12 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 	pollInterval := opts.PollIntervalMin
 
 	var (
-		hashSeen     string
-		hashSeenAt   time.Time
-		lastContent  string
-		iterations   int
-		lastState    State
+		hashSeen           string
+		hashSeenAt         time.Time
+		lastContent        string
+		iterations         int
+		lastState          State
+		notifiedOfTyping   bool
 	)
 
 	for {
@@ -171,6 +183,15 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 			}, nil
 
 		case StateAwaitingOperator:
+			// Fire the operator-typing notification ONCE per delivery
+			// cycle (#95). The callback (when wired by mailman) sends a
+			// 📫 emoji into the operator's input row so they have a
+			// visible signal that a bus message is pending. Subsequent
+			// iterations in the same cycle skip the re-fire.
+			if !notifiedOfTyping && opts.OnOperatorTyping != nil {
+				opts.OnOperatorTyping()
+				notifiedOfTyping = true
+			}
 			content, cerr := extractInputContent(ctx, pane)
 			if cerr != nil {
 				// Capture failure on input-content extraction is non-
@@ -333,6 +354,49 @@ func isInputAreaBoundary(line string) bool {
 func hashContent(content string) string {
 	sum := sha256.Sum256([]byte(content))
 	return hex.EncodeToString(sum[:8])
+}
+
+// PendingMessageMarker is the single character (or short string) the
+// mailman injects into the operator's input row as a one-shot
+// visibility signal that a bus message is queued and the gate is
+// waiting (#95). Default is 📫 (U+1F4EB Closed Mailbox with Raised
+// Flag) per the operator's 2026-06-04 design call — readable at small
+// font sizes and structurally unique against typical Claude Code
+// chrome / status content.
+//
+// The marker is a load-bearing operator-facing affordance: it rides
+// along into the bus message if the operator doesn't notice / delete
+// it. Recipients seeing 📫 in a message body know what it means: "the
+// sender saw a pending bus message land while they were typing."
+const PendingMessageMarker = "📫"
+
+// NotifyPendingMessage injects PendingMessageMarker into the
+// receiver's input row via a single `tmux send-keys -l` call. Used by
+// the mailman serve loop as a one-shot visibility signal (#95) when
+// the observe-gate first detects StateAwaitingOperator — the
+// operator's input row gains one extra character so they have a
+// visible indication that a bus message is pending.
+//
+// One-shot semantics (no follow-up Enter, no cleanup). Operator
+// either notices and deletes it via Backspace (gate keeps waiting),
+// or notices and finishes typing (📫 rides along into the sent
+// message), or doesn't notice at all (same as the previous case). The
+// mailman does NOT track or remove the marker — operator-deletes-or-
+// it-rides-along is the intentional design, sibling to the (b)-
+// rejected-style honesty that informs the (c) flush.
+//
+// Idempotency is enforced at the gate layer (ObserveGate's
+// OnOperatorTyping callback fires at most once per delivery cycle);
+// this helper does no caller-tracking of its own.
+func NotifyPendingMessage(ctx context.Context, pane string) error {
+	if pane == "" {
+		return errors.New("tmuxio: pane required")
+	}
+	if out, err := tmuxRun(ctx, nil, "send-keys", "-t", pane, "-l", PendingMessageMarker); err != nil {
+		return fmt.Errorf("tmuxio: send-keys notify-pending: %w: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // SendCtrlU sends a single Ctrl+U keystroke to the receiver pane,

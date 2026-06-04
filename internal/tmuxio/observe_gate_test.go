@@ -496,6 +496,146 @@ func TestIsInputAreaBoundary_RecognizerCases(t *testing.T) {
 	}
 }
 
+// TestObserveGate_OnOperatorTyping_FiresOncePerDeliveryCycle pins #95's
+// load-bearing property: the visibility-notification callback fires
+// EXACTLY ONCE the first iteration the gate observes
+// StateAwaitingOperator. Subsequent iterations in the same cycle skip
+// the re-fire so the operator's input row doesn't accumulate emoji.
+//
+// Mechanism: drive a gate over a draft that grows iteration to
+// iteration (StateAwaitingOperator throughout); count callback fires.
+// Green-state count = 1.
+func TestObserveGate_OnOperatorTyping_FiresOncePerDeliveryCycle(t *testing.T) {
+	fastObserveDelta(t)
+	// Three iterations of growing draft → StateAwaitingOperator each
+	// time, callback should fire on iteration 1 and skip 2+3.
+	steps := []observeStep{
+		{paneA: "h", paneB: "h", cursorX: 5, cursorY: 1, inputContent: "Hel"},
+		{paneA: "h", paneB: "h", cursorX: 7, cursorY: 1, inputContent: "Hello"},
+		{paneA: "h", paneB: "h", cursorX: 9, cursorY: 1, inputContent: "Hello t"},
+	}
+	// Make panes structurally StateAwaitingOperator by including the
+	// sentinel row with content past it + cursor past sentinel.
+	for i, draft := range []string{"Hel", "Hello", "Hello t"} {
+		pane := "history\n" + PromptSentinel + draft + "\nfooter\n"
+		steps[i].paneA = pane
+		steps[i].paneB = pane
+	}
+	runner := newObserveGateRunner(steps)
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	notifyCount := 0
+	_, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     time.Microsecond,
+		PollIntervalMax:     time.Microsecond,
+		BackoffFactor:       1.0,
+		InputStaleThreshold: time.Hour, // never fires within test budget
+		MaxWait:             50 * time.Millisecond,
+		OnOperatorTyping:    func() { notifyCount++ },
+	})
+	if err == nil {
+		// Expected ErrMaxWaitExceeded since stale threshold never hits.
+		t.Fatalf("expected ErrMaxWaitExceeded, got nil")
+	}
+	if notifyCount != 1 {
+		t.Errorf("OnOperatorTyping fired %d times, want exactly 1 (one-shot per delivery cycle)", notifyCount)
+	}
+}
+
+// TestObserveGate_OnOperatorTyping_NotFiredOnIdleFastPath pins that
+// the notification is suppressed when the gate's fast-path-idle
+// branch fires — no point notifying the operator that mail is coming
+// when it's about to land cleanly anyway.
+func TestObserveGate_OnOperatorTyping_NotFiredOnIdleFastPath(t *testing.T) {
+	fastObserveDelta(t)
+	pane := "history\n" + PromptSentinel + "\nfooter\n"
+	runner := newObserveGateRunner([]observeStep{
+		{paneA: pane, paneB: pane, cursorX: 2, cursorY: 1, inputContent: ""},
+	})
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	notifyCount := 0
+	_, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     time.Microsecond,
+		PollIntervalMax:     time.Microsecond,
+		InputStaleThreshold: time.Minute,
+		MaxWait:             time.Second,
+		OnOperatorTyping:    func() { notifyCount++ },
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if notifyCount != 0 {
+		t.Errorf("OnOperatorTyping fired %d times on idle fast-path, want 0", notifyCount)
+	}
+}
+
+// TestObserveGate_OnOperatorTyping_NilCallbackSafe pins that a nil
+// callback is a valid no-op — used by callers (or tests) that don't
+// want the notification.
+func TestObserveGate_OnOperatorTyping_NilCallbackSafe(t *testing.T) {
+	fastObserveDelta(t)
+	pane := "history\n" + PromptSentinel + "drafting...\nfooter\n"
+	runner := newObserveGateRunner([]observeStep{
+		{paneA: pane, paneB: pane, cursorX: 14, cursorY: 1, inputContent: "drafting..."},
+	})
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	_, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     time.Microsecond,
+		PollIntervalMax:     time.Microsecond,
+		InputStaleThreshold: time.Microsecond, // fires immediately so we return cleanly
+		MaxWait:             time.Second,
+		// OnOperatorTyping intentionally nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error with nil callback: %v", err)
+	}
+}
+
+// TestNotifyPendingMessage_SendsCorrectKeystroke pins the tmux call
+// shape: a single send-keys -l with PendingMessageMarker as the
+// literal payload. No Enter follow-up — the 📫 rides along in the
+// operator's input row.
+func TestNotifyPendingMessage_SendsCorrectKeystroke(t *testing.T) {
+	var calls []string
+	prev := SetTmuxRunner(func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return nil, nil
+	})
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	if err := NotifyPendingMessage(context.Background(), "%5"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("tmux call count = %d, want 1 (single send-keys)", len(calls))
+	}
+	if !strings.Contains(calls[0], "send-keys") {
+		t.Errorf("expected send-keys; got %q", calls[0])
+	}
+	if !strings.Contains(calls[0], "-l") {
+		t.Errorf("expected -l (literal) flag; got %q", calls[0])
+	}
+	if !strings.Contains(calls[0], PendingMessageMarker) {
+		t.Errorf("expected PendingMessageMarker %q in call; got %q", PendingMessageMarker, calls[0])
+	}
+	if strings.Contains(calls[0], "Enter") {
+		t.Errorf("send-keys should NOT include Enter (📫 rides along); got %q", calls[0])
+	}
+}
+
+// TestNotifyPendingMessage_PaneRequired pins input validation
+// symmetric with the rest of the package.
+func TestNotifyPendingMessage_PaneRequired(t *testing.T) {
+	if err := NotifyPendingMessage(context.Background(), ""); err == nil {
+		t.Fatal("expected error for empty pane")
+	}
+}
+
 // TestSendCtrlU_SendsCorrectKeystroke pins the tmux call shape: a
 // single send-keys with "C-u" target and no Enter follow-up.
 func TestSendCtrlU_SendsCorrectKeystroke(t *testing.T) {

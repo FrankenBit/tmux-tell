@@ -82,6 +82,49 @@ Run `claude-msg --version` to see what's installed.
   fail-loud discipline the v0.3.0 substrate shift introduced
   elsewhere.
 
+- **📫 mailbox notification for pending bus messages (#95).** When
+  the observe-gate's first iteration observes `StateAwaitingOperator`
+  (cursor past sentinel = operator drafting), the mailman injects a
+  single `📫` (U+1F4EB) character into the operator's input row as
+  a one-shot visibility signal that a bus message is waiting. Closes
+  the gap surfaced post-deploy of v0.3.0: the substrate-class shift
+  eliminated the legacy `─` probe dashes that had served as an
+  unintentional visibility signal, leaving the operator with no
+  indication that something was pending while they typed.
+
+  Design properties per the operator's 2026-06-04 framing:
+  - **Inject once per delivery cycle**, not on every observe
+    iteration. `ObserveGate.OnOperatorTyping` callback tracks a
+    `notifiedOfTyping` boolean; subsequent iterations skip the
+    re-fire. Qualitatively different from probe-and-watch's
+    continuous dash injection.
+  - **No cleanup attempted.** The mailman does NOT track or remove
+    the `📫`. Operator-deletes-or-it-rides-along is the intentional
+    design — sibling to the (b)-rejected discipline that informs
+    the (c) flush. Recipients seeing `📫` in a message body know what
+    it means ("the sender saw a pending bus message land while they
+    were typing").
+  - **Vector**: mailman → operator (incoming notification). Distinct
+    from the rejected greenlight glyph proposal which was operator →
+    mailman (manual override). The greenlight was subsumed by v0.3.0's
+    speed; `📫` fills a different (smaller, real) UX gap.
+
+  New surface:
+  - `internal/tmuxio.PendingMessageMarker` constant (`"📫"`)
+  - `internal/tmuxio.NotifyPendingMessage(ctx, pane)` helper —
+    single `tmux send-keys -l 📫`, no Enter follow-up
+  - `ObserveGateOpts.OnOperatorTyping` callback field — gate fires
+    it ONCE per delivery cycle on first `StateAwaitingOperator`
+  - `--notify-emoji-disabled` CLI flag + `notify-emoji-disabled`
+    TOML knob (default `false` = notification on)
+  - `ResolvedView.NotifyEmojiDisabled` for `claude-msg config show`
+
+  Test coverage: 5 new tests covering one-fire-per-cycle, no-fire on
+  idle fast-path, nil-callback safety, send-keys call shape (no
+  Enter), and pane-required validation. Mutation experiment: removing
+  the `notifiedOfTyping` guard makes the one-fire test fail with the
+  expected over-fire count matching iteration depth.
+
 ### Removed
 
 - **Dead probe-and-watch primitives + legacy gate knobs (#94).**
