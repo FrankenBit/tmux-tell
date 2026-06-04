@@ -215,7 +215,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	// in the resolved config so the operator knows to migrate. The
 	// runtime ignores them per #92.
 	if deprecated := cfg.DeprecatedKnobs(*agent); len(deprecated) > 0 {
-		fmt.Fprintf(stderr, "WARN config: deprecated knobs ignored (replaced by observe-gate #92): %s\n",
+		fmt.Fprintf(stderr,
+			"WARN config: deprecated knobs ignored (replaced by observe-gate #92, safe to delete from /etc/cli-semaphore/config.toml): %s\n",
 			strings.Join(deprecated, ", "))
 	}
 
@@ -482,6 +483,16 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			// per #92's 2026-06-04 design call. (b) Clear-and-discard
 			// is OFF the table — the input content might be a half-
 			// delivered bus message from a previous failed delivery.
+			//
+			// Step ordering: archive FIRST, then Ctrl+U. Archive is
+			// load-bearing data capture (the operator's typed work);
+			// Ctrl+U is opportunistic UX cleanup. The (archive OK,
+			// Ctrl+U fails) edge case is acceptable: the operator sees
+			// a compound message AND has the snapshot in the bus —
+			// recoverable, not lossy. The inverse order (clear first
+			// then archive) would risk silent draft loss on archive
+			// failure after a successful clear, which the (b)-rejected
+			// rationale exists to prevent.
 			if outcome.Stale && outcome.InputContent != "" {
 				if archiveErr := archiveStrandedDraft(opCtx, s, opts.Agent,
 					paneForDelivery, msg.PublicID, outcome.InputContent); archiveErr != nil {
@@ -494,7 +505,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					clearErr := tmuxio.SendCtrlU(clearCtx, paneForDelivery)
 					ccancel()
 					if clearErr != nil {
-						logger.Printf("WARN stranded_draft_clear_failed id=%s err=%v — falling back to (a) compound delivery",
+						logger.Printf("WARN stranded_draft_clear_failed id=%s err=%v — falling back to (a) compound delivery; draft snapshot already archived",
 							msg.PublicID, clearErr)
 					} else {
 						logger.Printf("stranded_draft archived+cleared id=%s pane=%s bytes=%d (gate iter=%d)",

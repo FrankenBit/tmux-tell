@@ -146,6 +146,23 @@ Run `claude-msg --version` to see what's installed.
   are ignored at runtime; the mailman logs a WARN at startup naming
   any that are set so the operator knows to migrate.
 
+- **Silent-pass gap closed on `AwaitingOperatorMarker` canary (#89,
+  retrofit from PR #88).** `TestAwaitingOperatorMarker_MatchesGoldenCapture`
+  in `internal/tmuxio/probe_test.go` previously relied solely on a
+  `strings.Contains(golden, AwaitingOperatorMarker)` substring check.
+  Go's `strings.Contains(g, "")` returns true for any `g` — so a
+  regression that reverted `AwaitingOperatorMarker` to the pre-#79
+  placeholder `""` would silently pass the canary while disabling the
+  `StateAwaitingOperator` branch in `ChamberState`. PR #88 surfaced
+  the same gap on `TestCompactionMarker_MatchesGoldenCapture` and
+  added an explicit empty-marker guard; this retrofit carries the
+  same one-line guard back to PR #87's canary. No production
+  behavior change. Mutation experiment verified: emptying the
+  marker now fires both the new guard (in `probe_test.go`) and the
+  e2e classification pin
+  `TestChamberState_AwaitingOperatorOnAskUserQuestionGolden` (in
+  `state_test.go`).
+
 ### Deprecated
 
 - **Legacy probe-and-watch CLI flags + TOML knobs** (#92): `--quiet-
@@ -174,25 +191,6 @@ Run `claude-msg --version` to see what's installed.
   this pinned (sentinel-first-cheap promotes, QuickPresenceProbe
   skipped) doesn't exist anymore because there's only one gate. The
   empty PIN_ slot is preserved as a comment for traceability.
-
-### Changed (additional)
-
-- **Silent-pass gap closed on `AwaitingOperatorMarker` canary (#89,
-  retrofit from PR #88).** `TestAwaitingOperatorMarker_MatchesGoldenCapture`
-  in `internal/tmuxio/probe_test.go` previously relied solely on a
-  `strings.Contains(golden, AwaitingOperatorMarker)` substring check.
-  Go's `strings.Contains(g, "")` returns true for any `g` — so a
-  regression that reverted `AwaitingOperatorMarker` to the pre-#79
-  placeholder `""` would silently pass the canary while disabling the
-  `StateAwaitingOperator` branch in `ChamberState`. PR #88 surfaced
-  the same gap on `TestCompactionMarker_MatchesGoldenCapture` and
-  added an explicit empty-marker guard; this retrofit carries the
-  same one-line guard back to PR #87's canary. No production
-  behavior change. Mutation experiment verified: emptying the
-  marker now fires both the new guard (in `probe_test.go`) and the
-  e2e classification pin
-  `TestChamberState_AwaitingOperatorOnAskUserQuestionGolden` (in
-  `state_test.go`).
 
 ### Added
 
