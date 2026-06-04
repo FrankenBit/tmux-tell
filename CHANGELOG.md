@@ -104,7 +104,8 @@ Run `claude-msg --version` to see what's installed.
     `InputStaleThreshold` (default 2 min), return `Stale=true` so the
     caller can archive + clear + paste.
   - `StateWorking` / `StateAtRestInCompaction` / `StateUnknown` →
-    safer-default wait, progressive backoff (3s → 6s → 10s → 15s cap).
+    safer-default wait, progressive backoff (×1.5: 3s → 4.5s → 6.75s →
+    … → 15s cap).
 
   Stale-flush mechanics implement the (c) Clear-paste-archive primary
   path per #92's 2026-06-04 design call: the gate returns the captured
