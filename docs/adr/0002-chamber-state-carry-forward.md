@@ -75,16 +75,28 @@ type ChamberStateResult = {
                                 // shape. Consumers MAY display or
                                 // log it; they MUST NOT branch logic
                                 // on its inner fields.
-  captured_at: string;          // ISO 8601 UTC, microsecond precision.
+  captured_at: string;          // ISO 8601 UTC, microsecond precision —
+                                // mirrors cli-semaphore's existing
+                                // timestamp shape (the SQLite store's
+                                // `datetime('now','subsec')` default on
+                                // messages.created_at / delivered_at).
 };
 ```
 
-The `evidence` field is an opaque blob by design. The
-cli-semaphore implementation populates it with
+The `evidence` field is an opaque blob **at the cross-implementation
+contract level**. The cli-semaphore implementation populates it with
 `{Reason: string, RegisteredPane: string, CapturedAt: time}`;
 Binnacle's implementation can populate whatever fits its substrate.
-Consumers that need to make decisions branch on `state`, not on
-`evidence`'s inner structure.
+Cross-implementation consumers that need to make decisions branch on
+`state`, not on `evidence`'s inner structure.
+
+**Substrate-locality carve-out**: a consumer that is *part of the same
+implementation* (e.g., Binnacle's own debug / diagnostic UI reading
+Binnacle's own `evidence` fields) may legitimately branch on inner
+fields it controls. The MUST NOT applies to cross-implementation
+consumers — those reading evidence from a substrate they don't own.
+This carve-out prevents future Binnacle-internal-vs-cross-implementation
+drift on the contract.
 
 #### (3) `unknown`-as-advisory convention
 
