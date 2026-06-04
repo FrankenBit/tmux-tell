@@ -57,6 +57,13 @@ type serveOpts struct {
 	// faking ChamberState in the runtime tmux runner) and as an
 	// operator escape hatch. Default false (gate on).
 	GateDisabled bool
+	// NotifyEmojiDisabled suppresses the operator-typing 📫
+	// visibility notification (#95). Default false (notification on).
+	// When false, the mailman wires ObserveGate's OnOperatorTyping
+	// callback to NotifyPendingMessage so a single 📫 lands in the
+	// operator's input row the first iteration the gate observes
+	// StateAwaitingOperator.
+	NotifyEmojiDisabled bool
 	// DriftCheckDisabled bypasses the pre-delivery silent-drift guard
 	// (#37). Production keeps it enabled. Tests that don't fake
 	// ListPanesWithPID + /proc readers should set this to true so the
@@ -120,6 +127,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"observe-gate maximum poll interval. The cadence backs off multiplicatively (1.5×) up to this cap when the chamber is not yet ready (#92).")
 	inputStaleThreshold := fs.Duration("input-stale-threshold", 2*time.Minute,
 		"observe-gate stale-draft threshold. When the operator's input-row content remains unchanged this long, the gate decides the draft is abandoned and proceeds with archive-then-clear-then-paste (kind=stranded_draft snapshot + Ctrl+U). Per #92's 2026-06-04 design call.")
+	notifyEmojiDisabled := fs.Bool("notify-emoji-disabled", false,
+		"disable the operator-typing 📫 visibility notification (#95). Default false (notification on). When the observe-gate first detects the operator is typing, the mailman injects a single 📫 character into their input row as a one-shot signal that a bus message is pending. Operator can Backspace it (gate keeps waiting) or let it ride along with their next message.")
 	driftSoftFail := fs.Bool("drift-soft-fail", false,
 		"when pre-delivery drift detection hits ambiguous or unrecoverable, log WARN and deliver to the (potentially wrong) pane instead of marking the message failed. Default off — fail-loud is safer for autonomous receivers")
 	notifyOnFailed := fs.Bool("notify-on-failed", true,
@@ -164,6 +173,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	if !flagWasSet(fs, "input-stale-threshold") {
 		*inputStaleThreshold = config.ResolveDuration(cfg, *agent, "input-stale-threshold", *inputStaleThreshold)
 	}
+	if !flagWasSet(fs, "notify-emoji-disabled") {
+		*notifyEmojiDisabled = config.ResolveBool(cfg, *agent, "notify-emoji-disabled", *notifyEmojiDisabled)
+	}
 	if *agent == "" {
 		fmt.Fprintln(stderr, "--agent required")
 		return exitUsage
@@ -200,6 +212,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 			// a CLI flag in v1 — operators can tune via TOML if needed
 			// once the migration settles.
 		},
+		NotifyEmojiDisabled: *notifyEmojiDisabled,
 		DriftSoftFail:               *driftSoftFail,
 		NotifyOnFailed:              *notifyOnFailed,
 		NotifyOnDeliveredUnverified: *notifyOnDeliveredUnverified,
@@ -404,6 +417,21 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			gateOpts := opts.ObserveGateOpts
 			if gateOpts.Ping == nil {
 				gateOpts.Ping = func() { _ = sdnotify.Watchdog() }
+			}
+			// Wire the operator-typing 📫 notification (#95) unless the
+			// operator disabled it. The gate fires this callback ONCE
+			// per delivery cycle on its first StateAwaitingOperator
+			// observation; subsequent iterations skip.
+			if !opts.NotifyEmojiDisabled {
+				pane := paneForDelivery
+				gateOpts.OnOperatorTyping = func() {
+					nCtx, nCancel := context.WithTimeout(stopCtx, 1*time.Second)
+					defer nCancel()
+					if err := tmuxio.NotifyPendingMessage(nCtx, pane); err != nil {
+						logger.Printf("notify_pending_failed id=%s pane=%s err=%v",
+							msg.PublicID, pane, err)
+					}
+				}
 			}
 			gateBudget := gateOpts.MaxWait
 			if gateBudget <= 0 {
