@@ -46,8 +46,11 @@ const (
 	// structurally distinct from idle: the chamber has an open turn
 	// awaiting human response, and the next bus message can't drive the
 	// turn forward without first being treated by the operator.
-	// Detection relies on AwaitingOperatorMarker; per cli-semaphore#79 the marker is
-	// currently a placeholder pending empirical capture.
+	// Detection relies on AwaitingOperatorMarker, an empirically-captured
+	// substring of Claude Code's popup footer (cli-semaphore#79, PR #87).
+	// Lit up 2026-06-04 from an operator-coordinated AskUserQuestion
+	// capture; canary + classification pins in probe_test.go and
+	// state_test.go protect the substring against Claude Code UI drift.
 	StateAwaitingOperator
 )
 
