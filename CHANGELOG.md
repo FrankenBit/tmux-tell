@@ -97,6 +97,17 @@ Run `claude-msg --version` to see what's installed.
   message" section. Operational-coordination-layer expression of the
   broader filed-bug-rootcause-is-hypothesis discipline.
 
+- **ADR-0002: Chamber-state carry-forward spec for Binnacle's M6b
+  (#74).** Names which parts of the cli-semaphore chamber-state
+  primitive (#69) carry forward verbatim to Binnacle's M6b dashboard
+  / operator API, and which are bridge-specific. Durable: the
+  five-state vocabulary, the result schema (with `evidence` as an
+  opaque blob), the `unknown`-as-advisory convention, and both
+  per-agent + enumeration API primitives. Bridge-specific: the
+  tmux-capture detection mechanism, the ~200ms temporal-delta
+  latency floor, and the Evidence struct's inner field shape. Sub-
+  issue (5) of the #69 parent tracker.
+
 - **Discipline-pin: perf-skip composition for the asymmetric gate
   (#67).** PR #66's mutation-experiment table called out one un-pinned
   branch: removing the `!runFullGate` guard from the QuickPresenceProbe
