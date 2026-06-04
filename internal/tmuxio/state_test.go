@@ -6,9 +6,43 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// fakeProbeRunner is a scripted tmux runner. Captures are consumed in
+// order as the loop progresses. The `calls` slice records every tmux
+// invocation; `TestChamberState_NoPaneMutation` asserts every
+// recorded call is capture-pane or display-message (no send-keys),
+// which catches any future change that reintroduces pane mutation
+// against the recipient.
+type fakeProbeRunner struct {
+	mu         sync.Mutex
+	captures   []string
+	captureIdx int
+	calls      []string
+}
+
+func newFakeProbeRunner(captures []string) *fakeProbeRunner {
+	return &fakeProbeRunner{captures: captures}
+}
+
+func (f *fakeProbeRunner) run(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, strings.Join(args, " "))
+	switch args[0] {
+	case "capture-pane":
+		if f.captureIdx >= len(f.captures) {
+			return []byte(f.captures[len(f.captures)-1]), nil
+		}
+		out := f.captures[f.captureIdx]
+		f.captureIdx++
+		return []byte(out), nil
+	}
+	return nil, nil
+}
 
 // --- State.String() ---
 
@@ -178,12 +212,6 @@ func TestChamberState_NoPaneMutation(t *testing.T) {
 	}
 	if displayMessageCount != 1 {
 		t.Errorf("display-message count = %d, want 1", displayMessageCount)
-	}
-	if fr.probeChars != 0 {
-		t.Errorf("probe chars sent = %d, want 0 (no inject)", fr.probeChars)
-	}
-	if fr.backspaces != 0 {
-		t.Errorf("backspaces = %d, want 0 (no cleanup needed in read-only-observe)", fr.backspaces)
 	}
 }
 

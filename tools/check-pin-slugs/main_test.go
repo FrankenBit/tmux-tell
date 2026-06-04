@@ -67,7 +67,9 @@ func TestScanInUseSlugs_FindsKnownSlugs(t *testing.T) {
 		"AtomicCapEnforcement",
 		"ThreadStructurePrecondition",
 		"CanonicalNoSilentGuess",
-		"OperatorInputRowGate",
+		// OperatorInputRowGate removed in #94 (the asymmetric gate
+		// composition this pinned was retired with the probe-and-
+		// watch substrate; see PR #93 + #94).
 		"CapExemption",
 	} {
 		if !inUse[want] {

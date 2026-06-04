@@ -10,6 +10,26 @@ import (
 	"unicode/utf8"
 )
 
+// PromptSentinel is the Claude Code TUI's input-row prefix — U+276F
+// (Heavy Right-Pointing Angle Quotation Mark Ornament) followed by
+// U+00A0 (NO-BREAK SPACE). Empirically verified across all six
+// chambers on 2026-06-04, hex `e2 9d af c2 a0`.
+//
+// The string-literal uses `\u00a0` so the NBSP is explicit in the
+// source code (mixing a visually-identical NBSP into the literal
+// would silently fool future readers into thinking it's a regular
+// space).
+//
+// FORWARD-WATCH: this constant is Claude-Code-version-dependent. If
+// the Claude Code TUI's prompt character changes (theme update,
+// version bump, customization), the cursor-aware ChamberState branch
+// silently degrades to "cursor not at input row". Re-verify the
+// constant during any major Claude Code version update via
+// `tmux capture-pane | od -An -tx1` on the input row; the canary
+// tests in state_canary_test.go (golden + byte-encoding) catch
+// drift loudly.
+const PromptSentinel = "❯\u00a0"
+
 // State classifies a chamber's current activity from the cli-semaphore
 // vantage point. Five values, per the cli-semaphore#69 verdict
 // (bus id `d47f`, 2026-06-04). The zero value is StateUnknown so a
@@ -42,8 +62,9 @@ const (
 	// (cli-semaphore#70, PR #88). Lit up 2026-06-04 from two operator-
 	// coordinated captures of the Quartermaster pane at distinct
 	// progress points (8% and 68%) across the same /compact event;
-	// canary + classification pins in probe_test.go and state_test.go
-	// protect the substring against Claude Code UI drift.
+	// canary + classification pins in state_canary_test.go and
+	// state_test.go protect the substring against Claude Code UI
+	// drift.
 	StateAtRestInCompaction
 	// StateAwaitingOperator means the chamber is paused on an
 	// AskUserQuestion popup or other operator-input-required UI —
@@ -53,8 +74,9 @@ const (
 	// Detection relies on AwaitingOperatorMarker, an empirically-captured
 	// substring of Claude Code's popup footer (cli-semaphore#79, PR #87).
 	// Lit up 2026-06-04 from an operator-coordinated AskUserQuestion
-	// capture; canary + classification pins in probe_test.go and
-	// state_test.go protect the substring against Claude Code UI drift.
+	// capture; canary + classification pins in state_canary_test.go
+	// and state_test.go protect the substring against Claude Code UI
+	// drift.
 	StateAwaitingOperator
 )
 
@@ -107,7 +129,7 @@ type Evidence struct {
 // testdata/golden_quartermaster_compaction_2026-06-04.txt and
 // testdata/golden_quartermaster_compaction_advanced_2026-06-04.txt so
 // future Claude Code UI drift surfaces as a golden-match failure on the
-// canary test in probe_test.go.
+// canary test in state_canary_test.go.
 //
 // The substring intentionally EXCLUDES the leading spinner glyph: the
 // 8% capture shows `✻ Compacting conversation…` (U+273B six-pointed
@@ -137,7 +159,7 @@ const CompactionMarker = "Compacting conversation…"
 // a live AskUserQuestion popup (cli-semaphore#79). The captured pane
 // content is frozen as testdata/golden_quartermaster_askuserquestion_
 // 2026-06-04.txt so future Claude Code UI drift surfaces as a golden-
-// match failure on the canary test in probe_test.go.
+// match failure on the canary test in state_canary_test.go.
 //
 // The substring is the popup's bottom-line keybinding hint —
 // "↑/↓ to navigate · Esc to cancel" — combined with the middle-dot
@@ -160,8 +182,8 @@ const AwaitingOperatorMarker = "↑/↓ to navigate · Esc to cancel"
 // a working chamber doesn't add meaningful latency to the caller's
 // flow. False-negatives on chambers running long-running tools whose
 // only paint is a 1Hz spinner counter are an accepted risk for v1 —
-// the cli-semaphore prompt-sentinel gate (PR #66) catches a working-
-// pane mis-classified as idle at the delivery layer if it matters.
+// the ObserveGate's poll loop catches a working-pane mis-classified
+// as idle at the delivery layer via subsequent iterations.
 var chamberStateTemporalDelta = 200 * time.Millisecond
 
 // SetChamberStateTemporalDeltaForTest swaps the temporal-delta wait
@@ -179,14 +201,12 @@ func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
 // position and applying a precedence-ordered heuristic.
 //
 // Substrate-class: read-only-observe. Exactly two capture-pane calls,
-// one display-message call, zero send-keys, zero pane mutation. This
-// is the load-bearing property that distinguishes ChamberState from
-// QuickPresenceProbe and WaitForQuietPane (write+observe via probe-
-// and-watch). Pinned by TestChamberState_NoPaneMutation in the test
-// suite. "Knock at the door without waking the inhabitant" per
-// cli-semaphore#69's framing — all three tmux calls are read-only
-// (capture-pane reads the visible buffer; display-message reads
-// tmux's internal pane state).
+// one display-message call, zero send-keys, zero pane mutation.
+// Pinned by TestChamberState_NoPaneMutation in the test suite. "Knock
+// at the door without waking the inhabitant" per cli-semaphore#69's
+// framing — all three tmux calls are read-only (capture-pane reads
+// the visible buffer; display-message reads tmux's internal pane
+// state).
 //
 // Heuristic v2 (cli-semaphore#69 smoke test surfaced the v1 gap on
 // cursor-less classification; operator's design call 2026-06-04
@@ -219,17 +239,15 @@ func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //     UIs — AskUserQuestion popups, search dialogs, etc.)
 //  6. If the cursor query failed or the cursor row doesn't start with
 //     PromptSentinel, fall back to the cursor-less heuristic
-//     (classifyInputRow == DeltaQuiet → Idle; else Unknown). This
-//     preserves the v1 behavior when the cursor substrate is
+//     (isInputRowQuiet returns true → Idle; else Unknown). This
+//     preserves classification when the cursor substrate is
 //     unreachable.
 //  7. Otherwise → StateUnknown with an accurate reason naming the
-//     sub-case that fired (vs the v1's misleading "no prompt sentinel"
-//     blanket message).
+//     sub-case that fired (sentinel found vs not, cursor query failure
+//     vs cursor-not-on-input-row).
 //
-// Substrate-reuse: the cursor-less fallback path consumes
-// classifyInputRow which is the parse-only sibling of PR #66's
-// InputRowHasContent. PromptSentinel is the Claude-Code-version-
-// pinned constant; same forward-watch as documented there.
+// PromptSentinel is the Claude-Code-version-pinned constant; see its
+// doc-comment for the forward-watch on Claude Code TUI changes.
 //
 // Errors: capture-pane failures propagate via the error return value
 // paired with StateUnknown — the safer-default-on-uncertainty contract
@@ -345,10 +363,11 @@ func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 	}
 
 	// Cursor-less fallback (cursor query failed or cursor row doesn't
-	// have the sentinel): the v1 heuristic via classifyInputRow. Used
-	// when display-message isn't available or the cursor is somewhere
-	// other than the input row (e.g., chamber paused mid-spinner).
-	if classifyInputRow(capBStr) == DeltaQuiet {
+	// have the sentinel): parse the pane for a sentinel-row with no
+	// content past it. Used when display-message isn't available or
+	// the cursor is somewhere other than the input row (e.g., chamber
+	// paused mid-spinner).
+	if isInputRowQuiet(capBStr) {
 		return StateIdle,
 			Evidence{
 				Reason:      "prompt sentinel found with empty input row (cursor-less fallback); pane stable",
@@ -427,4 +446,25 @@ func countChangedLines(a, b string) int {
 		}
 	}
 	return diff
+}
+
+// isInputRowQuiet walks the captured pane and returns true when at
+// least one row starts with PromptSentinel AND that row has only
+// whitespace past the sentinel. False otherwise (no sentinel row
+// found, or sentinel row has non-whitespace content). Used by the
+// cursor-less fallback path in ChamberState when display-message
+// fails or the cursor isn't on the input row.
+func isInputRowQuiet(paneContent string) bool {
+	sawSentinel := false
+	for _, row := range strings.Split(paneContent, "\n") {
+		rest, found := strings.CutPrefix(row, PromptSentinel)
+		if !found {
+			continue
+		}
+		sawSentinel = true
+		if strings.TrimSpace(rest) != "" {
+			return false
+		}
+	}
+	return sawSentinel
 }

@@ -36,14 +36,12 @@ type ObserveGateOpts struct {
 	// MaxWait is the total safety cap on the gate's loop. On hitting
 	// it, the gate returns ErrMaxWaitExceeded; the caller can still
 	// deliver the message (the cap is a fail-loud rather than fail-
-	// stop), matching WaitForQuietPane's quiet-cap semantics. Default
-	// 5m, same as the legacy quiet-max-wait default.
+	// stop). Default 5m.
 	MaxWait time.Duration
 	// Ping is an optional callback the gate invokes on each iteration
 	// so the caller can keep external timers (notably systemd's
 	// WatchdogSec) alive during long observe loops. May be nil.
-	// Sibling to QuietOpts.Ping; mailman wires this to sdnotify
-	// Watchdog at startup.
+	// Mailman wires this to sdnotify.Watchdog at startup.
 	Ping func()
 }
 
@@ -79,7 +77,6 @@ type GateOutcome struct {
 
 // ErrMaxWaitExceeded is returned when ObserveGate's safety cap fires
 // without reaching either the idle path or the stale-flush path.
-// Sibling to ErrCapExceeded (the WaitForQuietPane equivalent).
 var ErrMaxWaitExceeded = errors.New("tmuxio: observe-gate MaxWait exceeded")
 
 // ObserveGate observes the receiver pane via repeated read-only
@@ -88,8 +85,8 @@ var ErrMaxWaitExceeded = errors.New("tmuxio: observe-gate MaxWait exceeded")
 // mutation, zero probe injection, zero send-keys before the caller's
 // own Deliver call (or the caller's Ctrl+U on Stale flush).
 //
-// Replaces the probe-and-watch WaitForQuietPane gate per #92. The
-// algorithm:
+// Replaced the probe-and-watch gate per #92 (shipped in v0.3.0; the
+// legacy primitives were swept out in v0.4.0 / #94). The algorithm:
 //
 //  1. Poll ChamberState; on StateIdle (cursor at sentinel — empty or
 //     auto-suggestion ghost-text), return immediately with Stale=false.

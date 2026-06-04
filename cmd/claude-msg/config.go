@@ -82,12 +82,10 @@ func runConfigShowCLI(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "notify-on-failed\t%t\n", view.NotifyOnFailed)
 		fmt.Fprintf(stdout, "notify-on-delivered-unverified\t%t\n", view.NotifyOnDeliveredUnverified)
 		fmt.Fprintf(stdout, "drift-soft-fail\t%t\n", view.DriftSoftFail)
-		fmt.Fprintf(stdout, "quiet-disabled\t%t\n", view.QuietDisabled)
-		fmt.Fprintf(stdout, "quick-presence-probe\t%t\n", view.QuickPresenceProbe)
-		fmt.Fprintf(stdout, "prompt-sentinel-gate\t%t\n", view.PromptSentinelGate)
-		fmt.Fprintf(stdout, "quiet-observe-window\t%s\n", view.QuietObserveWindow)
-		fmt.Fprintf(stdout, "quiet-input-backoff\t%s\n", view.QuietInputBackoff)
-		fmt.Fprintf(stdout, "quiet-max-wait\t%s\n", view.QuietMaxWait)
+		fmt.Fprintf(stdout, "gate-disabled\t%t\n", view.GateDisabled)
+		fmt.Fprintf(stdout, "poll-interval-min\t%s\n", view.PollIntervalMin)
+		fmt.Fprintf(stdout, "poll-interval-max\t%s\n", view.PollIntervalMax)
+		fmt.Fprintf(stdout, "input-stale-threshold\t%s\n", view.InputStaleThreshold)
 		return exitOK
 	default:
 		return writeJSONError(stdout, stderr,
