@@ -466,7 +466,7 @@ cycle) to ~3–5s.
 
 The gate polls the recipient's `ChamberState` (two read-only
 `capture-pane` snapshots plus a cursor query — zero pane mutation) and
-decides per state:
+decides across the five `ChamberState` values:
 
 | Recipient state | Gate decision |
 |---|---|
@@ -506,13 +506,17 @@ silently discard the typed content. The flush is a three-path decision:
    destroy bus content, not just operator content. The safe paths above
    always archive before clearing.
 
-To recover a flushed draft, read the recipient chamber's inbox — the
-snapshot row carries the cleared content verbatim plus the public_id of
-the delivery that triggered the flush:
+Because the snapshot is self-addressed, the chamber's own mailman
+delivers it straight back into the chamber's pane — so the **primary
+recovery is inline**: the cleared draft reappears as a
+`kind=stranded_draft` bus message carrying the content verbatim plus the
+public_id of the delivery that triggered the flush. To find it again in
+the store *after* that self-delivery (the row has moved past `queued`),
+the SQLite-inbox fallback is:
 
 ```bash
-claude-msg inbox <chamber>     # the kind=stranded_draft row holds the draft
-claude-msg track <id>          # cross-reference the triggering delivery
+claude-msg inbox <chamber> --state delivered   # the self-delivered snapshot
+claude-msg inbox <chamber> --state ""          # all states, if unsure
 ```
 
 #### Tuning knobs
