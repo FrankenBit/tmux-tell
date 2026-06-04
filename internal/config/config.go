@@ -53,12 +53,56 @@ type Block struct {
 	NotifyOnFailed              *bool          `toml:"notify-on-failed"`
 	NotifyOnDeliveredUnverified *bool          `toml:"notify-on-delivered-unverified"`
 	DriftSoftFail               *bool          `toml:"drift-soft-fail"`
-	QuietDisabled               *bool          `toml:"quiet-disabled"`
-	QuickPresenceProbe          *bool          `toml:"quick-presence-probe"`
-	PromptSentinelGate          *bool          `toml:"prompt-sentinel-gate"`
-	QuietObserveWindow          *time.Duration `toml:"quiet-observe-window"`
-	QuietInputBackoff           *time.Duration `toml:"quiet-input-backoff"`
-	QuietMaxWait                *time.Duration `toml:"quiet-max-wait"`
+	// GateDisabled disables the read-only-observe-only gate added in
+	// #92. Default false (gate on). Operators rarely need to disable;
+	// useful only for chambers where collision-avoidance is unwanted
+	// (e.g., a chamber that should always receive instantly).
+	GateDisabled *bool `toml:"gate-disabled"`
+	// PollIntervalMin / PollIntervalMax / InputStaleThreshold tune the
+	// observe-gate's polling cadence + abandoned-draft detection (#92).
+	PollIntervalMin     *time.Duration `toml:"poll-interval-min"`
+	PollIntervalMax     *time.Duration `toml:"poll-interval-max"`
+	InputStaleThreshold *time.Duration `toml:"input-stale-threshold"`
+	// Deprecated knobs from the legacy probe-and-watch gate. Kept here
+	// for backward-compatible TOML decoding; the mailman startup logs
+	// a deprecation warning when any of these are set. Will be removed
+	// in a future release per #92's migration plan.
+	QuietDisabled      *bool          `toml:"quiet-disabled"`
+	QuickPresenceProbe *bool          `toml:"quick-presence-probe"`
+	PromptSentinelGate *bool          `toml:"prompt-sentinel-gate"`
+	QuietObserveWindow *time.Duration `toml:"quiet-observe-window"`
+	QuietInputBackoff  *time.Duration `toml:"quiet-input-backoff"`
+	QuietMaxWait       *time.Duration `toml:"quiet-max-wait"`
+}
+
+// DeprecatedKnobs returns the set of legacy-probe-and-watch knobs that
+// the operator has set in either [defaults] or [agent.<name>]. The
+// mailman startup logs a deprecation warning naming the specific
+// knobs that need migration. Returns an empty slice when nothing is
+// stale.
+func (f *File) DeprecatedKnobs(agent string) []string {
+	if f == nil {
+		return nil
+	}
+	keys := []string{
+		"quiet-disabled", "quick-presence-probe", "prompt-sentinel-gate",
+		"quiet-observe-window", "quiet-input-backoff", "quiet-max-wait",
+	}
+	var set []string
+	for _, k := range keys {
+		if blockBoolField(&f.Defaults, k) != nil || blockDurField(&f.Defaults, k) != nil {
+			set = append(set, k+" (defaults)")
+			continue
+		}
+		if f.Agent != nil {
+			if b, ok := f.Agent[agent]; ok {
+				if blockBoolField(&b, k) != nil || blockDurField(&b, k) != nil {
+					set = append(set, k+" (agent."+agent+")")
+				}
+			}
+		}
+	}
+	return set
 }
 
 // Load reads the config from the path resolved by:
@@ -147,6 +191,8 @@ func blockBoolField(b *Block, field string) *bool {
 		return b.NotifyOnDeliveredUnverified
 	case "drift-soft-fail":
 		return b.DriftSoftFail
+	case "gate-disabled":
+		return b.GateDisabled
 	case "quiet-disabled":
 		return b.QuietDisabled
 	case "quick-presence-probe":
@@ -174,6 +220,12 @@ func defaultDurField(file *File, field string) *time.Duration {
 
 func blockDurField(b *Block, field string) *time.Duration {
 	switch field {
+	case "poll-interval-min":
+		return b.PollIntervalMin
+	case "poll-interval-max":
+		return b.PollIntervalMax
+	case "input-stale-threshold":
+		return b.InputStaleThreshold
 	case "quiet-observe-window":
 		return b.QuietObserveWindow
 	case "quiet-input-backoff":
@@ -194,12 +246,19 @@ type ResolvedView struct {
 	NotifyOnFailed              bool          `json:"notify_on_failed"`
 	NotifyOnDeliveredUnverified bool          `json:"notify_on_delivered_unverified"`
 	DriftSoftFail               bool          `json:"drift_soft_fail"`
-	QuietDisabled               bool          `json:"quiet_disabled"`
-	QuickPresenceProbe          bool          `json:"quick_presence_probe"`
-	PromptSentinelGate          bool          `json:"prompt_sentinel_gate"`
-	QuietObserveWindow          time.Duration `json:"quiet_observe_window"`
-	QuietInputBackoff           time.Duration `json:"quiet_input_backoff"`
-	QuietMaxWait                time.Duration `json:"quiet_max_wait"`
+	GateDisabled                bool          `json:"gate_disabled"`
+	PollIntervalMin             time.Duration `json:"poll_interval_min"`
+	PollIntervalMax             time.Duration `json:"poll_interval_max"`
+	InputStaleThreshold         time.Duration `json:"input_stale_threshold"`
+	// Deprecated knobs (#92). Resolved for `claude-msg config show` so
+	// operators can confirm what they have set, but the runtime ignores
+	// these — the observe-gate replaces the probe-and-watch flow.
+	QuietDisabled      bool          `json:"quiet_disabled,omitempty"`
+	QuickPresenceProbe bool          `json:"quick_presence_probe,omitempty"`
+	PromptSentinelGate bool          `json:"prompt_sentinel_gate,omitempty"`
+	QuietObserveWindow time.Duration `json:"quiet_observe_window,omitempty"`
+	QuietInputBackoff  time.Duration `json:"quiet_input_backoff,omitempty"`
+	QuietMaxWait       time.Duration `json:"quiet_max_wait,omitempty"`
 }
 
 // Resolve builds the resolved snapshot. Hardcoded defaults mirror
@@ -211,6 +270,10 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		NotifyOnFailed:              ResolveBool(file, agent, "notify-on-failed", true),
 		NotifyOnDeliveredUnverified: ResolveBool(file, agent, "notify-on-delivered-unverified", true),
 		DriftSoftFail:               ResolveBool(file, agent, "drift-soft-fail", false),
+		GateDisabled:                ResolveBool(file, agent, "gate-disabled", false),
+		PollIntervalMin:             ResolveDuration(file, agent, "poll-interval-min", 3*time.Second),
+		PollIntervalMax:             ResolveDuration(file, agent, "poll-interval-max", 15*time.Second),
+		InputStaleThreshold:         ResolveDuration(file, agent, "input-stale-threshold", 2*time.Minute),
 		QuietDisabled:               ResolveBool(file, agent, "quiet-disabled", true),
 		QuickPresenceProbe:          ResolveBool(file, agent, "quick-presence-probe", false),
 		PromptSentinelGate:          ResolveBool(file, agent, "prompt-sentinel-gate", false),
