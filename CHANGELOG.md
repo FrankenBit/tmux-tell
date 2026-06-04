@@ -24,6 +24,8 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-04
+
 ### Fixed
 
 - **Multi-line draft truncation in observe-gate's (c) flush (#96).**
