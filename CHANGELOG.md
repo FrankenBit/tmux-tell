@@ -82,7 +82,69 @@ Run `claude-msg --version` to see what's installed.
   encoding of constants that reference external-tool emissions
   against the actual tool emission, not the spec.
 
+### Added
+
+- **Read-only-observe-only delivery gate (#92).** `internal/tmuxio/
+  observe_gate.go` introduces `ObserveGate`, replacing the probe-and-
+  watch `WaitForQuietPane` flow in the mailman's pre-delivery path.
+  The new gate uses repeated `ChamberState` polls (read-only-observe
+  substrate-class, zero pane mutation) + content-hash stale detection
+  to decide when to deliver. Typical-case latency drops from 72s
+  (legacy single backoff cycle) or 138s (legacy double backoff cycle)
+  to ~3–5s. The `─` probe dashes that previously appeared in the
+  receiver's input row during gate observation are gone.
+
+  Gate decision matrix:
+  - `StateIdle` (cursor at sentinel, empty input row or auto-suggestion
+    ghost-text) → deliver immediately.
+  - `StateAwaitingOperator` (cursor past sentinel = operator typing) →
+    hash the input-row content; if it stays unchanged for at least
+    `InputStaleThreshold` (default 2 min), return `Stale=true` so the
+    caller can archive + clear + paste.
+  - `StateWorking` / `StateAtRestInCompaction` / `StateUnknown` →
+    safer-default wait, progressive backoff (3s → 6s → 10s → 15s cap).
+
+  Stale-flush mechanics implement the (c) Clear-paste-archive primary
+  path per #92's 2026-06-04 design call: the gate returns the captured
+  input content; the mailman archives it as `kind=stranded_draft`
+  (cap-bypass) before sending Ctrl+U + paste. On archive failure, the
+  (a) Append fallback kicks in (paste-and-Enter without clearing —
+  compound message, but doesn't strand the delivery). The (b) Clear-
+  and-discard option is REJECTED in code + comments because the input
+  content might be a half-delivered bus message from a previous
+  failed delivery; blind Ctrl+U would destroy bus content not
+  operator content.
+
+- **`KindStrandedDraft` message kind** (`internal/store/types.go`).
+  Self-addressed snapshot row inserted via `InsertNotice` (cap-bypass)
+  whenever the observe-gate decides to flush operator-typed content
+  from the input row. The body preserves the cleared content verbatim
+  + a reference to the triggering delivery's public_id so the operator
+  can recover the draft post-hoc.
+
+- **New TOML/CLI knobs** for tuning the observe-gate: `gate-disabled`
+  (default `false`), `poll-interval-min` (default `3s`),
+  `poll-interval-max` (default `15s`), `input-stale-threshold` (default
+  `2m`). All composable with the existing per-agent precedence chain.
+
 ### Changed
+
+- **Default delivery-gate behavior** (#92). The pre-delivery gate is
+  now on by default for all chambers (observe-gate, read-only,
+  ~3–5s typical). Previously the gate was OFF by default
+  (`quiet-disabled = true` since 2026-06-01) with an opt-in
+  `prompt-sentinel-gate` for Bosun + Quartermaster that fell back to
+  the probe-and-watch gate (60s `quiet-input-backoff` per iteration —
+  the load-bearing cost in cli-semaphore #91's investigation). The new
+  default is strictly better than both: faster than the legacy gate,
+  safer than no gate at all.
+
+  Migration for operators with the old config: blocks like
+  `[agent.bosun] prompt-sentinel-gate = true` can be deleted — the new
+  gate is on for all chambers without per-agent config. Existing
+  `quiet-*` and `prompt-sentinel-gate` / `quick-presence-probe` knobs
+  are ignored at runtime; the mailman logs a WARN at startup naming
+  any that are set so the operator knows to migrate.
 
 - **Silent-pass gap closed on `AwaitingOperatorMarker` canary (#89,
   retrofit from PR #88).** `TestAwaitingOperatorMarker_MatchesGoldenCapture`
@@ -100,6 +162,35 @@ Run `claude-msg --version` to see what's installed.
   e2e classification pin
   `TestChamberState_AwaitingOperatorOnAskUserQuestionGolden` (in
   `state_test.go`).
+
+### Deprecated
+
+- **Legacy probe-and-watch CLI flags + TOML knobs** (#92): `--quiet-
+  disabled` / `quiet-disabled`, `--quick-presence-probe` /
+  `quick-presence-probe`, `--prompt-sentinel-gate` /
+  `prompt-sentinel-gate`, `--quiet-observe-window` /
+  `quiet-observe-window`, `--quiet-input-backoff` /
+  `quiet-input-backoff`, `--quiet-max-wait` / `quiet-max-wait`. All
+  become no-ops at runtime; the observe-gate subsumes their behaviors
+  per the migration plan. Mailman startup logs a WARN naming any that
+  are set. Will be removed in a future release.
+
+### Removed
+
+- `cmd/claude-msg/serve_quiet_test.go` (3 tests:
+  `TestServe_QuietGate_DeliversAfterInputActivity`,
+  `TestServe_UnverifiedDelivery_MarksDeliveredWithWarn`,
+  `TestServe_QuietGate_CapExceededLogsAndDelivers`) — all coupled to
+  probe-and-watch behavior that no longer exists at the active path.
+  The `delivered_unverified` semantics at the deliver layer remain
+  covered by `internal/tmuxio.TestDeliver_ReturnsUnverifiedSentinelAfterRetriesExhausted`;
+  a serve-layer pin can be re-added as a follow-up once the gate
+  migration settles if needed.
+- `TestPin_OperatorInputRowGate_QuickProbeSkippedWhenSentinelPromotes`
+  (`cmd/claude-msg/pin_test.go`) — the asymmetric gate composition
+  this pinned (sentinel-first-cheap promotes, QuickPresenceProbe
+  skipped) doesn't exist anymore because there's only one gate. The
+  empty PIN_ slot is preserved as a comment for traceability.
 
 ### Added
 

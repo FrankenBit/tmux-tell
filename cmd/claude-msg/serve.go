@@ -48,51 +48,15 @@ type serveOpts struct {
 	// settled, not into the slash-command parser mid-compaction. Zero
 	// disables the pause entirely.
 	PostCompactPause time.Duration
-	// QuietOpts configures the pre-delivery probe-and-watch gate so the
-	// mailman doesn't fragment the operator's in-progress typing. See
-	// internal/tmuxio.QuietOpts for the per-field semantics.
-	QuietOpts tmuxio.QuietOpts
-	// QuietDisabled bypasses the probe-and-watch gate entirely. Useful
-	// in tests (the existing fast-opts helper sets this so the fake
-	// tmux runner doesn't need to handle the probe sequence) and as an
-	// escape hatch if the probe pattern misbehaves with a future TUI.
-	QuietDisabled bool
-	// QuickPresenceProbe (opt-in, #63) activates the asymmetric
-	// pre-check that handles mid-typing collisions when the full gate
-	// is disabled. When BOTH QuietDisabled=true AND this flag=true:
-	// the mailman runs a one-shot ~50ms probe before delivery; if it
-	// detects operator activity, it falls back to the full gate; if
-	// quiet, it delivers immediately. The speed win of QuietDisabled
-	// is preserved for the common empty-buffer case, while the safety
-	// of the gate is restored when the operator is mid-draft.
-	// Defaults to false to preserve the v0.2.x ship-fast default; an
-	// operator opts in per-mailman via --quick-presence-probe or the
-	// quick-presence-probe config knob.
-	QuickPresenceProbe bool
-	// QuickPresenceOpts configures the asymmetric pre-check. Only
-	// consulted when QuickPresenceProbe is true. Zero values pick the
-	// aggressive defaults sized for fast empty-buffer delivery.
-	QuickPresenceOpts tmuxio.QuickPresenceOpts
-	// PromptSentinelGate (opt-in, #63 Part 2) activates the read-only
-	// pre-check that handles the operator-draft-sitting collision —
-	// the headline #63 failure mode that QuickPresenceProbe cannot
-	// catch (a sitting draft + two appended probes still look like a
-	// clean append). When BOTH QuietDisabled=true AND this flag=true:
-	// the mailman inspects the receiver's input row via a single
-	// capture-pane (no inject, no paint-wait); if the row shows the
-	// Claude Code prompt sentinel followed by ANY non-whitespace
-	// content (operator's draft, an agent's narration, a selection
-	// menu echo), falls back to the full gate. If the sentinel is
-	// missing entirely (Claude Code in a non-prompt state — mid-stream
-	// output, menu overlay), also falls back (safer default).
-	//
-	// Composable with QuickPresenceProbe: sentinel runs FIRST (read-
-	// only, ~5ms); if sentinel says quiet, the QuickPresenceProbe
-	// runs next (write+observe, ~50ms) to catch active-typing during
-	// the brief paint window between sentinel-check and delivery.
-	//
-	// Defaults to false. Per-agent TOML knob: `prompt-sentinel-gate`.
-	PromptSentinelGate bool
+	// ObserveGateOpts configures the read-only-observe-only gate (#92)
+	// that replaced the probe-and-watch flow. See
+	// internal/tmuxio/observe_gate.go for the per-field semantics.
+	ObserveGateOpts tmuxio.ObserveGateOpts
+	// GateDisabled bypasses the observe-gate entirely; delivery
+	// happens immediately on every queue head. Useful in tests (avoids
+	// faking ChamberState in the runtime tmux runner) and as an
+	// operator escape hatch. Default false (gate on).
+	GateDisabled bool
 	// DriftCheckDisabled bypasses the pre-delivery silent-drift guard
 	// (#37). Production keeps it enabled. Tests that don't fake
 	// ListPanesWithPID + /proc readers should set this to true so the
@@ -146,18 +110,32 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"per-message deadline for the tmux delivery sequence")
 	postCompactPause := fs.Duration("post-compact-pause", 120*time.Second,
 		"quiescent window after delivering /compact before claiming the next message (0 to disable)")
+	// Observe-gate knobs (#92). The read-only-observe-only gate replaces
+	// the probe-and-watch flow; see internal/tmuxio/observe_gate.go.
+	gateDisabled := fs.Bool("gate-disabled", false,
+		"bypass the observe-gate entirely (delivery happens immediately on every queue head). Default false (gate on). Operators rarely need to disable; the gate is read-only-observe-only and adds ~3-5s in the typical idle case. Per-agent TOML knob: `gate-disabled = true`.")
+	pollIntervalMin := fs.Duration("poll-interval-min", 3*time.Second,
+		"observe-gate initial poll interval. The gate samples ChamberState at this cadence on the fast path (#92).")
+	pollIntervalMax := fs.Duration("poll-interval-max", 15*time.Second,
+		"observe-gate maximum poll interval. The cadence backs off multiplicatively (1.5×) up to this cap when the chamber is not yet ready (#92).")
+	inputStaleThreshold := fs.Duration("input-stale-threshold", 2*time.Minute,
+		"observe-gate stale-draft threshold. When the operator's input-row content remains unchanged this long, the gate decides the draft is abandoned and proceeds with archive-then-clear-then-paste (kind=stranded_draft snapshot + Ctrl+U). Per #92's 2026-06-04 design call.")
+	// Legacy probe-and-watch knobs (#92 deprecation). Kept here so
+	// existing config files don't trip the flag parser; the runtime
+	// path no longer consults them. Mailman startup logs a deprecation
+	// warning when any are set explicitly.
 	quietObserve := fs.Duration("quiet-observe-window", 3*time.Second,
-		"per-probe wait between pasting each of the two dashes and capturing/observing — gives the operator time to react to each dash individually")
+		"DEPRECATED (#92): legacy probe-and-watch knob; superseded by --poll-interval-min/-max. No-op at runtime; documented for backward compatibility")
 	quietInputBackoff := fs.Duration("quiet-input-backoff", 60*time.Second,
-		"how long to wait before re-probing after detecting operator activity in the input row")
+		"DEPRECATED (#92): legacy probe-and-watch knob; superseded by --poll-interval-max (backoff cap). No-op at runtime")
 	quietMaxWait := fs.Duration("quiet-max-wait", 5*time.Minute,
-		"total cap on the pre-delivery quiet wait; on cap we deliver anyway with a WARN log")
+		"DEPRECATED (#92): legacy probe-and-watch knob; the observe-gate has its own MaxWait baked in. No-op at runtime (use --input-stale-threshold for the abandoned-draft cutoff)")
 	quietDisabled := fs.Bool("quiet-disabled", true,
-		"bypass the probe-and-watch gate (delivery happens immediately on every queue head). Default true since 2026-06-01: empirical use showed the gate added 5-min worst-case latency without preventing mid-turn collisions in practice — the verify-token retry + delivered_unverified notice path (independent toggle, on by default) is the load-bearing safety net. Re-enable per-agent via TOML `quiet-disabled = false` if a polite-wait shape is wanted")
+		"DEPRECATED (#92): legacy probe-and-watch knob; use --gate-disabled to bypass the new observe-gate. No-op at runtime")
 	quickPresenceProbe := fs.Bool("quick-presence-probe", false,
-		"opt-in asymmetric pre-check (#63): when --quiet-disabled is also true, run a ~50ms one-shot probe before each delivery; if it detects operator typing during the probe window, fall back to the full probe-and-watch gate; if quiet, deliver immediately. Catches the active-typing collision class without paying the full gate's latency on idle panes. Defaults to false (preserves v0.2.x ship-fast). Per-agent TOML knob: `quick-presence-probe = true`. Caveat: does NOT detect operator-drafts-sitting-in-the-buffer (a passive non-typing operator with an unsent draft) — that's the prompt-sentinel-gate's territory (#63 Part 2).")
+		"DEPRECATED (#92): legacy probe-and-watch knob; the new observe-gate subsumes the asymmetric pre-check. No-op at runtime")
 	promptSentinelGate := fs.Bool("prompt-sentinel-gate", false,
-		"opt-in read-only pre-check (#63 Part 2): when --quiet-disabled is also true, inspect the receiver's input row via a single capture-pane (no probe injection, no paint-wait) BEFORE attempting delivery; if the input area shows the Claude Code prompt sentinel followed by ANY non-whitespace content, fall back to the full gate. Catches the operator-drafts-sitting-in-the-buffer class (the headline #63 failure mode) AND the agent-narration-in-input-area class, at ~5ms cost vs the ~50ms QuickPresenceProbe + ~6s+ full gate. Composable with --quick-presence-probe: sentinel runs first (cheap), probe runs only if sentinel says quiet (catches active-typing during the probe window). Defaults to false (preserves v0.2.x ship-fast). Per-agent TOML knob: `prompt-sentinel-gate = true`.")
+		"DEPRECATED (#92): legacy probe-and-watch knob; the new observe-gate IS the sentinel-aware logic. No-op at runtime")
 	driftSoftFail := fs.Bool("drift-soft-fail", false,
 		"when pre-delivery drift detection hits ambiguous or unrecoverable, log WARN and deliver to the (potentially wrong) pane instead of marking the message failed. Default off — fail-loud is safer for autonomous receivers")
 	notifyOnFailed := fs.Bool("notify-on-failed", true,
@@ -190,6 +168,18 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	if !flagWasSet(fs, "drift-soft-fail") {
 		*driftSoftFail = config.ResolveBool(cfg, *agent, "drift-soft-fail", *driftSoftFail)
 	}
+	if !flagWasSet(fs, "gate-disabled") {
+		*gateDisabled = config.ResolveBool(cfg, *agent, "gate-disabled", *gateDisabled)
+	}
+	if !flagWasSet(fs, "poll-interval-min") {
+		*pollIntervalMin = config.ResolveDuration(cfg, *agent, "poll-interval-min", *pollIntervalMin)
+	}
+	if !flagWasSet(fs, "poll-interval-max") {
+		*pollIntervalMax = config.ResolveDuration(cfg, *agent, "poll-interval-max", *pollIntervalMax)
+	}
+	if !flagWasSet(fs, "input-stale-threshold") {
+		*inputStaleThreshold = config.ResolveDuration(cfg, *agent, "input-stale-threshold", *inputStaleThreshold)
+	}
 	if !flagWasSet(fs, "quiet-disabled") {
 		*quietDisabled = config.ResolveBool(cfg, *agent, "quiet-disabled", *quietDisabled)
 	}
@@ -211,6 +201,23 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	if *agent == "" {
 		fmt.Fprintln(stderr, "--agent required")
 		return exitUsage
+	}
+	// Silence the staticcheck-style unused warnings for the deprecated
+	// knobs — they're read above to support backward-compatible config
+	// decoding, but the runtime path uses the observe-gate instead.
+	_ = *quietObserve
+	_ = *quietInputBackoff
+	_ = *quietMaxWait
+	_ = *quietDisabled
+	_ = *quickPresenceProbe
+	_ = *promptSentinelGate
+	// Surface a deprecation warning if any of the legacy knobs are set
+	// in the resolved config so the operator knows to migrate. The
+	// runtime ignores them per #92.
+	if deprecated := cfg.DeprecatedKnobs(*agent); len(deprecated) > 0 {
+		fmt.Fprintf(stderr,
+			"WARN config: deprecated knobs ignored (replaced by observe-gate #92, safe to delete from /etc/cli-semaphore/config.toml): %s\n",
+			strings.Join(deprecated, ", "))
 	}
 
 	s, err := store.Open(resolveDBPath(*dbPath))
@@ -235,14 +242,15 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		PauseCheckInterval: *pausePoll,
 		DeliverTimeout:     *deliverTimeout,
 		PostCompactPause:   *postCompactPause,
-		QuietOpts: tmuxio.QuietOpts{
-			ObserveWindow:        *quietObserve,
-			InputActivityBackoff: *quietInputBackoff,
-			MaxWait:              *quietMaxWait,
+		GateDisabled:       *gateDisabled,
+		ObserveGateOpts: tmuxio.ObserveGateOpts{
+			PollIntervalMin:     *pollIntervalMin,
+			PollIntervalMax:     *pollIntervalMax,
+			InputStaleThreshold: *inputStaleThreshold,
+			// MaxWait stays at the gate's default (5m); not exposed as
+			// a CLI flag in v1 — operators can tune via TOML if needed
+			// once the migration settles.
 		},
-		QuietDisabled:               *quietDisabled,
-		QuickPresenceProbe:          *quickPresenceProbe,
-		PromptSentinelGate:          *promptSentinelGate,
 		DriftSoftFail:               *driftSoftFail,
 		NotifyOnFailed:              *notifyOnFailed,
 		NotifyOnDeliveredUnverified: *notifyOnDeliveredUnverified,
@@ -299,16 +307,13 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		logger.Printf("watchdog interval=%s", watchdogPing)
 	}
 
-	// Wire a ping closure into the quiet-pane gate so its internal
-	// sleeps (ObserveWindow + BackoffInterval) keep the systemd
-	// watchdog ticking. Without this, a 60s activity-detected backoff
-	// trips WatchdogSec=30s and SIGABRTs the mailman mid-backoff
-	// (2026-05-30 incident).
-	if opts.QuietOpts.Ping == nil {
-		opts.QuietOpts.Ping = func() { _ = sdnotify.Watchdog() }
-	}
-	if opts.QuietOpts.PingInterval == 0 && watchdogPing > 0 {
-		opts.QuietOpts.PingInterval = watchdogPing
+	// Wire a ping closure into the observe-gate so its internal sleeps
+	// (PollInterval up to 15s by default) keep the systemd watchdog
+	// ticking. Without this, a long poll interval could trip
+	// WatchdogSec=30s and SIGABRT the mailman mid-observe (sibling to
+	// the 2026-05-30 incident on the legacy probe-and-watch path).
+	if opts.ObserveGateOpts.Ping == nil {
+		opts.ObserveGateOpts.Ping = func() { _ = sdnotify.Watchdog() }
 	}
 
 	for {
@@ -434,90 +439,78 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			}
 		}
 
-		// Asymmetric pre-checks (#63). When QuietDisabled is the default
-		// (skip full gate), opt-in cheap pre-checks still catch the
-		// collision classes the v0.2.x ship-fast path misses. Two
-		// independent gate flags compose serially:
+		// Pre-delivery observe-gate (#92). Read-only ChamberState
+		// polling + content-hash stale-detection. Replaces the legacy
+		// probe-and-watch flow (the dashes + 60s backoff path
+		// per the cli-semaphore #91 investigation). On any error other
+		// than a clean exit, log and proceed — we'd rather risk a
+		// fragmented delivery than starve the queue.
 		//
-		//   1. PromptSentinelGate (#63 Part 2, read-only-observe, ~5ms):
-		//      capture-pane + parse for the Claude Code prompt sentinel
-		//      followed by non-whitespace content. Catches operator
-		//      drafts sitting in the buffer (the headline #63 case),
-		//      agent narration in the input row, and selection-menu
-		//      echoes. No pane disturbance.
-		//   2. QuickPresenceProbe (#63 Part 1, write+observe, ~50ms):
-		//      one-shot probe-and-watch. Catches active-typing during
-		//      the brief paint window after the sentinel check.
-		//
-		// Either flag triggering DeltaInputActivity or an error promotes
-		// to the full gate. The sentinel runs first so its cheaper
-		// failure path can skip the probe entirely; the probe runs only
-		// if the sentinel says quiet (or PromptSentinelGate is off) AND
-		// QuickPresenceProbe is on AND we haven't already promoted.
-		// Net cost on the fast path is ~5ms (sentinel only), ~55ms
-		// (both), or 0ms (both off) — identical to pre-#63 when neither
-		// flag is set.
-		runFullGate := !opts.QuietDisabled
-		if opts.QuietDisabled && opts.PromptSentinelGate && !runFullGate {
-			sCtx, sCancel := context.WithTimeout(stopCtx, 1*time.Second)
-			verdict, serr := tmuxio.InputRowHasContent(sCtx, paneForDelivery)
-			sCancel()
-			if serr != nil || verdict == tmuxio.DeltaInputActivity {
-				if serr != nil {
-					logger.Printf("prompt-sentinel check error on pane %s: %v; falling back to full gate",
-						paneForDelivery, serr)
-				}
-				runFullGate = true
+		// We derive the gate ctx from stopCtx (not opCtx) so SIGTERM
+		// wakes us out of a long observe loop. The ClaimNext above
+		// already transitioned the row to 'delivering'; on SIGTERM
+		// exit, RecoverDelivering at the next startup resets it to
+		// 'queued' for a clean retry.
+		if !opts.GateDisabled {
+			gateOpts := opts.ObserveGateOpts
+			if gateOpts.Ping == nil {
+				gateOpts.Ping = func() { _ = sdnotify.Watchdog() }
 			}
-		}
-		if opts.QuietDisabled && opts.QuickPresenceProbe && !runFullGate {
-			qCtx, qCancel := context.WithTimeout(stopCtx,
-				200*time.Millisecond+opts.QuickPresenceOpts.PaintWait)
-			verdict, qerr := tmuxio.QuickPresenceProbe(qCtx, paneForDelivery,
-				opts.QuickPresenceOpts)
-			qCancel()
-			if qerr != nil || verdict == tmuxio.DeltaInputActivity {
-				// Probe error → conservative: gate. Operator activity
-				// → safety: gate. Both paths converge on the existing
-				// full-gate behaviour.
-				if qerr != nil {
-					logger.Printf("quick-presence probe error on pane %s: %v; falling back to full gate",
-						paneForDelivery, qerr)
-				}
-				runFullGate = true
+			gateBudget := gateOpts.MaxWait
+			if gateBudget <= 0 {
+				gateBudget = 5 * time.Minute
 			}
-		}
-
-		// Pre-delivery quiet-pane gate (probe-and-watch). On any error
-		// other than a clean quiet exit, log and proceed — we'd rather
-		// risk a fragmented delivery than starve the queue. The
-		// per-iteration cap inside WaitForQuietPane handles the truly
-		// pathological "operator never stops typing" case.
-		//
-		// We derive the quiet ctx from stopCtx (not opCtx) so SIGTERM
-		// wakes us out of a long quiet wait — the operator shouldn't
-		// have to wait up to 30 minutes for the mailman to notice it
-		// should stop. The ClaimNext above already transitioned the
-		// row to 'delivering'; on SIGTERM exit, RecoverDelivering at
-		// the next startup resets it to 'queued' for a clean retry.
-		if runFullGate {
-			quietCtx, qcancel := context.WithTimeout(stopCtx,
-				opts.QuietOpts.MaxWait+5*time.Second)
-			qerr := tmuxio.WaitForQuietPane(quietCtx, paneForDelivery, opts.QuietOpts)
-			qcancel()
-			if qerr != nil {
+			gateCtx, gcancel := context.WithTimeout(stopCtx, gateBudget+5*time.Second)
+			outcome, gerr := tmuxio.ObserveGate(gateCtx, paneForDelivery, gateOpts)
+			gcancel()
+			if gerr != nil {
 				switch {
-				case errors.Is(qerr, context.Canceled):
-					// SIGTERM during the quiet wait — exit cleanly, do
-					// not deliver. Row stays 'delivering'; recovered
-					// on next startup.
+				case errors.Is(gerr, context.Canceled):
+					// SIGTERM during the observe loop — exit cleanly.
 					return exitOK
-				case errors.Is(qerr, tmuxio.ErrCapExceeded):
-					logger.Printf("WARN quiet_cap_exceeded id=%s pane=%s — delivering anyway",
-						msg.PublicID, paneForDelivery)
+				case errors.Is(gerr, tmuxio.ErrMaxWaitExceeded):
+					logger.Printf("WARN gate_max_wait id=%s pane=%s iter=%d — delivering anyway (%s)",
+						msg.PublicID, paneForDelivery, outcome.Iterations, outcome.Reason)
 				default:
-					logger.Printf("WARN quiet_check_err id=%s err=%v — delivering anyway",
-						msg.PublicID, qerr)
+					logger.Printf("WARN gate_err id=%s err=%v — delivering anyway",
+						msg.PublicID, gerr)
+				}
+			}
+			// (c) primary path: when the operator had stable content in
+			// the input row past InputStaleThreshold, archive the
+			// content as kind=stranded_draft before clearing + pasting.
+			// On archive failure, fall back to (a) compound delivery
+			// per #92's 2026-06-04 design call. (b) Clear-and-discard
+			// is OFF the table — the input content might be a half-
+			// delivered bus message from a previous failed delivery.
+			//
+			// Step ordering: archive FIRST, then Ctrl+U. Archive is
+			// load-bearing data capture (the operator's typed work);
+			// Ctrl+U is opportunistic UX cleanup. The (archive OK,
+			// Ctrl+U fails) edge case is acceptable: the operator sees
+			// a compound message AND has the snapshot in the bus —
+			// recoverable, not lossy. The inverse order (clear first
+			// then archive) would risk silent draft loss on archive
+			// failure after a successful clear, which the (b)-rejected
+			// rationale exists to prevent.
+			if outcome.Stale && outcome.InputContent != "" {
+				if archiveErr := archiveStrandedDraft(opCtx, s, opts.Agent,
+					paneForDelivery, msg.PublicID, outcome.InputContent); archiveErr != nil {
+					logger.Printf("WARN stranded_draft_archive_failed id=%s err=%v — falling back to (a) compound delivery",
+						msg.PublicID, archiveErr)
+					// Skip the Ctrl+U; deliverOne will paste onto the
+					// operator's content producing a compound message.
+				} else {
+					clearCtx, ccancel := context.WithTimeout(stopCtx, 2*time.Second)
+					clearErr := tmuxio.SendCtrlU(clearCtx, paneForDelivery)
+					ccancel()
+					if clearErr != nil {
+						logger.Printf("WARN stranded_draft_clear_failed id=%s err=%v — falling back to (a) compound delivery; draft snapshot already archived",
+							msg.PublicID, clearErr)
+					} else {
+						logger.Printf("stranded_draft archived+cleared id=%s pane=%s bytes=%d (gate iter=%d)",
+							msg.PublicID, paneForDelivery, len(outcome.InputContent), outcome.Iterations)
+					}
 				}
 			}
 		}
@@ -647,6 +640,70 @@ func maybeInsertFailureNotice(
 	}
 	logger.Printf("notify_inserted notice_id=%s orig_id=%s class=%s to=%s",
 		res.PublicID, msg.PublicID, failureKind, msg.FromAgent)
+}
+
+// archiveStrandedDraft snapshots operator-typed content that the
+// observe-gate (#92) is about to flush from the receiver's input row
+// to make room for delivery. Inserted as kind=stranded_draft from the
+// receiving chamber to itself (self-addressed) via the cap-bypass
+// InsertNotice path — operator-typed work shouldn't be silently
+// dropped because the inbox is congested.
+//
+// Per #92's 2026-06-04 design call: this is the (c) Clear-paste-
+// archive primary path. If this insert fails the caller falls back
+// to (a) compound delivery (paste appends to the operator's content
+// without clearing) rather than risk a silent draft loss via (b).
+//
+// `receiver` is the chamber the mailman is serving (the chamber whose
+// pane had the stranded content). `triggerMsgID` is the public_id of
+// the message whose delivery triggered the flush — referenced in the
+// body so the operator can correlate.
+func archiveStrandedDraft(
+	ctx context.Context,
+	s *store.Store,
+	receiver string,
+	pane string,
+	triggerMsgID string,
+	content string,
+) error {
+	body := renderStrandedDraftBody(pane, triggerMsgID, content)
+	_, err := s.InsertNotice(ctx, store.InsertParams{
+		FromAgent: receiver, // self-addressed
+		ToAgent:   receiver,
+		Body:      body,
+		Kind:      store.KindStrandedDraft,
+	})
+	return err
+}
+
+// renderStrandedDraftBody formats the human-readable body of a
+// stranded-draft snapshot. The shape parallels renderFailureNoticeBody
+// for visual consistency in the inbox view.
+func renderStrandedDraftBody(pane, triggerMsgID, content string) string {
+	return fmt.Sprintf(`:bookmark: Stranded draft snapshot
+  Pane: %s
+  Triggered by delivery of: %s
+  Cleared content:
+%s`, pane, triggerMsgID, indentForBody(content))
+}
+
+// indentForBody indents each line of s by two spaces so multi-line
+// content nests visually inside a bullet-style body block. No
+// trimming — we preserve the operator's original whitespace verbatim
+// so they can recover the draft exactly as they typed it.
+func indentForBody(s string) string {
+	if s == "" {
+		return "    (empty)"
+	}
+	var b strings.Builder
+	for i, line := range strings.Split(s, "\n") {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("    ")
+		b.WriteString(line)
+	}
+	return b.String()
 }
 
 // renderFailureNoticeBody formats the human-readable body of a
