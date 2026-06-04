@@ -120,22 +120,6 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"observe-gate maximum poll interval. The cadence backs off multiplicatively (1.5×) up to this cap when the chamber is not yet ready (#92).")
 	inputStaleThreshold := fs.Duration("input-stale-threshold", 2*time.Minute,
 		"observe-gate stale-draft threshold. When the operator's input-row content remains unchanged this long, the gate decides the draft is abandoned and proceeds with archive-then-clear-then-paste (kind=stranded_draft snapshot + Ctrl+U). Per #92's 2026-06-04 design call.")
-	// Legacy probe-and-watch knobs (#92 deprecation). Kept here so
-	// existing config files don't trip the flag parser; the runtime
-	// path no longer consults them. Mailman startup logs a deprecation
-	// warning when any are set explicitly.
-	quietObserve := fs.Duration("quiet-observe-window", 3*time.Second,
-		"DEPRECATED (#92): legacy probe-and-watch knob; superseded by --poll-interval-min/-max. No-op at runtime; documented for backward compatibility")
-	quietInputBackoff := fs.Duration("quiet-input-backoff", 60*time.Second,
-		"DEPRECATED (#92): legacy probe-and-watch knob; superseded by --poll-interval-max (backoff cap). No-op at runtime")
-	quietMaxWait := fs.Duration("quiet-max-wait", 5*time.Minute,
-		"DEPRECATED (#92): legacy probe-and-watch knob; the observe-gate has its own MaxWait baked in. No-op at runtime (use --input-stale-threshold for the abandoned-draft cutoff)")
-	quietDisabled := fs.Bool("quiet-disabled", true,
-		"DEPRECATED (#92): legacy probe-and-watch knob; use --gate-disabled to bypass the new observe-gate. No-op at runtime")
-	quickPresenceProbe := fs.Bool("quick-presence-probe", false,
-		"DEPRECATED (#92): legacy probe-and-watch knob; the new observe-gate subsumes the asymmetric pre-check. No-op at runtime")
-	promptSentinelGate := fs.Bool("prompt-sentinel-gate", false,
-		"DEPRECATED (#92): legacy probe-and-watch knob; the new observe-gate IS the sentinel-aware logic. No-op at runtime")
 	driftSoftFail := fs.Bool("drift-soft-fail", false,
 		"when pre-delivery drift detection hits ambiguous or unrecoverable, log WARN and deliver to the (potentially wrong) pane instead of marking the message failed. Default off — fail-loud is safer for autonomous receivers")
 	notifyOnFailed := fs.Bool("notify-on-failed", true,
@@ -180,44 +164,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	if !flagWasSet(fs, "input-stale-threshold") {
 		*inputStaleThreshold = config.ResolveDuration(cfg, *agent, "input-stale-threshold", *inputStaleThreshold)
 	}
-	if !flagWasSet(fs, "quiet-disabled") {
-		*quietDisabled = config.ResolveBool(cfg, *agent, "quiet-disabled", *quietDisabled)
-	}
-	if !flagWasSet(fs, "quick-presence-probe") {
-		*quickPresenceProbe = config.ResolveBool(cfg, *agent, "quick-presence-probe", *quickPresenceProbe)
-	}
-	if !flagWasSet(fs, "prompt-sentinel-gate") {
-		*promptSentinelGate = config.ResolveBool(cfg, *agent, "prompt-sentinel-gate", *promptSentinelGate)
-	}
-	if !flagWasSet(fs, "quiet-observe-window") {
-		*quietObserve = config.ResolveDuration(cfg, *agent, "quiet-observe-window", *quietObserve)
-	}
-	if !flagWasSet(fs, "quiet-input-backoff") {
-		*quietInputBackoff = config.ResolveDuration(cfg, *agent, "quiet-input-backoff", *quietInputBackoff)
-	}
-	if !flagWasSet(fs, "quiet-max-wait") {
-		*quietMaxWait = config.ResolveDuration(cfg, *agent, "quiet-max-wait", *quietMaxWait)
-	}
 	if *agent == "" {
 		fmt.Fprintln(stderr, "--agent required")
 		return exitUsage
-	}
-	// Silence the staticcheck-style unused warnings for the deprecated
-	// knobs — they're read above to support backward-compatible config
-	// decoding, but the runtime path uses the observe-gate instead.
-	_ = *quietObserve
-	_ = *quietInputBackoff
-	_ = *quietMaxWait
-	_ = *quietDisabled
-	_ = *quickPresenceProbe
-	_ = *promptSentinelGate
-	// Surface a deprecation warning if any of the legacy knobs are set
-	// in the resolved config so the operator knows to migrate. The
-	// runtime ignores them per #92.
-	if deprecated := cfg.DeprecatedKnobs(*agent); len(deprecated) > 0 {
-		fmt.Fprintf(stderr,
-			"WARN config: deprecated knobs ignored (replaced by observe-gate #92, safe to delete from /etc/cli-semaphore/config.toml): %s\n",
-			strings.Join(deprecated, ", "))
 	}
 
 	s, err := store.Open(resolveDBPath(*dbPath))

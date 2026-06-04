@@ -68,6 +68,86 @@ Run `claude-msg --version` to see what's installed.
   row extraction makes the new multi-line tests fail with the exact
   truncation signature (only line 1 captured).
 
+### Removed
+
+- **Dead probe-and-watch primitives + legacy gate knobs (#94).**
+  Follow-up sweep to v0.3.0's observe-gate substrate-class shift,
+  deferred from PR #93 to keep that diff scoped. The active code path
+  hasn't called any of these since 2026-06-04; this PR removes them
+  from the codebase entirely.
+
+  Removed from `internal/tmuxio/`:
+  - `probe.go` (full file) — `WaitForQuietPane`, `QuickPresenceProbe`,
+    `InputRowHasContent`, `analyzeDelta`, `stripTrailingProbes`,
+    `classifyInputRow`, `QuietOpts`, `QuickPresenceOpts`, `DeltaKind`
+    + `DeltaQuiet` + `DeltaInputActivity` constants, `ErrCapExceeded`
+    sentinel, `QuietProbe` constant, `sleepWithPing` helper
+  - `probe_test.go` (full file) — analyzeDelta / stripTrailingProbes
+    / QuickPresenceProbe / WaitForQuietPane tests
+  - `pin_test.go` (full file) — discipline pins for the dead
+    `DeltaKind` binary-verdict surface
+  - The four marker canary tests (PromptSentinel byte-encoding +
+    golden-capture; AwaitingOperatorMarker golden-capture;
+    CompactionMarker golden-capture) migrated to the new
+    `state_canary_test.go` since they exercise live `state.go`
+    constants, not the dead probe-and-watch flow
+  - `fakeProbeRunner` (test helper used by ChamberState tests)
+    migrated to `state_test.go`
+
+  Survived the sweep into `state.go`:
+  - `PromptSentinel` constant (with its full forward-watch doc-
+    comment) — used by ChamberState's cursor-aware path and
+    `observe_gate.go`'s `extractInputContent`
+  - New `isInputRowQuiet` helper (the parse-only sibling that used to
+    be `classifyInputRow`, now returns `bool` instead of the dead
+    `DeltaKind` enum)
+
+  Removed from `cmd/claude-msg/serve.go`:
+  - Legacy CLI flags: `--quiet-disabled`, `--quick-presence-probe`,
+    `--prompt-sentinel-gate`, `--quiet-observe-window`,
+    `--quiet-input-backoff`, `--quiet-max-wait`
+  - The `_ = *quiet…` discards keeping the flag pointers alive after
+    parse
+  - The startup `WARN config: deprecated knobs ignored …` block (the
+    knobs are no longer parsed, so a config file that still mentions
+    them now fails with a precise TOML "unknown key" error — more
+    helpful than a silent ignore)
+
+  Removed from `internal/config/config.go`:
+  - `Block` fields: `QuietDisabled`, `QuickPresenceProbe`,
+    `PromptSentinelGate`, `QuietObserveWindow`, `QuietInputBackoff`,
+    `QuietMaxWait`
+  - `ResolvedView` legacy fields (used to surface them via
+    `claude-msg config show`)
+  - The `(*File).DeprecatedKnobs(agent)` helper that drove the
+    startup WARN
+  - Corresponding cases in `blockBoolField` / `blockDurField` /
+    `Resolve`
+
+  Removed from `cmd/claude-msg/config.go`:
+  - `claude-msg config show`'s `quiet-disabled` / `quick-presence-probe`
+    / `prompt-sentinel-gate` / `quiet-*` output lines (replaced by
+    `gate-disabled` / `poll-interval-min` / `poll-interval-max` /
+    `input-stale-threshold` in v0.3.0; the legacy lines are gone now)
+
+  Removed from `tools/check-pin-slugs/`:
+  - `OperatorInputRowGate` from the in-use-slugs allowlist (the pin
+    was retired in v0.3.0 with the asymmetric gate composition it
+    guarded; tracker comment preserved at the call site)
+
+  Removed from `internal/config/config_test.go`:
+  - `TestLoadFrom_ParsesQuickPresenceProbeAndPromptSentinelGate` and
+    `TestResolveBool_PrecedenceChain_QuickPresenceProbeAndPromptSentinelGate`
+    (the fields they pinned no longer exist); replaced with sibling-
+    shape `TestLoadFrom_ParsesGateDisabled` and
+    `TestResolveBool_PrecedenceChain_GateDisabled` that exercise the
+    observe-gate's surviving bool knob.
+
+  Operator migration: any `/etc/cli-semaphore/config.toml` that still
+  references the removed keys now produces a TOML parse error at
+  mailman startup, naming the offending key. Delete the lines or the
+  containing `[agent.<name>]` block and restart.
+
 ## [0.3.0] — 2026-06-04
 
 ### Fixed

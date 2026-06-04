@@ -6,9 +6,47 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// fakeProbeRunner is a scripted tmux runner. Captures are consumed in
+// order as the loop progresses. The struct retains probeChars and
+// backspaces counters (always zero in the observe-gate world) so the
+// `TestChamberState_NoPaneMutation` pin can assert the read-only-
+// observe substrate-class property — any future change that
+// reintroduces send-keys against the recipient pane would be a
+// regression worth catching even though the counters are
+// reference-only post-#94.
+type fakeProbeRunner struct {
+	mu         sync.Mutex
+	captures   []string
+	captureIdx int
+	probeChars int
+	backspaces int
+	calls      []string
+}
+
+func newFakeProbeRunner(captures []string) *fakeProbeRunner {
+	return &fakeProbeRunner{captures: captures}
+}
+
+func (f *fakeProbeRunner) run(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, strings.Join(args, " "))
+	switch args[0] {
+	case "capture-pane":
+		if f.captureIdx >= len(f.captures) {
+			return []byte(f.captures[len(f.captures)-1]), nil
+		}
+		out := f.captures[f.captureIdx]
+		f.captureIdx++
+		return []byte(out), nil
+	}
+	return nil, nil
+}
 
 // --- State.String() ---
 

@@ -32,11 +32,11 @@ func TestLoadFrom_HappyPathParsesDefaultsAndAgent(t *testing.T) {
 	content := `
 [defaults]
 notify-on-failed = false
-quiet-input-backoff = "45s"
+input-stale-threshold = "45s"
 
 [agent.surveyor]
 notify-on-failed = true
-quiet-input-backoff = "90s"
+input-stale-threshold = "90s"
 `
 	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -49,9 +49,9 @@ quiet-input-backoff = "90s"
 		t.Errorf("Defaults.NotifyOnFailed should be false; got %v",
 			f.Defaults.NotifyOnFailed)
 	}
-	if f.Defaults.QuietInputBackoff == nil || *f.Defaults.QuietInputBackoff != 45*time.Second {
-		t.Errorf("Defaults.QuietInputBackoff = %v, want 45s",
-			f.Defaults.QuietInputBackoff)
+	if f.Defaults.InputStaleThreshold == nil || *f.Defaults.InputStaleThreshold != 45*time.Second {
+		t.Errorf("Defaults.InputStaleThreshold = %v, want 45s",
+			f.Defaults.InputStaleThreshold)
 	}
 	if f.Agent == nil || f.Agent["surveyor"].NotifyOnFailed == nil {
 		t.Fatalf("agent.surveyor.NotifyOnFailed missing")
@@ -85,24 +85,19 @@ func TestResolveBool_PrecedenceChain(t *testing.T) {
 	}
 }
 
-// TestLoadFrom_ParsesQuickPresenceProbeAndPromptSentinelGate pins the
-// gap-fix for the #63 Part 1 + Part 2 config knobs. Before this fix,
-// the Block struct didn't include QuickPresenceProbe or
-// PromptSentinelGate fields, so the TOML decoder silently dropped
-// those keys — operators setting them in /etc/cli-semaphore/config.toml
-// got no behavior change. The CLI flag was the only working path.
-//
-// This test pins both per-agent + defaults parsing for both fields so
-// the gap-fix can't silently regress.
-func TestLoadFrom_ParsesQuickPresenceProbeAndPromptSentinelGate(t *testing.T) {
+// TestLoadFrom_ParsesGateDisabled pins TOML parsing of the observe-
+// gate's bool knob. The sibling tests for legacy probe-and-watch
+// fields (QuickPresenceProbe, PromptSentinelGate) were removed in
+// #94 along with the fields themselves; this test preserves the
+// per-agent + defaults shape for the surviving knob.
+func TestLoadFrom_ParsesGateDisabled(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "gate.toml")
 	content := `
 [defaults]
-quick-presence-probe = true
+gate-disabled = false
 
 [agent.quartermaster]
-prompt-sentinel-gate = true
-quick-presence-probe = false
+gate-disabled = true
 `
 	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -111,65 +106,49 @@ quick-presence-probe = false
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	if f.Defaults.QuickPresenceProbe == nil || !*f.Defaults.QuickPresenceProbe {
-		t.Errorf("Defaults.QuickPresenceProbe should be true; got %v",
-			f.Defaults.QuickPresenceProbe)
+	if f.Defaults.GateDisabled == nil || *f.Defaults.GateDisabled {
+		t.Errorf("Defaults.GateDisabled should be false; got %v",
+			f.Defaults.GateDisabled)
 	}
-	if f.Agent == nil || f.Agent["quartermaster"].PromptSentinelGate == nil {
-		t.Fatalf("agent.quartermaster.PromptSentinelGate missing — TOML decoder dropped the key (Block struct lacks the field)")
+	if f.Agent == nil || f.Agent["quartermaster"].GateDisabled == nil {
+		t.Fatalf("agent.quartermaster.GateDisabled missing — TOML decoder dropped the key")
 	}
-	if !*f.Agent["quartermaster"].PromptSentinelGate {
-		t.Errorf("agent.quartermaster.PromptSentinelGate should be true; got false")
-	}
-	if f.Agent["quartermaster"].QuickPresenceProbe == nil || *f.Agent["quartermaster"].QuickPresenceProbe {
-		t.Errorf("agent.quartermaster.QuickPresenceProbe should be false (per-agent override of defaults); got %v",
-			f.Agent["quartermaster"].QuickPresenceProbe)
+	if !*f.Agent["quartermaster"].GateDisabled {
+		t.Errorf("agent.quartermaster.GateDisabled should be true; got false")
 	}
 }
 
-// TestResolveBool_PrecedenceChain_QuickPresenceProbeAndPromptSentinelGate
-// pins the precedence chain for the gap-fix fields. Before the fix,
-// blockBoolField's switch didn't cover these field names, so
-// ResolveBool fell through to the hardcoded default regardless of what
-// the TOML config said. This test ensures the agent-override + defaults
-// + hardcoded chain works for both new fields.
-func TestResolveBool_PrecedenceChain_QuickPresenceProbeAndPromptSentinelGate(t *testing.T) {
+// TestResolveBool_PrecedenceChain_GateDisabled pins the precedence
+// chain for the observe-gate bool knob. Sibling-shape to the legacy
+// probe-and-watch precedence test (removed in #94 along with the
+// fields it pinned).
+func TestResolveBool_PrecedenceChain_GateDisabled(t *testing.T) {
 	tr := true
 	fa := false
 	file := &File{
-		Defaults: Block{QuickPresenceProbe: &tr, PromptSentinelGate: &fa},
+		Defaults: Block{GateDisabled: &fa},
 		Agent: map[string]Block{
-			"bosun":         {PromptSentinelGate: &tr},
-			"quartermaster": {QuickPresenceProbe: &fa, PromptSentinelGate: &tr},
+			"bosun":         {GateDisabled: &tr},
+			"quartermaster": {GateDisabled: &tr},
 		},
 	}
 
-	// Per-agent override wins for both fields.
-	if !ResolveBool(file, "bosun", "prompt-sentinel-gate", false) {
-		t.Errorf("agent.bosun.prompt-sentinel-gate should be true (agent override)")
+	// Per-agent override wins.
+	if !ResolveBool(file, "bosun", "gate-disabled", false) {
+		t.Errorf("agent.bosun.gate-disabled should be true (agent override)")
 	}
-	if ResolveBool(file, "quartermaster", "quick-presence-probe", true) {
-		t.Errorf("agent.quartermaster.quick-presence-probe should be false (agent override of defaults true)")
-	}
-	if !ResolveBool(file, "quartermaster", "prompt-sentinel-gate", false) {
-		t.Errorf("agent.quartermaster.prompt-sentinel-gate should be true (agent override of defaults false)")
+	if !ResolveBool(file, "quartermaster", "gate-disabled", false) {
+		t.Errorf("agent.quartermaster.gate-disabled should be true (agent override of defaults false)")
 	}
 
 	// Defaults wins when no agent override.
-	if !ResolveBool(file, "engineer", "quick-presence-probe", false) {
-		t.Errorf("defaults.quick-presence-probe should win for engineer (no agent block); got false")
-	}
-	if ResolveBool(file, "engineer", "prompt-sentinel-gate", true) {
-		t.Errorf("defaults.prompt-sentinel-gate should win for engineer (no agent block); got true")
+	if ResolveBool(file, "engineer", "gate-disabled", true) {
+		t.Errorf("defaults.gate-disabled should win for engineer (no agent block); got true")
 	}
 
-	// Hardcoded wins when neither agent nor defaults set the field. Test
-	// with a fresh file that has neither.
+	// Hardcoded wins when neither agent nor defaults set the field.
 	empty := &File{}
-	if !ResolveBool(empty, "quartermaster", "quick-presence-probe", true) {
-		t.Errorf("hardcoded should win for empty file; got false")
-	}
-	if !ResolveBool(empty, "quartermaster", "prompt-sentinel-gate", true) {
+	if !ResolveBool(empty, "quartermaster", "gate-disabled", true) {
 		t.Errorf("hardcoded should win for empty file; got false")
 	}
 }
@@ -184,18 +163,18 @@ func TestResolveDuration_PrecedenceChain(t *testing.T) {
 	d30 := 30 * time.Second
 	d90 := 90 * time.Second
 	file := &File{
-		Defaults: Block{QuietInputBackoff: &d30},
+		Defaults: Block{InputStaleThreshold: &d30},
 		Agent: map[string]Block{
-			"surveyor": {QuietInputBackoff: &d90},
+			"surveyor": {InputStaleThreshold: &d90},
 		},
 	}
-	if got := ResolveDuration(file, "surveyor", "quiet-input-backoff", time.Minute); got != d90 {
+	if got := ResolveDuration(file, "surveyor", "input-stale-threshold", time.Minute); got != d90 {
 		t.Errorf("agent override = %v, want %v", got, d90)
 	}
-	if got := ResolveDuration(file, "admin", "quiet-input-backoff", time.Minute); got != d30 {
+	if got := ResolveDuration(file, "admin", "input-stale-threshold", time.Minute); got != d30 {
 		t.Errorf("defaults = %v, want %v", got, d30)
 	}
-	if got := ResolveDuration(file, "admin", "quiet-max-wait", time.Hour); got != time.Hour {
+	if got := ResolveDuration(file, "admin", "poll-interval-max", time.Hour); got != time.Hour {
 		t.Errorf("hardcoded = %v, want %v", got, time.Hour)
 	}
 }
@@ -204,7 +183,7 @@ func TestResolve_FullSnapshot(t *testing.T) {
 	tr := true
 	d := 45 * time.Second
 	file := &File{
-		Defaults: Block{NotifyOnFailed: &tr, QuietInputBackoff: &d},
+		Defaults: Block{NotifyOnFailed: &tr, InputStaleThreshold: &d},
 	}
 	v := Resolve(file, "/some/path.toml", "bosun")
 	if v.Agent != "bosun" {
@@ -213,11 +192,11 @@ func TestResolve_FullSnapshot(t *testing.T) {
 	if !v.NotifyOnFailed {
 		t.Errorf("NotifyOnFailed should be true (from defaults)")
 	}
-	if v.QuietInputBackoff != d {
-		t.Errorf("QuietInputBackoff = %v, want %v", v.QuietInputBackoff, d)
+	if v.InputStaleThreshold != d {
+		t.Errorf("InputStaleThreshold = %v, want %v", v.InputStaleThreshold, d)
 	}
-	// QuietMaxWait wasn't set anywhere — should be the hardcoded default.
-	if v.QuietMaxWait != 5*time.Minute {
-		t.Errorf("QuietMaxWait = %v, want 5m (hardcoded)", v.QuietMaxWait)
+	// PollIntervalMax wasn't set anywhere — should be the hardcoded default.
+	if v.PollIntervalMax != 15*time.Second {
+		t.Errorf("PollIntervalMax = %v, want 15s (hardcoded)", v.PollIntervalMax)
 	}
 }
