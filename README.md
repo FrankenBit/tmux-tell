@@ -381,6 +381,13 @@ Common cause patterns:
   claude-mailman@<recipient>.service`. Orphan-recovery on next
   startup will re-queue any in-flight messages.
 
+> Different shape: if the chamber claims a message went missing but
+> `claude-msg track` says **no such id** (or you don't even have the
+> id), the failure may be **sender-side** rather than bus-side. Walk
+> the [sender-outbox-first diagnostic playbook](docs/diagnostic-playbook.md)
+> instead — it starts from the SQLite store rather than the receiver's
+> mailman journal.
+
 ### Delivery semantics: probe-and-watch quiet-pane gate (opt-in)
 
 **Default state since 2026-06-01: OFF.** Empirical use during M2.11
