@@ -68,6 +68,20 @@ Run `claude-msg --version` to see what's installed.
   row extraction makes the new multi-line tests fail with the exact
   truncation signature (only line 1 captured).
 
+### Added
+
+- **Strict-mode TOML config decoding (#94).** `config.LoadFrom`
+  now uses `toml.Decode` + a post-decode `MetaData.Undecoded()` check;
+  any unknown key in `/etc/cli-semaphore/config.toml` causes the load
+  to fail with an error naming the offending key(s). Catches operator
+  typos AND configs that still mention the legacy probe-and-watch
+  knobs swept below — `prompt-sentinel-gate = true` in an old config
+  block now fails with `config: parse /etc/cli-semaphore/config.toml:
+  unknown key(s): agent.bosun.prompt-sentinel-gate`. Replaces the
+  prior silent-drop behavior + post-hoc startup WARN, matching the
+  fail-loud discipline the v0.3.0 substrate shift introduced
+  elsewhere.
+
 ### Removed
 
 - **Dead probe-and-watch primitives + legacy gate knobs (#94).**
@@ -108,10 +122,11 @@ Run `claude-msg --version` to see what's installed.
     `--quiet-input-backoff`, `--quiet-max-wait`
   - The `_ = *quiet…` discards keeping the flag pointers alive after
     parse
-  - The startup `WARN config: deprecated knobs ignored …` block (the
-    knobs are no longer parsed, so a config file that still mentions
-    them now fails with a precise TOML "unknown key" error — more
-    helpful than a silent ignore)
+  - The startup `WARN config: deprecated knobs ignored …` block —
+    replaced by a stricter TOML decoder (see Added below) so a config
+    file that still mentions retired keys fails the load loudly with
+    an "unknown key(s):" error naming the offending key, rather than
+    a silent ignore + post-hoc WARN.
 
   Removed from `internal/config/config.go`:
   - `Block` fields: `QuietDisabled`, `QuickPresenceProbe`,

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,6 +151,33 @@ func TestResolveBool_PrecedenceChain_GateDisabled(t *testing.T) {
 	empty := &File{}
 	if !ResolveBool(empty, "quartermaster", "gate-disabled", true) {
 		t.Errorf("hardcoded should win for empty file; got false")
+	}
+}
+
+// TestLoadFrom_StrictMode_UnknownKeyFails pins the strict-mode TOML
+// decoding added in #94. Unknown keys (including the deprecated
+// probe-and-watch knobs swept in v0.4.0) cause LoadFrom to return an
+// error naming the offending key, rather than silently dropping the
+// value. Catches operator typos AND configs that still mention
+// retired keys after a deletion sweep.
+func TestLoadFrom_StrictMode_UnknownKeyFails(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "stale.toml")
+	content := `
+[agent.bosun]
+prompt-sentinel-gate = true
+`
+	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := LoadFrom(tmp)
+	if err == nil {
+		t.Fatal("expected error for unknown key, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown key") {
+		t.Errorf("error should mention 'unknown key'; got %v", err)
+	}
+	if !strings.Contains(err.Error(), "prompt-sentinel-gate") {
+		t.Errorf("error should name the offending key; got %v", err)
 	}
 }
 

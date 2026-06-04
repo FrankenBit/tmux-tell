@@ -22,6 +22,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -80,6 +81,15 @@ func Load() (*File, error) {
 }
 
 // LoadFrom reads from an explicit path. Same semantics as Load.
+//
+// Strict-mode decoding (#94): unknown keys in the TOML file produce a
+// load error rather than getting silently dropped. BurntSushi/toml's
+// Unmarshal is non-strict by default — a typo or a deprecated key
+// (e.g., `quiet-disabled` from the pre-v0.3.0 probe-and-watch path)
+// would land in `MetaData.Undecoded()` and the decoded File would
+// silently lose the operator's intent. After v0.4.0's dead-code sweep
+// the deprecated keys are gone for real, so an old config that still
+// mentions them now fails the load loudly + names the offending keys.
 func LoadFrom(path string) (*File, error) {
 	f := &File{}
 	raw, err := os.ReadFile(path)
@@ -89,8 +99,17 @@ func LoadFrom(path string) (*File, error) {
 		}
 		return f, fmt.Errorf("config: read %s: %w", path, err)
 	}
-	if err := toml.Unmarshal(raw, f); err != nil {
+	meta, err := toml.Decode(string(raw), f)
+	if err != nil {
 		return f, fmt.Errorf("config: parse %s: %w", path, err)
+	}
+	if undecoded := meta.Undecoded(); len(undecoded) > 0 {
+		keys := make([]string, 0, len(undecoded))
+		for _, k := range undecoded {
+			keys = append(keys, k.String())
+		}
+		return f, fmt.Errorf("config: parse %s: unknown key(s): %s",
+			path, strings.Join(keys, ", "))
 	}
 	return f, nil
 }
