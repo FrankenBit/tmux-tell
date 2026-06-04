@@ -24,6 +24,50 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Multi-line draft truncation in observe-gate's (c) flush (#96).**
+  `extractInputContent` previously returned only the first sentinel-
+  prefixed row of the captured pane, so when the observe-gate fired
+  the (c) Clear-paste-archive flush on a multi-line operator draft,
+  the archived `kind=stranded_draft` row held only line 1 — while
+  `Ctrl+U` cleared the entire input buffer. Lines 2+ were silently
+  destroyed with no bus-recovery path, which is the exact failure
+  mode the (b) Clear-and-discard option was rejected to avoid: (c)
+  silently degraded to (b) for multi-line drafts.
+
+  Empirical evidence (the 2026-06-04 post-deploy validation test of
+  PR #93): a ~5-min typing session that should have archived several
+  paragraphs only archived 123 bytes — the first sentence of the
+  operator's submitted message. Documented at the time as a partial-
+  archive surprise; #96 traced it back to this single-row extraction
+  gap.
+
+  Fix: `extractInputContent` now walks from the sentinel row downward,
+  joining continuation rows with `\n` until it hits an
+  `isInputAreaBoundary` row. Two boundary recognizers:
+  - `⏵⏵` (U+23F5, the status-line marker that bounds the input area
+    below in every Claude Code pane)
+  - 20+ consecutive `─` (U+2500) characters, the below-input
+    separator. Threshold tuned to avoid false-positives on operator-
+    typed runs of box-drawing chars (a vanishingly-rare edge case).
+
+  The walk-until-boundary shape matches Claude Code's TUI layout:
+  `─── <title> ──` separator above, `❯ ` sentinel + continuation
+  rows, below-input separator, status line. The fix preserves the
+  archive-then-clear-then-paste ordering — `Ctrl+U` is unchanged;
+  it's the archive half that's now honest about what it captures.
+
+  Test coverage: `TestExtractInputContent_MultilineDraftCapturedToStatusBoundary`,
+  `TestExtractInputContent_StopsAtBelowInputSeparator`,
+  `TestExtractInputContent_StopsAtStatusLine`, plus a function-level
+  pin `TestIsInputAreaBoundary_RecognizerCases` (9 sub-cases). The
+  existing `TestExtractInputContent_SentinelRowFound` fixture was
+  updated to include the boundary chrome that production captures
+  always have. Mutation experiment: reverting to the legacy single-
+  row extraction makes the new multi-line tests fail with the exact
+  truncation signature (only line 1 captured).
+
 ## [0.3.0] — 2026-06-04
 
 ### Fixed
