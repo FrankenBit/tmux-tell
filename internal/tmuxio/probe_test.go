@@ -106,6 +106,56 @@ func TestAwaitingOperatorMarker_MatchesGoldenCapture(t *testing.T) {
 	}
 }
 
+// TestCompactionMarker_MatchesGoldenCapture is the sibling-shape canary
+// for the CompactionMarker constant — same capture-derived-vs-spec-
+// derived discipline as the PromptSentinel + AwaitingOperatorMarker
+// canaries above. Two golden files are checked, both real `tmux
+// capture-pane` outputs frozen from a Quartermaster pane mid-`/compact`
+// (cli-semaphore#70, captured 2026-06-04). The two captures differ in
+// progress (8% vs 68%) and — critically — in the spinner glyph (✻
+// U+273B vs ✢ U+2722); the marker excludes the glyph and matches the
+// trailing phrase that survives the spinner animation. If Claude Code's
+// compaction UI drifts (phrase changes, ellipsis encoding flips),
+// either or both fixtures stop matching and the test fails loudly +
+// names the re-capture recipe.
+//
+// The substring is structurally unique to Claude Code's compaction UI
+// — regular chat / response text doesn't combine "Compacting" with
+// "conversation" plus the U+2026 ellipsis. The two-fixture shape pins
+// the spinner-frame robustness: a future contributor who accidentally
+// includes the glyph (e.g., `CompactionMarker = "✻ Compacting…"`) gets
+// at least one failing case here.
+func TestCompactionMarker_MatchesGoldenCapture(t *testing.T) {
+	// Guard against the empty-marker regression: strings.Contains(g, "")
+	// returns true for any g, so an accidentally-emptied constant
+	// would silently pass the substring check below. The empty value
+	// is the pre-#70 placeholder; a future revert (intentional or via
+	// merge conflict) needs to surface loudly here, not just in the
+	// e2e classification pin in state_test.go.
+	if CompactionMarker == "" {
+		t.Fatal("CompactionMarker is empty — the StateAtRestInCompaction branch is disabled; re-populate from a re-captured golden fixture (see CompactionMarker doc-comment)")
+	}
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"early_8pct_six_pointed_star_spinner", "testdata/golden_quartermaster_compaction_2026-06-04.txt"},
+		{"advanced_68pct_teardrops_spoked_asterisk_spinner", "testdata/golden_quartermaster_compaction_advanced_2026-06-04.txt"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			golden, err := os.ReadFile(c.path)
+			if err != nil {
+				t.Fatalf("read golden capture: %v", err)
+			}
+			if !strings.Contains(string(golden), CompactionMarker) {
+				t.Errorf("golden %q does NOT contain CompactionMarker %q — Claude Code compaction UI may have drifted; re-verify via `tmux capture-pane -p -t <pane>` during a live /compact + update CompactionMarker + re-capture both golden fixtures",
+					c.path, CompactionMarker)
+			}
+		})
+	}
+}
+
 // --- analyzeDelta unit tests ---
 
 func TestAnalyzeDelta_Quiet_TwoTrailingProbes(t *testing.T) {

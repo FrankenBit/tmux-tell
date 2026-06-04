@@ -84,6 +84,42 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **AtRestInCompaction detection: `/compact` UI capture (#70).** The
+  chamber-state primitive's `CompactionMarker` constant flips from
+  placeholder `""` to `"Compacting conversation…"` (with U+2026
+  ellipsis), populated from two empirically-captured pane snapshots
+  taken during the same `/compact` event — at 8% and 68% progress.
+  The two captures show different spinner glyphs (`✻` U+273B vs `✢`
+  U+2722), confirming Claude Code cycles the leading glyph across
+  spinner frames; the marker intentionally excludes the glyph and
+  matches the trailing phrase that survives the animation. The
+  marker check at precedence 1 in `ChamberState` fires BEFORE the
+  precedence-2 pane-equality "working" check — load-bearing because
+  the compaction UI animates (spinner cycles, percentage ticks,
+  elapsed time changes) so `capA != capB`, and without the marker
+  check firing first a mid-compaction chamber would mis-classify as
+  Working. Two capture-derived golden fixtures at
+  `internal/tmuxio/testdata/golden_quartermaster_compaction_2026-06-04.txt`
+  and `internal/tmuxio/testdata/golden_quartermaster_compaction_advanced_2026-06-04.txt`
+  pin the encoding + the spinner-cycling robustness against future
+  drift; two new tests in `probe_test.go` + `state_test.go` enforce
+  the constant-vs-golden alignment (with an explicit empty-marker
+  guard — `strings.Contains(g, "")` is true so a regression to the
+  placeholder needed an explicit non-empty assertion to surface) AND
+  the end-to-end `ChamberState` classification (`StateAtRestInCompaction`
+  with marker surfaced in Evidence, capA=early-golden and capB=
+  advanced-golden so the test exercises the precedence-over-working
+  property). Mutation experiment verified: reverting the marker to
+  placeholder makes both pins fire — the canary on the explicit
+  guard, the e2e on the mis-classification as Working. Pre-#70 a
+  chamber mid-`/compact` classified as `working` (the spinner-animation
+  hit precedence 2); post-#70 it correctly classifies as
+  `at-rest-in-compaction`. Closes the second of the two empirical-
+  capture lit-ups originally bundled as the parent #69 verdict —
+  `AwaitingOperatorMarker` (#79, PR #87) and `CompactionMarker`
+  (#70, PR #88) — completing the 5-state vocabulary's detection
+  coverage.
+
 - **AwaitingOperator detection: AskUserQuestion popup capture (#79).**
   The chamber-state primitive's `AwaitingOperatorMarker` constant
   flips from placeholder `""` to `"↑/↓ to navigate · Esc to cancel"`,
