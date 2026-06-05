@@ -16,7 +16,7 @@ import (
 // Usage: claude-msg inbox [AGENT] [--state STATE] [--limit N] [--format text|json]
 //
 // AGENT defaults to the calling pane's identity (via the same
-// resolution rules as semaphore.whoami).
+// resolution rules as tmux-msg.whoami).
 func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	fs.SetOutput(stderr)

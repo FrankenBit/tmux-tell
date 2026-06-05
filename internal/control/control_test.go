@@ -11,9 +11,9 @@ func TestResolve_SelfScope(t *testing.T) {
 		"rename":                "/rename",
 		"cost":                  "/cost",
 		"help":                  "/help",
-		"mcp-enable-semaphore":  "/mcp enable semaphore",
-		"mcp-disable-semaphore": "/mcp disable semaphore",
-		"mcp-restart-semaphore": "/mcp restart semaphore",
+		"mcp-enable-tmux-msg":  "/mcp enable tmux-msg",
+		"mcp-disable-tmux-msg": "/mcp disable tmux-msg",
+		"mcp-restart-tmux-msg": "/mcp restart tmux-msg",
 		"/compact":              "/compact",
 		"COMPACT":               "/compact",
 		"  cost  ":              "/cost",
@@ -37,8 +37,8 @@ func TestResolve_PeerScope_OnlyPeerAllowed(t *testing.T) {
 	allowed := map[string]string{
 		"rename":                "/rename",
 		"help":                  "/help",
-		"mcp-enable-semaphore":  "/mcp enable semaphore",
-		"mcp-restart-semaphore": "/mcp restart semaphore",
+		"mcp-enable-tmux-msg":  "/mcp enable tmux-msg",
+		"mcp-restart-tmux-msg": "/mcp restart tmux-msg",
 	}
 	for in, want := range allowed {
 		// Globally peer-allowed commands resolve for any (sender,
@@ -56,12 +56,12 @@ func TestResolve_PeerScope_OnlyPeerAllowed(t *testing.T) {
 }
 
 func TestResolve_PeerScope_RejectsSelfOnly(t *testing.T) {
-	// mcp-disable-semaphore moved from self+peer to self-only in #28.
+	// mcp-disable-tmux-msg moved from self+peer to self-only in #28.
 	// Pin the regression test so future scope shuffles can't silently
 	// expose the peer-DoS surface again. clear is omitted here because
 	// its peer-denial is conditional (lifted for the Bosun→Pilot edge
 	// per #60) — see TestResolve_PeerScope_EdgeRule for that pinning.
-	for _, in := range []string{"compact", "cost", "mcp-disable-semaphore"} {
+	for _, in := range []string{"compact", "cost", "mcp-disable-tmux-msg"} {
 		_, err := Resolve(in, ScopePeer, "alice", "bob")
 		if !errors.Is(err, ErrScopeDenied) {
 			t.Errorf("Resolve(%q, peer): want ErrScopeDenied, got %v", in, err)
@@ -182,7 +182,7 @@ func TestNames_SortedAndComplete(t *testing.T) {
 	names := Names()
 	want := []string{
 		"clear", "compact", "cost", "help",
-		"mcp-disable-semaphore", "mcp-enable-semaphore", "mcp-restart-semaphore",
+		"mcp-disable-tmux-msg", "mcp-enable-tmux-msg", "mcp-restart-tmux-msg",
 		"rename",
 	}
 	if len(names) != len(want) {
@@ -201,7 +201,7 @@ func TestNamesForScope(t *testing.T) {
 	self := NamesForScope(ScopeSelf, "alice", "alice")
 	wantSelf := []string{
 		"compact", "cost", "help",
-		"mcp-disable-semaphore", "mcp-enable-semaphore", "mcp-restart-semaphore",
+		"mcp-disable-tmux-msg", "mcp-enable-tmux-msg", "mcp-restart-tmux-msg",
 		"rename",
 	}
 	if len(self) != len(wantSelf) {
@@ -215,7 +215,7 @@ func TestNamesForScope(t *testing.T) {
 
 	// Peer scope, no edge match: only globally peer-allowed commands.
 	peer := NamesForScope(ScopePeer, "alice", "bob")
-	wantPeer := []string{"help", "mcp-enable-semaphore", "mcp-restart-semaphore", "rename"}
+	wantPeer := []string{"help", "mcp-enable-tmux-msg", "mcp-restart-tmux-msg", "rename"}
 	if len(peer) != len(wantPeer) {
 		t.Fatalf("peer names = %v, want %v", peer, wantPeer)
 	}
@@ -230,7 +230,7 @@ func TestNamesForScope(t *testing.T) {
 	// callers — without this, a Bosun trying /clear on Pilot would
 	// see "peer-invokable: [help …]" and think clear isn't available.
 	bosunPilot := NamesForScope(ScopePeer, "bosun", "pilot")
-	wantBosunPilot := []string{"clear", "help", "mcp-enable-semaphore", "mcp-restart-semaphore", "rename"}
+	wantBosunPilot := []string{"clear", "help", "mcp-enable-tmux-msg", "mcp-restart-tmux-msg", "rename"}
 	if len(bosunPilot) != len(wantBosunPilot) {
 		t.Fatalf("bosun→pilot names = %v, want %v", bosunPilot, wantBosunPilot)
 	}

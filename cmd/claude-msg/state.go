@@ -12,7 +12,7 @@ import (
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
-// chamberStateResult is the wire-format shape that both the CLI and
+// agentStateResult is the wire-format shape that both the CLI and
 // the MCP tool emit. Per #69's verdict, this is the
 // durable schema that Binnacle's M6b dashboard / operator API can
 // consume verbatim once the bridge replaces the tmux-msg-side
@@ -23,16 +23,16 @@ import (
 //   - State: the wire-format state name (matches tmuxio.State.String())
 //   - Evidence: the observation that led to the classification
 //   - CapturedAt: RFC3339 UTC timestamp of the probe
-type chamberStateResult struct {
+type agentStateResult struct {
 	Agent      string          `json:"agent"`
 	State      string          `json:"state"`
 	Evidence   tmuxio.Evidence `json:"evidence"`
 	CapturedAt string          `json:"captured_at"`
 }
 
-// resolveChamberState looks up the agent's pane and probes the chamber
+// resolveAgentState looks up the agent's pane and probes the agent
 // state. Shared between the CLI subcommand (`claude-msg state`) and
-// the MCP tool (`semaphore.chamber_state`) so both surfaces produce
+// the MCP tool (`tmux-msg.agent_state`) so both surfaces produce
 // byte-identical JSON. Returns the result + any error from agent
 // resolution or tmux capture.
 //
@@ -42,8 +42,8 @@ type chamberStateResult struct {
 // to act on State should still check err first; consumers that just
 // want to surface "what did we observe" can render Evidence.Reason
 // regardless.
-func resolveChamberState(ctx context.Context, s *store.Store, agent string) (chamberStateResult, error) {
-	res := chamberStateResult{Agent: agent}
+func resolveAgentState(ctx context.Context, s *store.Store, agent string) (agentStateResult, error) {
+	res := agentStateResult{Agent: agent}
 	a, err := s.GetAgent(ctx, agent)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -63,12 +63,12 @@ func resolveChamberState(ctx context.Context, s *store.Store, agent string) (cha
 		res.CapturedAt = nowRFC3339()
 		return res, fmt.Errorf("agent %q has no pane", agent)
 	}
-	state, ev, err := tmuxio.ChamberState(ctx, a.PaneID)
+	state, ev, err := tmuxio.AgentState(ctx, a.PaneID)
 	res.State = state.String()
 	res.Evidence = ev
 	res.CapturedAt = nowRFC3339()
 	if err != nil {
-		return res, fmt.Errorf("chamber_state: %w", err)
+		return res, fmt.Errorf("agent_state: %w", err)
 	}
 	return res, nil
 }
@@ -81,8 +81,8 @@ func nowRFC3339() string {
 }
 
 // runStateCLI implements `claude-msg state --agent NAME` — the
-// operator-facing CLI sibling to the MCP `semaphore.chamber_state`
-// tool. Both surfaces consume resolveChamberState so the JSON schema
+// operator-facing CLI sibling to the MCP `tmux-msg.agent_state`
+// tool. Both surfaces consume resolveAgentState so the JSON schema
 // is identical across them.
 //
 // Usage: claude-msg state --agent NAME [--format text|json] [--db PATH]
@@ -112,7 +112,7 @@ func runStateCLI(args []string, stdout, stderr io.Writer) int {
 // runStateWithStore is the testable inner that runStateCLI calls
 // after opening the store. Same pattern as runStatusWithStore.
 func runStateWithStore(ctx context.Context, s *store.Store, agent, format string, stdout, stderr io.Writer) int {
-	res, resolveErr := resolveChamberState(ctx, s, agent)
+	res, resolveErr := resolveAgentState(ctx, s, agent)
 
 	switch format {
 	case "json":

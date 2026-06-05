@@ -17,7 +17,7 @@ const usage = `usage: claude-msg <subcommand> [args]
 
 Subcommands:
   send    Queue a message for an agent (validates caps, returns JSON)
-  control Send a whitelisted slash-command to a pane (mirrors semaphore.control)
+  control Send a whitelisted slash-command to a pane (mirrors tmux-msg.control)
   track   Show the delivery state of a single message by its public_id
   inbox   List queued messages for an agent
   status  Show paused state + queue depths across all agents (--today for journal-sourced today counts)
@@ -31,8 +31,8 @@ Subcommands:
   reset   Purge messages (requires --confirm)
   log     Inspect message threads
   discover Re-derive agents.pane_id from current tmux state
-  state   Probe a chamber's current activity via read-only capture-pane (#71)
-  refresh-all-mcps  Bulk-fire mcp-restart-semaphore to every registered chamber (#62)
+  state   Probe a agent's current activity via read-only capture-pane (#71)
+  refresh-all-mcps  Bulk-fire mcp-restart-tmux-msg to every registered agent (#62)
   mcp     Speak MCP over stdio (Claude Code tools)
 
 See https://git.frankenbit.de/frankenbit/tmux-msg for the design notes.

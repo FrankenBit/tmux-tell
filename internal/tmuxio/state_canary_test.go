@@ -31,7 +31,7 @@ import (
 func TestPromptSentinel_BytesMatchNBSP(t *testing.T) {
 	// The Claude Code TUI emits ❯ (U+276F, hex e2 9d af) followed by
 	// NBSP (U+00A0, hex c2 a0). Empirically captured across all 6
-	// chambers on 2026-06-04 via `tmux capture-pane | od -An -tx1`.
+	// agents on 2026-06-04 via `tmux capture-pane | od -An -tx1`.
 	want := []byte{0xe2, 0x9d, 0xaf, 0xc2, 0xa0}
 	got := []byte(PromptSentinel)
 	if !bytesEqual(got, want) {
@@ -77,7 +77,7 @@ func TestPromptSentinel_MatchesGoldenCapture(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Errorf("golden capture has NO line starting with PromptSentinel %q (% x) — Claude Code emission encoding may have drifted; re-verify via tmux capture-pane | od -An -tx1 on a live chamber + update PromptSentinel + re-capture the golden fixture", PromptSentinel, []byte(PromptSentinel))
+		t.Errorf("golden capture has NO line starting with PromptSentinel %q (% x) — Claude Code emission encoding may have drifted; re-verify via tmux capture-pane | od -An -tx1 on a live agent + update PromptSentinel + re-capture the golden fixture", PromptSentinel, []byte(PromptSentinel))
 	}
 }
 

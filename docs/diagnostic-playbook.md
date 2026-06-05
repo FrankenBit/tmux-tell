@@ -1,6 +1,6 @@
-# Diagnostic playbook: when a chamber says "I missed a message"
+# Diagnostic playbook: when a agent says "I missed a message"
 
-When a chamber reports a missing bus message, the instinct is to assume
+When a agent reports a missing bus message, the instinct is to assume
 tmux-msg dropped or corrupted it. The existing bug catalog reflects
 that — [#59](https://git.frankenbit.de/frankenbit/tmux-msg/issues/59)
 covers Enter-injection corruption when the receiver is at a Claude prompt,
@@ -8,15 +8,15 @@ covers Enter-injection corruption when the receiver is at a Claude prompt,
 mid-typing collisions when delivery lands during operator composition.
 
 But the 2026-06-03 incident that surfaced this playbook showed a third
-category: **sender-side gaps**, where the chamber's own flow skipped the
-`semaphore.send` call entirely. No DB row, no mailman delivery attempt,
+category: **sender-side gaps**, where the agent's own flow skipped the
+`tmux-msg.send` call entirely. No DB row, no mailman delivery attempt,
 no failure trace. The external action (a Forgejo PR filing) had happened
 cleanly; the corresponding bus notification simply was never inserted.
 
 A "bus is broken" narrative was forwarded as recovered substrate before
 the actual DB was checked. The recovery path took the wrong shape.
 
-This playbook captures the triage so the **next** time a chamber reports
+This playbook captures the triage so the **next** time a agent reports
 a missing message, the answer to "did the bus drop it?" lands in under
 five minutes instead of seeding a bus-recovery investigation.
 
@@ -24,7 +24,7 @@ five minutes instead of seeding a bus-recovery investigation.
 
 This is an **operational-coordination-layer expression** of the broader
 *"filed-bug root cause is hypothesis until probed"* discipline that
-already applies at the code-bug layer. The chamber reporting the gap is
+already applies at the code-bug layer. The agent reporting the gap is
 generating a hypothesis (*"tmux-msg dropped it"*), not a verified
 diagnosis. The playbook's job is to keep the hypothesis labelled as
 such until the substrate has been checked.
@@ -67,7 +67,7 @@ Decision tree on the result:
 
 | Result                                        | What it means                                                                       | Next action                                                                                                                       |
 |-----------------------------------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| **No row**                                    | Sender never reached the bus. Chamber-side flow gap.                                | **Stop investigating tmux-msg.** Probe the sender chamber's state at the alleged send time.                                  |
+| **No row**                                    | Sender never reached the bus. Agent-side flow gap.                                | **Stop investigating tmux-msg.** Probe the sender agent's state at the alleged send time.                                  |
 | **`state = 'delivered'`**                     | Bus did its job.                                                                    | Cross-check the receiver pane's state at `delivered_at`. The receiver may not have processed it (UI race, popup collision #59).   |
 | **`state = 'failed'`**                        | Bus tried and failed cleanly.                                                       | Check the `error` column. The `delivered_unverified` notification path should have fired — if it didn't, that's a separate gap.   |
 | **`state = 'queued'` / `'delivering'` stale** | Genuine delivery stall.                                                             | File a fresh bug citing the row's `public_id` + the receiver's mailman journal excerpt from §2.                                   |
@@ -113,7 +113,7 @@ the external system in the same window.
 
 The 2026-06-03 incident's key signal: Pilot's PR #305 was filed on
 Forgejo at 15:57 local, but Pilot's last bus message was at 15:23 local
-— the chamber had gone silent ~34 minutes *before* the external action.
+— the agent had gone silent ~34 minutes *before* the external action.
 The PR existed; the corresponding bus notification simply hadn't been
 fired.
 
@@ -129,13 +129,13 @@ Common cross-checks:
 Outcomes:
 
 - **External action at alleged time, no bus message**: gap in the
-  chamber's flow (the post-action notification step was skipped or
-  unreachable from where the chamber landed). Not a bus problem.
+  agent's flow (the post-action notification step was skipped or
+  unreachable from where the agent landed). Not a bus problem.
 - **External action at a *different* time than the operator
   remembers**: gap in the operator's mental model. Easier to recover
   from — verify the actual time, re-align the narrative.
-- **No external action at all**: chamber didn't do what was expected.
-  Investigate the chamber's session log for where the flow stopped.
+- **No external action at all**: agent didn't do what was expected.
+  Investigate the agent's session log for where the flow stopped.
 
 ## When this playbook DOES escalate to "bus-side"
 
@@ -159,7 +159,7 @@ fully grounded.
 ## When this playbook does NOT apply
 
 - A message **arrived** but the receiver acted on it wrong: that's a
-  receiver-chamber behavioral question, not a delivery question.
+  receiver-agent behavioral question, not a delivery question.
 - A message arrived but the receiver claims "wasn't expecting that":
   legitimate routing question, but separate from the
   did-it-actually-deliver triage this playbook is for.

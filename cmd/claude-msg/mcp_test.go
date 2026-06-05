@@ -67,7 +67,7 @@ func TestMCP_Send_HappyPath(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "semaphore.send", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
 		"to":   "bob",
 		"body": "hello via mcp",
 	})
@@ -84,7 +84,7 @@ func TestMCP_Send_UnknownRecipient(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "semaphore.send", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
 		"to":   "ghost",
 		"body": "hi",
 	})
@@ -97,7 +97,7 @@ func TestMCP_Send_RequiresEnvVar(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")
 
-	got := callMCPTool(t, s, "semaphore.send", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
 		"to":   "bob",
 		"body": "x",
 	})
@@ -110,7 +110,7 @@ func TestMCP_Whoami(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "semaphore.whoami", map[string]any{})
+	got := callMCPTool(t, s, "tmux-msg.whoami", map[string]any{})
 	if got["ok"] != true || got["name"] != "alice" {
 		t.Errorf("got %v", got)
 	}
@@ -120,7 +120,7 @@ func TestMCP_Agents(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob", "carol")
 
-	got := callMCPTool(t, s, "semaphore.agents", map[string]any{})
+	got := callMCPTool(t, s, "tmux-msg.agents", map[string]any{})
 	arr, ok := got["_array"].([]any)
 	if !ok {
 		t.Fatalf("expected array result, got %v", got)
@@ -136,7 +136,7 @@ func TestMCP_Inbox(t *testing.T) {
 	ctx := context.Background()
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "queued"})
 
-	got := callMCPTool(t, s, "semaphore.inbox", map[string]any{})
+	got := callMCPTool(t, s, "tmux-msg.inbox", map[string]any{})
 	arr, ok := got["_array"].([]any)
 	if !ok {
 		t.Fatalf("expected array, got %v", got)
@@ -148,7 +148,7 @@ func TestMCP_Inbox(t *testing.T) {
 
 func TestMCP_Status(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
-	got := callMCPTool(t, s, "semaphore.status", map[string]any{})
+	got := callMCPTool(t, s, "tmux-msg.status", map[string]any{})
 	arr, ok := got["_array"].([]any)
 	if !ok {
 		t.Fatalf("expected array, got %v", got)
@@ -171,16 +171,16 @@ func TestMCP_ToolsListContract(t *testing.T) {
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
 	want := map[string]bool{
-		"semaphore.send":           true,
-		"semaphore.agents":         true,
-		"semaphore.whoami":         true,
-		"semaphore.inbox":          true,
-		"semaphore.status":         true,
-		"semaphore.register":       true,
-		"semaphore.unregister":     true,
-		"semaphore.control":        true,
-		"semaphore.message_status": true,
-		"semaphore.chamber_state":  true,
+		"tmux-msg.send":           true,
+		"tmux-msg.agents":         true,
+		"tmux-msg.whoami":         true,
+		"tmux-msg.inbox":          true,
+		"tmux-msg.status":         true,
+		"tmux-msg.register":       true,
+		"tmux-msg.unregister":     true,
+		"tmux-msg.control":        true,
+		"tmux-msg.message_status": true,
+		"tmux-msg.agent_state":  true,
 	}
 	if len(tools) != len(want) {
 		t.Errorf("tools = %d, want %d", len(tools), len(want))

@@ -25,6 +25,67 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP wire-surface re-grounded on substrate name (#112, ADR-0004).**
+  The MCP server name and tool method prefix flipped from `semaphore`
+  to `tmux-msg`:
+  - **Server name**: `"semaphore"` → `"tmux-msg"` in MCP registration.
+    Every chamber's `.mcp.json` mapping for this MCP needs updating
+    (replace `"semaphore"` key with `"tmux-msg"`).
+  - **Tool method names**: `semaphore.send` → `tmux-msg.send`,
+    `semaphore.inbox` → `tmux-msg.inbox`, and 8 others (full
+    rename of all 10 registered tools).
+  - **Control-command names** for the `tmux-msg.control` whitelist:
+    `mcp-restart-semaphore` → `mcp-restart-tmux-msg`,
+    `mcp-enable-semaphore` → `mcp-enable-tmux-msg`,
+    `mcp-disable-semaphore` → `mcp-disable-tmux-msg`. Operator-side
+    macros that fire these commands need updating in lockstep with
+    the binary deploy.
+
+  Hard cutover per ADR-0004 §Decision (4): no alias period. Every
+  chamber updates `.mcp.json` + restarts Claude Code in one
+  operational window. ~5 minutes of MCP-bus-quiet across all six
+  chambers expected.
+
+- **Substrate terminology re-grounded `chamber` → `agent`
+  (#107, ADR-0005).** The substrate's per-pane-CLI-tool primitive is
+  renamed from project-local `chamber` jargon to substrate-honest
+  `agent` (which already lived in the substrate's identifier
+  vocabulary — `agents` SQL table, `--agent` flag,
+  `claude-mailman@<agent>.service` template):
+  - **Go code identifiers**: `ChamberState` → `AgentState`, all
+    derived forms (`chamberState`, `chamber_state`, etc.) swept
+    across `cmd/` and `internal/`. The `internal/store` schema's
+    `agents` table was already named correctly and stays unchanged.
+  - **MCP tool method**: `semaphore.chamber_state` →
+    `tmux-msg.agent_state`. Bundled into the same restart-cycle
+    cutover as the MCP wire-surface rename per ADR-0005
+    §Decision (4).
+  - **Doc prose**: README, `docs/diagnostic-playbook.md`,
+    `docs/operator-ux.md`, `docs/security.md` swept.
+  - **Out of scope** (preserved as written per ADR-0004 §Generality
+    + ADR-0005 §Decision (2)): ADR-0001 through ADR-0006 prose stays
+    frozen as accurate-to-time; chamber-level CLAUDE.md files in
+    `frankenbit/alcatraz-infra` are project-local lexicon (covered
+    by separate bridge note in `alcatraz-infra#21`); Binnacle's own
+    usage is a separate Bosun follow-up.
+
+  Operator migration in one cutover (alongside MCP wire-surface
+  rename above):
+
+  ```bash
+  # On alcatraz, after merging this PR + cutting v0.6.0:
+  sudo systemctl --user stop 'claude-mailman@*'
+  # Install v0.6.0 binary
+  sudo install -m 0755 -o root -g root claude-msg /usr/local/bin/
+  # Update each chamber's .mcp.json: server name semaphore → tmux-msg
+  # Update each chamber's Claude Code session: /mcp restart, then
+  # re-launch session so the new MCP tool names register.
+  systemctl --user daemon-reload
+  systemctl --user start 'claude-mailman@*'
+  ```
+
 ## [0.5.0] — 2026-06-05
 
 ### Changed

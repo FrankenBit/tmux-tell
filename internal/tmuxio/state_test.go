@@ -13,7 +13,7 @@ import (
 
 // fakeProbeRunner is a scripted tmux runner. Captures are consumed in
 // order as the loop progresses. The `calls` slice records every tmux
-// invocation; `TestChamberState_NoPaneMutation` asserts every
+// invocation; `TestAgentState_NoPaneMutation` asserts every
 // recorded call is capture-pane or display-message (no send-keys),
 // which catches any future change that reintroduces pane mutation
 // against the recipient.
@@ -65,28 +65,28 @@ func TestState_String_AllValues(t *testing.T) {
 	}
 }
 
-// --- ChamberState integration tests ---
+// --- AgentState integration tests ---
 
 // fastTemporalDelta installs a microsecond temporal-delta so tests
 // don't pay the 200ms production wait. Cleanup restores production.
 func fastTemporalDelta(t *testing.T) {
 	t.Helper()
-	prev := SetChamberStateTemporalDeltaForTest(time.Microsecond)
-	t.Cleanup(func() { SetChamberStateTemporalDeltaForTest(prev) })
+	prev := SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { SetAgentStateTemporalDeltaForTest(prev) })
 }
 
-// TestChamberState_IdleWhenSentinelEmpty pins the happy-path Idle
+// TestAgentState_IdleWhenSentinelEmpty pins the happy-path Idle
 // classification: pane is stable across the temporal-delta window
 // AND shows the PromptSentinel with no content past it. Reuses the
 // classifyInputRow helper from PR #66's substrate.
-func TestChamberState_IdleWhenSentinelEmpty(t *testing.T) {
+func TestAgentState_IdleWhenSentinelEmpty(t *testing.T) {
 	fastTemporalDelta(t)
-	pane := "history line A\nhistory line B\n──── Chamber ──\n❯\u00a0\n────────\n  status\n"
+	pane := "history line A\nhistory line B\n──── Agent ──\n❯\u00a0\n────────\n  status\n"
 	fr := newFakeProbeRunner([]string{pane, pane})
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, ev, err := ChamberState(context.Background(), "%5")
+	state, ev, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -101,10 +101,10 @@ func TestChamberState_IdleWhenSentinelEmpty(t *testing.T) {
 	}
 }
 
-// TestChamberState_WorkingWhenPaneChanges pins the Working
-// classification: the two captures differ → chamber is painting →
+// TestAgentState_WorkingWhenPaneChanges pins the Working
+// classification: the two captures differ → agent is painting →
 // working. ChangedLineCount is populated in Evidence for observability.
-func TestChamberState_WorkingWhenPaneChanges(t *testing.T) {
+func TestAgentState_WorkingWhenPaneChanges(t *testing.T) {
 	fastTemporalDelta(t)
 	paneA := "history\n● Bash(slow command)\n  ⎿ Running…\n✻ Crunched for 5s\n❯\u00a0\n  status\n"
 	paneB := "history\n● Bash(slow command)\n  ⎿ Running…\n✻ Crunched for 6s\n❯\u00a0\n  status\n"
@@ -112,7 +112,7 @@ func TestChamberState_WorkingWhenPaneChanges(t *testing.T) {
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, ev, err := ChamberState(context.Background(), "%5")
+	state, ev, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -124,12 +124,12 @@ func TestChamberState_WorkingWhenPaneChanges(t *testing.T) {
 	}
 }
 
-// TestChamberState_UnknownWhenStableNonPromptUI pins the safer-default
+// TestAgentState_UnknownWhenStableNonPromptUI pins the safer-default
 // branch: pane is stable across the temporal-delta window but neither
-// shows the PromptSentinel nor matches any marker. The chamber is in
+// shows the PromptSentinel nor matches any marker. The agent is in
 // some non-recognized UI state and the heuristic refuses to silently
 // roll up to a known classification.
-func TestChamberState_UnknownWhenStableNonPromptUI(t *testing.T) {
+func TestAgentState_UnknownWhenStableNonPromptUI(t *testing.T) {
 	fastTemporalDelta(t)
 	// Pane shows streaming output with no `❯\u00a0` row in view + no marker.
 	pane := "● Some response line\n  ⎿  Tool output line 1\n  ⎿  Tool output line 2\n  status line\n"
@@ -137,7 +137,7 @@ func TestChamberState_UnknownWhenStableNonPromptUI(t *testing.T) {
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, ev, err := ChamberState(context.Background(), "%5")
+	state, ev, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,16 +149,16 @@ func TestChamberState_UnknownWhenStableNonPromptUI(t *testing.T) {
 	}
 }
 
-// TestChamberState_PaneRequired pins the input-validation guard: empty
+// TestAgentState_PaneRequired pins the input-validation guard: empty
 // pane returns an error and StateUnknown without firing any tmux
 // calls. Mirrors the InputRowHasContent / QuickPresenceProbe
 // validation discipline.
-func TestChamberState_PaneRequired(t *testing.T) {
+func TestAgentState_PaneRequired(t *testing.T) {
 	fr := newFakeProbeRunner([]string{"ctx\n"})
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, _, err := ChamberState(context.Background(), "")
+	state, _, err := AgentState(context.Background(), "")
 	if err == nil {
 		t.Fatal("expected error for empty pane, got nil")
 	}
@@ -170,25 +170,25 @@ func TestChamberState_PaneRequired(t *testing.T) {
 	}
 }
 
-// TestChamberState_NoPaneMutation pins the substrate-class property:
-// ChamberState is read-only-observe. A successful classification makes
+// TestAgentState_NoPaneMutation pins the substrate-class property:
+// AgentState is read-only-observe. A successful classification makes
 // EXACTLY 2 capture-pane calls + 1 display-message call (the cursor
 // query added in #69's v2 algorithm per operator's
 // design call 2026-06-04) and ZERO send-keys. All three calls are
 // read-only at the tmux layer — capture-pane reads the visible
 // buffer; display-message reads internal pane state. This is the
-// load-bearing claim that ChamberState honors the "knock at the door
+// load-bearing claim that AgentState honors the "knock at the door
 // without waking" framing from #69; the v2 substrate-class extension
 // from PR #75's 2-call shape preserves the no-mutation property
 // while gaining cursor-position awareness.
-func TestChamberState_NoPaneMutation(t *testing.T) {
+func TestAgentState_NoPaneMutation(t *testing.T) {
 	fastTemporalDelta(t)
-	pane := "history\n──── Chamber ──\n❯\u00a0\n────────\n  status\n"
-	fr := newChamberStateRunner([]string{pane, pane}, 2, 5) // cursor at sentinel position
+	pane := "history\n──── Agent ──\n❯\u00a0\n────────\n  status\n"
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 5) // cursor at sentinel position
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	_, _, err := ChamberState(context.Background(), "%5")
+	_, _, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -215,25 +215,25 @@ func TestChamberState_NoPaneMutation(t *testing.T) {
 	}
 }
 
-// chamberStateRunner extends fakeProbeRunner with cursor-position
-// responses for the display-message call ChamberState makes in v2.
+// agentStateRunner extends fakeProbeRunner with cursor-position
+// responses for the display-message call AgentState makes in v2.
 // Returns capture-pane content from the captures slice + cursor
 // position as "X/Y" for display-message.
-type chamberStateRunner struct {
+type agentStateRunner struct {
 	*fakeProbeRunner
 	cursorX int
 	cursorY int
 }
 
-func newChamberStateRunner(captures []string, cursorX, cursorY int) *chamberStateRunner {
-	return &chamberStateRunner{
+func newAgentStateRunner(captures []string, cursorX, cursorY int) *agentStateRunner {
+	return &agentStateRunner{
 		fakeProbeRunner: newFakeProbeRunner(captures),
 		cursorX:         cursorX,
 		cursorY:         cursorY,
 	}
 }
 
-func (c *chamberStateRunner) run(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+func (c *agentStateRunner) run(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 	// Intercept display-message; delegate everything else to the
 	// underlying fakeProbeRunner.
 	c.mu.Lock()
@@ -255,21 +255,21 @@ func (c *chamberStateRunner) run(ctx context.Context, stdin io.Reader, args ...s
 	return c.fakeProbeRunner.run(ctx, stdin, args...)
 }
 
-// TestChamberState_IdleWhenCursorAtSentinelEmpty pins the cursor-aware
+// TestAgentState_IdleWhenCursorAtSentinelEmpty pins the cursor-aware
 // happy path for the clean-prompt case: cursor at the position right
 // after `❯\u00a0` AND empty content past it → StateIdle with
 // Evidence.PromptEmpty=true. v2 algorithm per #69
 // operator's design call 2026-06-04.
-func TestChamberState_IdleWhenCursorAtSentinelEmpty(t *testing.T) {
+func TestAgentState_IdleWhenCursorAtSentinelEmpty(t *testing.T) {
 	fastTemporalDelta(t)
 	// Cursor row (index 3, 0-indexed) is `❯\u00a0` with no content past it.
-	pane := "history\n──── Chamber ──\n  recap line\n❯\u00a0\n────────\n  status\n"
+	pane := "history\n──── Agent ──\n  recap line\n❯\u00a0\n────────\n  status\n"
 	// cursorX=2 (right after "❯\u00a0"); cursorY=3 (the ❯\u00a0row)
-	fr := newChamberStateRunner([]string{pane, pane}, 2, 3)
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 3)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, ev, err := ChamberState(context.Background(), "%5")
+	state, ev, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestChamberState_IdleWhenCursorAtSentinelEmpty(t *testing.T) {
 	}
 }
 
-// TestChamberState_IdleWhenCursorAtSentinelWithAutoSuggestion pins the
+// TestAgentState_IdleWhenCursorAtSentinelWithAutoSuggestion pins the
 // v2 fix for the smoke-test gap: when the input row is `❯\u00a0<content>`
 // but the cursor is still at the sentinel position (col == sentinel
 // width), the content is Claude Code's auto-suggested ghost-text and
@@ -295,17 +295,17 @@ func TestChamberState_IdleWhenCursorAtSentinelEmpty(t *testing.T) {
 // `❯\u00a0/nimbus-board` with cursor at col 2 — Claude Code's slash-command
 // auto-suggestion. Operator had not typed the suggestion; it was a
 // ghost-text proposal.
-func TestChamberState_IdleWhenCursorAtSentinelWithAutoSuggestion(t *testing.T) {
+func TestAgentState_IdleWhenCursorAtSentinelWithAutoSuggestion(t *testing.T) {
 	fastTemporalDelta(t)
 	// Row 3 (0-indexed): `❯\u00a0/nimbus-board` — Claude Code auto-suggested.
-	pane := "history\n──── Chamber ──\n  recap line\n❯\u00a0/nimbus-board\n────────\n  status\n"
+	pane := "history\n──── Agent ──\n  recap line\n❯\u00a0/nimbus-board\n────────\n  status\n"
 	// cursorX=2 (right after "❯\u00a0", before "/"); cursorY=3 (the ❯\u00a0row).
 	// Operator has NOT engaged — cursor would be past the suggestion if they had.
-	fr := newChamberStateRunner([]string{pane, pane}, 2, 3)
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 3)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, ev, err := ChamberState(context.Background(), "%5")
+	state, ev, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -320,21 +320,21 @@ func TestChamberState_IdleWhenCursorAtSentinelWithAutoSuggestion(t *testing.T) {
 	}
 }
 
-// TestChamberState_AwaitingOperatorWhenCursorPastSentinel pins the
+// TestAgentState_AwaitingOperatorWhenCursorPastSentinel pins the
 // operator-mid-typing case: cursor is past the sentinel position,
 // meaning content past `❯\u00a0` is operator-typed (not ghost-text).
-// Chamber is blocked on operator finishing the draft → return
+// Agent is blocked on operator finishing the draft → return
 // StateAwaitingOperator so consumers (Bosun) gate their dispatch.
-func TestChamberState_AwaitingOperatorWhenCursorPastSentinel(t *testing.T) {
+func TestAgentState_AwaitingOperatorWhenCursorPastSentinel(t *testing.T) {
 	fastTemporalDelta(t)
 	// Row 3 (0-indexed): `❯\u00a0Thank you for handling this and ` (#63 reproduction shape).
-	pane := "history\n──── Chamber ──\n  recap line\n❯\u00a0Thank you for handling this and \n────────\n  status\n"
+	pane := "history\n──── Agent ──\n  recap line\n❯\u00a0Thank you for handling this and \n────────\n  status\n"
 	// cursorX=37 (past the typed content); cursorY=3.
-	fr := newChamberStateRunner([]string{pane, pane}, 37, 3)
+	fr := newAgentStateRunner([]string{pane, pane}, 37, 3)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, ev, err := ChamberState(context.Background(), "%5")
+	state, ev, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -346,26 +346,26 @@ func TestChamberState_AwaitingOperatorWhenCursorPastSentinel(t *testing.T) {
 	}
 }
 
-// TestChamberState_FallbackWhenCursorRowNotSentinel pins the cursor-
+// TestAgentState_FallbackWhenCursorRowNotSentinel pins the cursor-
 // less fallback path: when the cursor sits on a row that doesn't start
-// with `❯\u00a0` (e.g., chamber is mid-spinner and cursor is on the spinner
+// with `❯\u00a0` (e.g., agent is mid-spinner and cursor is on the spinner
 // row), the v2 algorithm falls back to v1's classifyInputRow heuristic.
 //
 // Smoke evidence: Surveyor pane during PR review showed cursor at the
-// title-separator row, not the ❯\u00a0input row (the chamber was working).
+// title-separator row, not the ❯\u00a0input row (the agent was working).
 // The fallback lets the algorithm still classify cleanly when cursor
 // position doesn't help.
-func TestChamberState_FallbackWhenCursorRowNotSentinel(t *testing.T) {
+func TestAgentState_FallbackWhenCursorRowNotSentinel(t *testing.T) {
 	fastTemporalDelta(t)
 	// Cursor at row 1 (not the ❯\u00a0row at row 3). Pane is otherwise stable
 	// + has the sentinel with empty content; fallback to v1 heuristic
 	// → StateIdle.
-	pane := "history\n──── Chamber ──\n  recap line\n❯\u00a0\n────────\n  status\n"
-	fr := newChamberStateRunner([]string{pane, pane}, 0, 1)
+	pane := "history\n──── Agent ──\n  recap line\n❯\u00a0\n────────\n  status\n"
+	fr := newAgentStateRunner([]string{pane, pane}, 0, 1)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, ev, err := ChamberState(context.Background(), "%5")
+	state, ev, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -377,14 +377,14 @@ func TestChamberState_FallbackWhenCursorRowNotSentinel(t *testing.T) {
 	}
 }
 
-// TestChamberState_UnknownWithAccurateReason_SentinelFoundCursorOff pins
+// TestAgentState_UnknownWithAccurateReason_SentinelFoundCursorOff pins
 // the accurate-reason cleanup (the "C" item from the operator's
 // 2026-06-04 discussion): when the sentinel IS in the pane but the
 // cursor isn't at the input row AND the cursor-less fallback didn't
 // match (DeltaInputActivity on the input row), the Unknown branch
 // reports "sentinel found but cursor not at input row" rather than the
 // misleading v1 "no prompt sentinel" message.
-func TestChamberState_UnknownWithAccurateReason_SentinelFoundCursorOff(t *testing.T) {
+func TestAgentState_UnknownWithAccurateReason_SentinelFoundCursorOff(t *testing.T) {
 	fastTemporalDelta(t)
 	// Pane has the sentinel but with content past it. Cursor on row 1
 	// (a non-sentinel row). classifyInputRow returns DeltaInputActivity
@@ -392,11 +392,11 @@ func TestChamberState_UnknownWithAccurateReason_SentinelFoundCursorOff(t *testin
 	// as Idle. Falls through to Unknown — and the reason should name
 	// the actual situation, not "no prompt sentinel".
 	pane := "history\n  spinner-ish content\n❯\u00a0<agent-narration>\n────────\n  status\n"
-	fr := newChamberStateRunner([]string{pane, pane}, 0, 1)
+	fr := newAgentStateRunner([]string{pane, pane}, 0, 1)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, ev, err := ChamberState(context.Background(), "%5")
+	state, ev, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -411,15 +411,15 @@ func TestChamberState_UnknownWithAccurateReason_SentinelFoundCursorOff(t *testin
 	}
 }
 
-// TestChamberState_ContextCancelledDuringTemporalDelta pins the
+// TestAgentState_ContextCancelledDuringTemporalDelta pins the
 // cancellation contract: a context cancelled between the two captures
 // returns StateUnknown + ctx.Err() rather than racing the second
 // capture or silently waiting out the delta.
-func TestChamberState_ContextCancelledDuringTemporalDelta(t *testing.T) {
+func TestAgentState_ContextCancelledDuringTemporalDelta(t *testing.T) {
 	// Use the production temporal delta here so the cancellation has
 	// time to fire mid-wait. (Microsecond delta would race the cancel.)
-	prev := SetChamberStateTemporalDeltaForTest(100 * time.Millisecond)
-	t.Cleanup(func() { SetChamberStateTemporalDeltaForTest(prev) })
+	prev := SetAgentStateTemporalDeltaForTest(100 * time.Millisecond)
+	t.Cleanup(func() { SetAgentStateTemporalDeltaForTest(prev) })
 
 	pane := "history\n❯\u00a0\n  status\n"
 	fr := newFakeProbeRunner([]string{pane, pane})
@@ -432,7 +432,7 @@ func TestChamberState_ContextCancelledDuringTemporalDelta(t *testing.T) {
 		cancel()
 	}()
 
-	state, _, err := ChamberState(ctx, "%5")
+	state, _, err := AgentState(ctx, "%5")
 	if err == nil {
 		t.Fatal("expected error from ctx cancellation, got nil")
 	}
@@ -447,7 +447,7 @@ func TestChamberState_ContextCancelledDuringTemporalDelta(t *testing.T) {
 }
 
 // TestCountChangedLines_DiffShape pins the helper's behavior on the
-// shapes ChamberState cares about: same content → 0; trailing line
+// shapes AgentState cares about: same content → 0; trailing line
 // added → 1; spinner-counter line changed → 1; complete rewrite → all
 // lines.
 func TestCountChangedLines_DiffShape(t *testing.T) {
@@ -470,12 +470,12 @@ func TestCountChangedLines_DiffShape(t *testing.T) {
 	}
 }
 
-// TestChamberState_AwaitingOperatorOnAskUserQuestionGolden pins the
+// TestAgentState_AwaitingOperatorOnAskUserQuestionGolden pins the
 // end-to-end classification for the AskUserQuestion popup scenario
 // (#79). Loads the capture-derived golden fixture as
 // both capture-pane responses (the pane is stable across the temporal
 // delta — operator is reading the popup; nothing's animating), and
-// asserts ChamberState returns StateAwaitingOperator with the marker
+// asserts AgentState returns StateAwaitingOperator with the marker
 // surfaced in Evidence.
 //
 // The state.go classifier reaches the AwaitingOperatorMarker check
@@ -492,14 +492,14 @@ func TestCountChangedLines_DiffShape(t *testing.T) {
 // (which only checks the substring is in the golden) would still pass.
 // This test pins the load-bearing *classification*, not just the
 // constant-vs-golden alignment.
-// TestChamberState_AtRestInCompactionOnGolden pins the end-to-end
+// TestAgentState_AtRestInCompactionOnGolden pins the end-to-end
 // classification for the /compact-in-progress scenario (tmux-msg
 // #70). Loads BOTH capture-derived goldens — at 8% and 68% — and feeds
 // them as capA and capB. This shape is load-bearing:
 //
 //   - The pane animates during compaction (spinner glyph cycles ✻↔✢,
 //     percentage ticks, elapsed time changes), so capA != capB. Without
-//     the CompactionMarker check at precedence 1, ChamberState would
+//     the CompactionMarker check at precedence 1, AgentState would
 //     hit the precedence-2 "working" check and mis-classify.
 //   - The marker matches BOTH captures despite the different spinner
 //     glyphs, pinning the spinner-frame robustness end-to-end (the
@@ -515,7 +515,7 @@ func TestCountChangedLines_DiffShape(t *testing.T) {
 // removed the spinner-cycling-aware substring scoping — would
 // silently break the AtRestInCompaction path while the canary
 // (substring-in-golden) still passed.
-func TestChamberState_AtRestInCompactionOnGolden(t *testing.T) {
+func TestAgentState_AtRestInCompactionOnGolden(t *testing.T) {
 	fastTemporalDelta(t)
 	earlyGolden, err := os.ReadFile("testdata/golden_quartermaster_compaction_2026-06-04.txt")
 	if err != nil {
@@ -532,11 +532,11 @@ func TestChamberState_AtRestInCompactionOnGolden(t *testing.T) {
 	if string(earlyGolden) == string(advancedGolden) {
 		t.Fatalf("the two compaction goldens are byte-identical; the test's precedence-over-working claim requires capA != capB")
 	}
-	fr := newChamberStateRunner([]string{string(earlyGolden), string(advancedGolden)}, 0, 0)
+	fr := newAgentStateRunner([]string{string(earlyGolden), string(advancedGolden)}, 0, 0)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, ev, err := ChamberState(context.Background(), "%5")
+	state, ev, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -552,18 +552,18 @@ func TestChamberState_AtRestInCompactionOnGolden(t *testing.T) {
 	}
 }
 
-func TestChamberState_AwaitingOperatorOnAskUserQuestionGolden(t *testing.T) {
+func TestAgentState_AwaitingOperatorOnAskUserQuestionGolden(t *testing.T) {
 	fastTemporalDelta(t)
 	golden, err := os.ReadFile("testdata/golden_quartermaster_askuserquestion_2026-06-04.txt")
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}
 	pane := string(golden)
-	fr := newChamberStateRunner([]string{pane, pane}, 0, 0)
+	fr := newAgentStateRunner([]string{pane, pane}, 0, 0)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
 
-	state, ev, err := ChamberState(context.Background(), "%5")
+	state, ev, err := AgentState(context.Background(), "%5")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

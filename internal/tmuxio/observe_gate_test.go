@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// observeGateRunner is a per-test fake that drives ChamberState's
+// observeGateRunner is a per-test fake that drives AgentState's
 // (capture-pane × 2, display-message × 1) call shape plus the
 // observe-gate's extractInputContent capture-pane call. The script is
 // a per-iteration tuple of (paneA, paneB, cursorX, cursorY,
@@ -45,7 +45,7 @@ func (r *observeGateRunner) run(ctx context.Context, stdin io.Reader, args ...st
 	step := r.steps[0]
 	switch args[0] {
 	case "capture-pane":
-		// ChamberState's two captures, then extractInputContent's one.
+		// AgentState's two captures, then extractInputContent's one.
 		// We cycle 3 capture-pane calls per logical iteration; advance
 		// to the next step after the third.
 		r.cursor++
@@ -109,14 +109,14 @@ func formatInt(i int) string {
 	return string(buf[n:])
 }
 
-// fastObserveDelta installs a microsecond temporal-delta on ChamberState
+// fastObserveDelta installs a microsecond temporal-delta on AgentState
 // for the duration of the test. Without this, each iteration sleeps
 // 200ms for the cursor-aware classification's stability check, and the
 // observe-gate's loop would run real-time over tests.
 func fastObserveDelta(t *testing.T) {
 	t.Helper()
-	prev := SetChamberStateTemporalDeltaForTest(time.Microsecond)
-	t.Cleanup(func() { SetChamberStateTemporalDeltaForTest(prev) })
+	prev := SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { SetAgentStateTemporalDeltaForTest(prev) })
 }
 
 // TestObserveGate_FastPathIdle pins the idle-on-first-iteration happy
@@ -213,7 +213,7 @@ func TestObserveGate_StaleFlush(t *testing.T) {
 func TestObserveGate_ContentChangeResetsStale(t *testing.T) {
 	fastObserveDelta(t)
 	// Build sentinel-row panes whose draft grows each iteration so
-	// ChamberState classifies as StateAwaitingOperator (cursor past
+	// AgentState classifies as StateAwaitingOperator (cursor past
 	// sentinel position) and extractInputContent recovers the draft.
 	mkPane := func(draft string) (string, int) {
 		return "history\n" + PromptSentinel + draft + "\nfooter\n", 2 + len(draft)
@@ -360,7 +360,7 @@ func TestExtractInputContent_SentinelRowFound(t *testing.T) {
 }
 
 // TestExtractInputContent_NoSentinelRow pins the empty-return case:
-// when no row starts with PromptSentinel (e.g., chamber mid-spinner,
+// when no row starts with PromptSentinel (e.g., agent mid-spinner,
 // popup overlay), the function returns "" with nil error rather than
 // erroring.
 func TestExtractInputContent_NoSentinelRow(t *testing.T) {
@@ -392,7 +392,7 @@ func TestExtractInputContent_NoSentinelRow(t *testing.T) {
 // the (c) flush correctness bug the multi-line capture issue tracked.
 func TestExtractInputContent_MultilineDraftCapturedToStatusBoundary(t *testing.T) {
 	pane := "history line\n" +
-		"───────────────────────── Chamber ──\n" +
+		"───────────────────────── Agent ──\n" +
 		PromptSentinel + "first line of draft\n" +
 		"  second line of draft\n" +
 		"  third line of draft\n" +

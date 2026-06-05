@@ -46,13 +46,13 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
-// newMCPServer wires the semaphore.* tools onto an mcp.Server.
+// newMCPServer wires the tmux-msg.* tools onto an mcp.Server.
 // Tools registered: send / agents / whoami / inbox / message_status /
-// status / register / control / unregister / chamber_state.
+// status / register / control / unregister / agent_state.
 func newMCPServer(s *store.Store) *mcp.Server {
-	srv := mcp.NewServer("semaphore", "0.1.0")
+	srv := mcp.NewServer("tmux-msg", "0.1.0")
 
-	srv.RegisterTool("semaphore.send",
+	srv.RegisterTool("tmux-msg.send",
 		"Queue a message for another agent. Sender is resolved from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry.",
 		json.RawMessage(`{
 			"type": "object",
@@ -65,7 +65,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpSendHandler(s))
 
-	srv.RegisterTool("semaphore.agents",
+	srv.RegisterTool("tmux-msg.agents",
 		"List registered agents with pane liveness.",
 		json.RawMessage(`{
 			"type": "object",
@@ -75,12 +75,12 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpAgentsHandler(s))
 
-	srv.RegisterTool("semaphore.whoami",
+	srv.RegisterTool("tmux-msg.whoami",
 		"Return this session's registration. Identity from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry.",
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpWhoamiHandler(s))
 
-	srv.RegisterTool("semaphore.inbox",
+	srv.RegisterTool("tmux-msg.inbox",
 		"List the caller's own queued messages.",
 		json.RawMessage(`{
 			"type": "object",
@@ -91,7 +91,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpInboxHandler(s))
 
-	srv.RegisterTool("semaphore.message_status",
+	srv.RegisterTool("tmux-msg.message_status",
 		"Look up the delivery state of a sent message by its public_id. Returns created_at + delivered_at + error so the sender can see whether the bus has handed off the row yet.",
 		json.RawMessage(`{
 			"type": "object",
@@ -102,12 +102,12 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpMessageStatusHandler(s))
 
-	srv.RegisterTool("semaphore.status",
+	srv.RegisterTool("tmux-msg.status",
 		"Return registry overview: paused state + queue depths per agent.",
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpStatusHandler(s))
 
-	srv.RegisterTool("semaphore.register",
+	srv.RegisterTool("tmux-msg.register",
 		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true.",
 		json.RawMessage(`{
 			"type": "object",
@@ -122,7 +122,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpRegisterHandler(s))
 
-	srv.RegisterTool("semaphore.control",
+	srv.RegisterTool("tmux-msg.control",
 		"Send a whitelisted Claude Code slash-command directly to a pane. Scope-gated: when to==self, the self-whitelist applies; when to is a peer, the peer-whitelist applies — with a third tier of per-edge exceptions for destructive commands. Specifically, /clear is globally denied but Bosun→Pilot is permitted (rescue path when Pilot can't /compact out of token exhaustion). Bypasses the chat-message renderer. Optional resume_with (only with command=compact, only on self) queues a follow-up message that the mailman delivers AFTER /compact has settled — pre-write your continuation instead of going silent post-compact.",
 		json.RawMessage(`{
 			"type": "object",
@@ -135,7 +135,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpControlHandler(s))
 
-	srv.RegisterTool("semaphore.unregister",
+	srv.RegisterTool("tmux-msg.unregister",
 		"Remove an agent from the registry. stop_mailman defaults true.",
 		json.RawMessage(`{
 			"type": "object",
@@ -148,8 +148,8 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpUnregisterHandler(s))
 
-	srv.RegisterTool("semaphore.chamber_state",
-		"Probe an agent's chamber-state via read-only capture-pane (#71). Returns one of five states: idle / working / at-rest-in-compaction / awaiting-operator / unknown. 'Knock at the door without waking the inhabitant' — exactly two capture-pane calls, zero pane mutation, ~200ms latency. Consumers should treat 'unknown' as advisory-not-authoritative per #65's substrate-class-of-claim convention (don't silently roll up an unknown classification to a known state). v1 detects idle/working/unknown reliably; at-rest-in-compaction and awaiting-operator land when #70's empirical capture populates the marker constants.",
+	srv.RegisterTool("tmux-msg.agent_state",
+		"Probe an agent's agent-state via read-only capture-pane (#71). Returns one of five states: idle / working / at-rest-in-compaction / awaiting-operator / unknown. 'Knock at the door without waking the inhabitant' — exactly two capture-pane calls, zero pane mutation, ~200ms latency. Consumers should treat 'unknown' as advisory-not-authoritative per #65's substrate-class-of-claim convention (don't silently roll up an unknown classification to a known state). v1 detects idle/working/unknown reliably; at-rest-in-compaction and awaiting-operator land when #70's empirical capture populates the marker constants.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -157,17 +157,17 @@ func newMCPServer(s *store.Store) *mcp.Server {
 			},
 			"required": ["agent"]
 		}`),
-		mcpChamberStateHandler(s))
+		mcpAgentStateHandler(s))
 
 	return srv
 }
 
-// mcpChamberStateHandler returns the handler for the
-// semaphore.chamber_state MCP tool. Wraps resolveChamberState (shared
+// mcpAgentStateHandler returns the handler for the
+// tmux-msg.agent_state MCP tool. Wraps resolveAgentState (shared
 // with the CLI subcommand `claude-msg state`) so both surfaces emit
 // the same JSON schema — durable shape that Binnacle's M6b can
 // consume verbatim per #74's carry-forward spec.
-func mcpChamberStateHandler(s *store.Store) mcp.ToolHandler {
+func mcpAgentStateHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
 		Agent string `json:"agent"`
 	}
@@ -179,7 +179,7 @@ func mcpChamberStateHandler(s *store.Store) mcp.ToolHandler {
 		if in.Agent == "" {
 			return nil, fmt.Errorf("agent required")
 		}
-		res, err := resolveChamberState(ctx, s, in.Agent)
+		res, err := resolveAgentState(ctx, s, in.Agent)
 		// Return the result regardless of error — the consumer sees
 		// the Evidence.Reason and can decide. Error surfaces via the
 		// MCP error channel for callers that want to gate on success.

@@ -78,9 +78,9 @@ Mapped against the code as of v0.2.1.
 
 ```
 ┌──────────┐                  Bus                  ┌──────────┐
-│ Sender   │ ───► semaphore.send ─► mailman ─────► │ Receiver │
+│ Sender   │ ───► tmux-msg.send ─► mailman ─────► │ Receiver │
 │ Agent    │                                       │ Agent    │
-│          │ ───► semaphore.control (peer-scope) ─►│          │
+│          │ ───► tmux-msg.control (peer-scope) ─►│          │
 └──────────┘                                       └──────────┘
 ```
 
@@ -90,9 +90,9 @@ Mapped against the code as of v0.2.1.
     gates whether it's reachable as a peer command at all (compact,
     cost, mcp-disable are self-only; rename, help, mcp-enable,
     mcp-restart are peer-allowed).
-  - Sentinel-based macro: `mcp-restart-semaphore` peer-invokable
+  - Sentinel-based macro: `mcp-restart-tmux-msg` peer-invokable
     macro synthesises a disable+enable pair atomically (#28). Raw
-    `mcp-disable-semaphore` is self-only specifically to prevent a
+    `mcp-disable-tmux-msg` is self-only specifically to prevent a
     prompt-injected peer from denying-of-service another agent's
     bus connection.
   - Silent-drift detection (#37): before delivery, the mailman
@@ -120,7 +120,7 @@ Mapped against the code as of v0.2.1.
   trusts whatever the handler inserts as long as the
   schema-invariants hold (FK references resolve, non-empty
   required fields, etc.). This is the trust boundary Surveyor
-  named in the #28 Q1 review: the `mcp-restart-semaphore` macro
+  named in the #28 Q1 review: the `mcp-restart-tmux-msg` macro
   bypasses the per-row whitelist scope check on the inner inserts
   because the handler has already authorized the macro.
 - **What's enforced**:
@@ -294,7 +294,7 @@ without them.
 |----------------------------|-----------------------------------------------------------------------|------------------------------------------------------------------------------------|-------------|
 | Authentication             | `$TMUX_PANE` → registry                                               | Per-agent identity token (secret, mTLS, or signed JWT)                             | Substantial |
 | Sender identity guarantee  | `$TMUX_PANE` (trivially spoofable with shell)                         | Cryptographic binding between Claude session and identity token                    | Large       |
-| Authorization              | Binary self/peer scope on whitelist                                   | Per-tool capability ACLs ("agent X may call semaphore.control on agent Y")         | Substantial |
+| Authorization              | Binary self/peer scope on whitelist                                   | Per-tool capability ACLs ("agent X may call tmux-msg.control on agent Y")         | Substantial |
 
 ### 4.2 Independent (can land separately)
 
@@ -324,8 +324,8 @@ keeps the implicit-TODO ambiguity out of §1-§4 (which IS load-bearing
 and gets updated in lockstep with code).
 
 - **Control whitelist text-vs-sentinel ambiguity.** The
-  `mcp-restart-semaphore` macro resolves to text
-  `"/mcp restart semaphore"` that's never actually typed — it's a
+  `mcp-restart-tmux-msg` macro resolves to text
+  `"/mcp restart tmux-msg"` that's never actually typed — it's a
   sentinel for the handler to dispatch the macro. If a future
   whitelist edit accidentally makes it typeable (e.g. adds a
   `IsTyped bool` field default-true to `Command`), the recipient
@@ -368,4 +368,4 @@ and gets updated in lockstep with code).
 | Trust model              | The set of assumptions the design relies on (single operator, shell-access trust). |
 | Trust boundary           | An interface across which trust changes (operator vs bus, handler vs store, etc.). |
 | Load-bearing assumption  | A design decision that's only correct under the trust model. Naming them makes the cost of trust-model change explicit. |
-| Sentinel                 | A value that signals a special code path rather than being interpreted literally. The `mcp-restart-semaphore` Text field is one. |
+| Sentinel                 | A value that signals a special code path rather than being interpreted literally. The `mcp-restart-tmux-msg` Text field is one. |

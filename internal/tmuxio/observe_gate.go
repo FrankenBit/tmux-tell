@@ -21,7 +21,7 @@ type ObserveGateOpts struct {
 	// Default 15s.
 	PollIntervalMax time.Duration
 	// BackoffFactor is the multiplicative growth on PollInterval per
-	// iteration when the chamber is not yet ready (StateAwaitingOperator,
+	// iteration when the agent is not yet ready (StateAwaitingOperator,
 	// StateWorking, StateAtRestInCompaction, StateUnknown). Default 1.5.
 	// The interval resets to PollIntervalMin when the input-row content
 	// changes (operator typed something new) so a fresh observation
@@ -63,12 +63,12 @@ type GateOutcome struct {
 	// Reason is a one-line human-readable explanation of how the gate
 	// decided to return. Suitable for verbose mailman logging.
 	Reason string
-	// State is the ChamberState classification that produced the
+	// State is the AgentState classification that produced the
 	// outcome. StateIdle for the happy path; StateAwaitingOperator for
 	// stale-flush; potentially other states on MaxWait or context
 	// cancellation.
 	State State
-	// Iterations is the number of ChamberState polls before the gate
+	// Iterations is the number of AgentState polls before the gate
 	// decided to return (1 = fast-path idle on first poll).
 	Iterations int
 	// Stale is true when the gate decided to proceed despite operator-
@@ -91,7 +91,7 @@ type GateOutcome struct {
 var ErrMaxWaitExceeded = errors.New("tmuxio: observe-gate MaxWait exceeded")
 
 // ObserveGate observes the receiver pane via repeated read-only
-// ChamberState calls until the chamber is ready to receive a paste
+// AgentState calls until the agent is ready to receive a paste
 // delivery. The substrate-class is read-only-observe: zero pane
 // mutation, zero probe injection, zero send-keys before the caller's
 // own Deliver call (or the caller's Ctrl+U on Stale flush).
@@ -99,7 +99,7 @@ var ErrMaxWaitExceeded = errors.New("tmuxio: observe-gate MaxWait exceeded")
 // Replaced the probe-and-watch gate per #92 (shipped in v0.3.0; the
 // legacy primitives were swept out in v0.4.0 / #94). The algorithm:
 //
-//  1. Poll ChamberState; on StateIdle (cursor at sentinel — empty or
+//  1. Poll AgentState; on StateIdle (cursor at sentinel — empty or
 //     auto-suggestion ghost-text), return immediately with Stale=false.
 //  2. On StateAwaitingOperator (cursor past sentinel = operator
 //     drafting), capture the input row's content past the
@@ -164,11 +164,11 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 		if opts.Ping != nil {
 			opts.Ping()
 		}
-		state, ev, err := ChamberState(ctx, pane)
+		state, ev, err := AgentState(ctx, pane)
 		lastState = state
 		if err != nil {
 			return GateOutcome{
-				Reason:     fmt.Sprintf("ChamberState error: %v", err),
+				Reason:     fmt.Sprintf("AgentState error: %v", err),
 				State:      state,
 				Iterations: iterations,
 			}, fmt.Errorf("tmuxio: observe-gate: %w", err)
@@ -220,7 +220,7 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 			}
 
 		case StateWorking, StateAtRestInCompaction, StateUnknown:
-			// Safer-default wait. The chamber is busy / compacting /
+			// Safer-default wait. The agent is busy / compacting /
 			// in an unrecognized state; defer + re-poll.
 		}
 
@@ -269,7 +269,7 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 // sentinel-prefixed row downward, joining each continuation row with
 // "\n", until it hits a row recognized as outside the input area
 // (the below-input separator or the status line). Returns "" with
-// nil error when no sentinel row is found (e.g., chamber paused
+// nil error when no sentinel row is found (e.g., agent paused
 // mid-spinner — the input area isn't visible).
 //
 // Multi-line handling per #96: the legacy implementation captured
@@ -278,7 +278,7 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 // the archived stranded_draft only held line 1). The walk-until-
 // boundary shape matches Claude Code's TUI layout:
 //
-//	─────── <chamber title> ──     ← title separator (above input)
+//	─────── <agent title> ──     ← title separator (above input)
 //	❯ first line of draft           ← sentinel row + content
 //	  continuation row              ← continuation (no sentinel prefix)
 //	  another continuation row

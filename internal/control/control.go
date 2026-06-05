@@ -77,7 +77,7 @@ var Allowed = map[string]Command{
 	// blast-radius nightmare). The Bosun→Pilot rescue case is allowed
 	// via PeerEdges instead — see #60.
 	"clear": {Text: "/clear", Self: false, Peer: false},
-	// MCP-server lifecycle: useful after deploying a new semaphore tool
+	// MCP-server lifecycle: useful after deploying a new tmux-msg tool
 	// so a running agent can refresh its tool surface without losing
 	// session context.
 	//
@@ -85,24 +85,24 @@ var Allowed = map[string]Command{
 	// repeated /mcp disable would silently cut another agent off the
 	// bus. Enable stays peer-allowed (re-enabling someone is helpful).
 	// For the legitimate "peer asks me to restart your MCP" case,
-	// callers use the mcp-restart-semaphore macro below, which the
+	// callers use the mcp-restart-tmux-msg macro below, which the
 	// MCP handler synthesises into disable+enable internally.
-	"mcp-disable-semaphore": {Text: "/mcp disable semaphore", Self: true, Peer: false},
-	"mcp-enable-semaphore":  {Text: "/mcp enable semaphore", Self: true, Peer: true},
-	// mcp-restart-semaphore is a *macro*. The Text field documents what
+	"mcp-disable-tmux-msg": {Text: "/mcp disable tmux-msg", Self: true, Peer: false},
+	"mcp-enable-tmux-msg":  {Text: "/mcp enable tmux-msg", Self: true, Peer: true},
+	// mcp-restart-tmux-msg is a *macro*. The Text field documents what
 	// the macro represents but is not actually typed into a pane —
 	// Claude Code has no `/mcp restart` slash command. The MCP handler
 	// detects this command by name (or by matching this Text as a
-	// sentinel) and queues two control rows: `/mcp disable semaphore`
-	// then `/mcp enable semaphore`. Peer-allowed because the synthesised
+	// sentinel) and queues two control rows: `/mcp disable tmux-msg`
+	// then `/mcp enable tmux-msg`. Peer-allowed because the synthesised
 	// rows always restore the connection; the raw disable that would
 	// expose the DoS surface is never exposed to peers directly.
-	"mcp-restart-semaphore": {Text: "/mcp restart semaphore", Self: true, Peer: true},
+	"mcp-restart-tmux-msg": {Text: "/mcp restart tmux-msg", Self: true, Peer: true},
 }
 
 // Edge identifies a specific (sender → recipient) pair for which a
 // per-edge exception applies. From/To are matched against the canonical
-// agent names from the semaphore registry — exact match, no wildcards
+// agent names from the tmux-msg registry — exact match, no wildcards
 // in this first cut (#60).
 type Edge struct {
 	From string // sender agent name
@@ -122,7 +122,7 @@ type Edge struct {
 // reviewable.
 //
 // Maintenance: From/To values are matched against canonical agent
-// names from the semaphore registry. When a chamber is renamed (e.g.,
+// names from the tmux-msg registry. When a agent is renamed (e.g.,
 // the 2026-06-02 Admin → Quartermaster rename), every PeerEdges entry
 // referencing the old name MUST be updated in lockstep — otherwise
 // the edge silently stops matching and the rescue path goes dark.
@@ -132,7 +132,7 @@ var PeerEdges = map[string][]Edge{
 	// exhaustion where /compact can't recover, and only /clear
 	// restores a usable session. The destructive cost (loses
 	// in-flight work) is accepted because the alternative is a
-	// dead session. Bosun is the one chamber routed to make this
+	// dead session. Bosun is the one agent routed to make this
 	// call. See #60 for the design + acceptance criteria.
 	"clear": {
 		{From: "bosun", To: "pilot"},

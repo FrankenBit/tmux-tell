@@ -65,7 +65,7 @@ func itoa10(n int) string {
 	return string(buf[i:])
 }
 
-// TestRefreshAllMcps_HappyPath fans out to three chambers, asserts
+// TestRefreshAllMcps_HappyPath fans out to three agents, asserts
 // each gets the disable+enable pair, and verifies the JSON shape.
 func TestRefreshAllMcps_HappyPath(t *testing.T) {
 	s := newRefreshTestStore(t, "alice", "bob", "carol")
@@ -97,29 +97,29 @@ func TestRefreshAllMcps_HappyPath(t *testing.T) {
 	if got.Failed != 0 {
 		t.Errorf("failed = %d, want 0", got.Failed)
 	}
-	// Chambers should be name-sorted (alice, bob, carol). Each entry
+	// Agents should be name-sorted (alice, bob, carol). Each entry
 	// must carry a DisableID + EnableID and no Error.
 	wantOrder := []string{"alice", "bob", "carol"}
-	if len(got.Chambers) != len(wantOrder) {
-		t.Fatalf("chambers = %d, want %d", len(got.Chambers), len(wantOrder))
+	if len(got.Agents) != len(wantOrder) {
+		t.Fatalf("agents = %d, want %d", len(got.Agents), len(wantOrder))
 	}
-	for i, c := range got.Chambers {
+	for i, c := range got.Agents {
 		if c.Name != wantOrder[i] {
-			t.Errorf("chambers[%d].name = %q, want %q", i, c.Name, wantOrder[i])
+			t.Errorf("agents[%d].name = %q, want %q", i, c.Name, wantOrder[i])
 		}
 		if !c.OK {
-			t.Errorf("chambers[%d] (%s) ok = false: %s", i, c.Name, c.Error)
+			t.Errorf("agents[%d] (%s) ok = false: %s", i, c.Name, c.Error)
 		}
 		if c.DisableID == "" || c.EnableID == "" {
-			t.Errorf("chambers[%d] (%s) missing macro public_ids: disable=%q enable=%q",
+			t.Errorf("agents[%d] (%s) missing macro public_ids: disable=%q enable=%q",
 				i, c.Name, c.DisableID, c.EnableID)
 		}
 		if c.Error != "" {
-			t.Errorf("chambers[%d] (%s) has Error=%q on success path", i, c.Name, c.Error)
+			t.Errorf("agents[%d] (%s) has Error=%q on success path", i, c.Name, c.Error)
 		}
 	}
 
-	// Each chamber should have exactly 2 queued rows (the macro pair).
+	// Each agent should have exactly 2 queued rows (the macro pair).
 	for _, name := range wantOrder {
 		depth, err := s.RecipientQueueDepth(ctx, name)
 		if err != nil {
@@ -131,7 +131,7 @@ func TestRefreshAllMcps_HappyPath(t *testing.T) {
 	}
 }
 
-// TestRefreshAllMcps_EmptyRegistry exercises the no-chambers-registered
+// TestRefreshAllMcps_EmptyRegistry exercises the no-agents-registered
 // edge: zero rows in agents, no errors, summary line emitted.
 func TestRefreshAllMcps_EmptyRegistry(t *testing.T) {
 	s := newRefreshTestStore(t)
@@ -155,13 +155,13 @@ func TestRefreshAllMcps_EmptyRegistry(t *testing.T) {
 	if !got.OK || got.Total != 0 || got.Queued != 0 || got.Failed != 0 {
 		t.Errorf("empty-registry shape = %+v, want ok=true total=0 queued=0 failed=0", got)
 	}
-	if len(got.Chambers) != 0 {
-		t.Errorf("chambers = %d, want 0 on empty registry", len(got.Chambers))
+	if len(got.Agents) != 0 {
+		t.Errorf("agents = %d, want 0 on empty registry", len(got.Agents))
 	}
 }
 
-// TestRefreshAllMcps_PartialFailure pre-fills one chamber's queue to
-// the recipient cap, then runs the fan-out. The over-capped chamber
+// TestRefreshAllMcps_PartialFailure pre-fills one agent's queue to
+// the recipient cap, then runs the fan-out. The over-capped agent
 // must fail; the others succeed; the summary must report failed=1
 // and exit non-zero so a calling script can detect partial outcome.
 func TestRefreshAllMcps_PartialFailure(t *testing.T) {
@@ -205,15 +205,15 @@ func TestRefreshAllMcps_PartialFailure(t *testing.T) {
 
 	// Find bob's entry and verify it carries the Error string and
 	// missing public_ids.
-	var bobEntry *refreshChamberEntry
-	for i := range got.Chambers {
-		if got.Chambers[i].Name == "bob" {
-			bobEntry = &got.Chambers[i]
+	var bobEntry *refreshAgentEntry
+	for i := range got.Agents {
+		if got.Agents[i].Name == "bob" {
+			bobEntry = &got.Agents[i]
 			break
 		}
 	}
 	if bobEntry == nil {
-		t.Fatalf("bob not in chambers list: %+v", got.Chambers)
+		t.Fatalf("bob not in agents list: %+v", got.Agents)
 	}
 	if bobEntry.OK {
 		t.Errorf("bob.ok = true on cap-rejected path")
@@ -228,7 +228,7 @@ func TestRefreshAllMcps_PartialFailure(t *testing.T) {
 }
 
 // TestRefreshAllMcps_TextFormat verifies the operator-facing text
-// rendering: summary line first, then one row per chamber with the
+// rendering: summary line first, then one row per agent with the
 // macro ids on success or FAILED + error on failure.
 func TestRefreshAllMcps_TextFormat(t *testing.T) {
 	s := newRefreshTestStore(t, "alice", "bob")
@@ -250,7 +250,7 @@ func TestRefreshAllMcps_TextFormat(t *testing.T) {
 		t.Errorf("text output missing queued count: %s", out)
 	}
 	if !strings.Contains(out, "alice") || !strings.Contains(out, "bob") {
-		t.Errorf("text output missing per-chamber rows: %s", out)
+		t.Errorf("text output missing per-agent rows: %s", out)
 	}
 }
 
