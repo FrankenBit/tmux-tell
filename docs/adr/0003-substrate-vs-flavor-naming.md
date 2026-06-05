@@ -4,7 +4,11 @@
 > **Date**: 2026-06-05 (proposed)
 > **Authors**: Quartermaster (author), operator (driving the rename
 > decision and Option C scope), Surveyor (pre-review notes on PR #108
-> that shaped the framing of "substrate-class accuracy correction")
+> that shaped the framing of "substrate-class accuracy correction";
+> ADR-0003 framing-review tightening on Q1 role-vs-implementation,
+> Q2 structurally-distinct qualifier, and the §Decision (2) scope
+> binding), Infra Admin (original `cli-semaphore` author, 2026-05-29
+> — the substrate this ADR re-grounds)
 
 ## Context
 
@@ -77,22 +81,39 @@ The boundary:
   resolution (`$TMUX_PANE` → agent name); paste-and-Enter delivery;
   chrome detection (idle / busy / popup-open / mid-compaction /
   awaiting-operator); SQLite mailbox store with per-agent queues;
-  mailman daemons (`claude-mailman@.service` today, future
-  `codex-mailman@.service` / `copilot-mailman@.service`); the
-  control surface (`semaphore.control` whitelisted operations);
-  health-scan and observability primitives.
+  the **mailman daemon role pattern** (watchdog-loop,
+  `RecoverDelivering` reset-on-restart, sd_notify integration,
+  systemd template shape, journal-tag convention); the control
+  surface (`semaphore.control` whitelisted operations); health-scan
+  and observability primitives.
 - **Flavor** (lives in per-consumer binaries; today only
   `claude-msg`, future siblings `codex-msg` / `copilot-msg`):
   binary name; command-line surface tailored to the host CLI tool's
   conventions; consumer-specific message rendering (Claude-specific
   markup, Codex-specific transcript references, etc.); any wire
-  protocol adaptation for the host CLI tool's input/output shape.
+  protocol adaptation for the host CLI tool's input/output shape;
+  the per-flavor systemd unit file that wires the substrate's
+  daemon-role pattern to a specific flavor binary
+  (`init/claude-mailman@.service` today is conceptually
+  flavor-side; it currently ships in the substrate repo as a
+  pragmatic single-flavor accommodation pending sibling-binary
+  surface).
 
 **The substrate must remain consumer-agnostic.** When substrate code
 needs to vary by consumer (e.g., a chrome heuristic that only
 matches Claude Code's pane layout), the variation lives behind a
 substrate-level abstraction (interface / strategy / config), not
 behind a `if consumer == "claude"` branch.
+
+**Scope of the "no branching" commitment**: this constraint applies
+to **Go source under `internal/` and `cmd/claude-msg/`** — the
+substrate's runtime code. Per-flavor *shipping artifacts* (the
+unit-file name `claude-mailman@.service`, the binary name
+`claude-msg`, the CLI command set) live in the flavor space by
+construction; their per-flavor naming is a flavor identity, not a
+substrate branch on consumer identity. Naming this scope explicitly
+keeps the commitment actionable — the pin candidate (when promoted)
+greps Go source, not deployment artifacts.
 
 **(3) Adopt Option C for the rename scope.**
 
@@ -187,9 +208,13 @@ The scope explicitly **does not** include:
   refactors. The answer dictates package location, whether
   per-consumer parameterization is needed, and whether the change
   is even in this repo's scope (vs a downstream consumer's).
-- **Doc voice aligns with the framing.** README §Substrate vs
-  CLI-tool-flavor names the boundary explicitly; future contributors
-  read it before writing.
+- **Doc voice aligns with the framing — leverage for (1) and (2).**
+  README §Substrate vs CLI-tool-flavor names the boundary
+  explicitly; future contributors read it before writing. This is
+  what converts (1) sibling-first-class-ness and (2) substrate-vs-
+  flavor scope decisions from aspirational into mechanically
+  actionable: the boundary lives in code reviewers' working memory,
+  not just in this ADR.
 - **Substrate code names what it is.** Reading any file under
   `internal/`, the package paths and identifiers refer to the
   substrate by its actual primitive, not by a consumer-specific name.
@@ -259,9 +284,21 @@ Reasons to retract or supersede ADR-0003:
   actual scope.
 
 The watch: track every PR that adds a feature gating on consumer
-identity. The first one is acceptable (one heuristic doesn't break
-the boundary); the second triggers ADR-0003 amendment to either
+identity. The first **structurally-distinct case** is acceptable
+(one heuristic doesn't break the boundary); the second
+**structurally-distinct case** triggers ADR-0003 amendment to either
 codify the per-consumer-strategy pattern or retract the boundary.
+
+The "structurally-distinct" qualifier is load-bearing: adding more
+consumers to an existing per-consumer switch (e.g., extending a
+chrome heuristic from `claude` to also handle `codex` with the
+same branch shape) is the *same* structural case repeated, not a
+second one. The trigger fires when a *new shape* of consumer-aware
+branching surfaces — e.g., chrome detection is the first case;
+per-consumer paste-format adaptation would be the second. This
+mirrors the symmetric promotion-threshold framework (n=2+
+structurally-distinct cases warrant pattern extraction); applied in
+reverse for a violation-detection threshold.
 
 ## References
 
