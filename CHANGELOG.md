@@ -25,6 +25,8 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-05
+
 ### Changed
 
 - **Project re-grounded on its substrate primitive (#97).** Renamed
@@ -1216,7 +1218,9 @@ condensed — see git log for full audit.
   the existing recovery only fires on "can't find pane" errors.
   Tracked as #37.
 
-[Unreleased]: https://git.frankenbit.de/frankenbit/tmux-msg/compare/v0.2.1...main
+[Unreleased]: https://git.frankenbit.de/frankenbit/tmux-msg/compare/v0.5.0...main
+[0.5.0]: https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.5.0
+[0.4.0]: https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.4.0
 [0.2.1]: https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.2.1
 [0.2.0]: https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.2.0
 [0.1.0]: https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.1.0
