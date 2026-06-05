@@ -126,7 +126,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 			"properties": {
 				"name":          {"type": "string", "description": "Agent name (the new identity)"},
 				"pane":          {"type": "string", "description": "Pane id like %5 (default: $TMUX_PANE)"},
-				"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now claude-mailman@NAME (default true; default false when delivery_mode=mailbox-only)"},
+				"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now claude-mailman@NAME (default true; default false when delivery_mode=mailbox-only). Note: start_mailman=true with delivery_mode=mailbox-only is allowed but vestigial — the daemon starts, observes mailbox-only at startup, logs the no-work condition, and exits cleanly. The 'mailman: active' field in the response is momentary in this case."},
 				"force":         {"type": "boolean", "description": "Overwrite an existing row with the same name (default false)"},
 				"alias":         {"type": "string", "description": "Optional alternative name discover should accept for this canonical agent (e.g. 'Master Bosun of Nimbus' for canonical 'bosun'). Append-only; existing aliases preserved."},
 				"delivery_mode": {"type": "string", "enum": ["paste-and-enter", "mailbox-only"], "description": "How the mailman delivers to this agent (#116). 'paste-and-enter' (default): tmux paste + Enter into the agent's pane — the existing behavior for CLI-tool-hosting panes. 'mailbox-only': messages stay in state=queued; operator polls via claude-msg inbox. Use 'mailbox-only' to register an operator-shell pane as a bus destination (per ADR-0005 wheel-reinvention check)."}

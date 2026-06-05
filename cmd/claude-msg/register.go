@@ -35,7 +35,7 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 	deliveryMode := fs.String("delivery-mode", store.DeliveryModePasteAndEnter,
 		"how the mailman delivers to this agent: 'paste-and-enter' (default) or 'mailbox-only' (operator-as-bus-participant per #116; messages stay queued, operator polls via inbox)")
 	startMailmanFlag := fs.String("start-mailman", "",
-		"true|false — start the mailman daemon for this agent. Default: true (mailbox-only defaults to false; explicit true overrides)")
+		"true|false — start the mailman daemon for this agent. Default: true (mailbox-only defaults to false; explicit true overrides). Note: --start-mailman=true combined with --delivery-mode=mailbox-only is allowed but vestigial — the daemon will start, observe the mailbox-only mode at startup, log the no-work condition, and exit cleanly with Result=success. The 'mailman: active' field in the response is momentary in this case.")
 	force := fs.Bool("force", false,
 		"overwrite an existing registration with the same name")
 	alias := fs.String("alias", "",

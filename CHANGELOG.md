@@ -59,6 +59,15 @@ Run `claude-msg --version` to see what's installed.
   has no Claude TUI to probe, so the chrome-marker heuristics would
   always classify as `unknown`. Zero capture-pane calls.
 
+  Flip-back asymmetry: if you later switch a registered agent from
+  `mailbox-only` back to `paste-and-enter`, you need to manually
+  restart the mailman unit (`systemctl --user restart
+  claude-mailman@<name>`). The mailman doesn't auto-restart on the
+  delivery-mode change because the previous startup short-circuited
+  to `Result=success` (no resume trigger). The serve-time
+  short-circuit log-line names this asymmetry so operators discover
+  it when they hit it.
+
   Scope re-label: original issue labeled `size/S` (1-2h); actual
   implementation is `size/M` (5 surfaces touched: schema migration +
   store accessors + MCP register handler + CLI register subcommand +
