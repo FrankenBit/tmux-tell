@@ -4,7 +4,7 @@ When you send a bus message to an agent that's mid-turn, mid-`/compact`, or
 mid-typing, tmux-msg doesn't just paste it in and hope. Before each delivery the
 mailman runs the **observe-gate** — a read-only check that watches the recipient's
 pane and waits for a safe moment to deliver. This page is the operator-facing
-companion to the README's [§Delivery semantics: the observe-gate](../README.md);
+companion to the README's [§Delivery semantics: the observe-gate](../README.md#delivery-semantics-the-observe-gate);
 the README is the concise reference, this is the deeper "what it's doing and how to
 steer it" guide.
 
@@ -193,11 +193,12 @@ config: parse /etc/tmux-msg/config.toml: unknown key(s): agent.bosun.prompt-sent
 `quiet-max-wait`. A block that existed only to hold one of them can go entirely; the
 observe-gate is on by default with no per-agent config. (This strict-fail behavior
 supersedes the older "no-op + startup WARN" note still in the README's migration
-paragraph — that described v0.3.0; v0.4.0 made it fail-loud.)
+paragraph — that described v0.3.0; v0.4.0 made it fail-loud. README correction
+tracked in [#124](https://git.frankenbit.de/frankenbit/tmux-msg/issues/124).)
 
 ## See also
 
-- README [§Delivery semantics: the observe-gate](../README.md) — the concise reference
+- README [§Delivery semantics: the observe-gate](../README.md#delivery-semantics-the-observe-gate) — the concise reference
 - [`diagnostic-playbook.md`](diagnostic-playbook.md) — when an agent says "I missed a message" (sender-side vs bus-side triage)
 - `CHANGELOG.md` `[0.3.0]` (#92/#93 gate), `[0.4.0]` (#94 sweep + strict TOML, #95 📫, #96 multi-line)
 - Source: `internal/tmuxio/observe_gate.go`, `internal/tmuxio/state.go`, `cmd/claude-msg/serve.go`
