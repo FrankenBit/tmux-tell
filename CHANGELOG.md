@@ -53,6 +53,24 @@ Run `claude-msg --version` to see what's installed.
   WARN-then-continue path described. The paragraph now reflects the
   strict-fail behavior + the deprecated-key-removal recovery path.
 
+### Fixed
+
+- **Flaky timing test: `TestServe_PostCompactPauseDelaysNextDelivery`
+  (#127).** The test measured the gap between `/compact` delivery and
+  the next message's delivery via `time.Now()` at the test's polling-
+  observation time. The 2ms poll cadence introduced double-sided
+  jitter (~4ms) on the observed gap, which occasionally dipped below
+  the 80ms `PostCompactPause` threshold even though the mailman's
+  actual gap was always >= 80ms. Surfaced during PR #125's full-suite
+  run.
+
+  Fix: measure the gap via the store's `delivered_at` column (stamped
+  inside `MarkDelivered` at the actual state-transition moment)
+  rather than `time.Now()` at observation time. The polling now only
+  decides when to stop waiting; the gap measurement reflects what the
+  mailman actually did, not what the poller managed to observe. 20
+  consecutive runs green.
+
 ### Added
 
 - **`delivery_mode` for operator-as-bus-participant (#116).** New
