@@ -30,7 +30,7 @@ Run `claude-msg --version` to see what's installed.
 - **Doc precision: "read-only-observe-only" overstated the gate's
   discipline (#126).** Multiple doc + code-comment surfaces described
   `ObserveGate` as strictly read-only. Accurate at v0.3.0 (#92's
-  introduction) but v0.3.1 (#95) added the `📫` mailbox notification
+  introduction) but v0.4.0 (#95) added the `📫` mailbox notification
   — a single character injection into the operator's input row via
   the `OnOperatorTyping` callback. The framing has been corrected to
   `near-read-only (one optional 📫 nudge when you're typing)` at the
