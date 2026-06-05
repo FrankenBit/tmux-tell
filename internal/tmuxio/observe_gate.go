@@ -258,7 +258,7 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 					Iterations: iterations,
 				}, nil
 			}
-			// Safer-default wait. Fall through to deadline check.
+			// Safer-default wait. The agent is busy; defer + re-poll.
 		case StateAtRestInCompaction, StateUnknown:
 			// Safer-default wait. The agent is compacting / in an
 			// unrecognized state; defer + re-poll.

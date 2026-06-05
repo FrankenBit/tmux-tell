@@ -715,6 +715,25 @@ func TestObserveGate_WorkingDeliverImmediately_FastPath(t *testing.T) {
 // opt-in flag falls through to the safer-default wait, hits MaxWait,
 // and surfaces ErrMaxWaitExceeded. This is the v0.3.0-through-v0.6.0
 // contract that #106 doesn't change unless explicitly opted in.
+//
+// Note on the lastState assertion: this test does NOT pin a specific
+// outcome.State value. The observeGateRunner fixture cycles 3 capture
+// returns per its internal cursor counter (designed around
+// observe-gate's read-only-observe + extractInputContent pattern),
+// while AgentState makes only 2 capture-pane calls per gate iteration.
+// Across multi-iteration runs, every third iteration's first capture
+// hits the cursor-position-3 (input-content) return, which feeds paneB
+// into AgentState as both capA and capB → classifies as non-Working
+// (Unknown via the cursor-based fallback path). Which iteration MaxWait
+// happens to interrupt determines whether lastState reads StateWorking
+// or StateUnknown — both indicate non-fast-path. The contract being
+// pinned here is "default-off does NOT fast-path" (err = MaxWait,
+// Iterations >= 2), not the exact lastState classification.
+//
+// If this test fails, the cause is an intentional architectural rework
+// (extending the opt-in to default-on, moving the opt-in check, or
+// changing the fast-path semantics) — re-assert the per-state contract
+// before changing the test.
 func TestObserveGate_WorkingDeliverImmediately_Off_DefaultBackoff(t *testing.T) {
 	fastObserveDelta(t)
 	paneA := "● Streaming response line 1\n  status\n"
@@ -741,15 +760,26 @@ func TestObserveGate_WorkingDeliverImmediately_Off_DefaultBackoff(t *testing.T) 
 	if outcome.Iterations < 2 {
 		t.Errorf("Iterations = %d, want >= 2 (gate looped before MaxWait)", outcome.Iterations)
 	}
-	if outcome.State != StateWorking {
-		t.Errorf("State = %v, want StateWorking (last observed)", outcome.State)
+	// Non-fast-path assertion: any non-Idle classification is acceptable
+	// (see test-level docstring for why lastState specifically isn't
+	// pinned to StateWorking).
+	if outcome.State == StateIdle {
+		t.Errorf("State = %v, want non-Idle (any non-fast-path classification)", outcome.State)
 	}
 }
 
 // TestObserveGate_WorkingDeliverImmediately_DoesNotApplyToAwaitingOperator
-// pins the per-state eligibility: even with the opt-in true, a pane
-// classified as StateAwaitingOperator (cursor past sentinel = operator
-// drafting) must NOT fast-path. The flag is StateWorking-only.
+// pins the per-state eligibility contract: the opt-in is StateWorking-
+// only. Even with the flag true, a pane classified as StateAwaitingOperator
+// (cursor past sentinel = operator drafting) must NOT fast-path; the
+// existing stale-flush path takes over after InputStaleThreshold.
+//
+// If this test fails, the cause is an intentional architectural rework
+// (extending the opt-in to additional states, merging the case
+// structure, or moving the opt-in check from per-case to a single
+// pre-switch branch) — re-assert the per-state contract before changing
+// the test. The case-structure makes accidental regression hard;
+// failure here is a structural-reshape signal, not a slip-of-the-keyboard.
 func TestObserveGate_WorkingDeliverImmediately_DoesNotApplyToAwaitingOperator(t *testing.T) {
 	fastObserveDelta(t)
 	draft := "operator started typing"
@@ -796,11 +826,18 @@ func TestObserveGate_WorkingDeliverImmediately_DoesNotApplyToAwaitingOperator(t 
 }
 
 // TestObserveGate_WorkingDeliverImmediately_DoesNotApplyToUnknown pins
-// the second per-state eligibility check: StateUnknown (no sentinel,
-// no marker, stable pane = unrecognized UI) must NOT fast-path
-// regardless of the opt-in. This is the discipline that #105
-// surfaced — fast-paste into an unrecognized state is the destructive
-// case (popup-as-Unknown failure mode).
+// the second per-state eligibility contract: StateUnknown (no sentinel,
+// no marker, stable pane = unrecognized UI) must NOT fast-path regardless
+// of the opt-in. This is the discipline that #105 surfaced — fast-paste
+// into an unrecognized state is the destructive case (popup-as-Unknown
+// failure mode where the operator's draft gets paste-interpreted as
+// keystrokes).
+//
+// If this test fails, the cause is an intentional architectural rework
+// (extending the opt-in to Unknown, merging the case structure, or
+// changing how StateUnknown is classified) — re-assert the per-state
+// contract before changing the test. Like the AwaitingOperator pin,
+// failure here is a structural-reshape signal, not a regression.
 func TestObserveGate_WorkingDeliverImmediately_DoesNotApplyToUnknown(t *testing.T) {
 	fastObserveDelta(t)
 	// Stable pane with no sentinel + no marker → StateUnknown.

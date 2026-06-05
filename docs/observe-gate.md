@@ -135,7 +135,7 @@ claude-msg inbox <agent> --state ""          # all states, if you're unsure
 
 ## Tuning knobs
 
-All five are **CLI flags** on `claude-msg serve` *and* **TOML knobs** (per-agent or
+All six are **CLI flags** on `claude-msg serve` *and* **TOML knobs** (per-agent or
 `[defaults]`), resolved through the standard precedence chain — most specific wins:
 
 > **CLI flag > `[agent.<name>]` block > `[defaults]` block > compiled-in default**
