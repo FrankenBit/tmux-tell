@@ -109,6 +109,16 @@ func TestServe_DeliversControlMessageViaSendKeysOnly(t *testing.T) {
 // /compact control message is delivered, the next queued row is held
 // for at least PostCompactPause before its delivery starts. This is
 // the "land follow-up after compaction settles" property.
+//
+// The gap is measured via the store's `delivered_at` column (stamped
+// inside MarkDelivered at the actual transition moment) rather than
+// `time.Now()` at the test's polling-observation time (#127). The
+// polling-time path was flaky under load because the test loop polls
+// at 2ms cadence; the observed gap could lag the actual mailman gap
+// by up to ~4ms (double-sided jitter — late observation of compactAt
+// + early observation of resumeAt). Using `delivered_at` makes the
+// measurement reflect what the mailman actually did, not what the
+// poller managed to observe.
 func TestServe_PostCompactPauseDelaysNextDelivery(t *testing.T) {
 	withSuccessfulDelivery(t)
 
@@ -118,16 +128,18 @@ func TestServe_PostCompactPauseDelaysNextDelivery(t *testing.T) {
 	_ = s.UpsertAgent(ctx, "alice", "%1")
 	_ = s.UpsertAgent(ctx, "bob", "%3")
 
-	if _, err := s.InsertMessage(ctx, store.InsertParams{
+	compactRes, err := s.InsertMessage(ctx, store.InsertParams{
 		FromAgent: "alice", ToAgent: "bob",
 		Body: "/compact", Kind: store.KindControl,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("insert compact: %v", err)
 	}
-	if _, err := s.InsertMessage(ctx, store.InsertParams{
+	resumeRes, err := s.InsertMessage(ctx, store.InsertParams{
 		FromAgent: "alice", ToAgent: "bob",
 		Body: "resume work on the bus", Kind: store.KindMessage,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("insert resume: %v", err)
 	}
 
@@ -141,31 +153,18 @@ func TestServe_PostCompactPauseDelaysNextDelivery(t *testing.T) {
 	done := make(chan int, 1)
 	go func() { done <- runServeWithStore(stopCtx, s, opts, logger, io.Discard, io.Discard) }()
 
-	// Wait until /compact is marked delivered.
-	deadline := time.Now().Add(time.Second)
-	var compactAt time.Time
+	// Poll until both messages reach `delivered`. The polling decides
+	// when to stop waiting; the gap measurement comes from the store's
+	// own `delivered_at` timestamps (recorded inside MarkDelivered),
+	// not from the test's polling observation time.
+	deadline := time.Now().Add(2*time.Second + opts.PostCompactPause)
+	bothDelivered := false
 	for time.Now().Before(deadline) {
 		msgs, _ := s.ListMessages(ctx, store.ListFilter{
 			ToAgent: "bob", State: store.StateDelivered, Limit: 10,
 		})
-		if len(msgs) >= 1 {
-			compactAt = time.Now()
-			break
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
-	if compactAt.IsZero() {
-		t.Fatalf("/compact never delivered; log=%s", logbuf.String())
-	}
-
-	// Now wait for the resume to be delivered and capture how long it took.
-	var resumeAt time.Time
-	for time.Now().Before(deadline.Add(opts.PostCompactPause + time.Second)) {
-		msgs, _ := s.ListMessages(ctx, store.ListFilter{
-			ToAgent: "bob", State: store.StateDelivered, Limit: 10,
-		})
 		if len(msgs) >= 2 {
-			resumeAt = time.Now()
+			bothDelivered = true
 			break
 		}
 		time.Sleep(2 * time.Millisecond)
@@ -173,8 +172,31 @@ func TestServe_PostCompactPauseDelaysNextDelivery(t *testing.T) {
 	stop()
 	<-done
 
-	if resumeAt.IsZero() {
-		t.Fatalf("resume never delivered; log=%s", logbuf.String())
+	if !bothDelivered {
+		t.Fatalf("not both delivered within deadline; log=%s", logbuf.String())
+	}
+
+	// Re-fetch both messages by ID to get their final delivered_at
+	// timestamps. GetMessage emits the raw ISO string from the DB.
+	compact, err := s.GetMessage(ctx, compactRes.PublicID)
+	if err != nil {
+		t.Fatalf("get compact: %v", err)
+	}
+	resume, err := s.GetMessage(ctx, resumeRes.PublicID)
+	if err != nil {
+		t.Fatalf("get resume: %v", err)
+	}
+	if !compact.DeliveredAt.Valid || !resume.DeliveredAt.Valid {
+		t.Fatalf("delivered_at empty: compact=%v resume=%v",
+			compact.DeliveredAt, resume.DeliveredAt)
+	}
+	compactAt, err := time.Parse("2006-01-02T15:04:05.000Z", compact.DeliveredAt.String)
+	if err != nil {
+		t.Fatalf("parse compact.delivered_at %q: %v", compact.DeliveredAt.String, err)
+	}
+	resumeAt, err := time.Parse("2006-01-02T15:04:05.000Z", resume.DeliveredAt.String)
+	if err != nil {
+		t.Fatalf("parse resume.delivered_at %q: %v", resume.DeliveredAt.String, err)
 	}
 	gap := resumeAt.Sub(compactAt)
 	if gap < opts.PostCompactPause {
