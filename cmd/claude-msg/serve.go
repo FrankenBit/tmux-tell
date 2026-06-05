@@ -555,9 +555,27 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			probeCtx, pcancel := context.WithTimeout(opCtx, 2*time.Second)
 			probeState, _, perr := tmuxio.AgentState(probeCtx, paneForDelivery)
 			pcancel()
-			if perr == nil && tmuxio.IsPasteUnsafe(probeState) {
-				logger.Printf("WARN pre_paste_safety_abort id=%s pane=%s state=%s — popup-suspected; reverting to queued for retry (#105)",
-					msg.PublicID, paneForDelivery, probeState)
+			// Probe-failure is treated as paste-unsafe per IsPasteUnsafe's
+			// "couldn't substantiate → can't paste safely" semantic
+			// (Surveyor PR #134 S1). AgentState's error path already
+			// returns StateUnknown so IsPasteUnsafe(probeState) would
+			// catch it, but the explicit `perr != nil ||` keeps the
+			// codification symmetric with the doc-comment and avoids
+			// depending on AgentState's internal contract.
+			if perr != nil || tmuxio.IsPasteUnsafe(probeState) {
+				reason := probeState.String()
+				if perr != nil {
+					reason = fmt.Sprintf("probe-failed (%v)", perr)
+				}
+				logger.Printf("WARN pre_paste_safety_abort id=%s pane=%s state=%s — popup-suspected-or-probe-failed; reverting to queued for retry (#105)",
+					msg.PublicID, paneForDelivery, reason)
+				// Single-flight assumption: the mailman loop processes
+				// at most one message in 'delivering' state at a time
+				// (ClaimNext is atomic + state-change-on-claim). So
+				// RecoverDelivering reverts ONLY the current message
+				// even though it operates batch-style on the agent's
+				// rows. If future multi-flight delivery lands (#NNN),
+				// this needs to become a per-publicID revert.
 				if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
 					logger.Printf("WARN pre_paste_safety_recover_failed id=%s err=%v", msg.PublicID, rerr)
 				}

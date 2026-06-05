@@ -583,19 +583,21 @@ func TestAgentState_AwaitingOperatorOnAskUserQuestionGolden(t *testing.T) {
 }
 
 // TestIsPasteUnsafe pins the per-state classification used by the
-// mailman's pre-paste safety check (#105 Half 2): AwaitingOperator
-// and Unknown return true (paste-unsafe); Idle, Working, and
-// AtRestInCompaction return false. The Compaction case is intentional
-// — paste-into-compaction is handled by the PostCompactPause
-// machinery at a different layer; IsPasteUnsafe is specifically the
-// popup-suspected-OR-classifier-unsubstantiated axis.
+// mailman's pre-paste safety check (#105 Half 2): AwaitingOperator,
+// Unknown, and AtRestInCompaction return true (paste-unsafe); Idle
+// and Working return false. The Compaction case is intentional
+// defense-in-depth per Surveyor PR #134 S2 — PostCompactPause handles
+// the scheduling layer when the mailman just delivered /compact, but
+// leaves a coverage gap when the agent is in Compaction for an
+// unrelated reason (operator-initiated /compact). The safety-check
+// layer covers that gap.
 func TestIsPasteUnsafe(t *testing.T) {
 	cases := map[State]bool{
 		StateUnknown:            true,  // popup-as-Unknown failure mode
 		StateAwaitingOperator:   true,  // operator typing or popup
+		StateAtRestInCompaction: true,  // /compact slash-command parser destruction
 		StateIdle:               false, // safe by definition
-		StateWorking:            false, // Claude Code buffers
-		StateAtRestInCompaction: false, // PostCompactPause covers
+		StateWorking:            false, // Claude Code buffers mid-turn keystrokes
 	}
 	for state, want := range cases {
 		if got := IsPasteUnsafe(state); got != want {
