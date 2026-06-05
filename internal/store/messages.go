@@ -457,15 +457,22 @@ func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, erro
 // minimum prefix length — at very-short prefixes the result set can be
 // large; callers should reject prefixes that would return too many rows
 // before exposing the surface.
+//
+// LIKE-wildcard escape: the prefix is treated as a literal string match,
+// not a SQL LIKE pattern. `%` and `_` within the prefix are escaped via
+// backslash (matched by SQLite's ESCAPE clause below) so a caller can't
+// turn `get %` into a list-all-my-messages enumeration. Per Surveyor's
+// PR #128 S1: validation belongs where LIKE happens, not at every caller.
 func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Message, error) {
 	if prefix == "" {
 		return nil, errors.New("store: prefix required")
 	}
+	escaped := escapeLikePrefix(prefix)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
 		        state, created_at, delivered_at, error
-		 FROM messages WHERE public_id LIKE ? ORDER BY id ASC`,
-		prefix+"%")
+		 FROM messages WHERE public_id LIKE ? ESCAPE '\' ORDER BY id ASC`,
+		escaped+"%")
 	if err != nil {
 		return nil, err
 	}
@@ -481,6 +488,18 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// escapeLikePrefix backslash-escapes the three characters SQLite's LIKE
+// treats specially when an ESCAPE clause is in effect: the backslash
+// itself, `%` (zero-or-more chars wildcard), and `_` (single-char
+// wildcard). Order matters — backslash must be escaped first, otherwise
+// a subsequent `%` → `\%` replacement would itself get re-escaped.
+func escapeLikePrefix(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
 }
 
 // ListFilter narrows the rows returned by ListMessages. Zero-value fields

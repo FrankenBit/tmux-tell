@@ -199,6 +199,41 @@ func TestGet_CLI_JSON_HappyPath(t *testing.T) {
 	}
 }
 
+// TestGet_DoGet_LikeWildcardEscape pins the LIKE-injection guard added
+// per Surveyor's PR #128 S1: a literal `%` (or `_`) in the prefix must
+// match LITERALLY, not as a SQL LIKE wildcard. Without the escape, a
+// privileged agent calling `get %` (or any other LIKE wildcard) could
+// enumerate every message they're authorized to see. With the escape
+// + ESCAPE clause, `%` matches only public IDs that LITERALLY start
+// with `%` — and since real public IDs are 4-char hex, that set is
+// always empty.
+func TestGet_DoGet_LikeWildcardEscape(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bob")
+	// Seed several messages so a hypothetical `%`-as-wildcard would
+	// match all of them.
+	for i := 0; i < 5; i++ {
+		if _, err := s.InsertMessage(context.Background(), store.InsertParams{
+			FromAgent: "alice", ToAgent: "bob", Body: "msg",
+		}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	// alice (sender on all 5) requests prefix `%`. With proper escape,
+	// `%` matches NO real ID → errGetNotFound. Without escape, `%`
+	// would match all 5 → errGetAmbiguous listing every ID (enumeration
+	// backdoor).
+	_, err := doGet(context.Background(), s, nil, "alice", "%")
+	if !errors.Is(err, errGetNotFound) {
+		t.Errorf("prefix `%%` err = %v, want errGetNotFound (LIKE wildcard must be escaped)", err)
+	}
+	// Same check for `_`.
+	_, err = doGet(context.Background(), s, nil, "alice", "_")
+	if !errors.Is(err, errGetNotFound) {
+		t.Errorf("prefix `_` err = %v, want errGetNotFound (LIKE wildcard must be escaped)", err)
+	}
+}
+
 func TestConfig_IsPrivileged(t *testing.T) {
 	cases := []struct {
 		name string
