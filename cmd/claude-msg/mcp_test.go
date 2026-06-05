@@ -180,7 +180,8 @@ func TestMCP_ToolsListContract(t *testing.T) {
 		"tmux-msg.unregister":     true,
 		"tmux-msg.control":        true,
 		"tmux-msg.message_status": true,
-		"tmux-msg.agent_state":  true,
+		"tmux-msg.get":            true,
+		"tmux-msg.agent_state":    true,
 	}
 	if len(tools) != len(want) {
 		t.Errorf("tools = %d, want %d", len(tools), len(want))

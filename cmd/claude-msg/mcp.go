@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/mcp"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
@@ -101,6 +102,17 @@ func newMCPServer(s *store.Store) *mcp.Server {
 			"required": ["id"]
 		}`),
 		mcpMessageStatusHandler(s))
+
+	srv.RegisterTool("tmux-msg.get",
+		"Fetch a processed message by ID — recovery path for swallowed deliveries (#111). The bus stores message bodies; if the paste landed in a state that obscured the visible delivery (mid-AskUserQuestion, popup open, recipient mid-compaction), retrieving by ID returns the full body + metadata. Accepts full public_id or short prefix (4-char IDs from delivery headers work). Access: sender OR recipient OR allowlisted agent (`privileged-agents` in /etc/tmux-msg/config.toml). Not-found and not-authorized return the same error class to prevent existence leaks.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"id": {"type": "string", "description": "Public ID or short prefix (e.g. '8f54' or 'a2c76333...'); falls back to disambiguation error if multiple authorized matches"}
+			},
+			"required": ["id"]
+		}`),
+		mcpGetHandler(s))
 
 	srv.RegisterTool("tmux-msg.status",
 		"Return registry overview: paused state + queue depths per agent.",
@@ -295,6 +307,33 @@ func mcpMessageStatusHandler(s *store.Store) mcp.ToolHandler {
 		// so the JSON tags on trackResult are the single source of
 		// truth for the wire shape.
 		return doTrack(ctx, s, in.ID)
+	}
+}
+
+func mcpGetHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		ID string `json:"id"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		requester, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		if requester == "" {
+			return nil, fmt.Errorf("cannot resolve requester identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+		}
+		cfg, cfgErr := config.Load()
+		if cfgErr != nil {
+			// Config load failure should not block the access check —
+			// without the privileged-agents allowlist, the default rule
+			// (sender OR recipient) still applies. doGet handles nil cfg.
+			cfg = nil
+		}
+		return doGet(ctx, s, cfg, requester, in.ID)
 	}
 }
 

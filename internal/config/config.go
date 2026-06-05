@@ -38,6 +38,37 @@ const DefaultPath = "/etc/tmux-msg/config.toml"
 type File struct {
 	Defaults Block            `toml:"defaults"`
 	Agent    map[string]Block `toml:"agent"`
+	// PrivilegedAgents is the operator-defined allowlist for the
+	// get-by-id surface (#111): agents listed here can fetch any
+	// message via `claude-msg get <id>` / `tmux-msg.get`, bypassing
+	// the default sender-OR-recipient access rule. Empty (the default)
+	// means no privileged agents — every requester is bound by the
+	// default access rule. TOML:
+	//
+	//   privileged-agents = ["bosun", "quartermaster"]
+	//
+	// Why this lives at the top of File, not inside Block: the
+	// allowlist is a property of the system (which agents have
+	// privileged read), not of any particular agent. Per-agent
+	// override would have incoherent semantics ("when agent X is the
+	// requester, override which OTHER agents have privileged access").
+	PrivilegedAgents []string `toml:"privileged-agents"`
+}
+
+// IsPrivileged returns true when the named agent appears in the
+// allowlist. Convenience helper for the get-by-id access check; treats
+// nil allowlist (the default) as "no privileged agents" — exact-match
+// only, no glob expansion.
+func (f *File) IsPrivileged(agent string) bool {
+	if f == nil || agent == "" {
+		return false
+	}
+	for _, name := range f.PrivilegedAgents {
+		if name == agent {
+			return true
+		}
+	}
+	return false
 }
 
 // Block is the per-section settings struct. Both [defaults] and
@@ -238,6 +269,7 @@ type ResolvedView struct {
 	InputStaleThreshold         time.Duration `json:"input_stale_threshold"`
 	NotifyEmojiDisabled         bool          `json:"notify_emoji_disabled"`
 	WorkingDeliverImmediately   bool          `json:"working_deliver_immediately"`
+	PrivilegedAgents            []string      `json:"privileged_agents"`
 }
 
 // Resolve builds the resolved snapshot. Hardcoded defaults mirror
@@ -255,5 +287,18 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		InputStaleThreshold:         ResolveDuration(file, agent, "input-stale-threshold", 2*time.Minute),
 		NotifyEmojiDisabled:         ResolveBool(file, agent, "notify-emoji-disabled", false),
 		WorkingDeliverImmediately:   ResolveBool(file, agent, "working-deliver-immediately", false),
+		PrivilegedAgents:            resolvePrivilegedAgents(file),
 	}
+}
+
+// resolvePrivilegedAgents returns a copy of the file's privileged-agents
+// list (or nil if the file is nil/empty). The defensive copy prevents
+// callers from mutating the underlying config slice.
+func resolvePrivilegedAgents(file *File) []string {
+	if file == nil || len(file.PrivilegedAgents) == 0 {
+		return nil
+	}
+	out := make([]string, len(file.PrivilegedAgents))
+	copy(out, file.PrivilegedAgents)
+	return out
 }

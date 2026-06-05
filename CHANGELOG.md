@@ -27,6 +27,36 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`get` subcommand + `tmux-msg.get` MCP tool — fetch processed
+  messages by ID (#111).** New recovery surface for the case where a
+  delivery landed correctly into the SQLite store but was visually
+  swallowed by the recipient pane's state (mid-AskUserQuestion popup,
+  mid-compaction, etc.). The bus always preserved the body; this just
+  gives both CLI and MCP-aware sessions a direct retrieval path
+  instead of requiring manual SQLite lifting.
+
+  Surfaces:
+  - **CLI**: `claude-msg get <id> [--from <name>] [--format text|json]`
+  - **MCP**: `tmux-msg.get` with `{id: string}` input. Returns full
+    message body + metadata (`from`, `to`, `kind`, `state`,
+    `created_at`, `delivered_at?`, `reply_to?`).
+
+  Accepts full public_id or short prefix (the 4-char IDs that appear
+  in delivery headers work). Short-prefix lookup with disambiguation:
+  if multiple authorized matches → error names the matching IDs so the
+  operator can re-issue with a longer prefix.
+
+  Access model: sender OR recipient by default. A `privileged-agents`
+  TOML knob extends the allowlist:
+
+  ```toml
+  privileged-agents = ["bosun", "quartermaster"]
+  ```
+
+  No existence leak: not-authorized requests return the same error
+  class as not-found, so a requester can't probe for IDs they have no
+  business knowing about.
+
 - **`working-deliver-immediately` opt-in for fast-path delivery to
   busy chambers (#106).** New `--working-deliver-immediately` CLI
   flag + `working-deliver-immediately = true` per-agent TOML knob

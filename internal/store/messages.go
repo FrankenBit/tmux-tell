@@ -445,6 +445,44 @@ func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, erro
 	return &m, nil
 }
 
+// FindMessagesByPrefix returns all messages whose public_id starts with the
+// given prefix. Caller is responsible for any access-filtering and for
+// handling the disambiguation case (len(result) > 1) appropriately. Empty
+// result is returned as nil + nil error — distinct from ErrNotFound, which
+// the GetMessage exact-match path returns; the prefix path uses a SELECT
+// (not QueryRowContext) and "no rows" is a valid result, not an error.
+//
+// Used by the get-by-id surface (#111) for short-prefix lookups (the 4-char
+// IDs that appear in delivery headers). The store does not enforce a
+// minimum prefix length — at very-short prefixes the result set can be
+// large; callers should reject prefixes that would return too many rows
+// before exposing the surface.
+func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Message, error) {
+	if prefix == "" {
+		return nil, errors.New("store: prefix required")
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
+		        state, created_at, delivered_at, error
+		 FROM messages WHERE public_id LIKE ? ORDER BY id ASC`,
+		prefix+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent,
+			&m.ReplyTo, &m.Body, &m.Kind, &m.State, &m.CreatedAt,
+			&m.DeliveredAt, &m.Error); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // ListFilter narrows the rows returned by ListMessages. Zero-value fields
 // mean "no filter on that column".
 type ListFilter struct {
