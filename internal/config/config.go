@@ -118,6 +118,21 @@ type Block struct {
 	// on). Production should leave on — the check is the load-bearing
 	// safety net against the popup-as-Unknown failure mode (#105).
 	PrePasteSafetyDisabled *bool `toml:"pre-paste-safety-disabled"`
+	// DeliveryMode overrides the per-agent delivery_mode column from
+	// the agents table (#132 follow-up to #116). When set in the TOML
+	// config, the mailman's startup uses this value rather than the DB
+	// column. Two valid values: "paste-and-enter" (default behavior;
+	// mailman delivers via tmux paste + Enter) and "mailbox-only"
+	// (operator-as-bus-participant mode; mailman short-circuits at
+	// startup, messages stay queued for operator polling via
+	// `claude-msg inbox`). The TOML knob lets operators who manage
+	// state via config (rather than via register-time CLI calls)
+	// declare the mode without modifying the DB.
+	//
+	// Precedence: per-agent block > defaults block > DB column. The
+	// register-time CLI / MCP path still writes to the DB column;
+	// this knob is the OVERRIDE at mailman-startup time.
+	DeliveryMode *string `toml:"delivery-mode"`
 }
 
 // Load reads the config from the path resolved by:
@@ -198,6 +213,37 @@ func ResolveDuration(file *File, agent, field string, hardcoded time.Duration) t
 	return hardcoded
 }
 
+// ResolveString walks the precedence chain for a string field. The first
+// non-nil-and-non-empty value wins; if all layers are nil/empty,
+// hardcoded is the final fallback. Empty-string fields are treated as
+// "not set" so an absent TOML key falls through to the next layer
+// rather than overriding with empty.
+//
+// Asymmetry with ResolveBool / ResolveDuration: those helpers treat
+// zero-value as "explicitly set" (false / 0 are meaningful semantics
+// for those types). ResolveString treats empty-string as "not set"
+// because typical string config knobs are enum-ish (delivery-mode is
+// "paste-and-enter" | "mailbox-only"; never legitimately ""). The
+// asymmetry is intentional design-time: forcing the consumer to handle
+// empty as a non-set sentinel would surface "did this operator
+// intentionally clear this knob, or did the TOML decoder leave it
+// blank?" ambiguity at every call-site. Treating empty as not-set at
+// the helper layer codifies the convention once. A future field that
+// genuinely wants empty-as-explicit-value should use a different
+// resolver or `*string` directly. Per Surveyor PR #135 S1.
+func ResolveString(file *File, agent, field string, hardcoded string) string {
+	if file == nil {
+		return hardcoded
+	}
+	if s := agentStringField(file, agent, field); s != nil && *s != "" {
+		return *s
+	}
+	if s := defaultStringField(file, field); s != nil && *s != "" {
+		return *s
+	}
+	return hardcoded
+}
+
 // agentBoolField returns the agent-block's pointer for the named
 // field, or nil if the agent block doesn't exist or the field wasn't
 // set.
@@ -263,6 +309,29 @@ func blockDurField(b *Block, field string) *time.Duration {
 	return nil
 }
 
+func agentStringField(file *File, agent, field string) *string {
+	if file.Agent == nil {
+		return nil
+	}
+	block, ok := file.Agent[agent]
+	if !ok {
+		return nil
+	}
+	return blockStringField(&block, field)
+}
+
+func defaultStringField(file *File, field string) *string {
+	return blockStringField(&file.Defaults, field)
+}
+
+func blockStringField(b *Block, field string) *string {
+	switch field {
+	case "delivery-mode":
+		return b.DeliveryMode
+	}
+	return nil
+}
+
 // ResolvedView is a fully-resolved per-agent snapshot. Useful for
 // the `claude-msg config show` subcommand so the operator can see
 // what the precedence chain decided for an agent without having to
@@ -280,6 +349,7 @@ type ResolvedView struct {
 	NotifyEmojiDisabled         bool          `json:"notify_emoji_disabled"`
 	WorkingDeliverImmediately   bool          `json:"working_deliver_immediately"`
 	PrePasteSafetyDisabled      bool          `json:"pre_paste_safety_disabled"`
+	DeliveryMode                string        `json:"delivery_mode,omitempty"`
 	PrivilegedAgents            []string      `json:"privileged_agents"`
 }
 
@@ -299,6 +369,7 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		NotifyEmojiDisabled:         ResolveBool(file, agent, "notify-emoji-disabled", false),
 		WorkingDeliverImmediately:   ResolveBool(file, agent, "working-deliver-immediately", false),
 		PrePasteSafetyDisabled:      ResolveBool(file, agent, "pre-paste-safety-disabled", false),
+		DeliveryMode:                ResolveString(file, agent, "delivery-mode", ""),
 		PrivilegedAgents:            resolvePrivilegedAgents(file),
 	}
 }

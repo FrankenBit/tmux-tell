@@ -109,6 +109,13 @@ type serveOpts struct {
 	// nil, runServeWithStore constructs a discover.New() — tests can inject
 	// a fake walker that doesn't touch real tmux/proc.
 	Walker *discover.Walker
+	// ConfigDeliveryMode is the resolved per-agent delivery-mode from
+	// the TOML config (#132 follow-up to #116). Empty when no config
+	// override is in effect; in that case the DB column wins. Valid
+	// non-empty values are store.DeliveryModePasteAndEnter and
+	// store.DeliveryModeMailboxOnly; invalid values are logged and the
+	// DB column wins (fail-loud, not fail-stop).
+	ConfigDeliveryMode string
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -201,6 +208,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	if !flagWasSet(fs, "pre-paste-safety-disabled") {
 		*prePasteSafetyDisabled = config.ResolveBool(cfg, *agent, "pre-paste-safety-disabled", *prePasteSafetyDisabled)
 	}
+	configDeliveryMode := config.ResolveString(cfg, *agent, "delivery-mode", "")
 	if *agent == "" {
 		fmt.Fprintln(stderr, "--agent required")
 		return exitUsage
@@ -240,6 +248,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		},
 		NotifyEmojiDisabled: *notifyEmojiDisabled,
 		PrePasteSafetyDisabled:      *prePasteSafetyDisabled,
+		ConfigDeliveryMode:          configDeliveryMode,
 		DriftSoftFail:               *driftSoftFail,
 		NotifyOnFailed:              *notifyOnFailed,
 		NotifyOnDeliveredUnverified: *notifyOnDeliveredUnverified,
@@ -272,6 +281,27 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	if a.PaneID == "" {
 		fmt.Fprintf(stderr, "agent %q has no pane_id — run 'claude-msg discover'\n", opts.Agent)
 		return exitUnavailable
+	}
+
+	// TOML config override for delivery_mode (#132 follow-up to #116).
+	// When the host-level config sets `[agent.<name>] delivery-mode = X`
+	// (or via [defaults]), the mailman uses that value rather than the
+	// DB column for this run. Lets operators who manage state via config
+	// (rather than via register-time CLI/MCP calls) declare the mode
+	// without writing to the agents table.
+	//
+	// Validation: invalid mode values from config are logged + the DB
+	// column wins (fail-loud rather than fail-stop). This keeps a typo
+	// in /etc/tmux-msg/config.toml from silently breaking the mailman.
+	if opts.ConfigDeliveryMode != "" && opts.ConfigDeliveryMode != a.DeliveryMode {
+		if store.ValidDeliveryMode(opts.ConfigDeliveryMode) {
+			logger.Printf("delivery_mode overridden by config: db=%s → config=%s",
+				a.DeliveryMode, opts.ConfigDeliveryMode)
+			a.DeliveryMode = opts.ConfigDeliveryMode
+		} else {
+			logger.Printf("WARN config_delivery_mode_invalid %q — DB value (%s) wins",
+				opts.ConfigDeliveryMode, a.DeliveryMode)
+		}
 	}
 
 	// Mailbox-only short-circuit (#116). When the agent's delivery_mode
