@@ -63,8 +63,10 @@ func formatClock(iso string) string {
 // that wrapped awkwardly on narrow viewports (mobile chat clients) and
 // hit font-fallback to underline glyphs where U+2500 wasn't available.
 // ASCII bracket + middle-dot + arrow render identically across all
-// surfaces. Trailing footer rule dropped — the bracket-open + body
-// + trailing blank line provide the visual demarcation.
+// surfaces. Trailing footer rule dropped — the blank line between
+// header and body separates the envelope label from content, and the
+// bracket-open at the start of each new header delimits consecutive
+// messages on visual scan.
 func Message(m store.Message) string {
 	var header string
 	clock := formatClock(m.CreatedAt)

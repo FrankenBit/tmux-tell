@@ -51,13 +51,19 @@ Run `claude-msg --version` to see what's installed.
   fonts lacked U+2500 (BOX DRAWINGS LIGHT HORIZONTAL) and fell back to
   underline-position glyphs. The bracket-and-middle-dot format uses
   characters with near-universal font coverage and stays compact enough
-  to fit narrow viewports without wrapping ugliness. The body-end
-  blank line replaces the trailing rule as the visual demarcator.
+  to fit narrow viewports without wrapping ugliness. The blank line
+  between header and body separates the envelope label from content;
+  the bracket-open at the start of each new header delimits consecutive
+  messages on visual scan.
 
   Information content preserved: sender, recipient (replies), reply
   thread (replies), message ID, local clock (regular messages). Grep
   workflows that match on `id NNNN` still work — the ID still appears
   in plain text in every header.
+
+  Syntax compressions alongside the chrome swap: `re:` → `re` (colon
+  dropped — the bracket boundaries already segment the header), and
+  the `──` segment-separators became `·` middle-dots.
 
 ## [0.6.0] — 2026-06-05
 

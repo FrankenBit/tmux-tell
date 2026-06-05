@@ -45,9 +45,13 @@ func TestMessage_Regular(t *testing.T) {
 			t.Errorf("missing %q in:\n%s", w, got)
 		}
 	}
-	// Reply-format indicators should be absent on a regular message.
-	if strings.Contains(got, " → ") || strings.Contains(got, " re ") {
-		t.Errorf("regular rendering should not contain reply markers: %s", got)
+	// Reply-format indicators should be absent on a regular message's
+	// header. Scoping to the header line (not full output) protects against
+	// future fixture body content that happens to contain ` → ` or ` re `
+	// triggering a false positive without indicating regular-into-reply drift.
+	headerLine, _, _ := strings.Cut(got, "\n")
+	if strings.Contains(headerLine, " → ") || strings.Contains(headerLine, " re ") {
+		t.Errorf("regular header should not contain reply markers: %s", headerLine)
 	}
 }
 
