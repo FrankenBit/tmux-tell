@@ -25,6 +25,8 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-06-06
+
 ### Changed
 
 - **AskUserQuestion canary fixture refreshed for post-v0.6.0 validation
