@@ -3,20 +3,25 @@
 > **Status**: Accepted
 > **Date**: 2026-06-05 (proposed); 2026-06-05 (accepted on operator
 > + Surveyor TICK with three small refinements and one nit folded
-> pre-merge + Bosun cross-project convergence on 350 folded after)
+> pre-merge + Bosun's Binnacle-side analysis propagated via
+> operator from initial 400 down to 350; Bosun's bus correction
+> on the convergence framing folded too)
 > **Authors**: Quartermaster (author), operator (surfaced the
 > length-cap question on PR #115 after ADR-0005 merged; proposed
-> 300-400 range; picked 350 after analysis), Surveyor (framing
-> review: empirical-anchor framing folded pre-PR + three refinements
-> (bg-doc soft-one-per-ADR, status-lifecycle inheritance, index
-> visibility) + a §Worked example subsection + one nit on the
-> Binnacle comparison framing), Bosun (independent parallel analysis
-> from the Binnacle side that converged on 350 from first-ADR-size
-> + 15% growth headroom + Binnacle's empirical bg-doc distribution
-> — captured in §Calibration as cross-project corroboration),
-> Binnacle's ADR convention (inspiration — adapted upward from
-> ≤100 to ≤350 for tmux-msg's deeper-audience material; Binnacle's
-> parallel PR aligns at 350 for cross-project consistency)
+> 300-400 range; propagated Bosun's 350 reasoning into this ADR's
+> revision), Surveyor (framing review: empirical-anchor framing
+> folded pre-PR + three refinements (bg-doc soft-one-per-ADR,
+> status-lifecycle inheritance, index visibility) + a §Worked
+> example subsection + one nit on the Binnacle comparison framing),
+> Bosun (Binnacle-side analysis that originated 350 from first-ADR-
+> size + 15% growth headroom + Binnacle's empirical bg-doc
+> distribution; surfaced the verification-mechanism-layer correction
+> to my initial mis-framing of the cross-project relationship as
+> "independent convergence" when it was reasoning-propagation via
+> the operator), Binnacle's ADR convention (inspiration — adapted
+> upward from ≤100 to ≤350 for tmux-msg's deeper-audience material;
+> Binnacle's parallel PR aligns at 350 for cross-project
+> consistency)
 
 ## Context
 
@@ -91,16 +96,29 @@ docs from ADR-0006+ onward." The cap does NOT mean the longest
 existing ADR retroactively fits; it means future ADRs are held to a
 standard that two of the five existing ADRs demonstrably exceeded.
 
-**Cross-project corroboration**: Bosun independently arrived at
-350 from the Binnacle side (parallel analysis on raising
-Binnacle's existing 100-line cap), reasoning from first-ADR-size
-(310) + ~15% growth headroom and from Binnacle's empirical
-background-doc distribution (median 250-350, cluster 200-400, two
-outliers at 424 and 582). Two actors reasoned independently from
-different evidence bases to the same number — substrate-claim-
-verification family in action. Binnacle's parallel PR raises 100 →
-350, making 350 a cross-project consistent cap rather than a
-per-project choice.
+**Cross-project reasoning propagation** (corrected framing per
+Bosun's bus correction 2026-06-05, bank-worthy as a worked
+instance-of-the-pattern within this ADR): Bosun analyzed first
+from the Binnacle side (raising Binnacle's existing 100-line
+cap), reasoning from first-ADR-size (310) + ~15% growth headroom
++ Binnacle's empirical background-doc distribution (median
+250-350, cluster 200-400, two outliers at 424 and 582), arriving
+at 350. The operator surfaced Bosun's analysis to this ADR's
+context, propagating the 350 reasoning chain rather than asking
+this ADR to arrive at 350 from scratch. The ADR's revision from
+400 to 350 was reasoning-propagated, not independently arrived
+at. **The original fold of this paragraph mis-framed the
+propagation as "two actors reasoned independently to the same
+number" — Bosun's correction surfaced the verification-claim
+overreach.** Substrate-claim-verification at the
+verification-mechanism layer: when an apparent "convergence"
+pattern surfaces, verify whether the actors actually reasoned
+independently or whether one acted as the substrate-source for
+the other. Sibling pattern to the time-layer / empirical-render-
+verification sub-shapes from earlier in this campaign. Binnacle's
+parallel PR aligns at 350, making the cap cross-project
+consistent — that consistency is real even though the convergence
+shape is propagation, not parallel reasoning.
 
 The cap is **soft** — exceeding it doesn't block merge, but it
 triggers a question in framing review: "Should this material move
