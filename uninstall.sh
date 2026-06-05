@@ -46,7 +46,7 @@ also want to wipe the host config.
 
 What --purge does NOT touch:
   - /etc/tmux-msg/        (operator-edited config; remove by hand)
-  - Semaphore MCP entry in ~/.claude.json (remove with claude mcp
+  - tmux-msg MCP entry in ~/.claude.json (remove with claude mcp
     remove tmux-msg -s user)
   - loginctl enable-linger     (other services on the host may rely on it)
 EOF
