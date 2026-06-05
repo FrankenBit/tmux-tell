@@ -20,7 +20,7 @@ import (
 var errTrackNotFound = errors.New("no such message")
 
 // trackResult is the structured response from both the
-// `claude-msg track` CLI subcommand and the `semaphore.message_status`
+// `claude-msg track` CLI subcommand and the `tmux-msg.message_status`
 // MCP tool. JSON tags with omitempty on the optional state-dependent
 // fields (delivered_at, error, reply_to) keep the wire shape clean.
 //

@@ -47,7 +47,7 @@ also want to wipe the host config.
 What --purge does NOT touch:
   - /etc/tmux-msg/        (operator-edited config; remove by hand)
   - Semaphore MCP entry in ~/.claude.json (remove with claude mcp
-    remove semaphore -s user)
+    remove tmux-msg -s user)
   - loginctl enable-linger     (other services on the host may rely on it)
 EOF
 }
@@ -168,8 +168,8 @@ echo "Uninstall complete."
 echo
 echo "Not touched (remove by hand if you also want them gone):"
 echo "  /etc/tmux-msg/             — host-level config (#54)"
-echo "  ~/.claude.json                  — semaphore MCP entry; remove with:"
-echo "                                    claude mcp remove semaphore -s user"
+echo "  ~/.claude.json                  — tmux-msg MCP entry; remove with:"
+echo "                                    claude mcp remove tmux-msg -s user"
 echo "  loginctl enable-linger          — other services may need it"
 if ! $PURGE_DATA && [[ -d "$DATADIR" ]]; then
     echo "  ${DATADIR}    — SQLite message history (re-run with --purge to wipe)"

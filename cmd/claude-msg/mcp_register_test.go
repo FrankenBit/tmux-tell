@@ -31,7 +31,7 @@ func TestMCP_Register_HappyPath(t *testing.T) {
 	fs := &fakeSystemctl{}
 	fs.install(t)
 
-	got := callMCPTool(t, s, "semaphore.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
 		"name": "newone",
 	})
 	if got["ok"] != true {
@@ -62,7 +62,7 @@ func TestMCP_Register_ExplicitPaneArg(t *testing.T) {
 	s := newCmdTestStore(t)
 	(&fakeSystemctl{}).install(t)
 
-	got := callMCPTool(t, s, "semaphore.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
 		"name":          "explicit",
 		"pane":          "%42",
 		"start_mailman": false,
@@ -80,7 +80,7 @@ func TestMCP_Register_CollisionWithoutForce(t *testing.T) {
 	s := newCmdTestStore(t, "existing")
 	(&fakeSystemctl{}).install(t)
 
-	got := callMCPTool(t, s, "semaphore.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
 		"name": "existing",
 	})
 	if got["_isError"] != true {
@@ -98,7 +98,7 @@ func TestMCP_Register_CollisionWithForceOverwrites(t *testing.T) {
 	s := newCmdTestStore(t, "existing")
 	(&fakeSystemctl{}).install(t)
 
-	got := callMCPTool(t, s, "semaphore.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
 		"name":  "existing",
 		"force": true,
 	})
@@ -116,7 +116,7 @@ func TestMCP_Register_NoPaneAvailable(t *testing.T) {
 	s := newCmdTestStore(t)
 	(&fakeSystemctl{}).install(t)
 
-	got := callMCPTool(t, s, "semaphore.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
 		"name": "noenv",
 	})
 	if got["_isError"] != true {
@@ -129,7 +129,7 @@ func TestMCP_Register_SystemctlFailureStillReportsRegistration(t *testing.T) {
 	s := newCmdTestStore(t)
 	(&fakeSystemctl{err: errors.New("exit 1"), out: []byte("nope")}).install(t)
 
-	got := callMCPTool(t, s, "semaphore.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
 		"name": "registered-but-mailman-broken",
 	})
 	if got["ok"] != true {
@@ -148,7 +148,7 @@ func TestMCP_Unregister_HappyPath(t *testing.T) {
 	fs := &fakeSystemctl{}
 	fs.install(t)
 
-	got := callMCPTool(t, s, "semaphore.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
 		"name": "doomed",
 	})
 	if got["ok"] != true {
@@ -182,7 +182,7 @@ func TestMCP_Unregister_PurgeMessagesAlso(t *testing.T) {
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "doomed", Body: "1"})
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "doomed", Body: "2"})
 
-	got := callMCPTool(t, s, "semaphore.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
 		"name":           "doomed",
 		"purge_messages": true,
 	})
@@ -201,7 +201,7 @@ func TestMCP_Unregister_IdempotentOnMissingMailman(t *testing.T) {
 		out: []byte("Unit claude-mailman@doomed.service not loaded."),
 	}).install(t)
 
-	got := callMCPTool(t, s, "semaphore.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
 		"name": "doomed",
 	})
 	if got["ok"] != true {

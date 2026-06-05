@@ -54,7 +54,7 @@ type serveOpts struct {
 	ObserveGateOpts tmuxio.ObserveGateOpts
 	// GateDisabled bypasses the observe-gate entirely; delivery
 	// happens immediately on every queue head. Useful in tests (avoids
-	// faking ChamberState in the runtime tmux runner) and as an
+	// faking AgentState in the runtime tmux runner) and as an
 	// operator escape hatch. Default false (gate on).
 	GateDisabled bool
 	// NotifyEmojiDisabled suppresses the operator-typing 📫
@@ -122,9 +122,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	gateDisabled := fs.Bool("gate-disabled", false,
 		"bypass the observe-gate entirely (delivery happens immediately on every queue head). Default false (gate on). Operators rarely need to disable; the gate is read-only-observe-only and adds ~3-5s in the typical idle case. Per-agent TOML knob: `gate-disabled = true`.")
 	pollIntervalMin := fs.Duration("poll-interval-min", 3*time.Second,
-		"observe-gate initial poll interval. The gate samples ChamberState at this cadence on the fast path (#92).")
+		"observe-gate initial poll interval. The gate samples AgentState at this cadence on the fast path (#92).")
 	pollIntervalMax := fs.Duration("poll-interval-max", 15*time.Second,
-		"observe-gate maximum poll interval. The cadence backs off multiplicatively (1.5×) up to this cap when the chamber is not yet ready (#92).")
+		"observe-gate maximum poll interval. The cadence backs off multiplicatively (1.5×) up to this cap when the agent is not yet ready (#92).")
 	inputStaleThreshold := fs.Duration("input-stale-threshold", 2*time.Minute,
 		"observe-gate stale-draft threshold. When the operator's input-row content remains unchanged this long, the gate decides the draft is abandoned and proceeds with archive-then-clear-then-paste (kind=stranded_draft snapshot + Ctrl+U). Per #92's 2026-06-04 design call.")
 	notifyEmojiDisabled := fs.Bool("notify-emoji-disabled", false,
@@ -356,7 +356,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				logger.Printf("drift_check_err id=%s err=%v", msg.PublicID, err)
 			case ambiguous:
 				driftFailReason = "drift_check_ambiguous"
-				logger.Printf("WARN drift_check_ambiguous id=%s agent=%s registered_pane=%s — multiple canonicals exact-or-substring-match the running --resume value (resolve via: semaphore.register name=<canonical> alias=<unique-suffix> force=true; #47)",
+				logger.Printf("WARN drift_check_ambiguous id=%s agent=%s registered_pane=%s — multiple canonicals exact-or-substring-match the running --resume value (resolve via: tmux-msg.register name=<canonical> alias=<unique-suffix> force=true; #47)",
 					msg.PublicID, opts.Agent, paneForDelivery)
 			case running != "" && running != opts.Agent:
 				newPane, lambig, lerr := walker.LookupByNameWithCanonicals(opCtx, opts.Agent, canonicals)
@@ -401,7 +401,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			}
 		}
 
-		// Pre-delivery observe-gate (#92). Read-only ChamberState
+		// Pre-delivery observe-gate (#92). Read-only AgentState
 		// polling + content-hash stale-detection. Replaces the legacy
 		// probe-and-watch flow (the dashes + 60s backoff path
 		// per the tmux-msg #91 investigation). On any error other
@@ -622,7 +622,7 @@ func maybeInsertFailureNotice(
 // archiveStrandedDraft snapshots operator-typed content that the
 // observe-gate (#92) is about to flush from the receiver's input row
 // to make room for delivery. Inserted as kind=stranded_draft from the
-// receiving chamber to itself (self-addressed) via the cap-bypass
+// receiving agent to itself (self-addressed) via the cap-bypass
 // InsertNotice path — operator-typed work shouldn't be silently
 // dropped because the inbox is congested.
 //
@@ -631,7 +631,7 @@ func maybeInsertFailureNotice(
 // to (a) compound delivery (paste appends to the operator's content
 // without clearing) rather than risk a silent draft loss via (b).
 //
-// `receiver` is the chamber the mailman is serving (the chamber whose
+// `receiver` is the agent the mailman is serving (the agent whose
 // pane had the stranded content). `triggerMsgID` is the public_id of
 // the message whose delivery triggered the flush — referenced in the
 // body so the operator can correlate.

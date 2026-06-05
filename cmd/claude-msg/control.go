@@ -42,13 +42,13 @@ type controlResult struct {
 }
 
 // doControl is the shared validate+insert pipeline behind both the MCP
-// semaphore.control tool and the new `claude-msg control` CLI. Returns
+// tmux-msg.control tool and the new `claude-msg control` CLI. Returns
 // a structured result the caller renders into its preferred shape.
 //
 // Three execution paths:
 //
-//  1. mcp-restart-semaphore macro → two control rows
-//     (/mcp disable semaphore, /mcp enable semaphore).
+//  1. mcp-restart-tmux-msg macro → two control rows
+//     (/mcp disable tmux-msg, /mcp enable tmux-msg).
 //  2. compact with resume_with → one control row + one message row,
 //     reply_to-threaded; the mailman's post-compact pause lets the
 //     follow-up land after the slash-command settles.
@@ -87,7 +87,7 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 	// trimmed). We dispatch path 1 / path 2 against this — NOT against
 	// the resolved text — so the macro is keyed on the canonical command
 	// name rather than its prose form. (If a future whitelist edit added
-	// another entry whose Text happened to be `/mcp restart semaphore`,
+	// another entry whose Text happened to be `/mcp restart tmux-msg`,
 	// dispatching on text would silently route it through the macro;
 	// dispatching on name keeps the coupling visible.)
 	canonName := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(p.Command), "/"))
@@ -97,16 +97,16 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 	// guarantee means we can never leave the recipient half-actioned
 	// (disabled but never re-enabled). Cap budget for +2 slots is
 	// enforced inside the same transaction.
-	if canonName == "mcp-restart-semaphore" {
+	if canonName == "mcp-restart-tmux-msg" {
 		disableP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
-			Body: "/mcp disable semaphore", Kind: store.KindControl,
+			Body: "/mcp disable tmux-msg", Kind: store.KindControl,
 			MaxRecipientQueue: p.MaxRecipient,
 			MaxSenderBacklog:  p.MaxSender,
 		}
 		enableP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
-			Body: "/mcp enable semaphore", Kind: store.KindControl,
+			Body: "/mcp enable tmux-msg", Kind: store.KindControl,
 		}
 		disableRes, enableRes, err := s.InsertMessagePair(ctx, disableP, enableP, true)
 		if err != nil {

@@ -8,7 +8,7 @@ A tmux-based message-bus substrate. Each tmux session that hosts a CLI agent has
 
 ## Status
 
-Production on alcatraz across 6 chambers (Bosun, Surveyor, Engineer, Pilot, Herald, Quartermaster) since v0.3.0 (2026-06-04). See [the epic](https://git.frankenbit.de/frankenbit/tmux-msg/issues) for the roadmap and open work.
+Production on alcatraz across 6 agents (Bosun, Surveyor, Engineer, Pilot, Herald, Quartermaster) since v0.3.0 (2026-06-04). See [the epic](https://git.frankenbit.de/frankenbit/tmux-msg/issues) for the roadmap and open work.
 
 ## Architecture
 
@@ -194,8 +194,8 @@ gone):
 
 - `/etc/tmux-msg/` — host-level config (#54); the operator may
   have hand-edited it.
-- The semaphore MCP entry in `~/.claude.json` — remove with
-  `claude mcp remove semaphore -s user`.
+- The tmux-msg MCP entry in `~/.claude.json` — remove with
+  `claude mcp remove tmux-msg -s user`.
 - `loginctl enable-linger` — other services on the host may rely on
   the user manager continuing to run at boot.
 - `/var/lib/tmux-msg/` — message history. Default-preserved so
@@ -209,7 +209,7 @@ delete the very directory it's running from with `--purge`).
 ## Use from Claude Code (MCP)
 
 The same binary speaks MCP over stdio under `claude-msg mcp`, exposing
-`semaphore.send / control / agents / whoami / inbox / status / register
+`tmux-msg.send / control / agents / whoami / inbox / status / register
 / unregister` as native Claude tools. **One user-level config; identity
 is auto-resolved per pane.**
 
@@ -219,7 +219,7 @@ config) — no per-pane env or config files needed:
 ```json
 {
   "mcpServers": {
-    "semaphore": {
+    "tmux-msg": {
       "command": "/usr/local/bin/claude-msg",
       "args": ["mcp"]
     }
@@ -229,7 +229,7 @@ config) — no per-pane env or config files needed:
 
 ### How identity works
 
-When Claude in a tmux pane spawns the semaphore MCP server, the child
+When Claude in a tmux pane spawns the tmux-msg MCP server, the child
 process inherits `$TMUX_PANE` from the shell (tmux sets it automatically
 for every pane it owns — `%1`, `%3`, etc.). The MCP server looks that
 pane id up in the `agents` table and uses the matching agent name as the
@@ -237,7 +237,7 @@ session's identity.
 
 So the workflow for a **new pane** is just one tool call from that pane:
 
-> *Claude, please call `semaphore.register name=myname`*
+> *Claude, please call `tmux-msg.register name=myname`*
 
 The pane is auto-detected from `$TMUX_PANE`, the row is inserted, and
 `systemctl --user enable --now claude-mailman@myname.service` runs in
@@ -254,7 +254,7 @@ systemctl --user enable --now claude-mailman@myname.service
 
 ### Whitelisted control commands
 
-`semaphore.control` types a vetted Claude Code slash-command into a
+`tmux-msg.control` types a vetted Claude Code slash-command into a
 pane — either the caller's own pane (most common: an agent quietly
 asking itself to `/compact` at a quiescent point) or another agent's
 pane (for benign peer nudges like retitling). The string is typed
@@ -276,19 +276,19 @@ identity exactly.
 | `cost`    | ✓ | ✗ | Self-only — output goes to recipient |
 | `help`    | ✓ | ✓ | Harmless either way |
 | `clear`   | ✗ | ✗ | **Edge-only**: Bosun→Pilot rescue path when `/compact` can't recover from token exhaustion (#60). Loses in-flight work. |
-| `mcp-enable-semaphore`  | ✓ | ✓ | Refresh tool surface after deploying a new `semaphore.*` tool — no context loss |
-| `mcp-disable-semaphore` | ✓ | ✗ | Self-only: raw peer-disable is a DoS surface; use the restart macro instead |
-| `mcp-restart-semaphore` | ✓ | ✓ | Macro: the handler synthesises `disable` + `enable` as two control rows for a peer-safe reconnect cycle |
+| `mcp-enable-tmux-msg`  | ✓ | ✓ | Refresh tool surface after deploying a new `tmux-msg.*` tool — no context loss |
+| `mcp-disable-tmux-msg` | ✓ | ✗ | Self-only: raw peer-disable is a DoS surface; use the restart macro instead |
+| `mcp-restart-tmux-msg` | ✓ | ✓ | Macro: the handler synthesises `disable` + `enable` as two control rows for a peer-safe reconnect cycle |
 
 ```text
 # Self: an agent asks itself to compact
-semaphore.control to=bosun command=compact   # invoked from the bosun pane
+tmux-msg.control to=bosun command=compact   # invoked from the bosun pane
 
 # Peer: Bosun retitles Pilot's tab
-semaphore.control to=pilot command=rename
+tmux-msg.control to=pilot command=rename
 
 # Edge-allowed: Bosun rescues a token-exhausted Pilot
-semaphore.control to=pilot command=clear     # only works when sender == bosun
+tmux-msg.control to=pilot command=clear     # only works when sender == bosun
 ```
 
 Adding a command, flipping a scope flag, OR adding a new edge entry
@@ -313,12 +313,12 @@ Identity is auto-resolved the same way as the MCP tool — `$TMUX_PANE`
 #### Self-compact with a follow-up
 
 `/compact` leaves the session sitting at an empty prompt — no work
-resumes until input lands. To bridge the gap, `semaphore.control`
+resumes until input lands. To bridge the gap, `tmux-msg.control`
 accepts an optional `resume_with` string when `command=compact` on
 self-invocation:
 
 ```text
-semaphore.control to=bosun command=compact \
+tmux-msg.control to=bosun command=compact \
   resume_with="finish #25 follow-ups, then triage tomorrow's queue"
 ```
 
@@ -333,7 +333,7 @@ is rejected at the MCP boundary otherwise.
 
 ### Removing a pane
 
-> *Claude, please call `semaphore.unregister name=oldname`*
+> *Claude, please call `tmux-msg.unregister name=oldname`*
 
 Stops the mailman, drops the agent row, and optionally purges the
 agent's message history (`purge_messages: true`).
@@ -344,30 +344,30 @@ MCP tool lists are sent once during the `initialize` handshake and not
 refreshed. Updating `/usr/local/bin/claude-msg` and restarting the
 mailmen makes new tools available to *future* Claude sessions, but
 sessions that started before the upgrade stay pinned to the tool
-surface they were initialized with. To propagate a new `semaphore.*`
+surface they were initialized with. To propagate a new `tmux-msg.*`
 tool into a running pane, restart its Claude session.
 
-The `mcp-restart-semaphore` macro (#28) re-initializes one chamber's
+The `mcp-restart-tmux-msg` macro (#28) re-initializes one agent's
 MCP stdio without losing in-session context. For deploys that need
-EVERY chamber refreshed, the bulk shortcut collapses the per-chamber
+EVERY agent refreshed, the bulk shortcut collapses the per-agent
 typing tax:
 
 ```bash
 claude-msg refresh-all-mcps                 # text summary
-claude-msg refresh-all-mcps --format json   # per-chamber outcome rows
+claude-msg refresh-all-mcps --format json   # per-agent outcome rows
 ```
 
 Iterates the registered `agents` table and fires
-`mcp-restart-semaphore` per chamber, then reports each chamber's
+`mcp-restart-tmux-msg` per agent, then reports each agent's
 success or cap-rejected failure. Cap-protected by the existing 5-slot
-per-recipient queue ceiling — a busy chamber gets a `failed` entry
+per-recipient queue ceiling — a busy agent gets a `failed` entry
 rather than queue-bypass. Operator-only (no MCP tool variant; that
 would be a DoS amplification class).
 
-> **Forward-watch**: v1 fires the macro unconditionally per chamber.
-> If a chamber is mid-tool-call at restart time, that single tool-call
-> is disrupted (the chamber session itself is unaffected). If this
-> becomes recurring felt-pain, the post-#69 chamber-state primitive
+> **Forward-watch**: v1 fires the macro unconditionally per agent.
+> If a agent is mid-tool-call at restart time, that single tool-call
+> is disrupted (the agent session itself is unaffected). If this
+> becomes recurring felt-pain, the post-#69 agent-state primitive
 > enables a `state in [idle, awaiting-operator]` gate as a size/M
 > follow-up — file an issue citing the friction.
 
@@ -387,7 +387,7 @@ claude-msg track 9c1d           # human-readable text
 claude-msg track 9c1d --format json   # piping into scripts
 
 # From a Claude session (MCP):
-# call semaphore.message_status with {"id": "9c1d"}
+# call tmux-msg.message_status with {"id": "9c1d"}
 ```
 
 Both paths return the same shape (`state`, `created_at`,
@@ -432,7 +432,7 @@ sees it, walk this flow:
 Common cause patterns:
 
 - **`drift_check_ambiguous`** — multiple canonicals exact-or-substring
-  match the running `--resume` value. Fix: `semaphore.register name=X
+  match the running `--resume` value. Fix: `tmux-msg.register name=X
   alias=Y force=true` (the WARN line carries the exact recipe since
   #47).
 - **`drift_detected_unrecoverable`** — `discover` couldn't find the
@@ -449,7 +449,7 @@ Common cause patterns:
   claude-mailman@<recipient>.service`. Orphan-recovery on next
   startup will re-queue any in-flight messages.
 
-> Different shape: if the chamber claims a message went missing but
+> Different shape: if the agent claims a message went missing but
 > `claude-msg track` says **no such id** (or you don't even have the
 > id), the failure may be **sender-side** rather than bus-side. Walk
 > the [sender-outbox-first diagnostic playbook](docs/diagnostic-playbook.md)
@@ -466,9 +466,9 @@ It replaces the probe-and-watch quiet-pane gate retired in v0.3.0: no
 typical-case latency drops from ~72s (the legacy gate's single backoff
 cycle) to ~3–5s.
 
-The gate polls the recipient's `ChamberState` (two read-only
+The gate polls the recipient's `AgentState` (two read-only
 `capture-pane` snapshots plus a cursor query — zero pane mutation) and
-decides across the five `ChamberState` values:
+decides across the five `AgentState` values:
 
 | Recipient state | Gate decision |
 |---|---|
@@ -496,7 +496,7 @@ silently discard the typed content. The flush is a three-path decision:
 
 1. **(c) Clear-paste-archive (primary).** The gate snapshots the
    operator's input-row content into the bus as a `kind=stranded_draft`
-   row — **self-addressed to the recipient chamber** (cap-bypass, so a
+   row — **self-addressed to the recipient agent** (cap-bypass, so a
    congested inbox can't drop it) — then sends `Ctrl+U` to clear the
    input and pastes the message.
 2. **(a) Append (fallback).** If the archive write fails, the mailman
@@ -508,8 +508,8 @@ silently discard the typed content. The flush is a three-path decision:
    destroy bus content, not just operator content. The safe paths above
    always archive before clearing.
 
-Because the snapshot is self-addressed, the chamber's own mailman
-delivers it straight back into the chamber's pane — so the **primary
+Because the snapshot is self-addressed, the agent's own mailman
+delivers it straight back into the agent's pane — so the **primary
 recovery is inline**: the cleared draft reappears as a
 `kind=stranded_draft` bus message carrying the content verbatim plus the
 public_id of the delivery that triggered the flush. To find it again in
@@ -517,8 +517,8 @@ the store *after* that self-delivery (the row has moved past `queued`),
 the SQLite-inbox fallback is:
 
 ```bash
-claude-msg inbox <chamber> --state delivered   # the self-delivered snapshot
-claude-msg inbox <chamber> --state ""          # all states, if unsure
+claude-msg inbox <agent> --state delivered   # the self-delivered snapshot
+claude-msg inbox <agent> --state ""          # all states, if unsure
 ```
 
 #### Tuning knobs
@@ -540,7 +540,7 @@ The notification toggles (`--notify-on-failed` /
 
 #### Migration from v0.2.x
 
-The observe-gate is on for every chamber with no per-agent config. If
+The observe-gate is on for every agent with no per-agent config. If
 you carried `[agent.<name>]` blocks that only set the old probe-and-watch
 knobs — `quiet-disabled`, `prompt-sentinel-gate`, `quick-presence-probe`,
 `quiet-observe-window`, `quiet-input-backoff`, `quiet-max-wait` — those
@@ -625,7 +625,7 @@ Without help, this fails twice:
 
 ```text
 # from the bosun pane (MCP):
-semaphore.register name=bosun alias='Master Bosun of Nimbus'
+tmux-msg.register name=bosun alias='Master Bosun of Nimbus'
 
 # from a shell (CLI; identity already resolved):
 claude-msg control ...  # alias support via register is MCP-only today

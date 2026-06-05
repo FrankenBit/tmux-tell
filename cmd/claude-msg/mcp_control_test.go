@@ -14,7 +14,7 @@ func TestMCP_Control_SelfInvocation_SelfOnlyCommand(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":      "alice",
 		"command": "compact",
 	})
@@ -48,7 +48,7 @@ func TestMCP_Control_PeerInvocation_PeerAllowedCommand(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":      "bob",
 		"command": "rename",
 	})
@@ -66,7 +66,7 @@ func TestMCP_Control_PeerInvocation_BlockedForSelfOnlyCommand(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":      "bob",
 		"command": "compact",
 	})
@@ -91,7 +91,7 @@ func TestMCP_Control_RejectsUnknownCommand(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":      "bob",
 		"command": "clear",
 	})
@@ -104,7 +104,7 @@ func TestMCP_Control_RejectsUnknownRecipient(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":      "ghost",
 		"command": "compact",
 	})
@@ -120,7 +120,7 @@ func TestMCP_Control_CompactWithResume_QueuesBothRows(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":          "alice",
 		"command":     "compact",
 		"resume_with": "continue the bus work; specifically finish #25 follow-ups",
@@ -160,7 +160,7 @@ func TestMCP_Control_ResumeWith_RejectedOnNonCompact(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":          "alice",
 		"command":     "help",
 		"resume_with": "anything",
@@ -177,7 +177,7 @@ func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":          "bob",
 		"command":     "compact",
 		"resume_with": "irrelevant",
@@ -187,16 +187,16 @@ func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
 	}
 }
 
-// mcp-restart-semaphore is a peer-allowed macro that the handler
-// expands into two control rows: /mcp disable semaphore, then
-// /mcp enable semaphore (reply_to-threaded for audit).
+// mcp-restart-tmux-msg is a peer-allowed macro that the handler
+// expands into two control rows: /mcp disable tmux-msg, then
+// /mcp enable tmux-msg (reply_to-threaded for audit).
 func TestMCP_Control_RestartMacro_SelfInvocation_QueuesBothRows(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":      "alice",
-		"command": "mcp-restart-semaphore",
+		"command": "mcp-restart-tmux-msg",
 	})
 	if got["ok"] != true || got["macro"] != "restart" {
 		t.Fatalf("got=%v; want ok+macro=restart", got)
@@ -216,10 +216,10 @@ func TestMCP_Control_RestartMacro_SelfInvocation_QueuesBothRows(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("queued = %d, want 2", len(msgs))
 	}
-	if msgs[0].Kind != store.KindControl || msgs[0].Body != "/mcp disable semaphore" {
+	if msgs[0].Kind != store.KindControl || msgs[0].Body != "/mcp disable tmux-msg" {
 		t.Errorf("row[0] should be disable control; got %+v", msgs[0])
 	}
-	if msgs[1].Kind != store.KindControl || msgs[1].Body != "/mcp enable semaphore" {
+	if msgs[1].Kind != store.KindControl || msgs[1].Body != "/mcp enable tmux-msg" {
 		t.Errorf("row[1] should be enable control; got %+v", msgs[1])
 	}
 	if msgs[1].ReplyTo.String != disableID {
@@ -235,9 +235,9 @@ func TestMCP_Control_RestartMacro_PeerInvocation_QueuesBothRows(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":      "bob",
-		"command": "mcp-restart-semaphore",
+		"command": "mcp-restart-tmux-msg",
 	})
 	if got["ok"] != true || got["macro"] != "restart" {
 		t.Fatalf("got=%v; want ok+macro=restart", got)
@@ -252,7 +252,7 @@ func TestMCP_Control_RestartMacro_PeerInvocation_QueuesBothRows(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("queued = %d, want 2", len(msgs))
 	}
-	for i, want := range []string{"/mcp disable semaphore", "/mcp enable semaphore"} {
+	for i, want := range []string{"/mcp disable tmux-msg", "/mcp enable tmux-msg"} {
 		if msgs[i].Body != want || msgs[i].Kind != store.KindControl {
 			t.Errorf("row[%d] = %+v; want body=%q kind=control", i, msgs[i], want)
 		}
@@ -263,16 +263,16 @@ func TestMCP_Control_RestartMacro_PeerInvocation_QueuesBothRows(t *testing.T) {
 	}
 }
 
-// Regression test for the #28 scope flip: raw mcp-disable-semaphore
+// Regression test for the #28 scope flip: raw mcp-disable-tmux-msg
 // is now self-only. A peer attempt must be rejected so a prompt-
 // injected agent can't silently DoS another agent's bus connection.
 func TestMCP_Control_RawDisable_RejectedOnPeer(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":      "bob",
-		"command": "mcp-disable-semaphore",
+		"command": "mcp-disable-tmux-msg",
 	})
 	if got["_isError"] != true {
 		t.Fatalf("raw mcp-disable on peer must be rejected; got=%v", got)
@@ -293,7 +293,7 @@ func TestMCP_Control_RawDisable_RejectedOnPeer(t *testing.T) {
 // Regression for #28 follow-up (Surveyor Q1A): the macro dispatch is
 // keyed on the canonical command name, not the resolved Text. A call
 // whose .Command resolves through Resolve() but whose name isn't
-// "mcp-restart-semaphore" must NOT enter the two-row macro path.
+// "mcp-restart-tmux-msg" must NOT enter the two-row macro path.
 // Today no other entry shares the macro's text, but the contract
 // should be enforced on name to keep the coupling visible.
 func TestMCP_Control_RestartMacro_DispatchesOnName(t *testing.T) {
@@ -301,9 +301,9 @@ func TestMCP_Control_RestartMacro_DispatchesOnName(t *testing.T) {
 	s := newCmdTestStore(t, "alice")
 
 	// `help` is a plain command that resolves to "/help", never to
-	// "/mcp restart semaphore". This is a sanity-pin that the macro
+	// "/mcp restart tmux-msg". This is a sanity-pin that the macro
 	// dispatch isn't accidentally string-matching on something else.
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":      "alice",
 		"command": "help",
 	})
@@ -328,7 +328,7 @@ func TestMCP_Control_RequiresIdentity(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")
 
-	got := callMCPTool(t, s, "semaphore.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
 		"to":      "bob",
 		"command": "compact",
 	})

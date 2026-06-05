@@ -13,7 +13,7 @@ import (
 // PromptSentinel is the Claude Code TUI's input-row prefix — U+276F
 // (Heavy Right-Pointing Angle Quotation Mark Ornament) followed by
 // U+00A0 (NO-BREAK SPACE). Empirically verified across all six
-// chambers on 2026-06-04, hex `e2 9d af c2 a0`.
+// agents on 2026-06-04, hex `e2 9d af c2 a0`.
 //
 // The string-literal uses `\u00a0` so the NBSP is explicit in the
 // source code (mixing a visually-identical NBSP into the literal
@@ -22,7 +22,7 @@ import (
 //
 // FORWARD-WATCH: this constant is Claude-Code-version-dependent. If
 // the Claude Code TUI's prompt character changes (theme update,
-// version bump, customization), the cursor-aware ChamberState branch
+// version bump, customization), the cursor-aware AgentState branch
 // silently degrades to "cursor not at input row". Re-verify the
 // constant during any major Claude Code version update via
 // `tmux capture-pane | od -An -tx1` on the input row; the canary
@@ -30,7 +30,7 @@ import (
 // drift loudly.
 const PromptSentinel = "❯\u00a0"
 
-// State classifies a chamber's current activity from the tmux-msg
+// State classifies a agent's current activity from the tmux-msg
 // vantage point. Five values, per the #69 verdict
 // (bus id `d47f`, 2026-06-04). The zero value is StateUnknown so a
 // caller that forgets to initialize gets the safer-default-on-
@@ -48,15 +48,15 @@ const (
 	// some non-prompt non-menu UI state the heuristic doesn't recognize.
 	// Always the zero value.
 	StateUnknown State = iota
-	// StateIdle means the chamber is waiting for input. The pane is
+	// StateIdle means the agent is waiting for input. The pane is
 	// stable across the temporal-delta window AND the PromptSentinel is
 	// painted with no content past it.
 	StateIdle
-	// StateWorking means the chamber is actively processing — streaming
+	// StateWorking means the agent is actively processing — streaming
 	// output, spinner ticking, or any other substantive pane-content
 	// change across the temporal-delta window.
 	StateWorking
-	// StateAtRestInCompaction means the chamber is mid-`/compact`
+	// StateAtRestInCompaction means the agent is mid-`/compact`
 	// sequence. Detection relies on CompactionMarker, an empirically-
 	// captured substring of Claude Code's compaction-in-progress UI
 	// (#70, PR #88). Lit up 2026-06-04 from two operator-
@@ -66,9 +66,9 @@ const (
 	// state_test.go protect the substring against Claude Code UI
 	// drift.
 	StateAtRestInCompaction
-	// StateAwaitingOperator means the chamber is paused on an
+	// StateAwaitingOperator means the agent is paused on an
 	// AskUserQuestion popup or other operator-input-required UI —
-	// structurally distinct from idle: the chamber has an open turn
+	// structurally distinct from idle: the agent has an open turn
 	// awaiting human response, and the next bus message can't drive the
 	// turn forward without first being treated by the operator.
 	// Detection relies on AwaitingOperatorMarker, an empirically-captured
@@ -120,7 +120,7 @@ type Evidence struct {
 	Marker string `json:"marker,omitempty"`
 }
 
-// CompactionMarker is the substring that identifies a chamber in
+// CompactionMarker is the substring that identifies a agent in
 // StateAtRestInCompaction via pane-capture inspection.
 //
 // Empirically captured 2026-06-04 from a Quartermaster pane mid-
@@ -138,12 +138,12 @@ type Evidence struct {
 // spinner frames; the trailing phrase is the stable load-bearing
 // substring. The ellipsis is U+2026, painted as a single codepoint.
 //
-// Precedence in ChamberState: this check runs BEFORE the pane-equality
-// "working" check (precedence 1 vs 2) so a chamber mid-compaction — a
+// Precedence in AgentState: this check runs BEFORE the pane-equality
+// "working" check (precedence 1 vs 2) so a agent mid-compaction — a
 // pane whose spinner is animating across the temporal-delta window and
 // would otherwise classify as Working — is correctly identified as
 // AtRestInCompaction. The two captures at different progress points
-// pin this precedence in TestChamberState_AtRestInCompactionOnGolden.
+// pin this precedence in TestAgentState_AtRestInCompactionOnGolden.
 //
 // FORWARD-WATCH (same shape as PromptSentinel + AwaitingOperatorMarker):
 // Claude-Code-version-dependent. If the compaction UI's phrase changes
@@ -152,7 +152,7 @@ type Evidence struct {
 // loudly.
 const CompactionMarker = "Compacting conversation…"
 
-// AwaitingOperatorMarker is the substring that identifies a chamber in
+// AwaitingOperatorMarker is the substring that identifies a agent in
 // StateAwaitingOperator (AskUserQuestion popups, selection menus, …).
 //
 // Empirically captured 2026-06-04 from a Quartermaster pane displaying
@@ -175,34 +175,34 @@ const CompactionMarker = "Compacting conversation…"
 // drift loudly.
 const AwaitingOperatorMarker = "↑/↓ to navigate · Esc to cancel"
 
-// chamberStateTemporalDelta is the wait between the two capture-pane
-// calls in ChamberState. 200ms is long enough to catch typical
+// agentStateTemporalDelta is the wait between the two capture-pane
+// calls in AgentState. 200ms is long enough to catch typical
 // streaming-output changes + spinner animations (most Claude Code
 // spinners tick at ~80-100ms intervals) and short enough that probing
-// a working chamber doesn't add meaningful latency to the caller's
-// flow. False-negatives on chambers running long-running tools whose
+// a working agent doesn't add meaningful latency to the caller's
+// flow. False-negatives on agents running long-running tools whose
 // only paint is a 1Hz spinner counter are an accepted risk for v1 —
 // the ObserveGate's poll loop catches a working-pane mis-classified
 // as idle at the delivery layer via subsequent iterations.
-var chamberStateTemporalDelta = 200 * time.Millisecond
+var agentStateTemporalDelta = 200 * time.Millisecond
 
-// SetChamberStateTemporalDeltaForTest swaps the temporal-delta wait
-// for tests so the suite doesn't pay 200ms per ChamberState call.
+// SetAgentStateTemporalDeltaForTest swaps the temporal-delta wait
+// for tests so the suite doesn't pay 200ms per AgentState call.
 // Returns the previous value for cleanup restoration. Sibling to
 // SetSettleDelayForTest.
-func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
-	prev := chamberStateTemporalDelta
-	chamberStateTemporalDelta = d
+func SetAgentStateTemporalDeltaForTest(d time.Duration) time.Duration {
+	prev := agentStateTemporalDelta
+	agentStateTemporalDelta = d
 	return prev
 }
 
-// ChamberState classifies the receiving pane's current activity by
+// AgentState classifies the receiving pane's current activity by
 // inspecting two consecutive capture-pane snapshots + the tmux cursor
 // position and applying a precedence-ordered heuristic.
 //
 // Substrate-class: read-only-observe. Exactly two capture-pane calls,
 // one display-message call, zero send-keys, zero pane mutation.
-// Pinned by TestChamberState_NoPaneMutation in the test suite. "Knock
+// Pinned by TestAgentState_NoPaneMutation in the test suite. "Knock
 // at the door without waking the inhabitant" per #69's
 // framing — all three tmux calls are read-only (capture-pane reads
 // the visible buffer; display-message reads tmux's internal pane
@@ -215,12 +215,12 @@ func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //  1. If either capture fails → StateUnknown + the wrapped error.
 //  2. If CompactionMarker is non-empty AND found in capture B →
 //     StateAtRestInCompaction. Lit up 2026-06-04 (#70, PR #88). This
-//     precedence over working is load-bearing: a chamber mid-compaction
+//     precedence over working is load-bearing: a agent mid-compaction
 //     is animating (spinner glyph cycles, percentage ticks) so capA
-//     != capB; without the marker check firing first, the chamber
+//     != capB; without the marker check firing first, the agent
 //     would mis-classify as Working.
 //  3. If capture A != capture B → StateWorking. Any substantive change
-//     across the temporal-delta window means the chamber is painting.
+//     across the temporal-delta window means the agent is painting.
 //  4. **Cursor-position-aware input-row classification** (the v2 gap-fix):
 //     query the cursor position via display-message; identify the row
 //     the cursor sits on; if that row starts with PromptSentinel:
@@ -231,7 +231,7 @@ func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //     ghost text; operator hasn't engaged — cursor would have moved
 //     past the content if they had).
 //     - Cursor past sentinel position: operator is mid-typing →
-//     StateAwaitingOperator (chamber blocked on operator finishing
+//     StateAwaitingOperator (agent blocked on operator finishing
 //     their draft).
 //     - Cursor before sentinel position: unusual; treat as Unknown.
 //  5. If AwaitingOperatorMarker is non-empty AND found in capture B →
@@ -255,7 +255,7 @@ func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
 // Cursor query failures are non-fatal (the heuristic gracefully
 // degrades to the cursor-less path); only capture-pane failures bubble
 // up as errors.
-func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
+func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 	if pane == "" {
 		return StateUnknown, Evidence{Reason: "pane required"},
 			errors.New("tmuxio: pane required")
@@ -265,12 +265,12 @@ func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 	if err != nil {
 		return StateUnknown,
 			Evidence{Reason: fmt.Sprintf("first capture-pane failed: %v", err)},
-			fmt.Errorf("tmuxio: chamber-state capture #1: %w: %s",
+			fmt.Errorf("tmuxio: agent-state capture #1: %w: %s",
 				err, strings.TrimSpace(string(capA)))
 	}
 
 	select {
-	case <-time.After(chamberStateTemporalDelta):
+	case <-time.After(agentStateTemporalDelta):
 	case <-ctx.Done():
 		return StateUnknown,
 			Evidence{Reason: fmt.Sprintf("context cancelled during temporal-delta wait: %v", ctx.Err())},
@@ -281,7 +281,7 @@ func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 	if err != nil {
 		return StateUnknown,
 			Evidence{Reason: fmt.Sprintf("second capture-pane failed: %v", err)},
-			fmt.Errorf("tmuxio: chamber-state capture #2: %w: %s",
+			fmt.Errorf("tmuxio: agent-state capture #2: %w: %s",
 				err, strings.TrimSpace(string(capB)))
 	}
 
@@ -312,7 +312,7 @@ func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 	// distinguish auto-suggestion (cursor at sentinel) from operator-
 	// drafting (cursor past sentinel) — the two cases the v1 heuristic
 	// conflated as "non-empty input row".
-	cursorX, cursorY, cursorErr := chamberCursor(ctx, pane)
+	cursorX, cursorY, cursorErr := agentCursor(ctx, pane)
 	if cursorErr == nil {
 		lines := strings.Split(capBStr, "\n")
 		if cursorY >= 0 && cursorY < len(lines) {
@@ -337,7 +337,7 @@ func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 					return StateIdle, ev, nil
 				case cursorX > sentinelCol:
 					// Cursor past the sentinel — operator is mid-
-					// typing. Chamber is blocked on operator finishing
+					// typing. Agent is blocked on operator finishing
 					// the draft (or clearing it). Same consumer-side
 					// semantics as AskUserQuestion popup: don't
 					// dispatch into this state.
@@ -365,7 +365,7 @@ func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 	// Cursor-less fallback (cursor query failed or cursor row doesn't
 	// have the sentinel): parse the pane for a sentinel-row with no
 	// content past it. Used when display-message isn't available or
-	// the cursor is somewhere other than the input row (e.g., chamber
+	// the cursor is somewhere other than the input row (e.g., agent
 	// paused mid-spinner).
 	if isInputRowQuiet(capBStr) {
 		return StateIdle,
@@ -393,29 +393,29 @@ func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 		nil
 }
 
-// chamberCursor queries the tmux cursor position for the pane. Returns
+// agentCursor queries the tmux cursor position for the pane. Returns
 // (cursorX, cursorY, error). tmux's cursor_x is column 0-indexed,
 // cursor_y is row 0-indexed from the top of the visible pane. A single
 // display-message call returns both values as "X/Y" for parse-once
 // efficiency.
 //
-// Errors here are non-fatal at the ChamberState layer — the algorithm
+// Errors here are non-fatal at the AgentState layer — the algorithm
 // gracefully degrades to the cursor-less heuristic when the cursor
 // substrate is unreachable.
-func chamberCursor(ctx context.Context, pane string) (int, int, error) {
+func agentCursor(ctx context.Context, pane string) (int, int, error) {
 	out, err := tmuxRun(ctx, nil, "display-message", "-p", "-t", pane, "#{cursor_x}/#{cursor_y}")
 	if err != nil {
-		return 0, 0, fmt.Errorf("tmuxio: chamber-state cursor query: %w: %s",
+		return 0, 0, fmt.Errorf("tmuxio: agent-state cursor query: %w: %s",
 			err, strings.TrimSpace(string(out)))
 	}
 	parts := strings.SplitN(strings.TrimSpace(string(out)), "/", 2)
 	if len(parts) != 2 {
-		return 0, 0, fmt.Errorf("tmuxio: chamber-state cursor parse: unexpected format %q", string(out))
+		return 0, 0, fmt.Errorf("tmuxio: agent-state cursor parse: unexpected format %q", string(out))
 	}
 	x, errX := strconv.Atoi(parts[0])
 	y, errY := strconv.Atoi(parts[1])
 	if errX != nil || errY != nil {
-		return 0, 0, fmt.Errorf("tmuxio: chamber-state cursor parse: %q", string(out))
+		return 0, 0, fmt.Errorf("tmuxio: agent-state cursor parse: %q", string(out))
 	}
 	return x, y, nil
 }
@@ -452,7 +452,7 @@ func countChangedLines(a, b string) int {
 // least one row starts with PromptSentinel AND that row has only
 // whitespace past the sentinel. False otherwise (no sentinel row
 // found, or sentinel row has non-whitespace content). Used by the
-// cursor-less fallback path in ChamberState when display-message
+// cursor-less fallback path in AgentState when display-message
 // fails or the cursor isn't on the input row.
 func isInputRowQuiet(paneContent string) bool {
 	sawSentinel := false

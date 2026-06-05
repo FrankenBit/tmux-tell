@@ -56,8 +56,8 @@ type Block struct {
 	DriftSoftFail               *bool `toml:"drift-soft-fail"`
 	// GateDisabled disables the read-only-observe-only gate added in
 	// #92. Default false (gate on). Operators rarely need to disable;
-	// useful only for chambers where collision-avoidance is unwanted
-	// (e.g., a chamber that should always receive instantly).
+	// useful only for agents where collision-avoidance is unwanted
+	// (e.g., a agent that should always receive instantly).
 	GateDisabled *bool `toml:"gate-disabled"`
 	// PollIntervalMin / PollIntervalMax / InputStaleThreshold tune the
 	// observe-gate's polling cadence + abandoned-draft detection (#92).

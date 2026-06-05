@@ -42,7 +42,7 @@ actionable` (says what's wrong, not what's next).
 | `no such message: ghost`                                                                                  | clear, not actionable         | paper-cut  | Could suggest `claude-msg log --limit 20` to find a recent id                                                 |
 | `WARN delivered_unverified id=X — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); marking delivered, operator may need to submit manually` | clear, actionable | — | Exemplary; explains what happened AND what to do |
 | `WARN quiet_cap_exceeded id=X pane=Y — delivering anyway`                                                 | clear, not-quite-actionable   | paper-cut  | What does the operator do with this WARN? Add: "rerun `claude-msg discover` if frequent" or similar           |
-| `WARN drift_check_ambiguous ... multiple canonicals ... (resolve via: semaphore.register name=<canonical> alias=<unique-suffix> force=true; #47)` | clear, actionable (post-#47) | —          | Recipe now inline in the WARN per #47; operator gets the fix command without needing to grep docs. WARN string is generic enough to cover both the post-v0.2.1 Q(a) exact-collision path and the substring path |
+| `WARN drift_check_ambiguous ... multiple canonicals ... (resolve via: tmux-msg.register name=<canonical> alias=<unique-suffix> force=true; #47)` | clear, actionable (post-#47) | —          | Recipe now inline in the WARN per #47; operator gets the fix command without needing to grep docs. WARN string is generic enough to cover both the post-v0.2.1 Q(a) exact-collision path and the substring path |
 | `WARN drift_detected_unrecoverable ... discover couldn't find X anywhere`                                 | clear, half-actionable        | paper-cut  | Add a hint: "(is the agent running? `claude-msg agents` shows current panes)"                                 |
 | `store: alias %q is the canonical name of agent %q` (ErrAliasCollision)                                   | clear, actionable             | —          | Names both colliding agents; operator can fix the alias directly                                              |
 
@@ -140,15 +140,15 @@ another notice.
 
 Current surface:
 
-- `semaphore.send`
-- `semaphore.control`
-- `semaphore.inbox`
-- `semaphore.status`
-- `semaphore.agents`
-- `semaphore.whoami`
-- `semaphore.register`
-- `semaphore.unregister`
-- `semaphore.message_status`
+- `tmux-msg.send`
+- `tmux-msg.control`
+- `tmux-msg.inbox`
+- `tmux-msg.status`
+- `tmux-msg.agents`
+- `tmux-msg.whoami`
+- `tmux-msg.register`
+- `tmux-msg.unregister`
+- `tmux-msg.message_status`
 
 Consistency observations:
 
@@ -186,7 +186,7 @@ A new operator picking up the bus tomorrow: what would they hit?
 | Recover after a tmux restore        | Yes¹            | README's "Canonical names and aliases" section explicitly explains the recipe                              |
 | Investigate a failed message        | Partial         | `claude-msg track <id>` is documented; the WARN log discovery flow ("grep journalctl") is folklore           |
 | Tune the probe-and-watch gate       | Yes             | `serve --quiet-*` flags are self-documenting via `--help`; rationale in README                              |
-| Add a new agent                     | Yes²            | `semaphore.register name=X alias=Y` recipe                                                                  |
+| Add a new agent                     | Yes²            | `tmux-msg.register name=X alias=Y` recipe                                                                  |
 
 ¹ Supported since v0.2.0 (silent-drift detection + canonical-name resolution).
 ² Supported since v0.2.1 (alias collision detection + fail-loud drift).
@@ -217,7 +217,7 @@ follow-ups").
   operator is watching live; but the empirical data (deliver-time
   histogram once we have it) will tell us whether it's actually
   hitting. Don't tune from intuition. Stays.
-- **`semaphore.agents` includes paused agents with `paused=true`
+- **`tmux-msg.agents` includes paused agents with `paused=true`
   status.** Initial reaction: "why are paused agents in the list?"
   Realized: pausing is the kill-switch, the operator needs to see
   them to un-pause. Correct as designed.
@@ -255,13 +255,13 @@ differently. The ordering is informative, not canonical.
 
 **1.0-candidate (defer to the 1.0 break window regardless of severity):**
 - `message_status` → `track` rename for CLI/MCP symmetry
-- Naming consistency review for the full `semaphore.*` surface
+- Naming consistency review for the full `tmux-msg.*` surface
 
 ## What this audit does NOT cover (out of scope)
 
 - Big UX redesigns (a TUI for the bus, a web dashboard for the
   audit log, etc.). Different conversation.
-- Re-litigating naming decisions that are stable (the `semaphore.*`
+- Re-litigating naming decisions that are stable (the `tmux-msg.*`
   namespace is keeping; the open question is consistency for new
   additions).
 - Anything requiring a rewrite of core mechanics.
