@@ -48,7 +48,9 @@ type serveOpts struct {
 	// settled, not into the slash-command parser mid-compaction. Zero
 	// disables the pause entirely.
 	PostCompactPause time.Duration
-	// ObserveGateOpts configures the read-only-observe-only gate (#92)
+	// ObserveGateOpts configures the observe-only-with-one-named-
+	// visibility-side-effect gate (#92; the side-effect is the 📫
+	// typing-notification per #95, opt-out via notify-emoji-disabled)
 	// that replaced the probe-and-watch flow. See
 	// internal/tmuxio/observe_gate.go for the per-field semantics.
 	ObserveGateOpts tmuxio.ObserveGateOpts
@@ -117,10 +119,12 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"per-message deadline for the tmux delivery sequence")
 	postCompactPause := fs.Duration("post-compact-pause", 120*time.Second,
 		"quiescent window after delivering /compact before claiming the next message (0 to disable)")
-	// Observe-gate knobs (#92). The read-only-observe-only gate replaces
-	// the probe-and-watch flow; see internal/tmuxio/observe_gate.go.
+	// Observe-gate knobs (#92). The observe-only-with-one-named-
+	// visibility-side-effect gate (📫 per #95, opt-out via
+	// notify-emoji-disabled) replaces the probe-and-watch flow; see
+	// internal/tmuxio/observe_gate.go.
 	gateDisabled := fs.Bool("gate-disabled", false,
-		"bypass the observe-gate entirely (delivery happens immediately on every queue head). Default false (gate on). Operators rarely need to disable; the gate is read-only-observe-only and adds ~3-5s in the typical idle case. Per-agent TOML knob: `gate-disabled = true`.")
+		"bypass the observe-gate entirely (delivery happens immediately on every queue head). Default false (gate on). Operators rarely need to disable; the gate is near-read-only (one optional 📫 nudge when you're typing, opt-out via notify-emoji-disabled) and adds ~3-5s in the typical idle case. Per-agent TOML knob: `gate-disabled = true`.")
 	pollIntervalMin := fs.Duration("poll-interval-min", 3*time.Second,
 		"observe-gate initial poll interval. The gate samples AgentState at this cadence on the fast path (#92).")
 	pollIntervalMax := fs.Duration("poll-interval-max", 15*time.Second,

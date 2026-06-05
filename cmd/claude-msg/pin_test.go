@@ -96,7 +96,9 @@ func TestPin_WireShapeSingleSoT_CLIAndMCPByteIdentity(t *testing.T) {
 // REMOVED 2026-06-04 (tmux-msg #92). The asymmetric gate
 // composition this pin guarded (PromptSentinelGate → QuickPresenceProbe
 // → WaitForQuietPane) was retired when the probe-and-watch substrate
-// was replaced with the read-only-observe-only ObserveGate. The
+// was replaced with the observe-only-with-one-named-visibility-side-
+// effect ObserveGate (the 📫 typing-notification per #95 is the
+// side-effect; opt-out via notify-emoji-disabled). The
 // "sentinel-first-cheap promotes, QuickPresenceProbe skipped"
 // commitment from PR #67 no longer exists at this layer — there's no
 // composition order to preserve because there's only one gate.

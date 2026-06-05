@@ -2,8 +2,10 @@
 
 When you send a bus message to an agent that's mid-turn, mid-`/compact`, or
 mid-typing, tmux-msg doesn't just paste it in and hope. Before each delivery the
-mailman runs the **observe-gate** — a read-only check that watches the recipient's
-pane and waits for a safe moment to deliver. This page is the operator-facing
+mailman runs the **observe-gate** — a near-read-only check (one optional `📫`
+nudge when you're typing, opt-out via `notify-emoji-disabled`; see §"When
+you're typing" below) that watches the recipient's pane and waits for a safe
+moment to deliver. This page is the operator-facing
 companion to the README's [§Delivery semantics: the observe-gate](../README.md#delivery-semantics-the-observe-gate);
 the README is the concise reference, this is the deeper "what it's doing and how to
 steer it" guide.
@@ -15,13 +17,18 @@ followed in **v0.4.0** (#96). It's **on by default** for every agent.
 
 ## What it is, in one paragraph
 
-The observe-gate is **read-only-observe-only**: it inspects the recipient pane
-without touching it — two `capture-pane` snapshots plus one `display-message`
-cursor query, and **zero** `send-keys` before the actual delivery. (The old gate
-injected `─` probe dashes into your input row to test the waters; the observe-gate
-injects nothing.) It classifies the pane into one of five states, and either
-delivers immediately or waits and re-checks. Typical latency on an idle pane is
-**~3–5s**; the old gate's single backoff cycle was ~72s.
+The observe-gate is **near-read-only**: it inspects the recipient pane via
+two `capture-pane` snapshots plus one `display-message` cursor query, and
+makes **at most one optional, opt-out-able mutation** before the actual
+delivery — the `📫` typing-notification nudge (see §"When you're typing"
+below; turn it off with `notify-emoji-disabled = true` and the gate is
+**strictly read-only**). The nudge fires at most once per delivery cycle.
+(The old probe-and-watch gate injected `─` probe dashes into your input
+row on every poll cycle to test the waters; the observe-gate's one nudge
+is bounded, opt-out-able, and absent unless the gate observes that you're
+actively typing.) The gate classifies the pane into one of five states,
+and either delivers immediately or waits and re-checks. Typical latency
+on an idle pane is **~3–5s**; the old gate's single backoff cycle was ~72s.
 
 ## How it decides: the five agent states
 

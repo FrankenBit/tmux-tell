@@ -10,9 +10,14 @@ import (
 	"time"
 )
 
-// ObserveGateOpts configures the read-only-observe-only delivery gate
-// introduced by tmux-msg #92. Defaults are filled in by
-// ObserveGate when fields are zero-valued.
+// ObserveGateOpts configures the observe-only-with-one-named-visibility-
+// side-effect delivery gate introduced by tmux-msg #92 (the substrate
+// itself is read-only-observe; the one side-effect is the optional 📫
+// nudge fired via OnOperatorTyping when first observing
+// StateAwaitingOperator per #95 — opt-out via OnOperatorTyping=nil OR
+// notify-emoji-disabled in the mailman config). With OnOperatorTyping
+// nil-or-disabled the gate is strictly read-only. Defaults are filled
+// in by ObserveGate when fields are zero-valued.
 type ObserveGateOpts struct {
 	// PollIntervalMin is the initial sleep between observe iterations.
 	// Default 3s.
@@ -116,9 +121,15 @@ var ErrMaxWaitExceeded = errors.New("tmuxio: observe-gate MaxWait exceeded")
 
 // ObserveGate observes the receiver pane via repeated read-only
 // AgentState calls until the agent is ready to receive a paste
-// delivery. The substrate-class is read-only-observe: zero pane
-// mutation, zero probe injection, zero send-keys before the caller's
-// own Deliver call (or the caller's Ctrl+U on Stale flush).
+// delivery. The substrate-class is observe-only-with-one-named-
+// visibility-side-effect: the AgentState probe itself is strictly
+// read-only (two capture-pane reads + one display-message query, zero
+// send-keys), and the gate fires at most ONE optional pane mutation
+// per delivery cycle — the 📫 nudge via OnOperatorTyping when first
+// observing StateAwaitingOperator (#95, opt-out via
+// OnOperatorTyping=nil OR notify-emoji-disabled in the mailman
+// config). With OnOperatorTyping nil-or-disabled the gate is strictly
+// read-only.
 //
 // Replaced the probe-and-watch gate per #92 (shipped in v0.3.0; the
 // legacy primitives were swept out in v0.4.0 / #94). The algorithm:
