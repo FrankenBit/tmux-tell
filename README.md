@@ -1,6 +1,6 @@
 # tmux-msg
 
-A tmux-based message-bus substrate. Each tmux session that hosts a CLI agent has a mailbox; senders post messages via the SQLite store, and a per-recipient mailman daemon serializes paste-and-Enter delivery into the target tmux pane through a read-only-observe-only gate that defers while the recipient is busy.
+A tmux-based message-bus substrate. Each tmux session that hosts a CLI agent has a mailbox; senders post messages via the SQLite store, and a per-recipient mailman daemon serializes paste-and-Enter delivery into the target tmux pane through a near-read-only gate (one optional 📫 nudge when you're typing) that defers while the recipient is busy.
 
 **Substrate vs CLI-tool-flavor.** The substrate is tmux: the pane registry, the paste-and-Enter delivery, the per-pane chrome detection (idle / busy / popup-open / mid-compaction / awaiting-operator). The CLI tool running inside the pane is downstream — `claude-msg` is the binary built for Claude Code today; sibling binaries (`codex-msg`, `copilot-msg`) can be built from the same substrate when there's need for them. The repo name was chosen to reflect that: tmux-msg is what the substrate IS, not which CLI tool happens to run on top.
 
@@ -462,13 +462,14 @@ Common cause patterns:
 
 ### Delivery semantics: the observe-gate
 
-**Default since v0.3.0: ON** (read-only, ~3–5s typical). Before each
-delivery the mailman runs `ObserveGate` — a *read-only-observe-only*
-check that decides when the recipient pane is ready to receive a paste.
-It replaces the probe-and-watch quiet-pane gate retired in v0.3.0: no
-`─` probe dashes are injected into the recipient's input row, and
-typical-case latency drops from ~72s (the legacy gate's single backoff
-cycle) to ~3–5s.
+**Default since v0.3.0: ON** (near-read-only, ~3–5s typical). Before each
+delivery the mailman runs `ObserveGate` — a *near-read-only* check (one
+optional `📫` nudge when the operator is typing, opt-out via
+`notify-emoji-disabled`; otherwise zero pane mutation) that decides when
+the recipient pane is ready to receive a paste. It replaces the
+probe-and-watch quiet-pane gate retired in v0.3.0: no `─` probe dashes
+are injected into the recipient's input row, and typical-case latency
+drops from ~72s (the legacy gate's single backoff cycle) to ~3–5s.
 
 The gate polls the recipient's `AgentState` (two read-only
 `capture-pane` snapshots plus a cursor query — zero pane mutation) and
@@ -548,10 +549,13 @@ The observe-gate is on for every agent with no per-agent config. If
 you carried `[agent.<name>]` blocks that only set the old probe-and-watch
 knobs — `quiet-disabled`, `prompt-sentinel-gate`, `quick-presence-probe`,
 `quiet-observe-window`, `quiet-input-backoff`, `quiet-max-wait` — those
-are now **no-ops**: the mailman logs a startup `WARN` naming any that
-are set, and you can delete the blocks at your convenience. A block that
+keys are no longer recognized. As of v0.4.0 (#94) TOML decoding is
+**strict**: any unknown key makes the mailman's config load **fail**
+with an error naming the offending key, and the mailman falls back to
+compile-time defaults for that startup. Delete the deprecated keys
+(or the whole stale block if it held nothing else — a block that
 existed only to hold `prompt-sentinel-gate = true` can be removed
-entirely.
+entirely) and the mailman starts clean on the next restart.
 
 ### Delivery-failure notifications
 

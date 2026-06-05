@@ -25,6 +25,34 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Changed
+
+- **Doc precision: "read-only-observe-only" overstated the gate's
+  discipline (#126).** Multiple doc + code-comment surfaces described
+  `ObserveGate` as strictly read-only. Accurate at v0.3.0 (#92's
+  introduction) but v0.3.1 (#95) added the `📫` mailbox notification
+  — a single character injection into the operator's input row via
+  the `OnOperatorTyping` callback. The framing has been corrected to
+  `near-read-only (one optional 📫 nudge when you're typing)` at the
+  load-bearing surfaces (README top-line + observe-gate section +
+  `docs/observe-gate.md` introduction + §"What it is, in one
+  paragraph") and to the more verbose
+  `observe-only-with-one-named-visibility-side-effect` at the
+  code-comment layer (`internal/tmuxio/observe_gate.go`
+  `ObserveGateOpts` + `ObserveGate` doc-comments). The `AgentState`
+  probe remains strictly read-only and the docs there are unchanged
+  — only the gate-itself framing was overstated.
+
+- **Doc precision: stale migration paragraph in README (#124).** The
+  README's "Migration from v0.2.x" paragraph described the legacy
+  probe-and-watch TOML keys as "no-ops + startup WARN" — accurate at
+  v0.3.0 but v0.4.0 (#94) made TOML decoding strict, so unknown keys
+  now make the mailman's config load fail with an error naming the
+  offending key. Operators following the old advice would see their
+  mailman fall back to compile-time defaults rather than the
+  WARN-then-continue path described. The paragraph now reflects the
+  strict-fail behavior + the deprecated-key-removal recovery path.
+
 ### Added
 
 - **`delivery_mode` for operator-as-bus-participant (#116).** New
