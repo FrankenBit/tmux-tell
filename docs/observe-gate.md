@@ -32,7 +32,7 @@ matches wins:
 | # | State | How it's detected | Gate decision |
 |---|---|---|---|
 | 1 | **at-rest-in-compaction** | the `Compacting conversation…` marker is in the pane (#70) | wait |
-| 2 | **working** | the two snapshots differ across a 200ms window (streaming output, a spinner, any paint) | wait |
+| 2 | **working** | the two snapshots differ across a 200ms window (streaming output, a spinner, any paint) | wait — *or* **deliver now** when `working-deliver-immediately` is on (#106) |
 | 3 | **idle** | cursor sits *at* the `❯ ` prompt sentinel — empty prompt *or* an auto-suggestion ghost-text (you haven't engaged) | **deliver now** |
 | 4 | **awaiting-operator** | cursor sits *past* the sentinel (you're mid-typing), or an AskUserQuestion-style popup footer is present (#79) | notify + wait (see below) |
 | 5 | **unknown** | capture failed, or the pane is stable in some UI the heuristic doesn't recognize | wait (treated as advisory — never delivered into blindly) |
@@ -135,7 +135,7 @@ claude-msg inbox <agent> --state ""          # all states, if you're unsure
 
 ## Tuning knobs
 
-All five are **CLI flags** on `claude-msg serve` *and* **TOML knobs** (per-agent or
+All six are **CLI flags** on `claude-msg serve` *and* **TOML knobs** (per-agent or
 `[defaults]`), resolved through the standard precedence chain — most specific wins:
 
 > **CLI flag > `[agent.<name>]` block > `[defaults]` block > compiled-in default**
@@ -147,6 +147,7 @@ All five are **CLI flags** on `claude-msg serve` *and* **TOML knobs** (per-agent
 | `--poll-interval-max` / `poll-interval-max` | `15s` | Backoff ceiling per poll. |
 | `--input-stale-threshold` / `input-stale-threshold` | `2m` | How long your draft must sit unchanged before the gate flushes it. |
 | `--notify-emoji-disabled` / `notify-emoji-disabled` | `false` | Suppress the 📫 typing notification for this agent. |
+| `--working-deliver-immediately` / `working-deliver-immediately` | `false` | Opts `working` out of the backoff into the same fast-path as `idle` (#106). Eligibility is `working` ONLY — `awaiting-operator` / `at-rest-in-compaction` / `unknown` stay hard-deferred regardless. Useful for crew-coordination workflows where the recipient's mid-turn keystroke buffer is the right delivery target. The verify-token + `delivered_unverified` notice is the safety net for the small race window between observing `working` and the paste landing. |
 
 The two delivery-failure toggles (`--notify-on-failed`,
 `--notify-on-delivered-unverified`) are **independent of the gate** — they govern the

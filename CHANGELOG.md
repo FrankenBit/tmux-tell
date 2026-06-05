@@ -25,6 +25,39 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Added
+
+- **`working-deliver-immediately` opt-in for fast-path delivery to
+  busy chambers (#106).** New `--working-deliver-immediately` CLI
+  flag + `working-deliver-immediately = true` per-agent TOML knob
+  (default `false`) that opts the observe-gate's `StateWorking`
+  branch out of the safer-default backoff and into the same fast-path
+  return as `StateIdle`. When enabled, mid-turn deliveries land in
+  the recipient's input row while Claude is still streaming and are
+  read as the next operator turn after the current one completes
+  (Claude Code's TUI buffers mid-turn keystrokes; the paste is
+  structurally safe). For crew-coordination workflows the cadence
+  win is real — typical 1s instead of 3-57s under backoff.
+
+  Per-state eligibility (`StateWorking` ONLY):
+  - `StateAwaitingOperator` — operator drafting; paste would destroy
+    their input. Hard-deferred regardless.
+  - `StateAtRestInCompaction` — `/compact` slash-command parser would
+    race the paste. Hard-deferred regardless.
+  - `StateUnknown` — the popup-as-Unknown failure mode #105 surfaced;
+    immediate paste into an unrecognized state is the destructive
+    case. Hard-deferred regardless.
+
+  The verify-token retry + `delivered_unverified` notice path is the
+  load-bearing safety net for the small race window between
+  observing `StateWorking` and the paste landing.
+
+  Operator-side migration: no action required. The flag defaults to
+  `false`, preserving the v0.3.0-through-v0.6.0 conservative behavior.
+  Flip per-agent in `/etc/tmux-msg/config.toml` when the coordination-
+  latency tradeoff favors immediate delivery (e.g., Bosun the
+  orchestrator, where coordination cadence matters).
+
 ### Changed
 
 - **Delivery template re-grounded on narrow-viewport rendering (#121).**
