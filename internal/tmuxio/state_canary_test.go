@@ -84,11 +84,26 @@ func TestPromptSentinel_MatchesGoldenCapture(t *testing.T) {
 // TestAwaitingOperatorMarker_MatchesGoldenCapture is the sibling-shape
 // canary for the AwaitingOperatorMarker constant — same capture-
 // derived-vs-spec-derived discipline as the PromptSentinel canary
-// above. The golden file is a real `tmux capture-pane` output frozen
-// from a Quartermaster pane displaying a live AskUserQuestion popup
-// (#79, captured 2026-06-04). If Claude Code's popup UI
-// drifts (footer keybinding text changes, separator character flips),
-// this test fails loudly + names the re-capture recipe.
+// above. Two golden files are checked, both real `tmux capture-pane`
+// outputs frozen from a Quartermaster pane displaying a live
+// AskUserQuestion popup. If Claude Code's popup UI drifts (footer
+// keybinding text changes, separator character flips), at least one
+// fixture stops matching and the test fails loudly + names the
+// re-capture recipe.
+//
+// Two-fixture shape pins coverage across multiple operator-coordinated
+// capture sessions:
+//   - 2026-06-04: original #79 capture, pinned the marker as captured
+//   - 2026-06-06: #133 follow-up capture coordinated via Bosun during
+//     a real AskUserQuestion popup with question + 3 options + hint
+//     line. Confirms the marker still matches canonical popups
+//     post-v0.6.0 cutover. Per `feedback_filed_rootcause_is_hypothesis`:
+//     the 2026-06-05 incident's "marker mismatch" theory was
+//     hypothesis until empirical verification; this capture
+//     disconfirms the theory (existing marker DOES match the popup
+//     it failed on, so the failure was capture-window-scroll or a
+//     non-AskUserQuestion popup variant). The Half 2 safety net
+//     (#105 / PR #134) is the load-bearing protection regardless.
 //
 // The substring is structurally unique to Claude Code's popup UI —
 // regular chat / response text never combines U+00B7 middle-dot
@@ -105,13 +120,24 @@ func TestAwaitingOperatorMarker_MatchesGoldenCapture(t *testing.T) {
 	if AwaitingOperatorMarker == "" {
 		t.Fatal("AwaitingOperatorMarker is empty — the StateAwaitingOperator branch is disabled; re-populate from a re-captured golden fixture (see AwaitingOperatorMarker doc-comment)")
 	}
-	golden, err := os.ReadFile("testdata/golden_quartermaster_askuserquestion_2026-06-04.txt")
-	if err != nil {
-		t.Fatalf("read golden capture: %v", err)
+	cases := []struct {
+		name string
+		path string
+	}{
+		{"original_79_capture", "testdata/golden_quartermaster_askuserquestion_2026-06-04.txt"},
+		{"post_v060_133_capture", "testdata/golden_quartermaster_askuserquestion_2026-06-06.txt"},
 	}
-	if !strings.Contains(string(golden), AwaitingOperatorMarker) {
-		t.Errorf("golden capture does NOT contain AwaitingOperatorMarker %q — Claude Code popup UI may have drifted; re-verify via `tmux capture-pane -p -t <pane>` on a live AskUserQuestion popup + update AwaitingOperatorMarker + re-capture the golden fixture",
-			AwaitingOperatorMarker)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			golden, err := os.ReadFile(c.path)
+			if err != nil {
+				t.Fatalf("read golden capture %s: %v", c.path, err)
+			}
+			if !strings.Contains(string(golden), AwaitingOperatorMarker) {
+				t.Errorf("golden capture %s does NOT contain AwaitingOperatorMarker %q — Claude Code popup UI may have drifted; re-verify via `tmux capture-pane -p -t <pane>` on a live AskUserQuestion popup + update AwaitingOperatorMarker + re-capture the golden fixture",
+					c.path, AwaitingOperatorMarker)
+			}
+		})
 	}
 }
 
