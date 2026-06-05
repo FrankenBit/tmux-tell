@@ -102,30 +102,12 @@ This pattern is **sibling** to:
   (ADR-0005 round-2): when forward-correctness arguments surface
   for new abstractions, walk through the use case against existing
   primitives before accepting the commitment.
-- **Independent-triangulation / diversity-of-evidence corroboration**
-  (named-but-not-instantiated in this campaign): when actors
-  reasoning from different evidence bases arrive at the same
-  conclusion, that's Bayesian-strong corroboration of the
-  conclusion's substrate. This family is **distinct** from
-  substrate-claim-verification — the latter probes whether the
-  conclusion itself is grounded; the former probes whether
-  multiple independent groundings converge. ADR-0006 §Calibration's
-  original framing claimed this family's pattern; the routing-graph
-  probe revealed the actors weren't reasoning independently, so
-  the family didn't apply here. The pattern remains a valid
-  catalog entry for future cases where the routing graph confirms
-  independence.
 
-ADR-0006 contributes the fifth sub-shape: **verification-mechanism-
+ADR-0006 contributes the fourth sub-shape: **verification-mechanism-
 layer routing-graph probe**. The campaign's substrate-rename arc
 (ADR-0003/0004/0005) plus this ADR's process-discipline arc have
-together surfaced **five** named verification-discipline patterns
-through adversarial review pressure rather than by design — four
-instantiated in the campaign's worked examples, one
-(independent-triangulation) named-but-not-instantiated because the
-apparent example turned out to be a substrate-claim-verification
-instance instead. Both are valid distinct families; the catalog
-preserves both rather than collapsing them.
+together accumulated four named verification-discipline patterns
+through adversarial review pressure rather than by design.
 
 ## Surveyor's self-banked lesson
 
