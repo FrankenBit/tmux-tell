@@ -26,6 +26,7 @@ change for the decision to be revisited.
 | 0002 | [Chamber-state carry-forward spec for Binnacle's M6b](0002-chamber-state-carry-forward.md) | Accepted | 2026-06-04 |
 | 0003 | [Substrate-vs-flavor naming](0003-substrate-vs-flavor-naming.md) | Accepted | 2026-06-05 |
 | 0004 | [MCP wire-surface naming (application of ADR-0003)](0004-mcp-wire-surface-naming.md) | Accepted | 2026-06-05 |
+| 0005 | [Substrate-honest terminology (chamber → ?)](0005-substrate-honest-terminology.md) | Proposed | — |
 
 ## When to file an ADR
 
