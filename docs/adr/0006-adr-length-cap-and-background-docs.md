@@ -1,12 +1,18 @@
 # ADR-0006: ADR length cap (400 lines) + background docs
 
-> **Status**: Proposed
-> **Date**: 2026-06-05 (proposed)
+> **Status**: Accepted
+> **Date**: 2026-06-05 (proposed); 2026-06-05 (accepted on operator
+> + Surveyor TICK with three small refinements and one nit folded
+> pre-merge)
 > **Authors**: Quartermaster (author), operator (surfaced the
 > length-cap question on PR #115 after ADR-0005 merged; proposed
-> 300-400 range; picked 400 after analysis), Binnacle's ADR
-> convention (inspiration — adapted upward from ≤100 to ≤400 for
-> tmux-msg's deeper-audience material)
+> 300-400 range; picked 400 after analysis), Surveyor (framing
+> review: empirical-anchor framing folded pre-PR + three refinements
+> (bg-doc soft-one-per-ADR, status-lifecycle inheritance, index
+> visibility) + a §Worked example subsection + one nit on the
+> Binnacle comparison framing), Binnacle's ADR convention
+> (inspiration — adapted upward from ≤100 to ≤400 for tmux-msg's
+> deeper-audience material)
 
 ## Context
 
@@ -66,8 +72,10 @@ wrong; supersession escape hatch doesn't apply).
   (multi-axis distinctness analyses, wheel-reinvention checks,
   framing-review threading captured across rounds, pattern arc
   references that would otherwise re-inline per occurrence)
-- Avoids inviting the cap-loophole of ultra-aggressive abbreviation
-  that would have been a risk at 100 or 200
+- Suits tmux-msg's deeper-audience material (substrate-design
+  decisions that often need the alternative-bearing structure
+  inline for proper evaluation) without inviting the cap-loophole
+  of ultra-aggressive abbreviation that a tighter cap might
 
 **Calibration note** (per Surveyor's framing observation on the
 draft): the cap is calibrated to the **median** of the existing
@@ -88,10 +96,30 @@ preemptively.
 ### (2) Background-doc convention
 
 Background docs co-locate with their ADR in `docs/adr/`, named
-`NNNN-<slug>-background.md` (matching the ADR's slug). One
-background doc per ADR; no further nesting. Authors structure the
-background doc as they see fit — the ADR-format discipline applies
-to the ADR file, not the background.
+`NNNN-<slug>-background.md` (matching the ADR's slug). Authors
+structure the background doc as they see fit — the ADR-format
+discipline applies to the ADR file, not the background.
+
+**One per ADR (soft).** The convention is one background doc per
+ADR. If an ADR genuinely needs two background docs for unrelated
+deep-dive topics, that's usually a signal the ADR itself should
+be split into two ADRs (each with its own bg-doc). Authors may
+exceed the one-per-ADR norm with rationale; reviewers may push
+back. Not a hard rule.
+
+**Status / lifecycle implicitly inherits from the parent ADR.**
+Bg-docs are not independently versioned — they share the parent
+ADR's `Status` (Proposed / Accepted / Superseded / Retracted) by
+co-location. If the parent ADR is superseded, the bg-doc travels
+with it; supersession of the ADR transitively supersedes the
+bg-doc's claims. No separate status header is required in
+background docs.
+
+**Index visibility.** The `docs/adr/README.md` index lists ADRs
+only. Background docs are implicit-child via slug match
+(`<NNNN>-<slug>.md` → `<NNNN>-<slug>-background.md` adjacent).
+Listing them separately would clutter the index without value;
+readers know to check for the adjacent bg-doc.
 
 **What stays in the ADR:**
 
@@ -120,6 +148,30 @@ to the ADR file, not the background.
 The split is by **depth-of-required-engagement**, not by importance:
 a reader cares about both; the ADR offers the decision, the
 background offers the reasoning.
+
+**Worked example: ADR-0005 hypothetically split.** ADR-0005 at 440
+lines exceeds the cap by ~10%. Hypothetical split:
+
+- **Move to `0005-substrate-honest-terminology-background.md`**
+  (~100 lines): §Decision (1)'s wheel-reinvention check subsection
+  (the operator-shell scenario walk-through, ~50 lines) + §Pattern
+  promotion's structural-distinctness analysis (~20 lines) + the
+  expanded §Alternatives catalog with per-candidate rationale (~30
+  lines, beyond the one-line rejection summaries that stay).
+- **ADR file shrinks to ~340 lines**: header, §Context (with bg-doc
+  pointer for substrate-honest two-readings exploration), §Decision
+  (1)'s one-paragraph resolution ("`agent` chosen; rationale and
+  wheel-reinvention check in bg-doc"), §Decisions (2)/(3)/(4) as
+  is, §Alternatives catalog at one-line rejections each, §Pattern
+  promotion as one-paragraph reference to bg-doc analysis,
+  §Consequences and §What-would-change unchanged.
+- **Result**: skim-reader gets the decision in ~340 lines; deep
+  reader follows the bg-doc pointers for ~100 lines of analysis.
+  Total content preserved; per-reader cost reduced.
+
+The example is hypothetical because ADR-0005 stays as written per
+the forward-only scope below; it serves as the visualisable
+worked example for ADR-0006+ authors deciding what to split.
 
 ### (3) Index marker
 
