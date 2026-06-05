@@ -218,6 +218,19 @@ func ResolveDuration(file *File, agent, field string, hardcoded time.Duration) t
 // hardcoded is the final fallback. Empty-string fields are treated as
 // "not set" so an absent TOML key falls through to the next layer
 // rather than overriding with empty.
+//
+// Asymmetry with ResolveBool / ResolveDuration: those helpers treat
+// zero-value as "explicitly set" (false / 0 are meaningful semantics
+// for those types). ResolveString treats empty-string as "not set"
+// because typical string config knobs are enum-ish (delivery-mode is
+// "paste-and-enter" | "mailbox-only"; never legitimately ""). The
+// asymmetry is intentional design-time: forcing the consumer to handle
+// empty as a non-set sentinel would surface "did this operator
+// intentionally clear this knob, or did the TOML decoder leave it
+// blank?" ambiguity at every call-site. Treating empty as not-set at
+// the helper layer codifies the convention once. A future field that
+// genuinely wants empty-as-explicit-value should use a different
+// resolver or `*string` directly. Per Surveyor PR #135 S1.
 func ResolveString(file *File, agent, field string, hardcoded string) string {
 	if file == nil {
 		return hardcoded
