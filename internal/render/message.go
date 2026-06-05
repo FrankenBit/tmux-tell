@@ -11,11 +11,6 @@ import (
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
-// HeaderRule is the divider line that brackets a rendered message. 48 cols
-// fits in most operator terminals without wrapping and is wide enough to
-// read at a glance.
-const headerRule = "────────────────────────────────────────────────"
-
 // titleCase returns "Bosun" given "bosun" — for the header, since the
 // stored agent names are lowercase by convention.
 func titleCase(s string) string {
@@ -53,26 +48,33 @@ func formatClock(iso string) string {
 //
 // Regular message:
 //
-//	─── Message from Bosun ── 11:04:12 ── id 7f3a ──
+//	[Bosun · 11:04:12 · id 7f3a]
+//
 //	<body>
-//	────────────────────────────────────────────────
 //
 // Reply (the to_agent is the operator-visible recipient, but the header
 // shows the original sender for clarity):
 //
-//	─── Reply from Surveyor → Bosun ── re: 7f3a ── id 9c1d ──
+//	[Surveyor → Bosun · re 7f3a · id 9c1d]
+//
 //	<body>
-//	────────────────────────────────────────────────
+//
+// The bracket-header format (per #121) replaced the box-drawing rules
+// that wrapped awkwardly on narrow viewports (mobile chat clients) and
+// hit font-fallback to underline glyphs where U+2500 wasn't available.
+// ASCII bracket + middle-dot + arrow render identically across all
+// surfaces. Trailing footer rule dropped — the bracket-open + body
+// + trailing blank line provide the visual demarcation.
 func Message(m store.Message) string {
 	var header string
 	clock := formatClock(m.CreatedAt)
 	if m.ReplyTo.Valid && m.ReplyTo.String != "" {
-		header = fmt.Sprintf("─── Reply from %s → %s ── re: %s ── id %s ──",
+		header = fmt.Sprintf("[%s → %s · re %s · id %s]",
 			titleCase(m.FromAgent), titleCase(m.ToAgent),
 			m.ReplyTo.String, m.PublicID)
 	} else {
-		header = fmt.Sprintf("─── Message from %s ── %s ── id %s ──",
+		header = fmt.Sprintf("[%s · %s · id %s]",
 			titleCase(m.FromAgent), clock, m.PublicID)
 	}
-	return fmt.Sprintf("%s\n%s\n%s\n", header, m.Body, headerRule)
+	return fmt.Sprintf("%s\n\n%s\n", header, m.Body)
 }

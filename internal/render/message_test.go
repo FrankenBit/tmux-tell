@@ -35,16 +35,19 @@ func TestMessage_Regular(t *testing.T) {
 		CreatedAt: fixtureUTC,
 	})
 	wantSubstrings := []string{
-		"Message from Bosun",
+		"[Bosun · ",
 		localClockFromUTC(t, fixtureUTC),
-		"id 7f3a",
+		"id 7f3a]",
 		"please check CI on PR 1234",
-		"────",
 	}
 	for _, w := range wantSubstrings {
 		if !strings.Contains(got, w) {
 			t.Errorf("missing %q in:\n%s", w, got)
 		}
+	}
+	// Reply-format indicators should be absent on a regular message.
+	if strings.Contains(got, " → ") || strings.Contains(got, " re ") {
+		t.Errorf("regular rendering should not contain reply markers: %s", got)
 	}
 }
 
@@ -58,19 +61,15 @@ func TestMessage_Reply(t *testing.T) {
 		CreatedAt: "2026-05-29T11:05:00.000Z",
 	})
 	wantSubstrings := []string{
-		"Reply from Surveyor → Bosun",
-		"re: 7f3a",
-		"id 9c1d",
+		"[Surveyor → Bosun · ",
+		"re 7f3a",
+		"id 9c1d]",
 		"looking now, ETA 3 min",
 	}
 	for _, w := range wantSubstrings {
 		if !strings.Contains(got, w) {
 			t.Errorf("missing %q in:\n%s", w, got)
 		}
-	}
-	// Non-reply substring should be absent.
-	if strings.Contains(got, "Message from") {
-		t.Errorf("reply rendering should not say 'Message from': %s", got)
 	}
 }
 

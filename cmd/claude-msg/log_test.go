@@ -37,7 +37,7 @@ func TestLog_TextRendersAllMessages(t *testing.T) {
 		t.Fatalf("exit = %d", exit)
 	}
 	out := stdout.String()
-	for _, want := range []string{"ping", "pong", "thanks", "Message from Alice", "Reply from Bob"} {
+	for _, want := range []string{"ping", "pong", "thanks", "[Alice · ", "[Bob → Alice · re "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
