@@ -25,6 +25,29 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Changed
+
+- **AskUserQuestion canary fixture refreshed for post-v0.6.0 validation
+  (#133).** Added `golden_quartermaster_askuserquestion_2026-06-06.txt`
+  alongside the existing 2026-06-04 capture; the
+  `TestAwaitingOperatorMarker_MatchesGoldenCapture` canary now
+  verifies both fixtures contain `AwaitingOperatorMarker` as a
+  substring. Operator-coordinated capture via Bosun from a live
+  AskUserQuestion popup confirms the existing marker `"↑/↓ to navigate
+  · Esc to cancel"` still matches canonical popups post-cutover.
+
+  Per `feedback_filed_rootcause_is_hypothesis`: the 2026-06-05
+  incident's "marker mismatch" theory was working hypothesis until
+  empirical verification. The new capture **disconfirms** the theory
+  — the existing marker DOES match the AskUserQuestion popup variant
+  the operator was in. The 2026-06-05 incident's failure mode was
+  therefore something else (capture-window scroll, non-AskUserQuestion
+  popup type, or one-off render-state quirk) rather than marker drift.
+  The Half 2 safety net (#105 / PR #134) is the load-bearing
+  protection regardless; even if the recognizer misclassifies, the
+  pre-paste safety check aborts on `StateUnknown` so the load-bearing
+  harm (paste-into-popup destruction) stays closed.
+
 ### Added
 
 - **Pre-paste safety check against popup-as-Unknown destruction
