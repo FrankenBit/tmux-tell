@@ -34,8 +34,10 @@ change for the decision to be revisited.
 > caps at 350 lines per ADR file; deeper exploration lives in co-located
 > `NNNN-<slug>-background.md` files. The convention is forward-only —
 > existing ADRs stay as written per ADR-0004 §Generality's parent-frozen
-> precedent. ADR-0006 itself is the first worked example (under cap, no
-> background doc needed).
+> precedent. ADR-0006 itself is the first worked example: ADR file
+> under cap + co-located background doc carrying the deeper
+> cross-project routing-graph analysis that didn't fit the ADR's
+> §Calibration cleanly.
 
 ## When to file an ADR
 

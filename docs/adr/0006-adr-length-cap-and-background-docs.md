@@ -96,29 +96,28 @@ docs from ADR-0006+ onward." The cap does NOT mean the longest
 existing ADR retroactively fits; it means future ADRs are held to a
 standard that two of the five existing ADRs demonstrably exceeded.
 
-**Cross-project reasoning propagation** (corrected framing per
-Bosun's bus correction 2026-06-05, bank-worthy as a worked
-instance-of-the-pattern within this ADR): Bosun analyzed first
-from the Binnacle side (raising Binnacle's existing 100-line
-cap), reasoning from first-ADR-size (310) + ~15% growth headroom
-+ Binnacle's empirical background-doc distribution (median
-250-350, cluster 200-400, two outliers at 424 and 582), arriving
-at 350. The operator surfaced Bosun's analysis to this ADR's
-context, propagating the 350 reasoning chain rather than asking
-this ADR to arrive at 350 from scratch. The ADR's revision from
-400 to 350 was reasoning-propagated, not independently arrived
-at. **The original fold of this paragraph mis-framed the
-propagation as "two actors reasoned independently to the same
-number" — Bosun's correction surfaced the verification-claim
-overreach.** Substrate-claim-verification at the
-verification-mechanism layer: when an apparent "convergence"
-pattern surfaces, verify whether the actors actually reasoned
-independently or whether one acted as the substrate-source for
-the other. Sibling pattern to the time-layer / empirical-render-
-verification sub-shapes from earlier in this campaign. Binnacle's
-parallel PR aligns at 350, making the cap cross-project
-consistent — that consistency is real even though the convergence
-shape is propagation, not parallel reasoning.
+**Cross-project relationship**: both projects land at 350 — this
+ADR for tmux-msg, Binnacle's parallel ADR-0029 supersession
+(raising 100 → 350). The relationship is **not** independent
+convergence but also **not** a single propagation chain; it
+decomposes into two chains: number-carry via operator (from
+Bosun's Binnacle analysis to this ADR's revision) plus
+reasoning-survey direct from Bosun post-revision (analytical frame
+folded as supporting context after the mechanical push).
+
+The §Calibration paragraph went through three framings as the
+substrate of the cross-project relationship became clearer — first
+"independent convergence" (wrong on dependence), then
+"reasoning-propagated" (wrong on which chain propagated), then
+the current two-chain decomposition. Full routing graph + chronology
++ framework-register lesson in
+[`0006-adr-length-cap-and-background-docs-background.md`](0006-adr-length-cap-and-background-docs-background.md)
+— bg-doc co-located per §Decision (2). This ADR's bg-doc
+existence is itself the first worked example of the convention:
+material that ran to ~40 lines of layered analysis lives in the
+bg-doc; the ADR's §Calibration carries the summary.
+
+The cross-project number-consistency at 350 is real, just routed.
 
 The cap is **soft** — exceeding it doesn't block merge, but it
 triggers a question in framing review: "Should this material move
