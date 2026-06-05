@@ -3,16 +3,20 @@
 > **Status**: Accepted
 > **Date**: 2026-06-05 (proposed); 2026-06-05 (accepted on operator
 > + Surveyor TICK with three small refinements and one nit folded
-> pre-merge)
+> pre-merge + Bosun cross-project convergence on 350 folded after)
 > **Authors**: Quartermaster (author), operator (surfaced the
 > length-cap question on PR #115 after ADR-0005 merged; proposed
 > 300-400 range; picked 350 after analysis), Surveyor (framing
 > review: empirical-anchor framing folded pre-PR + three refinements
 > (bg-doc soft-one-per-ADR, status-lifecycle inheritance, index
 > visibility) + a §Worked example subsection + one nit on the
-> Binnacle comparison framing), Binnacle's ADR convention
-> (inspiration — adapted upward from ≤100 to ≤350 for tmux-msg's
-> deeper-audience material)
+> Binnacle comparison framing), Bosun (independent parallel analysis
+> from the Binnacle side that converged on 350 from first-ADR-size
+> + 15% growth headroom + Binnacle's empirical bg-doc distribution
+> — captured in §Calibration as cross-project corroboration),
+> Binnacle's ADR convention (inspiration — adapted upward from
+> ≤100 to ≤350 for tmux-msg's deeper-audience material; Binnacle's
+> parallel PR aligns at 350 for cross-project consistency)
 
 ## Context
 
@@ -86,6 +90,17 @@ are the empirical anchors for "this is what gets split to background
 docs from ADR-0006+ onward." The cap does NOT mean the longest
 existing ADR retroactively fits; it means future ADRs are held to a
 standard that two of the five existing ADRs demonstrably exceeded.
+
+**Cross-project corroboration**: Bosun independently arrived at
+350 from the Binnacle side (parallel analysis on raising
+Binnacle's existing 100-line cap), reasoning from first-ADR-size
+(310) + ~15% growth headroom and from Binnacle's empirical
+background-doc distribution (median 250-350, cluster 200-400, two
+outliers at 424 and 582). Two actors reasoned independently from
+different evidence bases to the same number — substrate-claim-
+verification family in action. Binnacle's parallel PR raises 100 →
+350, making 350 a cross-project consistent cap rather than a
+per-project choice.
 
 The cap is **soft** — exceeding it doesn't block merge, but it
 triggers a question in framing review: "Should this material move
