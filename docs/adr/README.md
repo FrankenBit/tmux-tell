@@ -24,7 +24,7 @@ change for the decision to be revisited.
 |------|------------------------------------------------|----------|--------|
 | 0001 | [Discipline pins as a test category](0001-discipline-pins-as-test-category.md) | Accepted (amended 2026-05-31 per #55; amended 2026-06-01 per Surveyor #42 retrospective) | 2026-05-31 |
 | 0002 | [Chamber-state carry-forward spec for Binnacle's M6b](0002-chamber-state-carry-forward.md) | Accepted | 2026-06-04 |
-| 0003 | [Substrate-vs-flavor naming](0003-substrate-vs-flavor-naming.md) | Proposed | — |
+| 0003 | [Substrate-vs-flavor naming](0003-substrate-vs-flavor-naming.md) | Accepted | 2026-06-05 |
 
 ## When to file an ADR
 

@@ -1,7 +1,7 @@
 # ADR-0003: Substrate-vs-flavor naming
 
-> **Status**: Proposed
-> **Date**: 2026-06-05 (proposed)
+> **Status**: Accepted
+> **Date**: 2026-06-05 (proposed); 2026-06-05 (accepted on operator + Surveyor sign-off)
 > **Authors**: Quartermaster (author), operator (driving the rename
 > decision and Option C scope), Surveyor (pre-review notes on PR #108
 > that shaped the framing of "substrate-class accuracy correction";
