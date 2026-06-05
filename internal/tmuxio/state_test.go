@@ -581,3 +581,25 @@ func TestAgentState_AwaitingOperatorOnAskUserQuestionGolden(t *testing.T) {
 		t.Errorf("Evidence.Reason should name the awaiting-operator marker match")
 	}
 }
+
+// TestIsPasteUnsafe pins the per-state classification used by the
+// mailman's pre-paste safety check (#105 Half 2): AwaitingOperator
+// and Unknown return true (paste-unsafe); Idle, Working, and
+// AtRestInCompaction return false. The Compaction case is intentional
+// — paste-into-compaction is handled by the PostCompactPause
+// machinery at a different layer; IsPasteUnsafe is specifically the
+// popup-suspected-OR-classifier-unsubstantiated axis.
+func TestIsPasteUnsafe(t *testing.T) {
+	cases := map[State]bool{
+		StateUnknown:            true,  // popup-as-Unknown failure mode
+		StateAwaitingOperator:   true,  // operator typing or popup
+		StateIdle:               false, // safe by definition
+		StateWorking:            false, // Claude Code buffers
+		StateAtRestInCompaction: false, // PostCompactPause covers
+	}
+	for state, want := range cases {
+		if got := IsPasteUnsafe(state); got != want {
+			t.Errorf("IsPasteUnsafe(%v) = %v, want %v", state, got, want)
+		}
+	}
+}

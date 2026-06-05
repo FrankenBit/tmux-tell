@@ -25,6 +25,45 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Added
+
+- **Pre-paste safety check against popup-as-Unknown destruction
+  (#105 Half 2).** New mailman safety net: immediately before each
+  paste-and-Enter delivery, the mailman takes one final `AgentState`
+  reading. If the pane is observed in `StateAwaitingOperator` (popup
+  open or operator typing) or `StateUnknown` (classifier couldn't
+  substantiate), the delivery is aborted: the message reverts from
+  `delivering` back to `queued` for the next mailman cycle, and a
+  `WARN pre_paste_safety_abort` log line names the per-message ID +
+  classified state for triage.
+
+  Why: the load-bearing failure mode #105 surfaced was MaxWait firing
+  with `lastState=Unknown` after an `AskUserQuestion` popup that
+  didn't match `AwaitingOperatorMarker` consumed the operator's draft
+  via paste-as-keystrokes (#105 2026-06-05 incident). The
+  observe-gate's classification might miss a popup variant; the
+  safety check is belt-and-suspenders that doesn't rely on the
+  recognizer being perfect.
+
+  New `tmuxio.IsPasteUnsafe(state) bool` helper centralizes the
+  per-state policy (returns true for AwaitingOperator + Unknown; false
+  for Idle + Working + AtRestInCompaction — the Compaction case is
+  paste-unsafe-for-different-reasons handled at the
+  `PostCompactPause` layer).
+
+  Surfaces:
+  - **CLI flag**: `--pre-paste-safety-disabled` (default false). Operators
+    rarely need to disable; the check is structurally inexpensive (one
+    capture-pane probe per delivery).
+  - **TOML knob**: `pre-paste-safety-disabled = true` per-agent or in
+    `[defaults]`, standard precedence chain.
+  - **`ResolvedView.PrePasteSafetyDisabled bool`** surfaced in
+    `claude-msg config show`.
+
+  Recognizer-improvement work (Half 1 — empirical capture of the
+  failing popup variant, marker expansion) tracked separately at #133
+  since it needs operator-coordinated popup capture.
+
 ### Changed
 
 - **Doc precision: "read-only-observe-only" overstated the gate's

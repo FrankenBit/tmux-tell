@@ -35,6 +35,13 @@ func fastOpts(agent string) serveOpts {
 		// check off here. Drift-specific tests opt in by setting
 		// DriftCheckDisabled=false and injecting a Walker.
 		DriftCheckDisabled: true,
+		// Same for the pre-paste safety check (#105 Half 2): existing
+		// tests don't fake AgentState classifications, so the safety
+		// check would see the runner's body-echoed pane content and
+		// classify as Unknown → abort every delivery. Safety-check-
+		// specific tests opt in by setting PrePasteSafetyDisabled=false
+		// and faking AgentState.
+		PrePasteSafetyDisabled: true,
 	}
 }
 

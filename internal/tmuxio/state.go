@@ -99,6 +99,31 @@ func (s State) String() string {
 	}
 }
 
+// IsPasteUnsafe reports whether a paste-and-Enter delivery to a pane in
+// this state risks corrupting operator-visible content. Two states qualify:
+//
+//   - StateAwaitingOperator: the operator is typing OR a popup is open
+//     consuming keystrokes. A paste into either case destroys what's
+//     visible (operator's draft / popup interpretation of pasted bytes
+//     as keystrokes).
+//   - StateUnknown: the classifier couldn't substantiate a known state.
+//     The popup-as-Unknown failure mode (#105) is exactly the case
+//     where pasting is destructive — if we can't substantiate, we
+//     can't paste safely.
+//
+// StateIdle and StateWorking are paste-safe (idle by definition;
+// working buffers mid-turn keystrokes per Claude Code TUI behavior).
+// StateAtRestInCompaction is paste-unsafe-for-different-reasons (races
+// the /compact slash-command parser); the existing PostCompactPause
+// machinery covers that case at a different layer.
+//
+// Used by the mailman's pre-paste safety check (#105 Half 2): even if
+// the observe-gate decides to flush, a final state probe before the
+// actual paste-and-Enter aborts the delivery when this returns true.
+func IsPasteUnsafe(s State) bool {
+	return s == StateAwaitingOperator || s == StateUnknown
+}
+
 // Evidence carries the observation that led to the State classification.
 // Fields are populated per state; consumers should treat unset fields as
 // "not applicable to this state's detection path." Reason is always
