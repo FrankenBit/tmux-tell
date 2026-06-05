@@ -71,6 +71,17 @@ type serveOpts struct {
 	// ListPanesWithPID + /proc readers should set this to true so the
 	// check doesn't hit real system state non-deterministically.
 	DriftCheckDisabled bool
+	// PrePasteSafetyDisabled bypasses the #105 Half 2 pre-paste safety
+	// check (one final AgentState probe before the actual paste; aborts
+	// when paste-unsafe states are observed). Production keeps it
+	// enabled — the check is the load-bearing safety net against the
+	// popup-as-Unknown failure mode where MaxWait fires with
+	// lastState=Unknown after the operator drafted an AskUserQuestion
+	// popup that didn't match AwaitingOperatorMarker. Tests that don't
+	// fake AgentState set this true so the check doesn't classify the
+	// fake runner's body-echoed pane content as Unknown and abort
+	// every delivery.
+	PrePasteSafetyDisabled bool
 	// DriftSoftFail keeps the pre-v0.2.1 behaviour where ambiguous
 	// and unrecoverable drift cases log WARN and deliver to the
 	// drifted (or ambiguous) pane. Surveyor Q(b) review of v0.2.0:
@@ -133,6 +144,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"observe-gate stale-draft threshold. When the operator's input-row content remains unchanged this long, the gate decides the draft is abandoned and proceeds with archive-then-clear-then-paste (kind=stranded_draft snapshot + Ctrl+U). Per #92's 2026-06-04 design call.")
 	notifyEmojiDisabled := fs.Bool("notify-emoji-disabled", false,
 		"disable the operator-typing 📫 visibility notification (#95). Default false (notification on). When the observe-gate first detects the operator is typing, the mailman injects a single 📫 character into their input row as a one-shot signal that a bus message is pending. Operator can Backspace it (gate keeps waiting) or let it ride along with their next message.")
+	prePasteSafetyDisabled := fs.Bool("pre-paste-safety-disabled", false,
+		"bypass the #105 Half 2 pre-paste safety check (one final AgentState probe before each paste; aborts when paste-unsafe states are observed). Default false (safety check on). Operators rarely need to disable; the check is structurally inexpensive (one capture-pane probe per delivery) and is the load-bearing safety net against the popup-as-Unknown failure mode where MaxWait fires with lastState=Unknown after the operator drafted an AskUserQuestion popup. Per-agent TOML knob: `pre-paste-safety-disabled = true`.")
 	workingDeliverImmediately := fs.Bool("working-deliver-immediately", false,
 		"opt the observe-gate's StateWorking branch into a fast-path return — deliver immediately to a busy chamber instead of deferring (#106). Default false (defer on Working, the v0.3.0-through-v0.6.0 conservative behavior). When on, mid-turn deliveries land in the recipient's input row while Claude is still streaming and are read as the next operator turn after the current one completes. Eligibility: StateWorking only — AwaitingOperator / Compaction / Unknown stay hard-deferred regardless. Per-agent TOML knob: `working-deliver-immediately = true`.")
 	driftSoftFail := fs.Bool("drift-soft-fail", false,
@@ -185,6 +198,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	if !flagWasSet(fs, "working-deliver-immediately") {
 		*workingDeliverImmediately = config.ResolveBool(cfg, *agent, "working-deliver-immediately", *workingDeliverImmediately)
 	}
+	if !flagWasSet(fs, "pre-paste-safety-disabled") {
+		*prePasteSafetyDisabled = config.ResolveBool(cfg, *agent, "pre-paste-safety-disabled", *prePasteSafetyDisabled)
+	}
 	if *agent == "" {
 		fmt.Fprintln(stderr, "--agent required")
 		return exitUsage
@@ -223,6 +239,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 			// once the migration settles.
 		},
 		NotifyEmojiDisabled: *notifyEmojiDisabled,
+		PrePasteSafetyDisabled:      *prePasteSafetyDisabled,
 		DriftSoftFail:               *driftSoftFail,
 		NotifyOnFailed:              *notifyOnFailed,
 		NotifyOnDeliveredUnverified: *notifyOnDeliveredUnverified,
@@ -516,6 +533,53 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 							msg.PublicID, paneForDelivery, len(outcome.InputContent), outcome.Iterations)
 					}
 				}
+			}
+		}
+
+		// Pre-paste safety check (#105 Half 2). Even if the observe-gate
+		// decided to flush (idle classification OR MaxWait-fired Stale=true),
+		// take one more AgentState reading immediately before the paste.
+		// If the pane is now paste-unsafe (StateAwaitingOperator or
+		// StateUnknown), abort the delivery and revert the message back
+		// to 'queued' for the next mailman cycle. Belt-and-suspenders
+		// against the popup-as-Unknown failure mode the gate's
+		// classification might have missed (#105 — the load-bearing case
+		// is MaxWait firing with lastState=Unknown after the operator
+		// drafted an AskUserQuestion popup that didn't match the
+		// AwaitingOperatorMarker).
+		//
+		// Independent of GateDisabled — the safety check is a separate
+		// concern from the observe-gate's pre-delivery wait. Tests that
+		// don't fake AgentState set PrePasteSafetyDisabled=true to skip.
+		if !opts.PrePasteSafetyDisabled {
+			probeCtx, pcancel := context.WithTimeout(opCtx, 2*time.Second)
+			probeState, _, perr := tmuxio.AgentState(probeCtx, paneForDelivery)
+			pcancel()
+			// Probe-failure is treated as paste-unsafe per IsPasteUnsafe's
+			// "couldn't substantiate → can't paste safely" semantic
+			// (Surveyor PR #134 S1). AgentState's error path already
+			// returns StateUnknown so IsPasteUnsafe(probeState) would
+			// catch it, but the explicit `perr != nil ||` keeps the
+			// codification symmetric with the doc-comment and avoids
+			// depending on AgentState's internal contract.
+			if perr != nil || tmuxio.IsPasteUnsafe(probeState) {
+				reason := probeState.String()
+				if perr != nil {
+					reason = fmt.Sprintf("probe-failed (%v)", perr)
+				}
+				logger.Printf("WARN pre_paste_safety_abort id=%s pane=%s state=%s — popup-suspected-or-probe-failed; reverting to queued for retry (#105)",
+					msg.PublicID, paneForDelivery, reason)
+				// Single-flight assumption: the mailman loop processes
+				// at most one message in 'delivering' state at a time
+				// (ClaimNext is atomic + state-change-on-claim). So
+				// RecoverDelivering reverts ONLY the current message
+				// even though it operates batch-style on the agent's
+				// rows. If future multi-flight delivery lands (#NNN),
+				// this needs to become a per-publicID revert.
+				if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
+					logger.Printf("WARN pre_paste_safety_recover_failed id=%s err=%v", msg.PublicID, rerr)
+				}
+				continue
 			}
 		}
 

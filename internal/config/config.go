@@ -112,6 +112,12 @@ type Block struct {
 	// tmuxio/observe_gate.go for the safety-net relationship with the
 	// verify-token retry.
 	WorkingDeliverImmediately *bool `toml:"working-deliver-immediately"`
+	// PrePasteSafetyDisabled bypasses the #105 Half 2 pre-paste safety
+	// check (one final AgentState probe before each paste; aborts when
+	// paste-unsafe states are observed). Default false (safety check
+	// on). Production should leave on — the check is the load-bearing
+	// safety net against the popup-as-Unknown failure mode (#105).
+	PrePasteSafetyDisabled *bool `toml:"pre-paste-safety-disabled"`
 }
 
 // Load reads the config from the path resolved by:
@@ -224,6 +230,8 @@ func blockBoolField(b *Block, field string) *bool {
 		return b.NotifyEmojiDisabled
 	case "working-deliver-immediately":
 		return b.WorkingDeliverImmediately
+	case "pre-paste-safety-disabled":
+		return b.PrePasteSafetyDisabled
 	}
 	return nil
 }
@@ -271,6 +279,7 @@ type ResolvedView struct {
 	InputStaleThreshold         time.Duration `json:"input_stale_threshold"`
 	NotifyEmojiDisabled         bool          `json:"notify_emoji_disabled"`
 	WorkingDeliverImmediately   bool          `json:"working_deliver_immediately"`
+	PrePasteSafetyDisabled      bool          `json:"pre_paste_safety_disabled"`
 	PrivilegedAgents            []string      `json:"privileged_agents"`
 }
 
@@ -289,6 +298,7 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		InputStaleThreshold:         ResolveDuration(file, agent, "input-stale-threshold", 2*time.Minute),
 		NotifyEmojiDisabled:         ResolveBool(file, agent, "notify-emoji-disabled", false),
 		WorkingDeliverImmediately:   ResolveBool(file, agent, "working-deliver-immediately", false),
+		PrePasteSafetyDisabled:      ResolveBool(file, agent, "pre-paste-safety-disabled", false),
 		PrivilegedAgents:            resolvePrivilegedAgents(file),
 	}
 }
