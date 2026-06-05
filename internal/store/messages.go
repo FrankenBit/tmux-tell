@@ -445,6 +445,63 @@ func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, erro
 	return &m, nil
 }
 
+// FindMessagesByPrefix returns all messages whose public_id starts with the
+// given prefix. Caller is responsible for any access-filtering and for
+// handling the disambiguation case (len(result) > 1) appropriately. Empty
+// result is returned as nil + nil error — distinct from ErrNotFound, which
+// the GetMessage exact-match path returns; the prefix path uses a SELECT
+// (not QueryRowContext) and "no rows" is a valid result, not an error.
+//
+// Used by the get-by-id surface (#111) for short-prefix lookups (the 4-char
+// IDs that appear in delivery headers). The store does not enforce a
+// minimum prefix length — at very-short prefixes the result set can be
+// large; callers should reject prefixes that would return too many rows
+// before exposing the surface.
+//
+// LIKE-wildcard escape: the prefix is treated as a literal string match,
+// not a SQL LIKE pattern. `%` and `_` within the prefix are escaped via
+// backslash (matched by SQLite's ESCAPE clause below) so a caller can't
+// turn `get %` into a list-all-my-messages enumeration. Per Surveyor's
+// PR #128 S1: validation belongs where LIKE happens, not at every caller.
+func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Message, error) {
+	if prefix == "" {
+		return nil, errors.New("store: prefix required")
+	}
+	escaped := escapeLikePrefix(prefix)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
+		        state, created_at, delivered_at, error
+		 FROM messages WHERE public_id LIKE ? ESCAPE '\' ORDER BY id ASC`,
+		escaped+"%")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Message
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent,
+			&m.ReplyTo, &m.Body, &m.Kind, &m.State, &m.CreatedAt,
+			&m.DeliveredAt, &m.Error); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// escapeLikePrefix backslash-escapes the three characters SQLite's LIKE
+// treats specially when an ESCAPE clause is in effect: the backslash
+// itself, `%` (zero-or-more chars wildcard), and `_` (single-char
+// wildcard). Order matters — backslash must be escaped first, otherwise
+// a subsequent `%` → `\%` replacement would itself get re-escaped.
+func escapeLikePrefix(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `%`, `\%`)
+	s = strings.ReplaceAll(s, `_`, `\_`)
+	return s
+}
+
 // ListFilter narrows the rows returned by ListMessages. Zero-value fields
 // mean "no filter on that column".
 type ListFilter struct {
