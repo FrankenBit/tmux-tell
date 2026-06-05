@@ -25,6 +25,8 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-06-05
+
 ### Changed
 
 - **MCP wire-surface re-grounded on substrate name (#112, ADR-0004).**
