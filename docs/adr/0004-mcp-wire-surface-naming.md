@@ -21,19 +21,28 @@ chamber-level docs. It did NOT touch the **MCP wire surface**
 Code; future: Codex, Copilot) use to invoke substrate primitives
 via the Model Context Protocol.
 
+ADR-0003 §Decision (3) Option C enumerated the scope of the
+mechanical rename: Forgejo + Go module path + operational paths +
+chamber-level docs + repo-internal docs. The MCP wire surface was
+neither explicitly included nor explicitly excluded — implicitly
+deferred. ADR-0004 picks up that deferral and applies ADR-0003's
+substrate-vs-flavor cut to the MCP wire layer with its own
+sub-decisions.
+
 The lingering `semaphore` symbols on the wire (operator-visible,
 breaking-change footprint):
 
 | Surface | Current | Count |
 |---|---|---|
 | MCP server name | `"semaphore"` | 1 — every chamber's `.mcp.json` references it |
-| MCP tool method names | `semaphore.send`, `.agents`, `.whoami`, `.inbox`, `.message_status`, `.status`, `.register`, `.control`, `.unregister`, `.chamber_state` | 11 — every chamber's tool-call namespace |
+| MCP tool method names | `semaphore.send`, `.agents`, `.whoami`, `.inbox`, `.message_status`, `.status`, `.register`, `.control`, `.unregister`, `.chamber_state` | 10 — every chamber's tool-call namespace |
 | Control-command names | `mcp-restart-semaphore`, `mcp-enable-semaphore`, `mcp-disable-semaphore` | 3 — the whitelisted slash commands `semaphore.control` queues |
-| `main.go` help text | "mirrors semaphore.control"; "Bulk-fire mcp-restart-semaphore"; design-notes URL | — |
+| `main.go` help text | "mirrors semaphore.control"; "Bulk-fire mcp-restart-semaphore" | — |
 
-Plus internal Go symbols (~70 mentions, not wire-visible): variable
-names, comments, identifiers across `cmd/claude-msg/` and
-`internal/`. Same rename pass, no wire impact; covered as
+Plus internal Go symbols (~40 non-test mentions, ~110 total
+including tests; not wire-visible): variable names, comments,
+identifiers across `cmd/claude-msg/` and `internal/`. Same rename
+pass, no wire impact; covered as
 substrate-side cleanup hygiene in the implementation PR.
 
 Under ADR-0003's framing, the current naming is wrong on two axes:
@@ -64,9 +73,26 @@ by a per-flavor binary — so the server name should be
 
 Sibling binaries running in other chambers' panes register the same
 server name (`"tmux-msg"`) in their own chamber's `.mcp.json`. MCP
-server identity is namespaced **per-chamber** (per `.mcp.json` file
-+ per Claude Code session), not per-binary — so two flavors running
-in the same tmux instance don't conflict at the MCP layer.
+server identity is one-per-name-per-`.mcp.json`, and `.mcp.json` is
+per-chamber (per Claude Code session config), so the substrate-named
+server presumes **one flavor binary per chamber config** — which is
+the alcatraz operational reality. A hypothetical chamber wanting to
+register two flavor binaries' substrate primitives in the same
+`.mcp.json` would collide on the `"tmux-msg"` server name; that
+configuration is out of scope here and would warrant its own
+sub-decision if it ever surfaces.
+
+**Per-flavor flavor-specific tools.** A future flavor binary that
+needs flavor-specific MCP tools (e.g., a `codex-msg` exposing
+Codex-only transcript-handling primitives) registers a **second**
+MCP server in the same `.mcp.json`, named per-flavor (`"codex-msg"`,
+`"copilot-msg"`, etc.). The substrate-named `"tmux-msg"` server
+carries substrate primitives; the per-flavor server carries
+flavor-specific tools. The two servers co-exist in one `.mcp.json`
+without conflict because they have distinct names. This preserves
+the substrate-vs-flavor cut at the wire layer: same server name
+across all flavors for substrate primitives; per-flavor server name
+for whatever each flavor needs on top.
 
 ### (2) Tool method prefix: `tmux-msg.<verb>`
 
@@ -119,6 +145,14 @@ registration logic, deprecation messaging, eventual cleanup PR)
 outweighs the convenience of incremental migration when the
 operational window is ~5 minutes of bus-quiet.
 
+**Restart sequencing.** The restart is **operator-side per chamber**
+(manual `/mcp restart` or Claude Code session restart), not via the
+renamed `mcp-restart-tmux-msg` macro. The control-command rename
+under decision (3) means the restart macro itself is being renamed
+in the same cutover; it cannot drive its own deprecation. The
+operator coordinates the restart sequence chamber-by-chamber after
+the new binary lands and `.mcp.json` files are updated.
+
 ## Alternatives considered
 
 ### Server name
@@ -145,6 +179,14 @@ operational window is ~5 minutes of bus-quiet.
   the same prefix). The redundancy of `tmux-msg.send` in the
   rendered tool name is a small cost; the collision risk of a
   bare-`msg` prefix is real.
+- **`tm.<verb>`** (short, substrate-flavored abbreviation).
+  Rejected: same shape as `msg.<verb>` — saves characters at the
+  cost of self-describing-ness. `tm.send` is opaque in non-MCP
+  contexts in a way `tmux-msg.send` is not. Both short-prefix
+  alternatives are rejected at decision time for the same
+  reasoning; if the prefix-friction watch ever triggers (§What
+  would change the decision), either could become worth
+  reconsidering.
 - **No prefix (`send`, `inbox`, etc.)** Rejected: while MCP
   already namespaces via server name, leaving methods unprefixed
   makes them ambiguous in non-MCP contexts (TOML, shell, docs).
@@ -219,9 +261,46 @@ operational window is ~5 minutes of bus-quiet.
   with `semaphore.X` in muscle memory need a beat to update.
   Acceptable cost; muscle memory updates fast under daily use.
 - **One-time PR overhead.** A dedicated implementation PR sweeps
-  the server name, 11 tool methods, 3 control commands, ~70
-  internal Go symbols, and the help text. Scoped enough to be
+  the server name, 10 tool methods, 3 control commands, ~40
+  non-test Go symbols, and the help text. Scoped enough to be
   bounded; large enough to warrant its own review window.
+
+## Precedent on ADR-0003 amendments by application ADRs
+
+ADR-0003 §Substrate enumerates substrate primitives by their
+current wire names at the time of writing — e.g., the control
+surface is named as `semaphore.control` (line 87). After ADR-0004
+implementation, that primitive is wire-named `tmux-msg.control`,
+making ADR-0003's enumeration accurate-to-time rather than current.
+
+**ADR-0004 sets the precedent: ADR-0003 stays frozen.** Application
+ADRs (this one, and any future ADR that applies ADR-0003's framing
+to a specific surface) do NOT amend ADR-0003. Future readers of
+ADR-0003 should treat in-text references to specific wire names as
+accurate-to-time; the current voice for any specific surface lives
+in the application ADR that addresses that surface (this one for
+the MCP wire layer).
+
+**Why frozen:** ADR-0003 §Decision (3) explicitly named historical
+ADRs 0001 and 0002 as immutable records, citing temporal context
+preservation. Applying the same discipline to ADR-0003 itself
+means application ADRs don't recursively touch their parent —
+keeping the amendment cost bounded as more application ADRs land
+over time. The alternative (application ADRs do amend their
+parent) creates a recursive amendment pattern where any new
+substrate-surface coverage touches every prior ADR mentioning that
+surface; cost grows quadratically with ADR count.
+
+**Cost:** ADR-0003 becomes incrementally less surface-accurate
+over time. A reader following ADR-0003's references finds the
+current voice in successor ADRs; the cost is the one extra hop.
+Acceptable in exchange for bounded amendment scope.
+
+**Scope of "frozen":** the discipline applies to substantive ADR
+content — §Context, §Decision, §Alternatives, §Consequences. Index
+metadata (ADR-0003's row in `docs/adr/README.md`'s index table)
+remains live state and can update for status flips, supersession
+markers, etc. without violating the frozen-substance discipline.
 
 ## What would change the decision
 
@@ -244,11 +323,14 @@ Reasons to retract or supersede ADR-0004:
 - **`tmux-msg.<verb>` causes real friction at scale.** If the
   prefix proves to clutter tool-call autocomplete, copy-paste,
   or transcript-readability badly enough that operators are
-  routinely abbreviating it, the no-prefix alternative (or a
-  shorter substrate prefix like `tm.`) becomes worth
-  reconsidering. The watch threshold: instance-2 of "the prefix
-  is annoying" as a structurally-distinct complaint, mirroring
-  ADR-0003 §What would change the decision's amendment trigger.
+  routinely abbreviating it, one of the §Alternatives' rejected
+  short-prefix shapes (`msg.<verb>`, `tm.<verb>`) or the no-prefix
+  alternative becomes worth reconsidering. The watch threshold:
+  instance-2 of prefix-friction as a **structurally-distinct**
+  complaint shape (different friction mode, not the same complaint
+  repeated), mirroring ADR-0003 §What would change the decision's
+  amendment trigger. Hold the structurally-distinct qualifier to
+  the same bar as in ADR-0003.
 - **The MCP wire surface stops being load-bearing.** If chambers
   migrate to a different inter-process mechanism (e.g., native
   CLI-tool IPC obsoletes MCP-over-stdio for this use case), the
