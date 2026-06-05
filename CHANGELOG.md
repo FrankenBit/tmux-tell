@@ -27,6 +27,44 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **TOML config support for `delivery-mode` per-agent (#132 follow-up
+  to #116).** New `delivery-mode` TOML knob in `[agent.<name>]` /
+  `[defaults]` blocks. The mailman's startup reads the resolved config
+  value (per-agent block > defaults block > DB column); when set, the
+  config value overrides the `agents.delivery_mode` column at
+  mailman-startup time:
+
+  ```toml
+  [agent.operator]
+  delivery-mode = "mailbox-only"
+  ```
+
+  Lets operators who manage state via config (rather than via the
+  `claude-msg register` / MCP `tmux-msg.register` paths) declare the
+  mode without writing to the DB. The register-time CLI / MCP path
+  still writes to the DB column; the TOML knob is the OVERRIDE at
+  mailman-startup time — the DB column is the long-term default;
+  config wins per-run.
+
+  Validation: invalid mode values from config log a `WARN
+  config_delivery_mode_invalid` and the DB column wins (fail-loud,
+  not fail-stop — a typo in `/etc/tmux-msg/config.toml` doesn't
+  silently break the mailman).
+
+  New `config.ResolveString` helper centralizes the per-string-field
+  precedence chain (sister to `ResolveBool` / `ResolveDuration`); the
+  delivery-mode knob is the first string-typed field, designed
+  forward-compatibly for additional string knobs.
+
+  Surfaces:
+  - **TOML**: `delivery-mode` per-agent or `[defaults]` block
+  - **`ResolvedView.DeliveryMode string`** surfaced in
+    `claude-msg config show` so operators can verify the resolved
+    value without tracing through TOML manually
+  - **No CLI flag**: the register-time CLI already covers the operator
+    workflow; adding a `--delivery-mode` override to `serve` would
+    duplicate the `register` surface without adding a use case
+
 - **Pre-paste safety check against popup-as-Unknown destruction
   (#105 Half 2).** New mailman safety net: immediately before each
   paste-and-Enter delivery, the mailman takes one final `AgentState`
