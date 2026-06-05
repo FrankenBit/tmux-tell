@@ -1216,7 +1216,7 @@ condensed — see git log for full audit.
   the existing recovery only fires on "can't find pane" errors.
   Tracked as #37.
 
-[Unreleased]: https://git.frankenbit.de/frankenbit/cli-semaphore/compare/v0.2.1...main
-[0.2.1]: https://git.frankenbit.de/frankenbit/cli-semaphore/releases/tag/v0.2.1
-[0.2.0]: https://git.frankenbit.de/frankenbit/cli-semaphore/releases/tag/v0.2.0
-[0.1.0]: https://git.frankenbit.de/frankenbit/cli-semaphore/releases/tag/v0.1.0
+[Unreleased]: https://git.frankenbit.de/frankenbit/tmux-msg/compare/v0.2.1...main
+[0.2.1]: https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.2.1
+[0.2.0]: https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.2.0
+[0.1.0]: https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.1.0

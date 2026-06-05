@@ -1,4 +1,4 @@
-# systemd user template unit for the cli-semaphore mailman daemon.
+# systemd user template unit for the tmux-msg mailman daemon.
 #
 # Install:
 #   cp init/claude-mailman@.service ~/.config/systemd/user/
@@ -13,8 +13,8 @@
 #   journalctl --user -u claude-mailman@surveyor.service -f
 
 [Unit]
-Description=cli-semaphore mailman for %i
-Documentation=https://git.frankenbit.de/frankenbit/cli-semaphore
+Description=tmux-msg mailman for %i
+Documentation=https://git.frankenbit.de/frankenbit/tmux-msg
 # Run after the user session is set up; pane-id discovery (#12) writes the
 # agents table before any mailman instance starts.
 After=default.target
@@ -38,7 +38,7 @@ Type=notify
 
 # Inherit the operator's PATH and HOME via the user manager.
 # Override CLAUDE_MSG_DB here if the install put it somewhere bespoke.
-Environment=CLAUDE_MSG_DB=/var/lib/cli-semaphore/messages.db
+Environment=CLAUDE_MSG_DB=/var/lib/tmux-msg/messages.db
 
 # Journal capture with per-instance tag so journalctl filtering is clean.
 StandardOutput=journal

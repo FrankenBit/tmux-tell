@@ -1,4 +1,4 @@
--- cli-semaphore SQLite schema.
+-- tmux-msg SQLite schema.
 --
 -- Applied idempotently by the store package on open. The store also runs
 -- the runtime PRAGMAs (WAL + synchronous=NORMAL + foreign_keys) before any
