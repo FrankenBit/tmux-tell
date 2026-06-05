@@ -75,7 +75,7 @@ wrong; supersession escape hatch doesn't apply).
 - Suits tmux-msg's deeper-audience material (substrate-design
   decisions that often need the alternative-bearing structure
   inline for proper evaluation) without inviting the cap-loophole
-  of ultra-aggressive abbreviation that a tighter cap might
+  of ultra-aggressive abbreviation that a tighter cap might invite
 
 **Calibration note** (per Surveyor's framing observation on the
 draft): the cap is calibrated to the **median** of the existing

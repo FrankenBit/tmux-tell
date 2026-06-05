@@ -30,11 +30,11 @@ change for the decision to be revisited.
 | 0006 | [ADR length cap (400 lines) + background docs](0006-adr-length-cap-and-background-docs.md) | Accepted | 2026-06-05 |
 
 > **Note on ADR length.** ADRs 0001-0005 predate the length-cap
-> convention codified in ADR-0006 and run 300-441 lines each. ADR-0006+
+> convention codified in ADR-0006 and run 276-440 lines each. ADR-0006+
 > caps at 400 lines per ADR file; deeper exploration lives in co-located
 > `NNNN-<slug>-background.md` files. The convention is forward-only —
 > existing ADRs stay as written per ADR-0004 §Generality's parent-frozen
-> precedent. ADR-0006 itself is the first worked example (222 lines, no
+> precedent. ADR-0006 itself is the first worked example (under cap, no
 > background doc needed).
 
 ## When to file an ADR
