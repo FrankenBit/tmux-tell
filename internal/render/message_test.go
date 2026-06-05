@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // localClockFromUTC converts an ISO 8601 UTC timestamp into the

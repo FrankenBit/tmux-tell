@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"os"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/version"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/version"
 )
 
 const usage = `usage: claude-msg <subcommand> [args]
@@ -35,7 +35,7 @@ Subcommands:
   refresh-all-mcps  Bulk-fire mcp-restart-semaphore to every registered chamber (#62)
   mcp     Speak MCP over stdio (Claude Code tools)
 
-See https://git.frankenbit.de/frankenbit/cli-semaphore for the design notes.
+See https://git.frankenbit.de/frankenbit/tmux-msg for the design notes.
 `
 
 func main() {

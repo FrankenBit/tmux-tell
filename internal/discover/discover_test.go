@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 func testWalker(cmdlines map[int]string, children map[int][]int) *Walker {

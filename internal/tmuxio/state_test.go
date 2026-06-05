@@ -173,7 +173,7 @@ func TestChamberState_PaneRequired(t *testing.T) {
 // TestChamberState_NoPaneMutation pins the substrate-class property:
 // ChamberState is read-only-observe. A successful classification makes
 // EXACTLY 2 capture-pane calls + 1 display-message call (the cursor
-// query added in cli-semaphore#69's v2 algorithm per operator's
+// query added in #69's v2 algorithm per operator's
 // design call 2026-06-04) and ZERO send-keys. All three calls are
 // read-only at the tmux layer — capture-pane reads the visible
 // buffer; display-message reads internal pane state. This is the
@@ -258,7 +258,7 @@ func (c *chamberStateRunner) run(ctx context.Context, stdin io.Reader, args ...s
 // TestChamberState_IdleWhenCursorAtSentinelEmpty pins the cursor-aware
 // happy path for the clean-prompt case: cursor at the position right
 // after `❯\u00a0` AND empty content past it → StateIdle with
-// Evidence.PromptEmpty=true. v2 algorithm per cli-semaphore#69
+// Evidence.PromptEmpty=true. v2 algorithm per #69
 // operator's design call 2026-06-04.
 func TestChamberState_IdleWhenCursorAtSentinelEmpty(t *testing.T) {
 	fastTemporalDelta(t)
@@ -472,7 +472,7 @@ func TestCountChangedLines_DiffShape(t *testing.T) {
 
 // TestChamberState_AwaitingOperatorOnAskUserQuestionGolden pins the
 // end-to-end classification for the AskUserQuestion popup scenario
-// (cli-semaphore#79). Loads the capture-derived golden fixture as
+// (#79). Loads the capture-derived golden fixture as
 // both capture-pane responses (the pane is stable across the temporal
 // delta — operator is reading the popup; nothing's animating), and
 // asserts ChamberState returns StateAwaitingOperator with the marker
@@ -493,7 +493,7 @@ func TestCountChangedLines_DiffShape(t *testing.T) {
 // This test pins the load-bearing *classification*, not just the
 // constant-vs-golden alignment.
 // TestChamberState_AtRestInCompactionOnGolden pins the end-to-end
-// classification for the /compact-in-progress scenario (cli-semaphore
+// classification for the /compact-in-progress scenario (tmux-msg
 // #70). Loads BOTH capture-derived goldens — at 8% and 68% — and feeds
 // them as capA and capB. This shape is load-bearing:
 //

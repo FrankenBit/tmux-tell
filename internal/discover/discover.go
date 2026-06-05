@@ -1,4 +1,4 @@
-// Package discover resolves tmux panes to cli-semaphore agent names. It is
+// Package discover resolves tmux panes to tmux-msg agent names. It is
 // the shared engine behind:
 //
 //   - the `claude-msg discover` subcommand (one-shot rewrite of pane_id),
@@ -17,7 +17,7 @@ import (
 	"strings"
 	"unicode"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 // Source describes which strategy produced an agent name. Used for tests

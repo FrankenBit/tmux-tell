@@ -1,5 +1,5 @@
 // Package control defines the whitelist of Claude Code slash-commands
-// that agents are allowed to invoke through cli-semaphore — split by
+// that agents are allowed to invoke through tmux-msg — split by
 // scope: which commands an agent may target at *itself* (self) vs which
 // commands an agent may target at *another* agent (peer).
 //

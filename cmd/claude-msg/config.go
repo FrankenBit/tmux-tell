@@ -6,7 +6,7 @@ import (
 	"io"
 	"os"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
 )
 
 // runConfigCLI is the umbrella for the `config` subcommand family.
@@ -43,7 +43,7 @@ func runConfigShowCLI(args []string, stdout, stderr io.Writer) int {
 	agent := fs.String("agent", "", "agent name to resolve config for (required)")
 	format := fs.String("format", "text", "text|json")
 	configPath := fs.String("config", "",
-		"override config path (else $CLAUDE_MSG_CONFIG, else /etc/cli-semaphore/config.toml)")
+		"override config path (else $CLAUDE_MSG_CONFIG, else /etc/tmux-msg/config.toml)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}

@@ -1,4 +1,4 @@
-# Operator UX audit — cli-semaphore at v0.2.1
+# Operator UX audit — tmux-msg at v0.2.1
 
 > **Status: DRAFT.** Admin-led per the lead/verify split in bus
 > message id 8117. Surveyor shape-verify complete (issue #36,
@@ -20,7 +20,7 @@ Pilot, Admin) through two cycles of:
 - Routine sends + replies
 - Cross-project review threads (3 rounds with Surveyor)
 - Incident response (6 production incidents — see `failure-modes.md`)
-- A full host reboot for the cli-semaphore epic-#1 closure test
+- A full host reboot for the tmux-msg epic-#1 closure test
 
 Findings collected by the operator-side admin pane during and after
 each cycle. Cross-checked against the actual CLI output and

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent installer for cli-semaphore on alcatraz-like Linux hosts.
+# Idempotent installer for tmux-msg on alcatraz-like Linux hosts.
 #
 # Run as root (sudo -A ./install.sh). The script:
 #   - installs the claude-msg binary to ${PREFIX}/bin/
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 PREFIX=${PREFIX:-/usr/local}
-DATADIR=${DATADIR:-/var/lib/cli-semaphore}
+DATADIR=${DATADIR:-/var/lib/tmux-msg}
 OPERATOR_USER=${SUDO_USER:-${USER:-alex}}
 
 if [[ $EUID -ne 0 ]]; then

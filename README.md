@@ -1,12 +1,14 @@
-# cli-semaphore
+# tmux-msg
 
-Inter-agent message bus for Claude CLI sessions on alcatraz. Each Claude pane has a mailbox; senders post messages, a per-recipient mailman daemon serializes delivery into the target tmux pane.
+A tmux-based message-bus substrate. Each tmux session that hosts a CLI agent has a mailbox; senders post messages via the SQLite store, and a per-recipient mailman daemon serializes paste-and-Enter delivery into the target tmux pane through a read-only-observe-only gate that defers while the recipient is busy.
 
-The name is a pun: ship-to-ship semaphore signalling, and the OS synchronization primitive — both descriptions of the same thing here.
+**Substrate vs CLI-tool-flavor.** The substrate is tmux: the pane registry, the paste-and-Enter delivery, the per-pane chrome detection (idle / busy / popup-open / mid-compaction / awaiting-operator). The CLI tool running inside the pane is downstream — `claude-msg` is the binary built for Claude Code today; sibling binaries (`codex-msg`, `copilot-msg`) can be built from the same substrate when there's need for them. The repo name was chosen to reflect that: tmux-msg is what the substrate IS, not which CLI tool happens to run on top.
+
+(The project was originally named `cli-semaphore` — re-grounded on the substrate's actual primitive in v0.5.0.)
 
 ## Status
 
-Design phase / scaffolding. See **the epic** for the roadmap and milestones.
+Production on alcatraz across 6 chambers (Bosun, Surveyor, Engineer, Pilot, Herald, Quartermaster) since v0.3.0 (2026-06-04). See [the epic](https://git.frankenbit.de/frankenbit/tmux-msg/issues) for the roadmap and open work.
 
 ## Architecture
 
@@ -50,7 +52,7 @@ CREATE TABLE agents (
 );
 ```
 
-DB lives at `/var/lib/cli-semaphore/messages.db`.
+DB lives at `/var/lib/tmux-msg/messages.db`.
 
 ## CLI shape (target)
 
@@ -103,7 +105,7 @@ looking now, ETA 3 min
 
 ## Versioning
 
-cli-semaphore follows [Semantic Versioning](https://semver.org/) at
+tmux-msg follows [Semantic Versioning](https://semver.org/) at
 the `0.x.y` cadence. Minor bumps (`0.1.0` → `0.2.0`) may break
 compatibility while the post-MVP shape settles; patch bumps are
 backward-compatible within a minor. See `CHANGELOG.md` for what's
@@ -123,8 +125,8 @@ binaries report `dev`.
 On a Linux host that has tmux, sqlite3, and Go (≥ 1.24):
 
 ```bash
-git clone https://git.frankenbit.de/frankenbit/cli-semaphore.git
-cd cli-semaphore
+git clone https://git.frankenbit.de/frankenbit/tmux-msg.git
+cd tmux-msg
 make build
 sudo -A ./install.sh                  # uses sudo -A so a tmux-popup
                                       # askpass surfaces nicely on alcatraz
@@ -133,7 +135,7 @@ sudo -A ./install.sh                  # uses sudo -A so a tmux-popup
 This:
 - builds `bin/claude-msg`,
 - installs the binary to `/usr/local/bin/claude-msg`,
-- creates `/var/lib/cli-semaphore/` (operator-owned, holds `messages.db`),
+- creates `/var/lib/tmux-msg/` (operator-owned, holds `messages.db`),
 - drops the systemd user template into the operator's `~/.config/systemd/user/`.
 
 Then, **as the operator (not root)**:
@@ -172,7 +174,7 @@ To uninstall:
 ```bash
 sudo -A ./uninstall.sh                # stops mailmen, removes binary,
                                       # leaves the SQLite DB alone
-sudo -A ./uninstall.sh --purge        # also wipes /var/lib/cli-semaphore/
+sudo -A ./uninstall.sh --purge        # also wipes /var/lib/tmux-msg/
                                       # (interactive confirmation when run
                                       # from a TTY)
 ```
@@ -190,18 +192,18 @@ The script:
 What `uninstall.sh` does **NOT** touch (remove by hand if you want them
 gone):
 
-- `/etc/cli-semaphore/` — host-level config (#54); the operator may
+- `/etc/tmux-msg/` — host-level config (#54); the operator may
   have hand-edited it.
 - The semaphore MCP entry in `~/.claude.json` — remove with
   `claude mcp remove semaphore -s user`.
 - `loginctl enable-linger` — other services on the host may rely on
   the user manager continuing to run at boot.
-- `/var/lib/cli-semaphore/` — message history. Default-preserved so
+- `/var/lib/tmux-msg/` — message history. Default-preserved so
   an accidental re-install can pick up where the previous one left off.
   Pass `--purge` to wipe it after an interactive confirmation.
 
 For safety, the script refuses to run from inside
-`/var/lib/cli-semaphore/` (so a sloppy `cd` + `./uninstall.sh` can't
+`/var/lib/tmux-msg/` (so a sloppy `cd` + `./uninstall.sh` can't
 delete the very directory it's running from with `--purge`).
 
 ## Use from Claude Code (MCP)
@@ -245,7 +247,7 @@ the same step. Equivalent CLI fallback:
 # from inside the new pane
 CLAUDE_AGENT_NAME=myname claude-msg ...   # (CLI doesn't yet expose register;
                                           # fall back to SQL until then)
-sqlite3 /var/lib/cli-semaphore/messages.db \
+sqlite3 /var/lib/tmux-msg/messages.db \
   "INSERT INTO agents (name, pane_id) VALUES ('myname', '$TMUX_PANE');"
 systemctl --user enable --now claude-mailman@myname.service
 ```

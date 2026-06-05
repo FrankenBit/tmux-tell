@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 func newCmdTestStore(t *testing.T, agents ...string) *store.Store {

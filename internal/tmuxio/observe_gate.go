@@ -11,7 +11,7 @@ import (
 )
 
 // ObserveGateOpts configures the read-only-observe-only delivery gate
-// introduced by cli-semaphore #92. Defaults are filled in by
+// introduced by tmux-msg #92. Defaults are filled in by
 // ObserveGate when fields are zero-valued.
 type ObserveGateOpts struct {
 	// PollIntervalMin is the initial sleep between observe iterations.

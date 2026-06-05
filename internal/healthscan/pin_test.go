@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
 )
 
 // PIN: external-source-on-demand scan completes in <100ms for the

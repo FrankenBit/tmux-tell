@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // runResetCLI parses reset flags and dispatches.

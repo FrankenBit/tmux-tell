@@ -1,4 +1,4 @@
-module git.frankenbit.de/frankenbit/cli-semaphore
+module git.frankenbit.de/frankenbit/tmux-msg
 
 go 1.25.0
 

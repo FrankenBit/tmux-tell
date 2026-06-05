@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // Self-invocation of a self-only command (compact) is the canonical

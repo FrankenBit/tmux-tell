@@ -9,7 +9,7 @@
 
 ## Why this doc exists
 
-cli-semaphore shipped end-of-MVP on 2026-05-29 and within 48h
+tmux-msg shipped end-of-MVP on 2026-05-29 and within 48h
 produced ten issues — **eight in production, two via the v0.2.0
 review pass**. Each fix was small. The cumulative pattern was
 "production (or review) discovered the assumption, we patched."
@@ -124,22 +124,22 @@ Filed as separate Forgejo issues so each is tracked, sized, and
 resolvable on its own cadence. Ordered by expected operator pain
 reduction (highest-leverage first):
 
-- [x] [#42 — `claude-msg health` subcommand](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/42)
+- [x] [#42 — `claude-msg health` subcommand](https://git.frankenbit.de/frankenbit/tmux-msg/issues/42)
   (priority/high, size/M). One-command scan-and-report of WARN
   rates + crash counts + stale registry entries; replaces the
   morning-coffee `journalctl ... | grep` ritual. The single
   biggest blind-spot collapse.
-- [x] [#39 — deliver-time histogram per recipient (95th/99th)](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/39)
+- [x] [#39 — deliver-time histogram per recipient (95th/99th)](https://git.frankenbit.de/frankenbit/tmux-msg/issues/39)
   (priority/medium, size/S). Would have flagged incidents 3
   (unverified delivery) and 4 (Enter-not-firing) immediately
   via 99th-percentile spike. Data already on the `messages`
   table; no schema change.
-- [x] [#40 — per-verdict count from `WaitForQuietPane`](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/40)
+- [x] [#40 — per-verdict count from `WaitForQuietPane`](https://git.frankenbit.de/frankenbit/tmux-msg/issues/40)
   (priority/medium, size/S). DeltaQuiet / InputActivity /
   TUINoise / ProbeMissing aggregated per recipient. High
   ProbeMissing rate is the smoking gun for input-row
   identification failures (incident 6).
-- [x] [#41 — per-mailman crash counter in status](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/41)
+- [x] [#41 — per-mailman crash counter in status](https://git.frankenbit.de/frankenbit/tmux-msg/issues/41)
   (priority/low, size/S). Reads `systemctl --user show
   ... NRestarts`. Would have flagged incidents 1 and 5 at the
   moment of each crash, not after operator-reported "panes
@@ -300,7 +300,7 @@ has empirical data of its own.
   versus switching to a different model. The gate's design has
   earned its keep across three reviews; this doc records its
   failure modes, not its architecture.
-- Comparing cli-semaphore's incident rate to industry benchmarks.
+- Comparing tmux-msg's incident rate to industry benchmarks.
   Single-operator homelab; the only meaningful comparison is
   pre-MVP intuition vs post-MVP empirical data.
 

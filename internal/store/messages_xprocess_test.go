@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
 )
 
 // The pins in this file are the *cross-process* counterparts to
@@ -120,7 +120,7 @@ func itoa(n int) string {
 //
 // Surveyor's #29 review (b) named this as the load-bearing real-
 // world case (mailman + CLI + MCP children all separate processes
-// against /var/lib/cli-semaphore/messages.db). Tracked as #33.
+// against /var/lib/tmux-msg/messages.db). Tracked as #33.
 func TestPin_AtomicCapEnforcement_CrossProcessCeilingForSingleInsert(t *testing.T) {
 	testpin.Triage(t, "AtomicCapEnforcement",
 		"caps are ceilings under cross-process concurrency — SQLite file-level RESERVED lock + _txlock=immediate atomicity holds across distinct OS-level processes")

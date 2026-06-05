@@ -1,10 +1,10 @@
 # Diagnostic playbook: when a chamber says "I missed a message"
 
 When a chamber reports a missing bus message, the instinct is to assume
-cli-semaphore dropped or corrupted it. The existing bug catalog reflects
-that — [#59](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/59)
+tmux-msg dropped or corrupted it. The existing bug catalog reflects
+that — [#59](https://git.frankenbit.de/frankenbit/tmux-msg/issues/59)
 covers Enter-injection corruption when the receiver is at a Claude prompt,
-[#63](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/63) covers
+[#63](https://git.frankenbit.de/frankenbit/tmux-msg/issues/63) covers
 mid-typing collisions when delivery lands during operator composition.
 
 But the 2026-06-03 incident that surfaced this playbook showed a third
@@ -25,7 +25,7 @@ five minutes instead of seeding a bus-recovery investigation.
 This is an **operational-coordination-layer expression** of the broader
 *"filed-bug root cause is hypothesis until probed"* discipline that
 already applies at the code-bug layer. The chamber reporting the gap is
-generating a hypothesis (*"cli-semaphore dropped it"*), not a verified
+generating a hypothesis (*"tmux-msg dropped it"*), not a verified
 diagnosis. The playbook's job is to keep the hypothesis labelled as
 such until the substrate has been checked.
 
@@ -42,11 +42,11 @@ identifies the gap; don't continue to the next layer.
 
 The SQLite store is the authoritative record of what reached the bus.
 Replace the placeholders with the alleged sender and a tight time
-window. Bounds are UTC (cli-semaphore stores ISO UTC timestamps);
+window. Bounds are UTC (tmux-msg stores ISO UTC timestamps);
 convert from local if needed.
 
 ```bash
-sudo sqlite3 /var/lib/cli-semaphore/messages.db -header -column "
+sudo sqlite3 /var/lib/tmux-msg/messages.db -header -column "
   SELECT public_id, from_agent, to_agent, state, kind,
          length(body) AS body_len,
          created_at, delivered_at,
@@ -67,7 +67,7 @@ Decision tree on the result:
 
 | Result                                        | What it means                                                                       | Next action                                                                                                                       |
 |-----------------------------------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| **No row**                                    | Sender never reached the bus. Chamber-side flow gap.                                | **Stop investigating cli-semaphore.** Probe the sender chamber's state at the alleged send time.                                  |
+| **No row**                                    | Sender never reached the bus. Chamber-side flow gap.                                | **Stop investigating tmux-msg.** Probe the sender chamber's state at the alleged send time.                                  |
 | **`state = 'delivered'`**                     | Bus did its job.                                                                    | Cross-check the receiver pane's state at `delivered_at`. The receiver may not have processed it (UI race, popup collision #59).   |
 | **`state = 'failed'`**                        | Bus tried and failed cleanly.                                                       | Check the `error` column. The `delivered_unverified` notification path should have fired — if it didn't, that's a separate gap.   |
 | **`state = 'queued'` / `'delivering'` stale** | Genuine delivery stall.                                                             | File a fresh bug citing the row's `public_id` + the receiver's mailman journal excerpt from §2.                                   |
@@ -149,7 +149,7 @@ The bus IS the failure point when:
   (delivery succeeded at the tmux paste-buffer layer but the receiver
   UI consumed it as something else — sibling failure mode to #59)
 - §1 returns a row with `state = 'failed'` AND the `error` column says
-  something cli-semaphore-specific (e.g., `can't find pane`, drift
+  something tmux-msg-specific (e.g., `can't find pane`, drift
   unrecoverable) — these are real bus-side failure modes worth filing
 
 In each case, file with the `public_id`, the journal excerpt, and the
@@ -170,9 +170,9 @@ fully grounded.
 
 ## See also
 
-- [#59](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/59)
+- [#59](https://git.frankenbit.de/frankenbit/tmux-msg/issues/59)
   — Enter-injection delivery into a Claude prompt
-- [#63](https://git.frankenbit.de/frankenbit/cli-semaphore/issues/63)
+- [#63](https://git.frankenbit.de/frankenbit/tmux-msg/issues/63)
   — mid-typing collision
 - [`failure-modes.md`](./failure-modes.md) §3 — observable diagnostics
   scoped to bus-side failure modes

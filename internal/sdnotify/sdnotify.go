@@ -1,5 +1,5 @@
 // Package sdnotify is a tiny systemd notification helper. It implements
-// just the two messages cli-semaphore needs (READY=1 and WATCHDOG=1) by
+// just the two messages tmux-msg needs (READY=1 and WATCHDOG=1) by
 // writing directly to the Unix socket pointed at by $NOTIFY_SOCKET.
 //
 // No external dependencies. If $NOTIFY_SOCKET is unset (not running under

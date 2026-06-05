@@ -15,7 +15,7 @@ import (
 // derived, per Surveyor's O69 framing) is obvious at the file-level
 // glance and survives test-file reshuffling.
 //
-// History — the canary discipline emerged from the cli-semaphore#69
+// History — the canary discipline emerged from the #69
 // substrate-discovery: PR #66 + PR #77 shipped with PromptSentinel
 // using a regular space ("❯ ") but Claude Code actually paints NBSP
 // (U+00A0). The bug was invisible to unit tests because the test
@@ -86,7 +86,7 @@ func TestPromptSentinel_MatchesGoldenCapture(t *testing.T) {
 // derived-vs-spec-derived discipline as the PromptSentinel canary
 // above. The golden file is a real `tmux capture-pane` output frozen
 // from a Quartermaster pane displaying a live AskUserQuestion popup
-// (cli-semaphore#79, captured 2026-06-04). If Claude Code's popup UI
+// (#79, captured 2026-06-04). If Claude Code's popup UI
 // drifts (footer keybinding text changes, separator character flips),
 // this test fails loudly + names the re-capture recipe.
 //
@@ -120,7 +120,7 @@ func TestAwaitingOperatorMarker_MatchesGoldenCapture(t *testing.T) {
 // derived discipline as the PromptSentinel + AwaitingOperatorMarker
 // canaries above. Two golden files are checked, both real `tmux
 // capture-pane` outputs frozen from a Quartermaster pane mid-`/compact`
-// (cli-semaphore#70, captured 2026-06-04). The two captures differ in
+// (#70, captured 2026-06-04). The two captures differ in
 // progress (8% vs 68%) and — critically — in the spinner glyph (✻
 // U+273B vs ✢ U+2722); the marker excludes the glyph and matches the
 // trailing phrase that survives the spinner animation. If Claude Code's

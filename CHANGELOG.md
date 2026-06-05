@@ -1,7 +1,8 @@
 # Changelog
 
-All notable changes to cli-semaphore are recorded here. The format
-follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
+All notable changes to tmux-msg (originally `cli-semaphore`,
+re-grounded on its substrate primitive in v0.5.0) are recorded here.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 the project adheres to [Semantic Versioning](https://semver.org/).
 
 Cadence (clarified per Surveyor review of v0.2.0):
@@ -23,6 +24,51 @@ Cadence (clarified per Surveyor review of v0.2.0):
 Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
+
+### Changed
+
+- **Project re-grounded on its substrate primitive (#97).** Renamed
+  from `cli-semaphore` to `tmux-msg`. This is not a cosmetic rename
+  but a substrate-class accuracy correction: the substrate IS tmux
+  (pane registry + paste-and-Enter delivery + per-pane chrome
+  detection); the CLI tool running inside the pane is downstream.
+  The old name conflated two layers — `cli` was generic, `semaphore`
+  was internally accurate but obscure for external readers. The new
+  name names what the substrate actually is, and preserves the
+  multi-CLI-flavor binary scheme: `claude-msg` today, sibling
+  binaries (`codex-msg`, `copilot-msg`) when there's need for them.
+
+  Surface changes:
+  - **Repo**: `frankenbit/cli-semaphore` → `frankenbit/tmux-msg`
+    (Forgejo creates URL redirects; old issue/PR links continue to
+    resolve)
+  - **Go module path**: `git.frankenbit.de/frankenbit/cli-semaphore`
+    → `git.frankenbit.de/frankenbit/tmux-msg`; every import statement
+    in the codebase updated mechanically
+  - **Operational directories**: `/etc/cli-semaphore/` →
+    `/etc/tmux-msg/`, `/var/lib/cli-semaphore/` → `/var/lib/tmux-msg/`
+  - **Code constants**: `config.DefaultPath`, `defaultDBLocation`,
+    help-text strings, and doc-comment cross-references all updated
+  - **Unchanged**: the binary stays `claude-msg` (it's CLI-tool-
+    flavored, not substrate-flavored), the daemon stays
+    `claude-mailman@<agent>.service` (same reason), the MCP server
+    name stays `semaphore` (decoupled from the repo name)
+
+  Migration: the v0.5.0 binary reads from the new operational paths.
+  On alcatraz, the v0.4.0 → v0.5.0 deploy moved `/etc/cli-semaphore/`
+  → `/etc/tmux-msg/` and `/var/lib/cli-semaphore/` → `/var/lib/tmux-msg/`
+  atomically during the mailman swap window. Operators with custom
+  install paths need to mv their `/etc/cli-semaphore/` and
+  `/var/lib/cli-semaphore/` to the new names before starting the
+  v0.5.0 binary.
+
+  Out of scope of this rename (tracked separately):
+  - `ChamberState` → `SessionState` identifier rename (#107) — same
+    substrate-honesty discipline applied to internal identifiers;
+    the Binnacle/Nimbus jargon `chamber` is downstream from
+    cli-semaphore's perspective and shouldn't leak upstream
+  - Binnacle repo's references to `cli-semaphore` (delegated to
+    Bosun as a follow-up dispatch)
 
 ## [0.4.0] — 2026-06-04
 

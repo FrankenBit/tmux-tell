@@ -7,8 +7,8 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/healthscan"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/healthscan"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // runStatusCLI parses status-subcommand flags and dispatches.

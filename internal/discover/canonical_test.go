@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 // canonicalSetup gives every test the same canonical agent registry

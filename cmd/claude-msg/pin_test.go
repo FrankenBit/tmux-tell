@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
 )
 
 // PIN: wire shape is single source-of-truth — JSON-tag-driven, no
@@ -93,7 +93,7 @@ func TestPin_WireShapeSingleSoT_CLIAndMCPByteIdentity(t *testing.T) {
 }
 
 // TestPin_OperatorInputRowGate_QuickProbeSkippedWhenSentinelPromotes —
-// REMOVED 2026-06-04 (cli-semaphore #92). The asymmetric gate
+// REMOVED 2026-06-04 (tmux-msg #92). The asymmetric gate
 // composition this pin guarded (PromptSentinelGate → QuickPresenceProbe
 // → WaitForQuietPane) was retired when the probe-and-watch substrate
 // was replaced with the read-only-observe-only ObserveGate. The
@@ -101,7 +101,7 @@ func TestPin_WireShapeSingleSoT_CLIAndMCPByteIdentity(t *testing.T) {
 // commitment from PR #67 no longer exists at this layer — there's no
 // composition order to preserve because there's only one gate.
 //
-// See cli-semaphore #91 (investigation) + #92 (redesign) for the
+// See tmux-msg #91 (investigation) + #92 (redesign) for the
 // migration story. The discipline that produced this pin —
 // perf-skip-when-cheaper-path-decides — is general and could resurface
 // under a different concrete pin; this PIN_ slot stays empty pending

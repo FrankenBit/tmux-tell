@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
 )
 
 // PIN: linkP2ToP1 callers don't pass explicit reply_to — the

@@ -1,4 +1,4 @@
-// Package config loads cli-semaphore's host-level config file (#54)
+// Package config loads tmux-msg's host-level config file (#54)
 // and resolves per-call values against a precedence chain:
 //
 //  1. CLI flags (operator overrides for ad-hoc testing)
@@ -11,7 +11,7 @@
 // tuning), and strings (paths) without per-type plumbing.
 //
 // Missing-file behavior: silent fallback to hardcoded defaults. A
-// fresh-from-install setup with no /etc/cli-semaphore/config.toml just
+// fresh-from-install setup with no /etc/tmux-msg/config.toml just
 // gets the CLI-flag defaults.
 //
 // Malformed-file behavior: error returned to the caller, which can
@@ -31,7 +31,7 @@ import (
 // DefaultPath is where Load looks by default. Override via the
 // CLAUDE_MSG_CONFIG env var or by passing an explicit path to
 // LoadFrom.
-const DefaultPath = "/etc/cli-semaphore/config.toml"
+const DefaultPath = "/etc/tmux-msg/config.toml"
 
 // File mirrors the TOML schema. Sections in the file map to the
 // fields here; missing sections + missing keys decode as zero values.

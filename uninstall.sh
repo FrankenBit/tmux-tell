@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent uninstaller for cli-semaphore.
+# Idempotent uninstaller for tmux-msg.
 #
 # Run as root (sudo -A ./uninstall.sh). The script:
 #   - stops + disables every running claude-mailman@*.service user unit
@@ -26,7 +26,7 @@
 set -euo pipefail
 
 PREFIX=${PREFIX:-/usr/local}
-DATADIR=${DATADIR:-/var/lib/cli-semaphore}
+DATADIR=${DATADIR:-/var/lib/tmux-msg}
 OPERATOR_USER=${SUDO_USER:-${USER:-alex}}
 PURGE_DATA=false
 
@@ -37,15 +37,15 @@ Usage: sudo -A ./uninstall.sh [--purge] [--prefix DIR] [--datadir DIR]
   --purge           Also delete the SQLite data directory (default-off;
                     needs an interactive confirmation when stdin is a TTY).
   --prefix DIR      Where the binary lives (default: /usr/local).
-  --datadir DIR     Where the SQLite DB lives (default: /var/lib/cli-semaphore).
+  --datadir DIR     Where the SQLite DB lives (default: /var/lib/tmux-msg).
   -h, --help        Show this message.
 
-The script leaves /etc/cli-semaphore/ alone (operator may have hand-
+The script leaves /etc/tmux-msg/ alone (operator may have hand-
 edited config there per #54). Remove that directory manually if you
 also want to wipe the host config.
 
 What --purge does NOT touch:
-  - /etc/cli-semaphore/        (operator-edited config; remove by hand)
+  - /etc/tmux-msg/        (operator-edited config; remove by hand)
   - Semaphore MCP entry in ~/.claude.json (remove with claude mcp
     remove semaphore -s user)
   - loginctl enable-linger     (other services on the host may rely on it)
@@ -167,7 +167,7 @@ echo
 echo "Uninstall complete."
 echo
 echo "Not touched (remove by hand if you also want them gone):"
-echo "  /etc/cli-semaphore/             — host-level config (#54)"
+echo "  /etc/tmux-msg/             — host-level config (#54)"
 echo "  ~/.claude.json                  — semaphore MCP entry; remove with:"
 echo "                                    claude mcp remove semaphore -s user"
 echo "  loginctl enable-linger          — other services may need it"

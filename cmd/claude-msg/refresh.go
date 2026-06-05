@@ -8,8 +8,8 @@ import (
 	"os"
 	"sort"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/identity"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // refreshResult is the structured return shape for the

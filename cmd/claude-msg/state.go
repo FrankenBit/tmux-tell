@@ -8,14 +8,14 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 // chamberStateResult is the wire-format shape that both the CLI and
-// the MCP tool emit. Per cli-semaphore#69's verdict, this is the
+// the MCP tool emit. Per #69's verdict, this is the
 // durable schema that Binnacle's M6b dashboard / operator API can
-// consume verbatim once the bridge replaces the cli-semaphore-side
+// consume verbatim once the bridge replaces the tmux-msg-side
 // detection mechanism.
 //
 // Fields:
@@ -37,7 +37,7 @@ type chamberStateResult struct {
 // resolution or tmux capture.
 //
 // The result's State field is populated even when err != nil — the
-// safer-default-on-uncertainty contract from cli-semaphore#65's
+// safer-default-on-uncertainty contract from #65's
 // playbook applied at the consumer-surface layer. Callers that want
 // to act on State should still check err first; consumers that just
 // want to surface "what did we observe" can render Evidence.Reason

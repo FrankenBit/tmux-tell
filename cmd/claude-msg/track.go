@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // errTrackNotFound wraps store.ErrNotFound with a precise "no such

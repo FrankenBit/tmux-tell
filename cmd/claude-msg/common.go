@@ -10,7 +10,7 @@ import (
 
 // Default DB path for production installs. Override with --db or
 // $CLAUDE_MSG_DB. Tests use a temp file or :memory:.
-const defaultDBLocation = "/var/lib/cli-semaphore/messages.db"
+const defaultDBLocation = "/var/lib/tmux-msg/messages.db"
 
 // Caps — operator-chosen 2026-05-29 (see roadmap epic #1).
 //
