@@ -11,7 +11,7 @@ import (
 	"context"
 	"os"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // Source describes where Resolve found the identity. Useful for

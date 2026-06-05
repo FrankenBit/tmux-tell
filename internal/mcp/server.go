@@ -1,11 +1,11 @@
 // Package mcp is a minimal Model Context Protocol server speaking JSON-RPC
 // 2.0 over stdio. It implements just enough of the spec
-// (https://modelcontextprotocol.io) for cli-semaphore's needs: the
+// (https://modelcontextprotocol.io) for tmux-msg's needs: the
 // initialize handshake, tools/list, and tools/call. The transport is
 // line-delimited JSON on stdin/stdout — one JSON object per line.
 //
 // Tool implementations are registered via Server.RegisterTool. The
-// signature is intentionally small so the cli-semaphore subcommands
+// signature is intentionally small so the tmux-msg subcommands
 // can be wrapped one-to-one.
 package mcp
 

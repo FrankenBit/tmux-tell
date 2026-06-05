@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // TestMaybeInsertFailureNotice_GeneratesNoticeOnFailed verifies that

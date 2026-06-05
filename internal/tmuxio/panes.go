@@ -1,4 +1,4 @@
-// Package tmuxio wraps the small set of tmux operations cli-semaphore
+// Package tmuxio wraps the small set of tmux operations tmux-msg
 // needs. The package isolates every shell-out to `tmux` so the rest of the
 // code is testable without a running tmux server.
 //

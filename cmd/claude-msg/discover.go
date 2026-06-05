@@ -7,8 +7,8 @@ import (
 	"io"
 	"strings"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/discover"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/discover"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // runDiscoverCLI parses discover flags and dispatches.

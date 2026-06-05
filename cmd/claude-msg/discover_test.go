@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 func TestFindCanonicalForAlias_WhitespaceBoundedMatch(t *testing.T) {

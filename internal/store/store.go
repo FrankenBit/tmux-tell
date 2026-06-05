@@ -1,10 +1,10 @@
-// Package store provides SQLite-backed persistence for cli-semaphore: the
+// Package store provides SQLite-backed persistence for tmux-msg: the
 // messages queue and the agents registry. The package is the single source
 // of truth for schema and queue-state invariants; the CLI subcommands and
 // the mailman daemon both go through it.
 //
 // Concurrency: in WAL mode SQLite supports concurrent readers and a single
-// writer. cli-semaphore's design has at most one mailman per recipient, so
+// writer. tmux-msg's design has at most one mailman per recipient, so
 // writes to a given to_agent are naturally serial. Reads (status, inbox,
 // caps) are concurrent and lock-free.
 package store

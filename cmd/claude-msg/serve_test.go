@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/discover"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/discover"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 // fastOpts gives a mailman that doesn't sleep meaningfully — tests must

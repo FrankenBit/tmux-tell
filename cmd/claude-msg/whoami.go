@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"io"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/identity"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 // runWhoamiCLI parses whoami-subcommand flags and dispatches.

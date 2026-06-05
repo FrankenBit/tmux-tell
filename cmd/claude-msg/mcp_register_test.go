@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // fakeSystemctl records every invocation and lets the test assert on it.

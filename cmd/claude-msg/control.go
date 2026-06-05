@@ -8,9 +8,9 @@ import (
 	"io"
 	"strings"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/control"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/identity"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/control"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // controlParams is the resolved input to doControl. Mirrors the MCP

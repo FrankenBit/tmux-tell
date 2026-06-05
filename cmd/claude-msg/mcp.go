@@ -9,10 +9,10 @@ import (
 	"io"
 	"os"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/identity"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/mcp"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/mcp"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 // runMCPCLI parses MCP-mode flags, opens the store, and serves on stdio.
@@ -149,7 +149,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpUnregisterHandler(s))
 
 	srv.RegisterTool("semaphore.chamber_state",
-		"Probe an agent's chamber-state via read-only capture-pane (#71). Returns one of five states: idle / working / at-rest-in-compaction / awaiting-operator / unknown. 'Knock at the door without waking the inhabitant' — exactly two capture-pane calls, zero pane mutation, ~200ms latency. Consumers should treat 'unknown' as advisory-not-authoritative per cli-semaphore#65's substrate-class-of-claim convention (don't silently roll up an unknown classification to a known state). v1 detects idle/working/unknown reliably; at-rest-in-compaction and awaiting-operator land when cli-semaphore#70's empirical capture populates the marker constants.",
+		"Probe an agent's chamber-state via read-only capture-pane (#71). Returns one of five states: idle / working / at-rest-in-compaction / awaiting-operator / unknown. 'Knock at the door without waking the inhabitant' — exactly two capture-pane calls, zero pane mutation, ~200ms latency. Consumers should treat 'unknown' as advisory-not-authoritative per #65's substrate-class-of-claim convention (don't silently roll up an unknown classification to a known state). v1 detects idle/working/unknown reliably; at-rest-in-compaction and awaiting-operator land when #70's empirical capture populates the marker constants.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -166,7 +166,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 // semaphore.chamber_state MCP tool. Wraps resolveChamberState (shared
 // with the CLI subcommand `claude-msg state`) so both surfaces emit
 // the same JSON schema — durable shape that Binnacle's M6b can
-// consume verbatim per cli-semaphore#74's carry-forward spec.
+// consume verbatim per #74's carry-forward spec.
 func mcpChamberStateHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
 		Agent string `json:"agent"`

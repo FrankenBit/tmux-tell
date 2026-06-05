@@ -10,7 +10,7 @@ import (
 	"context"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
 )
 
 // PIN: never silently guess between canonical-or-alias exact matches.

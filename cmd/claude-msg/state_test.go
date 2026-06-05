@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 // installFakeChamberState wires a tmuxio fake runner that returns the
@@ -33,7 +33,7 @@ func installFakeChamberState(t *testing.T, captureContent string) {
 
 // TestStateCLI_HappyPathJSON pins the JSON output shape for the
 // idle-classification case. The schema is the durable shape that
-// Binnacle's M6b will consume verbatim per cli-semaphore#74.
+// Binnacle's M6b will consume verbatim per #74.
 func TestStateCLI_HappyPathJSON(t *testing.T) {
 	installFakeChamberState(t, "history\n──── Chamber ──\n❯\u00a0\n────────\n  status\n")
 	s := newCmdTestStore(t, "bosun")

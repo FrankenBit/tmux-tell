@@ -13,7 +13,7 @@
 
 ## TL;DR — the trust model in one paragraph
 
-cli-semaphore is designed for a **single-operator homelab** trust
+tmux-msg is designed for a **single-operator homelab** trust
 model: one human (the operator) has shell access to one host
 (alcatraz). Anything that has shell access is fully trusted. The
 bus enforces caps, scope rules, and atomicity for the operator's

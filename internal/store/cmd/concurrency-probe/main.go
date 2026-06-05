@@ -28,7 +28,7 @@ import (
 	"fmt"
 	"os"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // Exit codes are part of the contract with messages_xprocess_test.go;

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // HeaderRule is the divider line that brackets a rendered message. 48 cols

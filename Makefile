@@ -8,7 +8,7 @@ PREFIX ?= /usr/local
 #   make build VERSION=v0.2.0-rc1
 # Plain `go build` (no Makefile) picks up the source default ("dev").
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS = -X git.frankenbit.de/frankenbit/cli-semaphore/internal/version.Version=$(VERSION)
+LDFLAGS = -X git.frankenbit.de/frankenbit/tmux-msg/internal/version.Version=$(VERSION)
 
 .PHONY: build test vet install clean version check-pin-slugs
 

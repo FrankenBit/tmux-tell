@@ -12,12 +12,12 @@ import (
 	"syscall"
 	"time"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/config"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/discover"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/render"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/sdnotify"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/discover"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/render"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/sdnotify"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 // flagWasSet reports whether a flag was set via the CLI (vs. left at
@@ -404,7 +404,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		// Pre-delivery observe-gate (#92). Read-only ChamberState
 		// polling + content-hash stale-detection. Replaces the legacy
 		// probe-and-watch flow (the dashes + 60s backoff path
-		// per the cli-semaphore #91 investigation). On any error other
+		// per the tmux-msg #91 investigation). On any error other
 		// than a clean exit, log and proceed — we'd rather risk a
 		// fragmented delivery than starve the queue.
 		//

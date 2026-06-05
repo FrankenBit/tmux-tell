@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/render"
-	"git.frankenbit.de/frankenbit/cli-semaphore/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/render"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
 // runLogCLI parses log-subcommand flags and dispatches.

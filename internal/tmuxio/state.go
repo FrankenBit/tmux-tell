@@ -30,14 +30,14 @@ import (
 // drift loudly.
 const PromptSentinel = "❯\u00a0"
 
-// State classifies a chamber's current activity from the cli-semaphore
-// vantage point. Five values, per the cli-semaphore#69 verdict
+// State classifies a chamber's current activity from the tmux-msg
+// vantage point. Five values, per the #69 verdict
 // (bus id `d47f`, 2026-06-04). The zero value is StateUnknown so a
 // caller that forgets to initialize gets the safer-default-on-
 // uncertainty behaviour automatically.
 //
 // Consumer convention: treat StateUnknown as advisory-not-authoritative
-// per the cli-semaphore#65 playbook's substrate-class-of-claim shape.
+// per the #65 playbook's substrate-class-of-claim shape.
 // Don't roll up an unknown classification into a known state silently;
 // gate the consumer's action until the probe substantiates better data.
 type State int
@@ -59,7 +59,7 @@ const (
 	// StateAtRestInCompaction means the chamber is mid-`/compact`
 	// sequence. Detection relies on CompactionMarker, an empirically-
 	// captured substring of Claude Code's compaction-in-progress UI
-	// (cli-semaphore#70, PR #88). Lit up 2026-06-04 from two operator-
+	// (#70, PR #88). Lit up 2026-06-04 from two operator-
 	// coordinated captures of the Quartermaster pane at distinct
 	// progress points (8% and 68%) across the same /compact event;
 	// canary + classification pins in state_canary_test.go and
@@ -72,7 +72,7 @@ const (
 	// awaiting human response, and the next bus message can't drive the
 	// turn forward without first being treated by the operator.
 	// Detection relies on AwaitingOperatorMarker, an empirically-captured
-	// substring of Claude Code's popup footer (cli-semaphore#79, PR #87).
+	// substring of Claude Code's popup footer (#79, PR #87).
 	// Lit up 2026-06-04 from an operator-coordinated AskUserQuestion
 	// capture; canary + classification pins in state_canary_test.go
 	// and state_test.go protect the substring against Claude Code UI
@@ -83,7 +83,7 @@ const (
 // String returns the wire-format name of the state — the same string
 // the CLI / MCP surfaces emit in their `state` field. Stable across
 // implementations so consumers can switch on it without recompilation.
-// Names match cli-semaphore#69's accepted vocabulary verbatim.
+// Names match #69's accepted vocabulary verbatim.
 func (s State) String() string {
 	switch s {
 	case StateIdle:
@@ -124,7 +124,7 @@ type Evidence struct {
 // StateAtRestInCompaction via pane-capture inspection.
 //
 // Empirically captured 2026-06-04 from a Quartermaster pane mid-
-// `/compact` (cli-semaphore#70). Two captures from the same compaction
+// `/compact` (#70). Two captures from the same compaction
 // event — at 8% and 68% progress — are frozen as
 // testdata/golden_quartermaster_compaction_2026-06-04.txt and
 // testdata/golden_quartermaster_compaction_advanced_2026-06-04.txt so
@@ -156,7 +156,7 @@ const CompactionMarker = "Compacting conversation…"
 // StateAwaitingOperator (AskUserQuestion popups, selection menus, …).
 //
 // Empirically captured 2026-06-04 from a Quartermaster pane displaying
-// a live AskUserQuestion popup (cli-semaphore#79). The captured pane
+// a live AskUserQuestion popup (#79). The captured pane
 // content is frozen as testdata/golden_quartermaster_askuserquestion_
 // 2026-06-04.txt so future Claude Code UI drift surfaces as a golden-
 // match failure on the canary test in state_canary_test.go.
@@ -203,12 +203,12 @@ func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
 // Substrate-class: read-only-observe. Exactly two capture-pane calls,
 // one display-message call, zero send-keys, zero pane mutation.
 // Pinned by TestChamberState_NoPaneMutation in the test suite. "Knock
-// at the door without waking the inhabitant" per cli-semaphore#69's
+// at the door without waking the inhabitant" per #69's
 // framing — all three tmux calls are read-only (capture-pane reads
 // the visible buffer; display-message reads tmux's internal pane
 // state).
 //
-// Heuristic v2 (cli-semaphore#69 smoke test surfaced the v1 gap on
+// Heuristic v2 (#69 smoke test surfaced the v1 gap on
 // cursor-less classification; operator's design call 2026-06-04
 // resolved it via cursor-position awareness):
 //
@@ -251,7 +251,7 @@ func SetChamberStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //
 // Errors: capture-pane failures propagate via the error return value
 // paired with StateUnknown — the safer-default-on-uncertainty contract
-// from the cli-semaphore#65 playbook applied at the detection layer.
+// from the #65 playbook applied at the detection layer.
 // Cursor query failures are non-fatal (the heuristic gracefully
 // degrades to the cursor-less path); only capture-pane failures bubble
 // up as errors.
@@ -307,7 +307,7 @@ func ChamberState(ctx context.Context, pane string) (State, Evidence, error) {
 	}
 
 	// Cursor-position-aware classification (the v2 substrate per
-	// cli-semaphore#69 operator's design call 2026-06-04). Query the
+	// #69 operator's design call 2026-06-04). Query the
 	// cursor; if it sits on a row that starts with PromptSentinel,
 	// distinguish auto-suggestion (cursor at sentinel) from operator-
 	// drafting (cursor past sentinel) — the two cases the v1 heuristic

@@ -1,4 +1,4 @@
-// Package version exposes the build version of cli-semaphore. The
+// Package version exposes the build version of tmux-msg. The
 // value is overridden at build time via -ldflags so the binary
 // reports something like `v0.2.0` (release) or `v0.2.0-3-g4f5e6d7`
 // (between releases, via `git describe --tags --always --dirty`).
@@ -10,4 +10,4 @@ package version
 
 // Version is the running build's version string. Override via
 // `-ldflags "-X .../internal/version.Version=..."` at link time.
-var Version = "v0.4.0"
+var Version = "v0.5.0-dev"
