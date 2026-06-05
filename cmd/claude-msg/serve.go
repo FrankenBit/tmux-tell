@@ -129,6 +129,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"observe-gate stale-draft threshold. When the operator's input-row content remains unchanged this long, the gate decides the draft is abandoned and proceeds with archive-then-clear-then-paste (kind=stranded_draft snapshot + Ctrl+U). Per #92's 2026-06-04 design call.")
 	notifyEmojiDisabled := fs.Bool("notify-emoji-disabled", false,
 		"disable the operator-typing 📫 visibility notification (#95). Default false (notification on). When the observe-gate first detects the operator is typing, the mailman injects a single 📫 character into their input row as a one-shot signal that a bus message is pending. Operator can Backspace it (gate keeps waiting) or let it ride along with their next message.")
+	workingDeliverImmediately := fs.Bool("working-deliver-immediately", false,
+		"opt the observe-gate's StateWorking branch into a fast-path return — deliver immediately to a busy chamber instead of deferring (#106). Default false (defer on Working, the v0.3.0-through-v0.6.0 conservative behavior). When on, mid-turn deliveries land in the recipient's input row while Claude is still streaming and are read as the next operator turn after the current one completes. Eligibility: StateWorking only — AwaitingOperator / Compaction / Unknown stay hard-deferred regardless. Per-agent TOML knob: `working-deliver-immediately = true`.")
 	driftSoftFail := fs.Bool("drift-soft-fail", false,
 		"when pre-delivery drift detection hits ambiguous or unrecoverable, log WARN and deliver to the (potentially wrong) pane instead of marking the message failed. Default off — fail-loud is safer for autonomous receivers")
 	notifyOnFailed := fs.Bool("notify-on-failed", true,
@@ -176,6 +178,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	if !flagWasSet(fs, "notify-emoji-disabled") {
 		*notifyEmojiDisabled = config.ResolveBool(cfg, *agent, "notify-emoji-disabled", *notifyEmojiDisabled)
 	}
+	if !flagWasSet(fs, "working-deliver-immediately") {
+		*workingDeliverImmediately = config.ResolveBool(cfg, *agent, "working-deliver-immediately", *workingDeliverImmediately)
+	}
 	if *agent == "" {
 		fmt.Fprintln(stderr, "--agent required")
 		return exitUsage
@@ -205,9 +210,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		PostCompactPause:   *postCompactPause,
 		GateDisabled:       *gateDisabled,
 		ObserveGateOpts: tmuxio.ObserveGateOpts{
-			PollIntervalMin:     *pollIntervalMin,
-			PollIntervalMax:     *pollIntervalMax,
-			InputStaleThreshold: *inputStaleThreshold,
+			PollIntervalMin:           *pollIntervalMin,
+			PollIntervalMax:           *pollIntervalMax,
+			InputStaleThreshold:       *inputStaleThreshold,
+			WorkingDeliverImmediately: *workingDeliverImmediately,
 			// MaxWait stays at the gate's default (5m); not exposed as
 			// a CLI flag in v1 — operators can tune via TOML if needed
 			// once the migration settles.

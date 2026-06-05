@@ -68,6 +68,17 @@ type Block struct {
 	// notification (#95). Default false (notification on). Operator
 	// escape hatch for the truly inject-averse.
 	NotifyEmojiDisabled *bool `toml:"notify-emoji-disabled"`
+	// WorkingDeliverImmediately opts the observe-gate's StateWorking
+	// branch into a fast-path return (#106). Default false (defer on
+	// Working — the v0.3.0-through-v0.6.0 conservative behavior).
+	// When true, mid-turn deliveries land in the recipient's input
+	// row while Claude is still streaming; Claude reads them as the
+	// next operator turn after the current one completes. Eligibility
+	// is StateWorking only; AwaitingOperator / Compaction / Unknown
+	// stay hard-deferred regardless. See the field's doc-comment in
+	// tmuxio/observe_gate.go for the safety-net relationship with the
+	// verify-token retry.
+	WorkingDeliverImmediately *bool `toml:"working-deliver-immediately"`
 }
 
 // Load reads the config from the path resolved by:
@@ -178,6 +189,8 @@ func blockBoolField(b *Block, field string) *bool {
 		return b.GateDisabled
 	case "notify-emoji-disabled":
 		return b.NotifyEmojiDisabled
+	case "working-deliver-immediately":
+		return b.WorkingDeliverImmediately
 	}
 	return nil
 }
@@ -224,6 +237,7 @@ type ResolvedView struct {
 	PollIntervalMax             time.Duration `json:"poll_interval_max"`
 	InputStaleThreshold         time.Duration `json:"input_stale_threshold"`
 	NotifyEmojiDisabled         bool          `json:"notify_emoji_disabled"`
+	WorkingDeliverImmediately   bool          `json:"working_deliver_immediately"`
 }
 
 // Resolve builds the resolved snapshot. Hardcoded defaults mirror
@@ -240,5 +254,6 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		PollIntervalMax:             ResolveDuration(file, agent, "poll-interval-max", 15*time.Second),
 		InputStaleThreshold:         ResolveDuration(file, agent, "input-stale-threshold", 2*time.Minute),
 		NotifyEmojiDisabled:         ResolveBool(file, agent, "notify-emoji-disabled", false),
+		WorkingDeliverImmediately:   ResolveBool(file, agent, "working-deliver-immediately", false),
 	}
 }

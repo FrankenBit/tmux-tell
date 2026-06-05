@@ -444,7 +444,11 @@ Common cause patterns:
   fail-stop) and logs the WARN so the operator can see why a delivery
   landed onto a busy pane. Rare in practice — the gate only waits this
   long when the recipient is continuously `working` for the full
-  window.
+  window. Operators who want busy chambers to receive immediately
+  (skipping the backoff for `StateWorking` only) can opt in via
+  `--working-deliver-immediately` / `working-deliver-immediately = true`
+  per-agent (#106). `AwaitingOperator` / Compaction / Unknown stay
+  hard-deferred regardless of the opt-in.
 - **Mailman not running** — check `systemctl --user status
   claude-mailman@<recipient>.service`. Orphan-recovery on next
   startup will re-queue any in-flight messages.

@@ -54,6 +54,30 @@ type ObserveGateOpts struct {
 	// May be nil — when nil, the gate is a no-op on the visibility
 	// concern.
 	OnOperatorTyping func()
+	// WorkingDeliverImmediately, when true, opts the gate's
+	// StateWorking branch out of the safer-default wait and into the
+	// same fast-path return as StateIdle (#106). Default false (defer
+	// on Working — the existing v0.3.0-through-v0.6.0 behavior).
+	//
+	// Rationale: Claude Code's TUI buffers keystrokes that arrive
+	// mid-turn — a paste during StateWorking lands in the input row
+	// and is read as the next operator turn after the current one
+	// completes. The gate's StateWorking-defers-uniformly behavior
+	// is structurally conservative; opting in trades a slightly
+	// busier-looking recipient pane (the body text appears in the
+	// input row while Claude is still streaming) for a real cadence
+	// win (1s instead of 3-57s under backoff).
+	//
+	// Eligibility is StateWorking ONLY. StateAwaitingOperator (paste
+	// would destroy the operator's draft), StateAtRestInCompaction
+	// (immediate paste races the /compact slash-command parser), and
+	// StateUnknown (the popup-state failure mode #105 surfaced — an
+	// immediate paste into an unrecognized state is the destructive
+	// case) all stay hard-deferred regardless of this flag. The
+	// verify-token retry + delivered_unverified notice is the
+	// load-bearing safety net for the small race-window between
+	// observing StateWorking and the paste actually landing.
+	WorkingDeliverImmediately bool
 }
 
 // GateOutcome reports the gate's decision and the evidence that
@@ -219,9 +243,25 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 				}, nil
 			}
 
-		case StateWorking, StateAtRestInCompaction, StateUnknown:
-			// Safer-default wait. The agent is busy / compacting /
-			// in an unrecognized state; defer + re-poll.
+		case StateWorking:
+			if opts.WorkingDeliverImmediately {
+				// #106: opt-in fast-path for StateWorking. Claude Code
+				// buffers the paste; recipient sees the body in the input
+				// row while still streaming, and reads it as the next
+				// turn after the current one completes. Eligibility is
+				// StateWorking only — see WorkingDeliverImmediately's
+				// doc-comment for why AwaitingOperator / Compaction /
+				// Unknown stay hard-deferred.
+				return GateOutcome{
+					Reason:     "working: immediate delivery (opt-in)",
+					State:      state,
+					Iterations: iterations,
+				}, nil
+			}
+			// Safer-default wait. Fall through to deadline check.
+		case StateAtRestInCompaction, StateUnknown:
+			// Safer-default wait. The agent is compacting / in an
+			// unrecognized state; defer + re-poll.
 		}
 
 		// Check the safety cap before sleeping for the next iteration.

@@ -667,3 +667,172 @@ func TestSendCtrlU_PaneRequired(t *testing.T) {
 		t.Fatal("expected error for empty pane")
 	}
 }
+
+// TestObserveGate_WorkingDeliverImmediately_FastPath pins the #106
+// opt-in: when WorkingDeliverImmediately is true and the first poll
+// classifies StateWorking (pane content changed across the temporal-
+// delta window), the gate returns immediately rather than entering
+// the backoff loop. Iterations==1 + State==StateWorking + Stale==false
+// distinguishes the opt-in fast-path from the existing safer-default
+// behavior.
+func TestObserveGate_WorkingDeliverImmediately_FastPath(t *testing.T) {
+	fastObserveDelta(t)
+	// paneA != paneB triggers StateWorking via the stability check.
+	paneA := "● Streaming response line 1\n  status\n"
+	paneB := "● Streaming response line 2\n  status\n"
+	runner := newObserveGateRunner([]observeStep{
+		{paneA: paneA, paneB: paneB, cursorX: 2, cursorY: 1, inputContent: ""},
+	})
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:           time.Microsecond,
+		PollIntervalMax:           time.Microsecond,
+		InputStaleThreshold:       time.Minute,
+		MaxWait:                   time.Second,
+		WorkingDeliverImmediately: true,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome.State != StateWorking {
+		t.Errorf("State = %v, want StateWorking (changed pane)", outcome.State)
+	}
+	if outcome.Stale {
+		t.Errorf("Stale = true on fast-path; expected false (no draft to archive)")
+	}
+	if outcome.Iterations != 1 {
+		t.Errorf("Iterations = %d, want 1 (fast-path on first poll)", outcome.Iterations)
+	}
+	if !strings.Contains(outcome.Reason, "immediate delivery") {
+		t.Errorf("Reason = %q, want it to mention opt-in immediate delivery", outcome.Reason)
+	}
+}
+
+// TestObserveGate_WorkingDeliverImmediately_Off_DefaultBackoff pins
+// the default-off behavior: same StateWorking capture without the
+// opt-in flag falls through to the safer-default wait, hits MaxWait,
+// and surfaces ErrMaxWaitExceeded. This is the v0.3.0-through-v0.6.0
+// contract that #106 doesn't change unless explicitly opted in.
+func TestObserveGate_WorkingDeliverImmediately_Off_DefaultBackoff(t *testing.T) {
+	fastObserveDelta(t)
+	paneA := "● Streaming response line 1\n  status\n"
+	paneB := "● Streaming response line 2\n  status\n"
+	// Provide enough steps so the gate cycles a few times before MaxWait.
+	steps := make([]observeStep, 10)
+	for i := range steps {
+		steps[i] = observeStep{paneA: paneA, paneB: paneB, cursorX: 2, cursorY: 1, inputContent: ""}
+	}
+	runner := newObserveGateRunner(steps)
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     time.Microsecond,
+		PollIntervalMax:     time.Microsecond,
+		InputStaleThreshold: time.Minute,
+		MaxWait:             20 * time.Millisecond,
+		// WorkingDeliverImmediately: false (default — explicit for clarity)
+	})
+	if !errors.Is(err, ErrMaxWaitExceeded) {
+		t.Errorf("err = %v, want ErrMaxWaitExceeded (gate deferred until cap)", err)
+	}
+	if outcome.Iterations < 2 {
+		t.Errorf("Iterations = %d, want >= 2 (gate looped before MaxWait)", outcome.Iterations)
+	}
+	if outcome.State != StateWorking {
+		t.Errorf("State = %v, want StateWorking (last observed)", outcome.State)
+	}
+}
+
+// TestObserveGate_WorkingDeliverImmediately_DoesNotApplyToAwaitingOperator
+// pins the per-state eligibility: even with the opt-in true, a pane
+// classified as StateAwaitingOperator (cursor past sentinel = operator
+// drafting) must NOT fast-path. The flag is StateWorking-only.
+func TestObserveGate_WorkingDeliverImmediately_DoesNotApplyToAwaitingOperator(t *testing.T) {
+	fastObserveDelta(t)
+	draft := "operator started typing"
+	// Stable pane with sentinel + cursor PAST the sentinel position →
+	// classifies StateAwaitingOperator, not StateWorking.
+	pane := "history\n" + PromptSentinel + draft + "\nfooter\n"
+	cursorX := 2 + len(draft)
+	steps := make([]observeStep, 5)
+	for i := range steps {
+		steps[i] = observeStep{
+			paneA:        pane,
+			paneB:        pane,
+			cursorX:      cursorX,
+			cursorY:      1,
+			inputContent: draft,
+		}
+	}
+	runner := newObserveGateRunner(steps)
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:           time.Microsecond,
+		PollIntervalMax:           time.Microsecond,
+		BackoffFactor:             1.0,
+		InputStaleThreshold:       50 * time.Millisecond,
+		MaxWait:                   5 * time.Second,
+		WorkingDeliverImmediately: true, // flag ON
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome.State != StateAwaitingOperator {
+		t.Errorf("State = %v, want StateAwaitingOperator (cursor past sentinel)", outcome.State)
+	}
+	// Operator-draft path: the gate should reach stale-flush
+	// (Stale=true), NOT fast-path with reason mentioning "immediate".
+	if strings.Contains(outcome.Reason, "immediate delivery") {
+		t.Errorf("Reason = %q, want stale-flush reason (opt-in must NOT apply to AwaitingOperator)", outcome.Reason)
+	}
+	if outcome.Iterations < 2 {
+		t.Errorf("Iterations = %d, want >= 2 (gate looped through stale threshold, not fast-path)", outcome.Iterations)
+	}
+}
+
+// TestObserveGate_WorkingDeliverImmediately_DoesNotApplyToUnknown pins
+// the second per-state eligibility check: StateUnknown (no sentinel,
+// no marker, stable pane = unrecognized UI) must NOT fast-path
+// regardless of the opt-in. This is the discipline that #105
+// surfaced — fast-paste into an unrecognized state is the destructive
+// case (popup-as-Unknown failure mode).
+func TestObserveGate_WorkingDeliverImmediately_DoesNotApplyToUnknown(t *testing.T) {
+	fastObserveDelta(t)
+	// Stable pane with no sentinel + no marker → StateUnknown.
+	pane := "● Some response\n  ⎿ Tool output\n  status\n"
+	steps := make([]observeStep, 5)
+	for i := range steps {
+		steps[i] = observeStep{
+			paneA:        pane,
+			paneB:        pane,
+			cursorX:      5,
+			cursorY:      0,
+			inputContent: "",
+		}
+	}
+	runner := newObserveGateRunner(steps)
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:           time.Microsecond,
+		PollIntervalMax:           time.Microsecond,
+		InputStaleThreshold:       time.Minute,
+		MaxWait:                   20 * time.Millisecond,
+		WorkingDeliverImmediately: true, // flag ON
+	})
+	if !errors.Is(err, ErrMaxWaitExceeded) {
+		t.Errorf("err = %v, want ErrMaxWaitExceeded (opt-in must NOT apply to Unknown — gate stays deferred until cap)", err)
+	}
+	if outcome.State != StateUnknown {
+		t.Errorf("State = %v, want StateUnknown (no sentinel, no marker)", outcome.State)
+	}
+	if strings.Contains(outcome.Reason, "immediate delivery") {
+		t.Errorf("Reason = %q, want MaxWait reason (opt-in must NOT apply to Unknown)", outcome.Reason)
+	}
+}
