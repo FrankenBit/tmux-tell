@@ -253,6 +253,21 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		return exitUnavailable
 	}
 
+	// Mailbox-only short-circuit (#116). When the agent's delivery_mode
+	// is mailbox-only, the mailman daemon has no work to do — messages
+	// stay in state=queued and the operator polls via `claude-msg inbox`.
+	// Exit cleanly so systemd records a Result=success rather than
+	// burning CPU on a poll loop that would never deliver anything. If
+	// the operator later flips delivery_mode back to paste-and-enter,
+	// they need to manually restart the unit.
+	if a.DeliveryMode == store.DeliveryModeMailboxOnly {
+		logger.Printf("delivery_mode=mailbox-only — no daemon work; exiting cleanly")
+		if err := sdnotify.Ready(); err != nil {
+			logger.Printf("sdnotify_ready_err err=%v", err)
+		}
+		return exitOK
+	}
+
 	if n, err := s.RecoverDelivering(opCtx, opts.Agent); err != nil {
 		logger.Printf("recover_failed err=%v", err)
 	} else if n > 0 {

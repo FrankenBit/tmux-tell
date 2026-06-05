@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
@@ -183,5 +184,38 @@ func TestMCP_AgentState_RequiresAgent(t *testing.T) {
 	got := callMCPTool(t, s, "tmux-msg.agent_state", map[string]any{})
 	if got["_isError"] != true {
 		t.Errorf("expected isError=true for missing agent; got %v", got)
+	}
+}
+
+// TestStateCLI_MailboxOnlyAgent_ShortCircuitsToIdle pins the #116
+// chrome short-circuit: a mailbox-only agent has no Claude TUI to
+// probe, so AgentState classification would always fall to Unknown.
+// Short-circuit to Idle gives consumers (mailman gate, operator probe)
+// a useful answer with zero capture-pane calls.
+func TestStateCLI_MailboxOnlyAgent_ShortCircuitsToIdle(t *testing.T) {
+	// installFakeAgentState would normally satisfy the AgentState
+	// probe; here we DON'T install it, so any call to tmuxio.AgentState
+	// would fail. The short-circuit must bypass the probe entirely.
+	s := newCmdTestStore(t, "operator")
+	if err := s.SetDeliveryMode(context.Background(), "operator",
+		store.DeliveryModeMailboxOnly); err != nil {
+		t.Fatalf("set delivery_mode: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	exit := runStateWithStore(context.Background(), s, "operator", "json",
+		&stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
+	}
+	var res agentStateResult
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &res); err != nil {
+		t.Fatalf("decode: %v; stdout=%s", err, stdout.String())
+	}
+	if res.State != "idle" {
+		t.Errorf("state = %q, want idle (mailbox-only short-circuit)", res.State)
+	}
+	if !strings.Contains(res.Evidence.Reason, "mailbox-only") {
+		t.Errorf("evidence.reason should mention mailbox-only; got %q", res.Evidence.Reason)
 	}
 }

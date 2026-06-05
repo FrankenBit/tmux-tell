@@ -27,6 +27,43 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`delivery_mode` for operator-as-bus-participant (#116).** New
+  `delivery_mode` column on the `agents` table (default
+  `paste-and-enter`, preserving existing behavior for all currently-
+  registered agents) plus a new `mailbox-only` value that registers
+  a pane as a bus *destination* without expecting the mailman to
+  paste into it. The intended use case: an operator's own shell
+  becomes a registered bus participant — chambers can `send to=operator`,
+  and the operator polls via `claude-msg inbox` when convenient.
+
+  Per ADR-0005 §Decision (1)'s wheel-reinvention check, this is a
+  config-difference (one column on the agents table), NOT a
+  participant-supertype expansion. The substrate's primitive remains
+  `agent`; the configuration space widens by one field.
+
+  Surfaces:
+  - **CLI**: `claude-msg register --name operator --delivery-mode mailbox-only`
+    (new subcommand mirroring the existing MCP tool — load-bearing for
+    operators at a bare shell who can't easily invoke MCP)
+  - **MCP**: `tmux-msg.register` gains a `delivery_mode` parameter
+    (`paste-and-enter` | `mailbox-only`, default `paste-and-enter`)
+
+  Mailman lifecycle: registering with `delivery_mode=mailbox-only`
+  implicitly sets `start_mailman=false` (no daemon needed; messages
+  stay in `state=queued` and the operator polls). Explicit
+  `start_mailman=true` overrides for operators who want a daemon
+  running for monitoring/health purposes.
+
+  Chrome detection: `claude-msg state` and `tmux-msg.agent_state`
+  short-circuit to `idle` for mailbox-only agents — a bare-shell pane
+  has no Claude TUI to probe, so the chrome-marker heuristics would
+  always classify as `unknown`. Zero capture-pane calls.
+
+  Scope re-label: original issue labeled `size/S` (1-2h); actual
+  implementation is `size/M` (5 surfaces touched: schema migration +
+  store accessors + MCP register handler + CLI register subcommand +
+  mailman gate + chrome short-circuit). Documented in PR body.
+
 - **`get` subcommand + `tmux-msg.get` MCP tool — fetch processed
   messages by ID (#111).** New recovery surface for the case where a
   delivery landed correctly into the SQLite store but was visually

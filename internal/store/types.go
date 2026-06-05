@@ -69,4 +69,31 @@ type Agent struct {
 	// discover walker should accept for this canonical agent. Empty
 	// list when no aliases registered. See #38.
 	Aliases []string
+	// DeliveryMode controls how the mailman delivers to this agent
+	// (#116). Two values:
+	//   - "paste-and-enter" (default): mailman delivers via tmux paste
+	//     + Enter; the existing behavior for CLI-tool-hosting panes.
+	//   - "mailbox-only": mailman does NOT paste; messages stay in
+	//     state=queued and the operator polls via `claude-msg inbox`.
+	//     The operator-as-bus-participant scenario from ADR-0005
+	//     §Decision (1)'s wheel-reinvention check.
+	// Default for newly-inserted agents (and the back-compat ALTER's
+	// DEFAULT) is "paste-and-enter".
+	DeliveryMode string
+}
+
+// Delivery-mode constants. Constrained string set; see Agent.DeliveryMode
+// for semantics. The store does not enforce membership at insert-time;
+// callers should validate via ValidDeliveryMode before writing.
+const (
+	DeliveryModePasteAndEnter = "paste-and-enter"
+	DeliveryModeMailboxOnly   = "mailbox-only"
+)
+
+// ValidDeliveryMode reports whether s is a known delivery-mode value.
+// Empty string is treated as INVALID (callers should default to
+// DeliveryModePasteAndEnter explicitly rather than relying on zero-
+// value behavior to leak into the schema).
+func ValidDeliveryMode(s string) bool {
+	return s == DeliveryModePasteAndEnter || s == DeliveryModeMailboxOnly
 }

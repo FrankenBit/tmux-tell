@@ -78,14 +78,15 @@ func (s *Store) SetPausedAll(ctx context.Context, paused bool) (int64, error) {
 // GetAgent returns the agent by name, or ErrNotFound.
 func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 	var (
-		a       Agent
-		pane    sql.NullString
-		paused  int
-		aliases string
+		a            Agent
+		pane         sql.NullString
+		paused       int
+		aliases      string
+		deliveryMode string
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -96,13 +97,37 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 	}
 	a.Paused = paused != 0
 	a.Aliases = decodeAliases(aliases)
+	a.DeliveryMode = deliveryMode
 	return &a, nil
+}
+
+// SetDeliveryMode updates the delivery_mode for an existing agent.
+// Returns ErrNotFound if no agent with that name is registered.
+// Validates against ValidDeliveryMode — invalid modes are rejected.
+func (s *Store) SetDeliveryMode(ctx context.Context, name, mode string) error {
+	if !ValidDeliveryMode(mode) {
+		return fmt.Errorf("store: invalid delivery_mode %q (want %q or %q)",
+			mode, DeliveryModePasteAndEnter, DeliveryModeMailboxOnly)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents
+		 SET delivery_mode = ?,
+		     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		 WHERE name = ?`,
+		mode, name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
 }
 
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -111,12 +136,13 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	var out []Agent
 	for rows.Next() {
 		var (
-			a       Agent
-			pane    sql.NullString
-			paused  int
-			aliases string
+			a            Agent
+			pane         sql.NullString
+			paused       int
+			aliases      string
+			deliveryMode string
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode); err != nil {
 			return nil, err
 		}
 		if pane.Valid {
@@ -124,6 +150,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 		}
 		a.Paused = paused != 0
 		a.Aliases = decodeAliases(aliases)
+		a.DeliveryMode = deliveryMode
 		out = append(out, a)
 	}
 	return out, rows.Err()

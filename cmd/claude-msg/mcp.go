@@ -120,15 +120,16 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpStatusHandler(s))
 
 	srv.RegisterTool("tmux-msg.register",
-		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true.",
+		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-bus-participant scenario).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"name":          {"type": "string", "description": "Agent name (the new identity)"},
 				"pane":          {"type": "string", "description": "Pane id like %5 (default: $TMUX_PANE)"},
-				"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now claude-mailman@NAME (default true)"},
+				"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now claude-mailman@NAME (default true; default false when delivery_mode=mailbox-only)"},
 				"force":         {"type": "boolean", "description": "Overwrite an existing row with the same name (default false)"},
-				"alias":         {"type": "string", "description": "Optional alternative name discover should accept for this canonical agent (e.g. 'Master Bosun of Nimbus' for canonical 'bosun'). Append-only; existing aliases preserved."}
+				"alias":         {"type": "string", "description": "Optional alternative name discover should accept for this canonical agent (e.g. 'Master Bosun of Nimbus' for canonical 'bosun'). Append-only; existing aliases preserved."},
+				"delivery_mode": {"type": "string", "enum": ["paste-and-enter", "mailbox-only"], "description": "How the mailman delivers to this agent (#116). 'paste-and-enter' (default): tmux paste + Enter into the agent's pane — the existing behavior for CLI-tool-hosting panes. 'mailbox-only': messages stay in state=queued; operator polls via claude-msg inbox. Use 'mailbox-only' to register an operator-shell pane as a bus destination (per ADR-0005 wheel-reinvention check)."}
 			},
 			"required": ["name"]
 		}`),
@@ -505,6 +506,7 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		StartMailman *bool  `json:"start_mailman"`
 		Force        bool   `json:"force"`
 		Alias        string `json:"alias"`
+		DeliveryMode string `json:"delivery_mode"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -522,6 +524,16 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 			return nil, fmt.Errorf("pane required (no --pane given and $TMUX_PANE empty)")
 		}
 
+		// delivery_mode default + validation.
+		deliveryMode := in.DeliveryMode
+		if deliveryMode == "" {
+			deliveryMode = store.DeliveryModePasteAndEnter
+		}
+		if !store.ValidDeliveryMode(deliveryMode) {
+			return nil, fmt.Errorf("invalid delivery_mode %q (want %q or %q)",
+				deliveryMode, store.DeliveryModePasteAndEnter, store.DeliveryModeMailboxOnly)
+		}
+
 		// Collision check.
 		existing, err := s.GetAgent(ctx, in.Name)
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -534,6 +546,9 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 
 		if err := s.UpsertAgent(ctx, in.Name, pane); err != nil {
 			return nil, err
+		}
+		if err := s.SetDeliveryMode(ctx, in.Name, deliveryMode); err != nil {
+			return nil, fmt.Errorf("set delivery_mode: %w", err)
 		}
 
 		// Optional alias append. AddAlias is idempotent on same-agent
@@ -548,8 +563,15 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 			}
 		}
 
-		// Default start_mailman to true.
+		// Default start_mailman to true — UNLESS delivery_mode is
+		// mailbox-only, in which case the implicit default is false
+		// (no daemon needed; messages stay queued for operator polling
+		// per #116). Explicit start_mailman=true overrides the
+		// implicit default if operator really wants a daemon running.
 		start := true
+		if deliveryMode == store.DeliveryModeMailboxOnly {
+			start = false
+		}
 		if in.StartMailman != nil {
 			start = *in.StartMailman
 		}
@@ -560,6 +582,7 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 					"ok":            true,
 					"name":          in.Name,
 					"pane":          pane,
+					"delivery_mode": deliveryMode,
 					"mailman":       "failed",
 					"mailman_error": err.Error(),
 					"registered":    true,
@@ -568,11 +591,12 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 			mailmanState = "active"
 		}
 		return map[string]any{
-			"ok":         true,
-			"name":       in.Name,
-			"pane":       pane,
-			"mailman":    mailmanState,
-			"registered": true,
+			"ok":            true,
+			"name":          in.Name,
+			"pane":          pane,
+			"delivery_mode": deliveryMode,
+			"mailman":       mailmanState,
+			"registered":    true,
 		}, nil
 	}
 }

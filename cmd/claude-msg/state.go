@@ -63,6 +63,19 @@ func resolveAgentState(ctx context.Context, s *store.Store, agent string) (agent
 		res.CapturedAt = nowRFC3339()
 		return res, fmt.Errorf("agent %q has no pane", agent)
 	}
+	// Mailbox-only short-circuit (#116). A bare-shell pane registered
+	// as mailbox-only doesn't have meaningful chrome states (no Claude
+	// TUI to probe); the AgentState classification's marker-based
+	// heuristics would always classify as Unknown. Short-circuit to
+	// Idle so consumers (the mailman gate, the operator-facing state
+	// probe) get a useful answer instead of "couldn't substantiate."
+	// Zero capture-pane calls — no probing.
+	if a.DeliveryMode == store.DeliveryModeMailboxOnly {
+		res.State = tmuxio.StateIdle.String()
+		res.Evidence = tmuxio.Evidence{Reason: "mailbox-only agent — no chrome to probe; idle by definition"}
+		res.CapturedAt = nowRFC3339()
+		return res, nil
+	}
 	state, ev, err := tmuxio.AgentState(ctx, a.PaneID)
 	res.State = state.String()
 	res.Evidence = ev

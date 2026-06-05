@@ -26,6 +26,7 @@ Subcommands:
   config  Read/show the host-level config (#54). Subcommands: show
   agents  List registered agents with pane liveness
   whoami  Show this session's registration (auto-resolves identity)
+  register Register this (or another) pane on the bus (mirrors tmux-msg.register; #116)
   serve   Run the mailman daemon for one agent
   pause   Halt one or all mailman daemons
   resume  Resume paused mailmen
@@ -77,6 +78,8 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runAgentsCLI(args[1:], stdout, stderr)
 	case "whoami":
 		return runWhoamiCLI(args[1:], stdout, stderr)
+	case "register":
+		return runRegisterCLI(args[1:], stdout, stderr)
 	case "serve":
 		return runServeCLI(args[1:], stdout, stderr)
 	case "pause":
