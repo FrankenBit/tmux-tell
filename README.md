@@ -113,7 +113,7 @@ shipped per release.
 
 ```bash
 $ claude-msg --version
-claude-msg v0.1.0
+claude-msg v0.5.0
 ```
 
 A binary built via `make build` (not bare `go build`) stamps the
