@@ -1,7 +1,7 @@
 # ADR-0004: MCP wire-surface naming (application of ADR-0003)
 
-> **Status**: Proposed
-> **Date**: 2026-06-05 (proposed)
+> **Status**: Accepted
+> **Date**: 2026-06-05 (proposed); 2026-06-05 (accepted on operator + Surveyor round-2 sign-off)
 > **Authors**: Quartermaster (author), operator (design calls on
 > server name / tool prefix / control commands / migration shape),
 > ADR-0003 (the principle this ADR applies)
@@ -265,7 +265,7 @@ the new binary lands and `.mcp.json` files are updated.
   non-test Go symbols, and the help text. Scoped enough to be
   bounded; large enough to warrant its own review window.
 
-## Precedent on ADR-0003 amendments by application ADRs
+## Precedent on parent-ADR amendments by application ADRs
 
 ADR-0003 §Substrate enumerates substrate primitives by their
 current wire names at the time of writing — e.g., the control
@@ -273,23 +273,34 @@ surface is named as `semaphore.control` (line 87). After ADR-0004
 implementation, that primitive is wire-named `tmux-msg.control`,
 making ADR-0003's enumeration accurate-to-time rather than current.
 
-**ADR-0004 sets the precedent: ADR-0003 stays frozen.** Application
-ADRs (this one, and any future ADR that applies ADR-0003's framing
-to a specific surface) do NOT amend ADR-0003. Future readers of
-ADR-0003 should treat in-text references to specific wire names as
-accurate-to-time; the current voice for any specific surface lives
-in the application ADR that addresses that surface (this one for
-the MCP wire layer).
+**ADR-0004 sets the precedent: parent ADRs stay frozen against
+their application ADRs.** Application ADRs (this one, and any
+future ADR that applies a parent ADR's framing to a specific
+surface) do NOT amend the parent. Future readers of any parent
+ADR should treat in-text references to specific wire names,
+identifiers, or terminology as accurate-to-time; the current voice
+for any specific surface lives in the application ADR that
+addresses that surface (this one for the MCP wire layer).
+
+**Generality.** The precedent is named generally rather than
+ADR-0003-specifically because the structural rationale below is
+parent-agnostic. ADR-0005 and later application ADRs inherit this
+precedent without re-litigating it; if a parent-child relationship
+ever surfaces where amendment IS warranted (e.g., a parent ADR
+itself proves substantively wrong, not just surface-outdated), the
+right move is supersession via a new ADR, not retroactive editing
+of the parent.
 
 **Why frozen:** ADR-0003 §Decision (3) explicitly named historical
 ADRs 0001 and 0002 as immutable records, citing temporal context
-preservation. Applying the same discipline to ADR-0003 itself
-means application ADRs don't recursively touch their parent —
+preservation. Generalizing the same discipline to any parent ADR
+means application ADRs don't recursively touch their parents —
 keeping the amendment cost bounded as more application ADRs land
 over time. The alternative (application ADRs do amend their
-parent) creates a recursive amendment pattern where any new
-substrate-surface coverage touches every prior ADR mentioning that
-surface; cost grows quadratically with ADR count.
+parents) creates a recursive amendment pattern where any new
+surface coverage touches every prior ADR mentioning that surface;
+cost grows quadratically with ADR count and the amendment scope
+becomes unbounded.
 
 **Cost:** ADR-0003 becomes incrementally less surface-accurate
 over time. A reader following ADR-0003's references finds the
