@@ -252,6 +252,50 @@ sqlite3 /var/lib/tmux-msg/messages.db \
 systemctl --user enable --now claude-mailman@myname.service
 ```
 
+### Delivery modes
+
+Every registered agent has a `delivery_mode` that determines how the
+mailman delivers messages targeting it. Two modes are supported:
+
+| mode | semantics | mailman | typical use |
+|---|---|---|---|
+| **`paste-and-enter`** *(default)* | The mailman pastes formatted content into the agent's tmux pane and presses Enter through the observe-gate. Standard Claude-in-a-pane shape. | Auto-started on register; runs as `claude-mailman@<name>.service` | Chambers (Bosun / Surveyor / Engineer / etc.) — Claude reads the message immediately. |
+| **`mailbox-only`** | The mailman does not paste into the pane. Senders queue messages; the recipient polls via `claude-msg inbox` when convenient. Operator-as-bus-participant: a plain shell becomes a registered destination without a Claude session. | NOT auto-started — there is no pane to paste into | The operator's own shell. Chambers can `send to=operator` and the operator reads when they choose. |
+
+A `mailbox-only` agent is a *destination*, not a *paste target*: chambers can `tmux-msg.send to=<name>` exactly as they would for any other agent, but messages sit in the queue (visible via `claude-msg inbox`) until the operator drains them. This is the shape #116 introduced for operator participation in the bus without requiring an always-on Claude session.
+
+Three configuration surfaces, in increasing operator-permanence order:
+
+1. **MCP** — registers at session start; transient if the agent's pane changes:
+   ```text
+   tmux-msg.register name=operator delivery_mode=mailbox-only
+   ```
+
+2. **CLI** — same effect from any shell, also runs the systemctl enable step in one go:
+   ```bash
+   claude-msg register --name operator --delivery-mode mailbox-only
+   ```
+
+3. **TOML** — per-agent block in `/etc/tmux-msg/config.toml` (or `[defaults]` for a fleet-wide value). The mailman's startup reads this on every restart and **overrides** the `agents.delivery_mode` DB column for that run; the DB column becomes a last-touched cache rather than the authoritative source.
+
+   ```toml
+   [agent.operator]
+   delivery-mode = "mailbox-only"
+
+   [defaults]
+   # delivery-mode = "paste-and-enter"   # fleet default; omitted here so the
+                                         # hardcoded default kicks in
+   ```
+
+   Precedence chain (highest wins): **per-agent block > `[defaults]` block > `agents.delivery_mode` column > hardcoded default (`paste-and-enter`)**. An invalid mode value in TOML (typo) logs `WARN config_delivery_mode_invalid` and the DB column wins — fail-loud, not fail-stop.
+
+To verify the resolved value without tracing through TOML manually:
+
+```bash
+claude-msg config show          # ResolvedView.DeliveryMode column shows the
+                                # winning value per-agent
+```
+
 ### Whitelisted control commands
 
 `tmux-msg.control` types a vetted Claude Code slash-command into a
