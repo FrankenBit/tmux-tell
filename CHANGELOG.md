@@ -37,6 +37,13 @@ Run `claude-msg --version` to see what's installed.
   v0.7.0 substrate landed cleanly but the README mention was missed
   at merge. Pure docs; no behavior changes.
 
+- **`docs/why.md` — "Why tmux-msg?" pitch (public-launch prep).** A
+  standalone, deployment-agnostic problem-framing doc for newcomers:
+  the you-are-the-message-bus pain, the observe-gate trust-close,
+  scope/non-goals, and a two-minute quickstart. First piece of the
+  GitHub-launch documentation package (operator-directed 2026-06-06).
+  Pure docs; no behavior change.
+
 ## [0.7.0] — 2026-06-06
 
 ### Changed
