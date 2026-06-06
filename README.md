@@ -96,6 +96,10 @@ first message across the bus
 That's the whole loop. `send` returns `{"ok":true,"id":"7f3a","queued":1}` on success
 (or `{"ok":false,"error":"…"}` with a sysexits-style exit code on failure).
 
+To confirm a freshly-registered agent is reachable *without* sending it a message,
+`claude-msg ping bob` probes daemon-up + pane-live (no pane paste) — see
+[Reachability probe](#operating-the-bus) under Operating the bus.
+
 ## Message rendering
 
 Headers come in two shapes:
@@ -188,6 +192,7 @@ verify-token + `delivered_unverified` safety net.
 
 ```
 claude-msg send   --to Y [--reply-to ID] [--no-reply-expected] "body"   # one-shot
+claude-msg ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
 claude-msg inbox  AGENT [--state STATE]            # list messages for AGENT
 claude-msg track  ID [--watch]                     # delivery state of one message
 claude-msg get    ID                               # fetch a processed message by id
@@ -207,6 +212,18 @@ injecting (messages keep queuing up to the cap) until `resume`. History is free 
 SQLite on disk; on mailman start, any row left `delivering` from a crashed run is
 reset to `queued`. `reset` purges `queued` + `delivering`; `--hard` also wipes the
 delivered audit log; `--confirm` is mandatory.
+
+**Reachability probe.** `claude-msg ping <agent>` answers "is the daemon up + the
+agent registered + its pane reachable?" without the side effect a test `send` has —
+it queues a `kind=ping` row the mailman picks up (proving the daemon is alive) and
+resolves via substrate-health checks (agent registered, pane live), transitioning
+straight to `delivered`/`failed` **without pasting into the recipient's pane**. The
+clean "is this chamber wired up?" check for new-agent setup and post-restart sanity.
+States (and exit codes): `delivered` reachable (`0`), `failed` registered-but-
+unreachable (`69`), `timeout` no answer in `--timeout` — daemon down/paused/
+backlogged (`75`). Pinging a non-registered agent fails loud. From MCP, call
+`tmux-msg.ping {"agent": "surveyor"}`. (A `mailbox-only` agent has no mailman, so a
+ping to it reports `timeout`.)
 
 **Tracking delivery.** `claude-msg track <id>` shows where a message is
 (`queued → delivering → delivered`, or `failed` with the reason in `error`);

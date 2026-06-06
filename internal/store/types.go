@@ -40,6 +40,16 @@ const (
 	// succeeded but verify-token never landed); blind Ctrl+U would
 	// destroy bus content not operator content.
 	KindStrandedDraft Kind = "stranded_draft"
+	// KindPing marks a substrate-only reachability probe (#144). The
+	// mailman picks the row up like any other message — which itself
+	// proves the daemon is alive — but instead of paste-and-Enter it
+	// runs substrate-health checks (recipient registered, pane live)
+	// and transitions the row straight to delivered (healthy) or
+	// failed (unreachable). The whole point is to exercise the
+	// DB-insert → mailman-pickup → delivery-state path WITHOUT pasting
+	// into the recipient's pane: a "is the daemon up + agent reachable?"
+	// probe that loads no recipient context.
+	KindPing Kind = "ping"
 )
 
 // Message mirrors a row in the messages table. Timestamps are kept as

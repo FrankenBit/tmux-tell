@@ -37,6 +37,16 @@ func SetListPanesWithPIDRunner(r func(ctx context.Context) ([]byte, error)) func
 	return prev
 }
 
+// SetListPanesRunner swaps the LivePanes shell-out for tests, returning
+// the previous runner so callers can restore it. Sibling to
+// SetListPanesWithPIDRunner; used by the #144 ping-branch serve tests to
+// fake pane liveness without a running tmux server.
+func SetListPanesRunner(r func(ctx context.Context) ([]byte, error)) func(ctx context.Context) ([]byte, error) {
+	prev := listPanesRunner
+	listPanesRunner = r
+	return prev
+}
+
 // PaneInfo describes one tmux pane for discovery purposes.
 type PaneInfo struct {
 	ID         string // "%3"

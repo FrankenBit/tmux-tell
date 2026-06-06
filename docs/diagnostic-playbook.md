@@ -38,6 +38,14 @@ falsify it.
 Walk three checks in order. **Stop and act** the moment the first one
 identifies the gap; don't continue to the next layer.
 
+> **Quick pre-check (#144).** Before the deep triage, confirm the
+> receiver is even reachable on the bus: `claude-msg ping <receiver>`.
+> It probes daemon-up + pane-live without pasting into the pane. A
+> `failed`/`timeout` here means the receiver's mailman is down or its
+> pane is gone — fix that first; the outbox triage below assumes a
+> live bus. A `delivered` here rules reachability out and points the
+> investigation at the sender-side / receiver-processing layers.
+
 ### 1. Did the sender actually send?
 
 The SQLite store is the authoritative record of what reached the bus.

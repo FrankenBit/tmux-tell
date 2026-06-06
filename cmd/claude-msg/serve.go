@@ -392,6 +392,23 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			continue
 		}
 
+		// kind=ping: substrate-only reachability probe (#144). The mere
+		// fact that this mailman claimed the row already proves the
+		// daemon is alive and the recipient is registered (an
+		// unregistered agent's GetAgent above would have `continue`d).
+		// The remaining health signal is pane liveness. We transition
+		// the row straight to delivered/failed and SKIP all delivery
+		// machinery below (drift guard, observe-gate, pre-paste safety,
+		// paste-and-Enter) — a ping MUST NOT mutate the recipient's pane
+		// or load their context. That is the whole point of the kind.
+		if msg.Kind == store.KindPing {
+			handlePing(opCtx, s, logger, opts.Agent, a.PaneID, msg)
+			if stopOrSleep(stopCtx, opts.InterMessageDelay) {
+				return exitOK
+			}
+			continue
+		}
+
 		logger.Printf("delivering id=%s kind=%s from=%s body_bytes=%d",
 			msg.PublicID, msg.Kind, msg.FromAgent, len(msg.Body))
 
@@ -822,6 +839,50 @@ func renderFailureNoticeBody(msg *store.Message, failureKind, reason string) str
   Original body preview:
     %s`,
 		msg.PublicID, msg.ToAgent, failureKind, reason, preview)
+}
+
+// handlePing processes a kind=ping reachability probe (#144). It runs
+// the recipient's substrate-health checks and transitions the message
+// straight to delivered (healthy) or failed (unreachable) — it never
+// pastes into the recipient's pane. Mailman-alive and agent-registered
+// are proven by the fact that this mailman (serving a registered agent)
+// claimed the row at all; the remaining signal is whether the
+// registered pane is live.
+func handlePing(ctx context.Context, s *store.Store, logger *log.Logger, agent, pane string, msg *store.Message) {
+	reason, ok := pingHealthy(ctx, pane)
+	if ok {
+		logger.Printf("ping_ok id=%s agent=%s pane=%s from=%s", msg.PublicID, agent, pane, msg.FromAgent)
+		if err := s.MarkDelivered(ctx, msg.PublicID); err != nil {
+			logger.Printf("ping_mark_delivered_err id=%s err=%v", msg.PublicID, err)
+		}
+		return
+	}
+	logger.Printf("ping_failed id=%s agent=%s pane=%s reason=%q", msg.PublicID, agent, pane, reason)
+	if err := s.MarkFailed(ctx, msg.PublicID, reason); err != nil {
+		logger.Printf("ping_mark_failed_err id=%s err=%v", msg.PublicID, err)
+	}
+}
+
+// pingHealthy reports whether the recipient's registered pane is live —
+// the load-bearing substrate-health signal for a ping (#144). An empty
+// pane id means the agent is registered but has no pane (operator should
+// run `claude-msg discover`); a non-live pane means the agent's session
+// is gone. Both are reachability failures. A LivePanes probe error is
+// itself treated as a failure with the underlying reason surfaced: we
+// can't substantiate reachability, so we don't claim it (sibling to the
+// pre-paste-safety "couldn't substantiate → unsafe" stance).
+func pingHealthy(ctx context.Context, pane string) (reason string, ok bool) {
+	if pane == "" {
+		return "agent registered but has no pane_id (run 'claude-msg discover')", false
+	}
+	live, err := tmuxio.LivePanes(ctx)
+	if err != nil {
+		return fmt.Sprintf("pane-liveness probe failed: %v", err), false
+	}
+	if !live[pane] {
+		return fmt.Sprintf("registered pane %s is not live (agent unreachable)", pane), false
+	}
+	return "", true
 }
 
 // deliverOne dispatches a single message to a pane based on its Kind:

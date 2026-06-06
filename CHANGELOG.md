@@ -51,6 +51,20 @@ Run `claude-msg --version` to see what's installed.
   both are `state='delivered'` in the DB; making that DB-queryable is
   tracked in #169.
 
+- **`claude-msg ping <agent>` substrate-only reachability probe (#144).**
+  A `kind=ping` message the recipient's mailman picks up (proving the
+  daemon is alive) and answers via substrate-health checks (agent
+  registered, pane live) — transitioning straight to `delivered`/`failed`
+  **without** paste-and-Enter, so no pane mutation and no recipient
+  context-load. New `claude-msg ping` CLI (`--timeout`, `--format`) and
+  `tmux-msg.ping` MCP tool share one probe core. Outcome states:
+  `delivered` (reachable, exit 0), `failed` (registered but unreachable,
+  exit 69), `timeout` (no answer in time, exit 75). Pinging a
+  non-registered agent fails loud. The intended replacement for the
+  runbook "send a test bus message" verification step, which polluted the
+  recipient's pane. README diagnostic + new-agent-setup sections and the
+  diagnostic-playbook updated.
+
 - **README `### Canonical name mapping` subsection (#143).** Documents
   the three-layer naming (wire-protocol / source / Claude Code slug /
   docs-prose), the Claude Code slug sanitization rule
