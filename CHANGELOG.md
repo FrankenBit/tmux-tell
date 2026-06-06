@@ -61,6 +61,22 @@ Run `claude-msg --version` to see what's installed.
   GitHub-launch documentation package (operator-directed 2026-06-06).
   Pure docs; no behavior change.
 
+### Changed
+
+- **README rewritten for the public launch (closes #156; restructures the #143 canonical-name-mapping section added in #166 into the streamlined layout).** Restructured
+  landing-page-first: leads with the "Why" pitch (links `docs/why.md`), genericized
+  off the alcatraz-specific examples (substrate-first per ADR-0003), condensed the
+  observe-gate section into a summary that links `docs/observe-gate.md`, and refreshed
+  stale spots — the Message-rendering examples now show the bracket header (#121/#122)
+  instead of the retired ─── box, the onboarding flow uses the shipped `register` CLI
+  (was a stale SQL fallback), and the `--version` example tracks v0.7.0. Folds in the
+  canonical-name-mapping table + wire-probe recipe (#143) and the two-shape header
+  conventions + delivery-modes recipient-POV (#156). Pure docs.
+- **`tmux-msg.send` MCP tool description (#156).** Names the queued→delivered lifecycle
+  (and points at `tmux-msg.message_status` to confirm) and surfaces `reply_to`'s
+  threading semantics, so a newcomer reading the schema doesn't read "queued" as
+  "delivered" or miss reply-threading. Description string only; no behavior change.
+
 ## [0.7.0] — 2026-06-06
 
 ### Changed
