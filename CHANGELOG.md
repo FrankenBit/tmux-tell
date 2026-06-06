@@ -25,6 +25,18 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Added
+
+- **README `### Delivery modes` subsection (#138).** Documents the
+  `paste-and-enter` (default) vs `mailbox-only` modes introduced by
+  #116 (PR #129) plus the TOML knob landed by #132 (PR #135).
+  Operator-as-bus-participant use case, three configuration surfaces
+  (MCP / CLI / TOML) with example invocations, precedence chain, +
+  `claude-msg config show` cross-link for resolved-value verification.
+  Caught during the 2026-06-06 post-close AC audit on #132 — the
+  v0.7.0 substrate landed cleanly but the README mention was missed
+  at merge. Pure docs; no behavior changes.
+
 ## [0.7.0] — 2026-06-06
 
 ### Changed
