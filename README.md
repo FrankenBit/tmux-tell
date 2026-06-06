@@ -192,6 +192,7 @@ claude-msg inbox  AGENT [--state STATE]            # list messages for AGENT
 claude-msg track  ID [--watch]                     # delivery state of one message
 claude-msg get    ID                               # fetch a processed message by id
 claude-msg status [--today]                        # paused state + queue depths per agent
+claude-msg stats  [--window all|7d|1h] [--agent X] [--pair]  # on-demand bus-traffic aggregates
 claude-msg state  --agent AGENT                    # probe an agent's current activity
 claude-msg health [--since DUR]                    # per-agent operational audit
 claude-msg pause  AGENT | --all                    # halt delivery (queue keeps filling)
@@ -211,6 +212,20 @@ delivered audit log; `--confirm` is mandatory.
 (`queued → delivering → delivered`, or `failed` with the reason in `error`);
 `--watch` re-renders on each state change until terminal. From MCP, call
 `tmux-msg.message_status {"id": "9c1d"}`.
+
+**Bus-traffic stats.** `claude-msg stats` is the in-terminal "show me the bus
+right now" surface — on-demand aggregates computed straight from the local
+`messages.db`, complementing the continuous observability stack that owns
+dashboard trends. The default reports a per-agent table (sent / received /
+delivered / failed / queued + p50 delivery latency) plus window totals for the
+last 24h; `--window` takes `all`, `<N>d` (e.g. `7d`), or any Go duration
+(`1h`/`90m`); `--agent X` scopes to one agent; `--pair --top N` shows the
+busiest sender→recipient pairs; `--format json` emits machine-readable output
+(also carrying `p95_latency_ms`). The verified-vs-unverified delivery split is
+*not* shown here — both land as `state='delivered'` in the DB (the
+`delivered_unverified` signal is a mailman journal line, not a column), so use
+`status --today` / `health` for that breakdown; making it DB-queryable is
+tracked in #169.
 
 **Delivery-failure notifications.** When an outbound message hits a terminal-failure
 state (`failed` or `delivered_unverified`), the mailman auto-inserts a

@@ -36,6 +36,21 @@ Run `claude-msg --version` to see what's installed.
   messages. Default false; opt-in per message. Renderer, CLI, MCP, store,
   README, and schema updated.
 
+- **`claude-msg stats` — on-demand bus-traffic aggregates (#147).** A new
+  subcommand that computes per-agent counts (sent / received / delivered /
+  failed / queued), delivery-latency percentiles (p50/p95, nearest-rank),
+  window-wide totals, and top sender→recipient pairs directly from the local
+  `messages.db`. Flags: `--window all|<N>d|<duration>` (default `24h`),
+  `--agent NAME`, `--pair --top N`, `--format text|json`. The aggregation
+  lives in `internal/store` (`StatsPerAgent` / `StatsTopPairs` /
+  `StatsTotals` over a single window-bounded scan) as the reusable seam the
+  #161 `digest` surface will consume; the shared `parseWindow` helper
+  (`all` / `<N>d` / Go-duration) lands alongside. This is the in-terminal
+  counterpart to the continuous observability stack (#146), which owns
+  dashboard trends. Verified vs unverified deliveries are **not** split —
+  both are `state='delivered'` in the DB; making that DB-queryable is
+  tracked in #169.
+
 - **README `### Canonical name mapping` subsection (#143).** Documents
   the three-layer naming (wire-protocol / source / Claude Code slug /
   docs-prose), the Claude Code slug sanitization rule
