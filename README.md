@@ -43,7 +43,7 @@ every message with `sqlite3`, and uninstall is one script.
 
 ```
    agent-a ──►┌─────────────────────────────────────┐──► mailman@agent-c
-   agent-b ──►│  SQLite mailbox (messages, agents)   │    (single writer to its pane)
+   agent-b ──►│  SQLite mailbox (messages, agents)  │    (single writer to its pane)
               └─────────────────────────────────────┘
    reply ──►  claude-msg send --reply-to <id> --to agent-a "…"
 ```
