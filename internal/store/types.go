@@ -46,17 +46,18 @@ const (
 // strings (ISO 8601 UTC) — callers parse to time.Time at presentation time
 // if needed; the store layer is timezone-agnostic.
 type Message struct {
-	ID          int64
-	PublicID    string
-	FromAgent   string
-	ToAgent     string
-	ReplyTo     sql.NullString
-	Body        string
-	Kind        Kind
-	State       State
-	CreatedAt   string
-	DeliveredAt sql.NullString
-	Error       sql.NullString
+	ID               int64
+	PublicID         string
+	FromAgent        string
+	ToAgent          string
+	ReplyTo          sql.NullString
+	Body             string
+	Kind             Kind
+	NoReplyExpected  bool
+	State            State
+	CreatedAt        string
+	DeliveredAt      sql.NullString
+	Error            sql.NullString
 }
 
 // Agent mirrors a row in the agents table.

@@ -14,13 +14,14 @@ import (
 
 // sendParams is the resolved input to runSendWithStore, post-flag-parsing.
 type sendParams struct {
-	From         string
-	To           string
-	ReplyTo      string
-	Body         string
-	MaxRecipient int
-	MaxSender    int
-	MaxBody      int
+	From            string
+	To              string
+	ReplyTo         string
+	Body            string
+	NoReplyExpected bool
+	MaxRecipient    int
+	MaxSender       int
+	MaxBody         int
 }
 
 // runSendCLI parses send-subcommand flags, opens the store, and dispatches
@@ -32,6 +33,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 	from := fs.String("from", "", "sender agent name (env: CLAUDE_AGENT_NAME)")
 	to := fs.String("to", "", "recipient agent name (required)")
 	replyTo := fs.String("reply-to", "", "public_id of the message being replied to")
+	noReplyExpected := fs.Bool("no-reply-expected", false, "signal recipient that no acknowledgment is needed (#145)")
 	body := fs.String("body", "", "message body (else read from positional args)")
 	maxRecipient := fs.Int("max-recipient-queue", capRecipientQueue,
 		"reject when the recipient's queue depth would exceed this")
@@ -57,13 +59,14 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 	}
 
 	p := sendParams{
-		From:         fromName,
-		To:           *to,
-		ReplyTo:      *replyTo,
-		Body:         *body,
-		MaxRecipient: *maxRecipient,
-		MaxSender:    *maxSender,
-		MaxBody:      *maxBody,
+		From:            fromName,
+		To:              *to,
+		ReplyTo:         *replyTo,
+		Body:            *body,
+		NoReplyExpected: *noReplyExpected,
+		MaxRecipient:    *maxRecipient,
+		MaxSender:       *maxSender,
+		MaxBody:         *maxBody,
 	}
 	if p.Body == "" {
 		p.Body = strings.Join(fs.Args(), " ")
@@ -124,6 +127,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		ToAgent:           p.To,
 		ReplyTo:           p.ReplyTo,
 		Body:              p.Body,
+		NoReplyExpected:   p.NoReplyExpected,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})

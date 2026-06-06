@@ -17,11 +17,12 @@ import (
 // same BEGIN IMMEDIATE transaction that does the INSERT, so two concurrent
 // senders to the same recipient can no longer race past it (#29).
 type InsertParams struct {
-	FromAgent string
-	ToAgent   string
-	ReplyTo   string
-	Body      string
-	Kind      Kind
+	FromAgent       string
+	ToAgent         string
+	ReplyTo         string
+	Body            string
+	Kind            Kind
+	NoReplyExpected bool // true → sender requests no ack (#145)
 
 	MaxRecipientQueue int // 0 = no cap check
 	MaxSenderBacklog  int // 0 = no cap check
@@ -288,10 +289,14 @@ func insertOneInTx(ctx context.Context, tx *sql.Tx, p InsertParams) (InsertResul
 		if err != nil {
 			return InsertResult{}, fmt.Errorf("store: generate public_id: %w", err)
 		}
+		nre := 0
+		if p.NoReplyExpected {
+			nre = 1
+		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind)
+			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre)
 		if err == nil {
 			publicID = candidate
 			break
@@ -430,13 +435,15 @@ func (s *Store) SenderBacklog(ctx context.Context, fromAgent string) (int, error
 // GetMessage returns one message by its public_id, or ErrNotFound.
 func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, error) {
 	var m Message
+	var nre int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        state, created_at, delivered_at, error
+		        no_reply_expected, state, created_at, delivered_at, error
 		 FROM messages WHERE public_id = ?`,
 		publicID).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error)
+		&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error)
+	m.NoReplyExpected = nre != 0
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -470,7 +477,7 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 	escaped := escapeLikePrefix(prefix)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        state, created_at, delivered_at, error
+		        no_reply_expected, state, created_at, delivered_at, error
 		 FROM messages WHERE public_id LIKE ? ESCAPE '\' ORDER BY id ASC`,
 		escaped+"%")
 	if err != nil {
@@ -480,11 +487,13 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 	var out []Message
 	for rows.Next() {
 		var m Message
+		var nre int
 		if err := rows.Scan(&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent,
-			&m.ReplyTo, &m.Body, &m.Kind, &m.State, &m.CreatedAt,
+			&m.ReplyTo, &m.Body, &m.Kind, &nre, &m.State, &m.CreatedAt,
 			&m.DeliveredAt, &m.Error); err != nil {
 			return nil, err
 		}
+		m.NoReplyExpected = nre != 0
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -538,7 +547,7 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	args = append(args, f.Limit)
 
 	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             state, created_at, delivered_at, error
+	             no_reply_expected, state, created_at, delivered_at, error
 	      FROM messages`
 	if len(wheres) > 0 {
 		q += " WHERE " + strings.Join(wheres, " AND ")
@@ -554,11 +563,13 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	var out []Message
 	for rows.Next() {
 		var m Message
+		var nre int
 		if err := rows.Scan(
 			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-			&m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error); err != nil {
+			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error); err != nil {
 			return nil, err
 		}
+		m.NoReplyExpected = nre != 0
 		out = append(out, m)
 	}
 	return out, rows.Err()

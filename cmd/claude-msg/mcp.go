@@ -58,9 +58,10 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"to":       {"type": "string", "description": "Recipient agent name"},
-				"body":     {"type": "string", "description": "Message body"},
-				"reply_to": {"type": "string", "description": "Optional public_id of the message this is a reply to"}
+				"to":               {"type": "string", "description": "Recipient agent name"},
+				"body":             {"type": "string", "description": "Message body"},
+				"reply_to":         {"type": "string", "description": "Optional public_id of the message this is a reply to"},
+				"no_reply_expected": {"type": "boolean", "description": "Set true to signal the recipient that no acknowledgment is needed — reduces ack-cascade on FYI/status messages (#145). Default false."}
 			},
 			"required": ["to", "body"]
 		}`),
@@ -215,9 +216,10 @@ func resolveMCPIdentity(ctx context.Context, s *store.Store) (string, error) {
 
 func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
-		To      string `json:"to"`
-		Body    string `json:"body"`
-		ReplyTo string `json:"reply_to"`
+		To              string `json:"to"`
+		Body            string `json:"body"`
+		ReplyTo         string `json:"reply_to"`
+		NoReplyExpected bool   `json:"no_reply_expected"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -232,13 +234,14 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 			return nil, fmt.Errorf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		p := sendParams{
-			From:         from,
-			To:           in.To,
-			ReplyTo:      in.ReplyTo,
-			Body:         in.Body,
-			MaxRecipient: capRecipientQueue,
-			MaxSender:    capSenderBacklog,
-			MaxBody:      capBodyBytes,
+			From:            from,
+			To:              in.To,
+			ReplyTo:         in.ReplyTo,
+			Body:            in.Body,
+			NoReplyExpected: in.NoReplyExpected,
+			MaxRecipient:    capRecipientQueue,
+			MaxSender:       capSenderBacklog,
+			MaxBody:         capBodyBytes,
 		}
 		// Re-use the validation + cap logic from the CLI by going
 		// directly through the store ourselves but mirroring the checks.
@@ -278,6 +281,7 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		ToAgent:           p.To,
 		ReplyTo:           p.ReplyTo,
 		Body:              p.Body,
+		NoReplyExpected:   p.NoReplyExpected,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})

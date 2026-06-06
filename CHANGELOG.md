@@ -27,6 +27,15 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`--no-reply-expected` bus-discipline flag on `send` (#145).** Adds
+  `no_reply_expected` column to `messages` (INTEGER NOT NULL DEFAULT 0).
+  New `--no-reply-expected` flag on `claude-msg send` and `no_reply_expected`
+  boolean parameter on `tmux-msg.send` (MCP). When set, the rendered
+  message header includes a `🔕` marker signalling the recipient's Claude
+  that no acknowledgment is needed — reduces ack-cascade on FYI / status
+  messages. Default false; opt-in per message. Renderer, CLI, MCP, store,
+  README, and schema updated.
+
 - **README `### Canonical name mapping` subsection (#143).** Documents
   the three-layer naming (wire-protocol / source / Claude Code slug /
   docs-prose), the Claude Code slug sanitization rule

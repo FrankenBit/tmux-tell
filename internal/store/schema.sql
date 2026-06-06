@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS messages (
     reply_to      TEXT REFERENCES messages(public_id),
     body          TEXT NOT NULL,
     kind          TEXT NOT NULL DEFAULT 'message',-- message | control
+    no_reply_expected INTEGER NOT NULL DEFAULT 0, -- 1 = sender requests no ack (#145)
     state         TEXT NOT NULL DEFAULT 'queued', -- queued|delivering|delivered|failed
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     delivered_at  TEXT,
