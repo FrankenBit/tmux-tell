@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
@@ -48,8 +49,9 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 // newMCPServer wires the tmux-msg.* tools onto an mcp.Server.
-// Tools registered: send / agents / whoami / inbox / message_status /
-// status / register / control / unregister / agent_state.
+// Tools registered: send / ping / agents / whoami / inbox /
+// message_status / status / register / control / unregister /
+// agent_state.
 func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("tmux-msg", "0.1.0")
 
@@ -173,7 +175,59 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpAgentStateHandler(s))
 
+	srv.RegisterTool("tmux-msg.ping",
+		"Substrate-only reachability probe (#144): is the recipient's mailman daemon up and its pane reachable? Queues a kind=ping row that the mailman picks up (proving the daemon is alive) and answers via substrate-health checks (agent registered, pane live) — it does NOT paste into the recipient's pane or load their context, so it's safe for runbook verification and post-restart sanity. Returns {ok, agent, id, state, elapsed_ms}: state is `delivered` (reachable), `failed` (registered but unreachable — pane gone), or `timeout` (no mailman answered in time — daemon down/paused/backlogged). Pinging a non-registered agent fails loud.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"agent":           {"type": "string", "description": "Agent name to probe for reachability"},
+				"timeout_seconds": {"type": "number", "description": "Bound the wait for a terminal state (default 5). A reachable agent answers in well under a second."}
+			},
+			"required": ["agent"]
+		}`),
+		mcpPingHandler(s))
+
 	return srv
+}
+
+// mcpPingHandler returns the handler for the tmux-msg.ping MCP tool.
+// Resolves the caller's identity (the ping's sender) and runs the shared
+// pingProbe core — the same code path as the `claude-msg ping` CLI
+// subcommand — so both surfaces emit the identical pingResult shape.
+func mcpPingHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		Agent          string  `json:"agent"`
+		TimeoutSeconds float64 `json:"timeout_seconds"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if in.Agent == "" {
+			return nil, fmt.Errorf("agent required")
+		}
+		from, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		if from == "" {
+			return nil, fmt.Errorf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+		}
+		timeout := defaultPingTimeout
+		if in.TimeoutSeconds > 0 {
+			timeout = time.Duration(in.TimeoutSeconds * float64(time.Second))
+		}
+		// pingProbe returns a structured pingResult; the MCP framework
+		// json.Marshals the handler return (internal/mcp/server.go), and
+		// pingResult's JSON tags are the single source of truth for the
+		// wire shape — identical to the CLI's --format json output.
+		res, err := pingProbe(ctx, s, from, in.Agent, timeout, pingPollInterval)
+		if err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
 }
 
 // mcpAgentStateHandler returns the handler for the

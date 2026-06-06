@@ -172,6 +172,7 @@ func TestMCP_ToolsListContract(t *testing.T) {
 	tools := result["tools"].([]any)
 	want := map[string]bool{
 		"tmux-msg.send":           true,
+		"tmux-msg.ping":           true,
 		"tmux-msg.agents":         true,
 		"tmux-msg.whoami":         true,
 		"tmux-msg.inbox":          true,
