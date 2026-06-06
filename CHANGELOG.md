@@ -27,6 +27,14 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **README `### Canonical name mapping` subsection (#143).** Documents
+  the three-layer naming (wire-protocol / source / Claude Code slug /
+  docs-prose), the Claude Code slug sanitization rule
+  (`mcp__<server>__<tool_dot_to_underscore>`), a wire-probe
+  operator-debug recipe (`tools/list` JSON-RPC via `claude-msg mcp`),
+  and a caveat for pre-v0.6.0 cached sessions still surfacing
+  `mcp__semaphore__semaphore_*` slugs. Pure docs; no behavior changes.
+
 - **README `### Delivery modes` subsection (#138).** Documents the
   `paste-and-enter` (default) vs `mailbox-only` modes introduced by
   #116 (PR #129) plus the TOML knob landed by #132 (PR #135).
