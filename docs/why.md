@@ -22,7 +22,7 @@ mailbox. An agent — or you — sends a message, and it lands in the target pan
 if it were typed there:
 
 ```
-[tester · 14:02:09 · id 7f3a]
+[Tester · 14:02:09 · id 7f3a]
 
 API change landed on main — your fixtures need the new auth header.
 ```
@@ -60,12 +60,14 @@ between three of them, you might.
 ## Try it in about two minutes
 
 ```bash
+# from inside a tmux session:
 git clone https://github.com/FrankenBit/tmux-msg && cd tmux-msg
-make build && ./install.sh
+make build && sudo ./install.sh          # builds + installs claude-msg and the systemd user unit
+systemctl --user daemon-reload           # so the mailman unit is visible
 
 # register two panes (one command in each), then send across the bus
-claude-msg register --name alice     # in pane A
-claude-msg register --name bob       # in pane B
+claude-msg register --name alice         # in pane A
+claude-msg register --name bob           # in pane B
 claude-msg send --to bob "first message across the bus"
 ```
 
