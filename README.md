@@ -227,6 +227,46 @@ config) — no per-pane env or config files needed:
 }
 ```
 
+### Canonical name mapping
+
+The MCP server registers itself as `tmux-msg` with tool names like
+`tmux-msg.register`. Different layers refer to the same tool by
+different sanitized variants:
+
+| Layer | Example name |
+|---|---|
+| Wire protocol (`tools/list` JSON-RPC) | `tmux-msg.register` |
+| Source (`srv.RegisterTool(...)`) | `tmux-msg.register` |
+| Claude Code MCP slug | `mcp__tmux-msg__tmux-msg_register` |
+| Documentation / prose | `tmux-msg.register` *(preferred)* |
+
+When writing prose or runbooks, prefer the wire-protocol name
+(`tmux-msg.register`); when invoking from Claude Code's tool-call
+surface, use the slug. The Claude Code sanitization rule: dots →
+underscores; dashes preserved; slug is
+`mcp__<server>__<tool_dot_to_underscore>` — so
+`tmux-msg.register` (server `tmux-msg`, tool `tmux-msg.register`)
+becomes `mcp__tmux-msg__tmux-msg_register`.
+
+**Wire-probe operator-debug recipe.** To inspect the exact names on
+the wire (useful when a slug doesn't match your expectation):
+
+```bash
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' \
+  | claude-msg mcp \
+  | python3 -c "import sys,json; [print(t['name']) for t in json.load(sys.stdin)['result']['tools']]"
+```
+
+This pipes a `tools/list` JSON-RPC request through the MCP stdio
+server and prints each registered wire-protocol name. Run it whenever
+you're unsure which name a session is using.
+
+**Pre-v0.6.0 cached sessions.** Sessions started before the v0.6.0
+rename (when the server was called `semaphore`) may surface tool slugs
+like `mcp__semaphore__semaphore_register` until the session is
+restarted. The underlying handler is identical; a session restart (or
+`claude-msg refresh-all-mcps`) updates the slug to the current form.
+
 ### How identity works
 
 When Claude in a tmux pane spawns the tmux-msg MCP server, the child
