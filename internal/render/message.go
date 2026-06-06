@@ -68,15 +68,19 @@ func formatClock(iso string) string {
 // bracket-open at the start of each new header delimits consecutive
 // messages on visual scan.
 func Message(m store.Message) string {
+	var nrSuffix string
+	if m.NoReplyExpected {
+		nrSuffix = " · 🔕"
+	}
 	var header string
 	clock := formatClock(m.CreatedAt)
 	if m.ReplyTo.Valid && m.ReplyTo.String != "" {
-		header = fmt.Sprintf("[%s → %s · re %s · id %s]",
+		header = fmt.Sprintf("[%s → %s · re %s · id %s%s]",
 			titleCase(m.FromAgent), titleCase(m.ToAgent),
-			m.ReplyTo.String, m.PublicID)
+			m.ReplyTo.String, m.PublicID, nrSuffix)
 	} else {
-		header = fmt.Sprintf("[%s · %s · id %s]",
-			titleCase(m.FromAgent), clock, m.PublicID)
+		header = fmt.Sprintf("[%s · %s · id %s%s]",
+			titleCase(m.FromAgent), clock, m.PublicID, nrSuffix)
 	}
 	return fmt.Sprintf("%s\n\n%s\n", header, m.Body)
 }

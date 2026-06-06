@@ -77,6 +77,37 @@ func TestMessage_Reply(t *testing.T) {
 	}
 }
 
+func TestMessage_NoReplyExpected(t *testing.T) {
+	const fixtureUTC = "2026-06-07T00:00:00.000Z"
+	got := Message(store.Message{
+		PublicID:        "ab12",
+		FromAgent:       "bosun",
+		ToAgent:         "pilot",
+		Body:            "FYI: tagged v0.8.0",
+		CreatedAt:       fixtureUTC,
+		NoReplyExpected: true,
+	})
+	headerLine, _, _ := strings.Cut(got, "\n")
+	if !strings.Contains(headerLine, "🔕") {
+		t.Errorf("no-reply header missing 🔕 marker: %s", headerLine)
+	}
+	if !strings.Contains(headerLine, "id ab12") {
+		t.Errorf("no-reply header missing id: %s", headerLine)
+	}
+	// Verify regular message does NOT carry the marker.
+	plain := Message(store.Message{
+		PublicID:  "cd34",
+		FromAgent: "bosun",
+		ToAgent:   "pilot",
+		Body:      "normal message",
+		CreatedAt: fixtureUTC,
+	})
+	plainHeader, _, _ := strings.Cut(plain, "\n")
+	if strings.Contains(plainHeader, "🔕") {
+		t.Errorf("regular header should not contain 🔕: %s", plainHeader)
+	}
+}
+
 func TestFormatClock_FallsBackOnBadInput(t *testing.T) {
 	if got := formatClock("not a timestamp"); got != "??:??:??" {
 		t.Errorf("formatClock(bad) = %q, want fallback", got)

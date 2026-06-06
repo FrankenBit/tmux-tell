@@ -108,6 +108,7 @@ var migrations = []string{
 	`ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'`,
 	`ALTER TABLE agents ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'`,
 	`ALTER TABLE agents ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT 'paste-and-enter'`,
+	`ALTER TABLE messages ADD COLUMN no_reply_expected INTEGER NOT NULL DEFAULT 0`,
 }
 
 // Close releases the underlying database handle.

@@ -69,6 +69,10 @@ claude-msg log    --thread ID                             # follow a reply chain
 
 `send` returns `{"ok":true,"id":"7f3a","queued":3}` on success, `{"ok":false,"error":"…"}` on failure, with sysexits-style exit codes.
 
+Bus-discipline flags on `send`: `--no-reply-expected` (CLI) / `no_reply_expected=true`
+(MCP) marks the message as acknowledgment-not-needed, reducing ack-cascades on
+FYI and status messages. See `## Message rendering` for the rendered chrome.
+
 ## Caps (MVP defaults)
 
 | Cap | Default | Reason |
@@ -90,18 +94,32 @@ claude-msg log    --thread ID                             # follow a reply chain
 What the recipient sees in their pane:
 
 ```
-─── Message from Bosun ── 11:04:12 ── id 7f3a ──
+[Bosun · 11:04:12 · id 7f3a]
+
 please check CI on PR 1234
-────────────────────────────────────────────────
 ```
 
 Replies carry the original id in the header:
 
 ```
-─── Reply from Surveyor → Bosun ── re: 7f3a ── id 9c1d ──
+[Surveyor → Bosun · re 7f3a · id 9c1d]
+
 looking now, ETA 3 min
-────────────────────────────────────────────────
 ```
+
+Messages sent with `--no-reply-expected` (CLI) or `no_reply_expected=true`
+(MCP) include a `🔕` marker in the header:
+
+```
+[Bosun · 11:04:12 · id 7f3a · 🔕]
+
+FYI: tagged v0.8.0 — no ack needed
+```
+
+The `🔕` signals the recipient's Claude to read but not acknowledge — a
+discipline aid for FYI / status messages that would otherwise accumulate
+ack-cascades. The recipient's Claude still judges whether to respond based
+on content; the marker is a hint, not a hard rule.
 
 ## Versioning
 
