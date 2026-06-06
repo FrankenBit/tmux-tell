@@ -54,13 +54,13 @@ func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("tmux-msg", "0.1.0")
 
 	srv.RegisterTool("tmux-msg.send",
-		"Queue a message for another agent. Sender is resolved from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry.",
+		"Queue a message for another agent (sender resolved from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers; confirm delivery with tmux-msg.message_status. Set reply_to to thread under an earlier message.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"to":               {"type": "string", "description": "Recipient agent name"},
-				"body":             {"type": "string", "description": "Message body"},
-				"reply_to":         {"type": "string", "description": "Optional public_id of the message this is a reply to"},
+				"to":                {"type": "string", "description": "Recipient agent name"},
+				"body":              {"type": "string", "description": "Message body"},
+				"reply_to":          {"type": "string", "description": "Optional public_id of the message this replies to; threads the reply (renders the 'Sender → Recipient · re …' header)"},
 				"no_reply_expected": {"type": "boolean", "description": "Set true to signal the recipient that no acknowledgment is needed — reduces ack-cascade on FYI/status messages (#145). Default false."}
 			},
 			"required": ["to", "body"]
