@@ -245,6 +245,7 @@ verify-token + `delivered_unverified` safety net.
 
 ```
 claude-msg send   --to Y [--reply-to ID] [--strict] [--wait-for-delivered] [--block-on-stale] "body"  # one-shot
+claude-msg resend ID [--force]                     # replay a failed/unverified message (#157)
 claude-msg ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
 claude-msg inbox  AGENT [--state STATE]            # list messages for AGENT
 claude-msg track  ID [--watch]                     # delivery state of one message
@@ -286,6 +287,30 @@ ping to it reports `timeout`.)
 (`queued → delivering → delivered`, or `failed` with the reason in `error`);
 `--watch` re-renders on each state change until terminal. From MCP, call
 `tmux-msg.message_status {"id": "9c1d"}`.
+
+**Diagnosing a failed or unverified message — `resend` (#157).** When a message
+lands `failed`, or lands `delivered` but you can't tell whether it actually
+surfaced in the recipient (a `delivered_unverified` — the paste landed but the
+verify-token never came back in budget), the recovery path is `claude-msg resend
+<id>`. It replays the original to its recipient as a *new* message whose body is
+byte-identical to the original, carrying a `↻ Replayed: original sent at <ts>`
+chrome marker so the recipient sees it's a re-send, not fresh content. The
+response adds a `replay` block (`original_id`, `original_sent_at`,
+`original_state`, `forced`). From MCP: `tmux-msg.resend {"id": "9c1d"}`.
+
+The duplicate guard keeps an accidental re-run from spamming:
+
+- A **`failed`** message replays directly — it never arrived.
+- A **`delivered`** message is refused without `--force`. **This includes a
+  delivered-but-unverified message**: the substrate has no `delivered_unverified`
+  column — verified and unverified both read as `delivered`, and only a mailman
+  journal line distinguishes them (#169). So recovering an unverified delivery
+  means `claude-msg resend <id> --force`. Once #169 makes the verified/unverified
+  split DB-queryable, a confirmed-unverified message could replay without
+  `--force`; until then `--force` is the deliberate "yes, I know it may already
+  have arrived" signal.
+- A still **in-flight** message (`queued`/`delivering`) is likewise refused
+  without `--force` — wait for a terminal state, or force a duplicate knowingly.
 
 **Reading a reply thread.** Two views of the same `reply_to` chain (both resolve
 the whole chain from *any* id in it — walk to root, then all descendants):

@@ -245,7 +245,7 @@ func (s *Store) MessagesInWindow(ctx context.Context, w StatsWindow) ([]Message,
 	clause, args := w.whereSince()
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, state, created_at, delivered_at, error
+		        no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
 		 FROM messages WHERE `+clause+` ORDER BY id ASC`, args...)
 	if err != nil {
 		return nil, err
@@ -257,7 +257,7 @@ func (s *Store) MessagesInWindow(ctx context.Context, w StatsWindow) ([]Message,
 		var nre int
 		if err := rows.Scan(
 			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error); err != nil {
+			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0

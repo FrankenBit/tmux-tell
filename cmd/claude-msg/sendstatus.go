@@ -66,10 +66,27 @@ type ThreadFreshness struct {
 	LatestInThread string   `json:"latest_in_thread,omitempty"`
 }
 
+// ReplayStatus is the replay-notice block, populated only on a `resend` (#157
+// PR1). It tells the caller this send is a replay of an earlier message: which
+// original, when it was first sent, what state that original was in at resend
+// time, and whether --force was needed to override the duplicate guard.
+//
+// Note on OriginalState: the substrate has no `delivered_unverified` state —
+// verified and unverified deliveries both read as "delivered" (#169). So a
+// resend of an unverified message reports OriginalState="delivered" and required
+// --force; the journal-aware distinction that would let unverified recover
+// without --force is gated on #169.
+type ReplayStatus struct {
+	OriginalID     string `json:"original_id"`
+	OriginalSentAt string `json:"original_sent_at,omitempty"`
+	OriginalState  string `json:"original_state"`
+	Forced         bool   `json:"forced"`
+}
+
 // SendResponse is the full structured result of a send. Recipient is always
 // present; Delivery only when the caller opted into the wait; Freshness only
-// when the send carries a reply_to. Error is set on a --strict / --block-on-stale
-// rejection (OK=false).
+// when the send carries a reply_to; Replay only on a `resend`. Error is set on a
+// --strict / --block-on-stale / resend-guard rejection (OK=false).
 type SendResponse struct {
 	OK        bool             `json:"ok"`
 	ID        string           `json:"id,omitempty"`
@@ -77,6 +94,7 @@ type SendResponse struct {
 	Recipient *RecipientStatus `json:"recipient,omitempty"`
 	Delivery  *DeliveryStatus  `json:"delivery,omitempty"`
 	Freshness *ThreadFreshness `json:"thread_freshness,omitempty"`
+	Replay    *ReplayStatus    `json:"replay,omitempty"`
 	Error     string           `json:"error,omitempty"`
 }
 
@@ -88,6 +106,9 @@ func renderSendResult(stdout io.Writer, res SendResponse, to, format string) {
 	if format == "text" {
 		if !res.OK {
 			fmt.Fprintf(stdout, "send FAILED: %s\n", res.Error)
+		} else if rp := res.Replay; rp != nil {
+			fmt.Fprintf(stdout, "resent id=%s queued=%d (replay of %s, originally sent %s)\n",
+				res.ID, res.Queued, rp.OriginalID, rp.OriginalSentAt)
 		} else {
 			fmt.Fprintf(stdout, "sent id=%s queued=%d\n", res.ID, res.Queued)
 		}

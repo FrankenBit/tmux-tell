@@ -55,6 +55,50 @@ func TestMessage_Regular(t *testing.T) {
 	}
 }
 
+func TestMessage_ReplayMarker(t *testing.T) {
+	const origUTC = "2026-06-06T09:00:00.000Z"
+	got := Message(store.Message{
+		PublicID:   "b2c4",
+		FromAgent:  "bosun",
+		ToAgent:    "surveyor",
+		Body:       "please check CI on PR 1234",
+		CreatedAt:  "2026-06-07T10:30:00.000Z", // the replay's own send time
+		ReplayOfAt: sql.NullString{String: origUTC, Valid: true},
+	}, DefaultByteMarkerThreshold)
+
+	// Marker line present, carrying the ORIGINAL send time (local full stamp),
+	// on its own line between header and body.
+	parsed, _ := time.Parse("2006-01-02T15:04:05.000Z", origUTC)
+	wantStamp := parsed.Local().Format("2006-01-02 15:04:05")
+	for _, w := range []string{
+		"↻ Replayed: original sent at " + wantStamp,
+		"id b2c4]",
+		"please check CI on PR 1234",
+	} {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %q in:\n%s", w, got)
+		}
+	}
+	// The marker sits between the header line and the body (line 2).
+	lines := strings.Split(got, "\n")
+	if len(lines) < 2 || !strings.HasPrefix(lines[1], "↻ Replayed:") {
+		t.Errorf("replay marker not on line 2; got:\n%s", got)
+	}
+}
+
+func TestMessage_NoReplayMarkerWhenAbsent(t *testing.T) {
+	got := Message(store.Message{
+		PublicID:  "7f3a",
+		FromAgent: "bosun",
+		ToAgent:   "surveyor",
+		Body:      "normal message",
+		CreatedAt: "2026-06-07T10:30:00.000Z",
+	}, DefaultByteMarkerThreshold)
+	if strings.Contains(got, "Replayed") {
+		t.Errorf("non-replay message should have no replay marker; got:\n%s", got)
+	}
+}
+
 func TestMessage_Reply(t *testing.T) {
 	got := Message(store.Message{
 		PublicID:  "9c1d",

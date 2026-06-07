@@ -35,7 +35,7 @@ func (s *Store) GetThread(ctx context.Context, anyID string) ([]Message, error) 
 
 		rows, err := s.db.QueryContext(ctx,
 			`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-			        no_reply_expected, state, created_at, delivered_at, error
+			        no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
 			 FROM messages WHERE reply_to = ?
 			 ORDER BY id ASC`, current)
 		if err != nil {
@@ -47,7 +47,7 @@ func (s *Store) GetThread(ctx context.Context, anyID string) ([]Message, error) 
 			var nre int
 			if err := rows.Scan(
 				&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-				&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error); err != nil {
+				&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
 				rows.Close()
 				return nil, err
 			}
@@ -84,10 +84,10 @@ func (s *Store) findThreadRoot(ctx context.Context, startID string) (*Message, e
 		var nre int
 		err := s.db.QueryRowContext(ctx,
 			`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-			        no_reply_expected, state, created_at, delivered_at, error
+			        no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
 			 FROM messages WHERE public_id = ?`, current).Scan(
 			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error)
+			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt)
 		m.NoReplyExpected = nre != 0
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
