@@ -98,6 +98,7 @@ func runResendWithStore(ctx context.Context, s *store.Store, p resendParams, std
 		ReplyTo:           replyTo,
 		Body:              orig.Body, // byte-identical → PR2 body-hash dedupe can match
 		NoReplyExpected:   orig.NoReplyExpected,
+		Quick:             orig.Quick,
 		ReplayOf:          orig.PublicID,
 		ReplayOfAt:        orig.CreatedAt,
 		MaxRecipientQueue: capRecipientQueue,
