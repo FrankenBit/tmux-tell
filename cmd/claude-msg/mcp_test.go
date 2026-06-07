@@ -93,6 +93,35 @@ func TestMCP_Send_UnknownRecipient(t *testing.T) {
 	}
 }
 
+func TestMCP_Send_BlockOnStale(t *testing.T) {
+	// MCP-path parity for #155: a stale thread + block_on_stale=true returns a
+	// structured ok:false result (not an MCP error) carrying the freshness block.
+	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice", "bob")
+	m1 := tfInsert(t, s, "alice", "bob", "")
+	_ = tfInsert(t, s, "bob", "alice", m1) // crosses in, addressed to alice
+
+	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
+		"to":             "bob",
+		"body":           "late reply",
+		"reply_to":       m1,
+		"block_on_stale": true,
+	})
+	if got["_isError"] == true {
+		t.Fatalf("block_on_stale should be a structured result, not an MCP error; got=%v", got)
+	}
+	if got["ok"] != false {
+		t.Errorf("ok = %v, want false; got=%v", got["ok"], got)
+	}
+	tf, _ := got["thread_freshness"].(map[string]any)
+	if tf == nil || tf["stale"] != true {
+		t.Errorf("thread_freshness = %v, want stale:true", got["thread_freshness"])
+	}
+	if got["error"] == nil || got["error"] == "" {
+		t.Errorf("error empty; want a stale-rejection message; got=%v", got)
+	}
+}
+
 func TestMCP_Send_RequiresEnvVar(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")

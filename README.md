@@ -110,10 +110,25 @@ shouldn't sit unclaimed forever). Two opt-in flags refine this:
   synchronous "delivered?" confirmation without a follow-up `track`/`message_status`
   poll. (The verified-vs-unverified split isn't surfaced here — both are `delivered`
   in the DB, per #169.)
+- `--block-on-stale` — with `--reply-to`, refuse the send (`ok:false`) when the thread
+  has moved since you last spoke. See the `thread_freshness` block below.
+
+When the send carries `--reply-to <id>`, the response adds a **`thread_freshness`**
+block (#155) — the crossed-message guard. Async bus traffic means replies cross in
+flight: you `reply_to` a thread-state that an inbound you haven't read may already have
+superseded. The block reports `{stale, newer_in_thread[], you_replied_to,
+latest_in_thread}`, where `newer_in_thread` lists messages in the reply chain that are
+**addressed to you and arrived after your own last message in that chain** — "the thread
+moved since you last spoke." That's a substrate-knowable signal (reply_to walk + arrival
+order + to/from); it deliberately does *not* claim "messages you haven't *processed*",
+which the substrate can't know — a `delivered` paste is in your context stream but may
+not be attended-to (per #155's semantic correction; see also #169). By default `stale`
+is informational and the send still succeeds; `--block-on-stale` turns it into a hard
+refusal so you can re-read before replying.
 
 The same fields are available over MCP (`tmux-msg.send` with `strict` /
-`wait_for_delivered` / `timeout`). The response schema is a named struct contract that
-later disposition features (#155, #157) extend.
+`wait_for_delivered` / `timeout` / `block_on_stale`). The response schema is a named
+struct contract that later disposition features (#157) extend.
 
 To confirm a freshly-registered agent is reachable *without* sending it a message,
 `claude-msg ping bob` probes daemon-up + pane-live (no pane paste) — see
@@ -229,7 +244,7 @@ verify-token + `delivered_unverified` safety net.
 ## Operating the bus
 
 ```
-claude-msg send   --to Y [--reply-to ID] [--strict] [--wait-for-delivered] "body"  # one-shot
+claude-msg send   --to Y [--reply-to ID] [--strict] [--wait-for-delivered] [--block-on-stale] "body"  # one-shot
 claude-msg ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
 claude-msg inbox  AGENT [--state STATE]            # list messages for AGENT
 claude-msg track  ID [--watch]                     # delivery state of one message
@@ -290,6 +305,11 @@ Glyphs: `○` root · `✓` delivered · `✗` failed · `…` queued/delivering
 distinct `delivered_unverified` glyph yet — the substrate stores that soft-failure
 as `delivered`; making it DB-queryable is tracked in #169.) `--format json` emits
 the nested tree for tooling. `thread` is read-only and never touches a pane.
+
+When you *write* into a chain with `send --reply-to <id>`, the substrate runs the same
+walk to warn you if the thread moved since you last spoke — the `thread_freshness`
+block, described under [the send loop](#quickstart). `thread`/`log` *read*
+the chain; `thread_freshness` *guards a write* against replying to a superseded state.
 
 **Bus-traffic stats.** `claude-msg stats` is the in-terminal "show me the bus
 right now" surface — on-demand aggregates computed straight from the local

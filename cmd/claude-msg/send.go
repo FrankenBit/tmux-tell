@@ -29,6 +29,9 @@ type sendParams struct {
 	WaitForDelivered bool          // block until terminal delivery state or timeout
 	Timeout          time.Duration // bound for WaitForDelivered (default applied if 0)
 	Format           string        // "json" (default) | "text"
+
+	// Thread-freshness option (#155). Only meaningful with ReplyTo set.
+	BlockOnStale bool // reject (ok:false) if the thread moved since sender last spoke
 }
 
 // runSendCLI parses send-subcommand flags, opens the store, and dispatches
@@ -54,6 +57,8 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		"block until the message reaches a terminal delivery state (or --timeout)")
 	timeout := fs.Duration("timeout", defaultDeliveredWaitTimeout,
 		"bound for --wait-for-delivered")
+	blockOnStale := fs.Bool("block-on-stale", false,
+		"with --reply-to: fail (ok:false) if the thread moved since you last spoke (#155)")
 	format := fs.String("format", "json", "json|text")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
@@ -85,6 +90,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		WaitForDelivered: *waitForDelivered,
 		Timeout:          *timeout,
 		Format:           *format,
+		BlockOnStale:     *blockOnStale,
 	}
 	if p.Body == "" {
 		p.Body = strings.Join(fs.Args(), " ")
@@ -152,6 +158,33 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
 
+	// Thread-freshness (#155). When the send threads under an earlier
+	// message, check whether the thread moved since the sender last spoke.
+	// This runs BEFORE the insert so --block-on-stale can refuse without
+	// queueing a row. A reply_to that doesn't resolve maps to the same
+	// "unknown reply-to id" error the insert path would raise.
+	var freshness *ThreadFreshness
+	if p.ReplyTo != "" {
+		tf, err := resolveThreadFreshness(ctx, s, p.ReplyTo, p.From)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return writeJSONError(stdout, stderr,
+					fmt.Sprintf("unknown reply-to id: %s", p.ReplyTo), exitDataErr)
+			}
+			return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+		}
+		freshness = tf
+		if p.BlockOnStale && tf.Stale {
+			renderSendResult(stdout, SendResponse{
+				OK:        false,
+				Recipient: rs,
+				Freshness: tf,
+				Error:     fmt.Sprintf("thread has %d newer message(s) addressed to you since you last spoke", len(tf.NewerInThread)),
+			}, p.To, p.Format)
+			return exitUnavailable
+		}
+	}
+
 	// Caps. After #29, cap enforcement lives inside InsertMessage's
 	// transaction so we don't need to pre-check here — the store
 	// returns ErrRecipientQueueFull / ErrSenderBacklogFull with a
@@ -182,6 +215,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		ID:        res.PublicID,
 		Queued:    res.Queued,
 		Recipient: rs,
+		Freshness: freshness,
 	}
 	// Opt-in synchronous delivery confirmation (#152). Bounded by --timeout
 	// (defaulted at flag-parse); the row is already inserted, so a timeout

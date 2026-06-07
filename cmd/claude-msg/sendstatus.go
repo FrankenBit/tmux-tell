@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
@@ -44,15 +45,38 @@ type DeliveryStatus struct {
 	VerifyMs    int64  `json:"verify_ms"`
 }
 
+// ThreadFreshness is the crossed-message signal, populated only when the send
+// carries a --reply_to (#155). It answers a substrate-knowable question: has
+// the thread moved since the sender last spoke in it? Specifically, NewerInThread
+// lists messages in the reply_to chain that are addressed to the sender AND
+// arrived after the sender's own last message in that chain — "the thread moved
+// since you last spoke," which the substrate can compute from the reply_to walk
+// + arrival order + to/from.
+//
+// It deliberately does NOT claim "messages you haven't processed": the substrate
+// tracks `delivered` (paste landed in the pane), not `processed` (the recipient
+// instance read/acted on it). A delivered message is in the context stream but
+// may not be attended-to — so "processed" isn't substrate-knowable and is out of
+// scope (see #155 §Semantic correction). Stale is a soft signal: the send still
+// succeeds unless --block-on-stale is set.
+type ThreadFreshness struct {
+	Stale          bool     `json:"stale"`
+	YouRepliedTo   string   `json:"you_replied_to"`
+	NewerInThread  []string `json:"newer_in_thread,omitempty"`
+	LatestInThread string   `json:"latest_in_thread,omitempty"`
+}
+
 // SendResponse is the full structured result of a send. Recipient is always
-// present; Delivery only when the caller opted into the wait. Error is set on
-// a --strict rejection (OK=false).
+// present; Delivery only when the caller opted into the wait; Freshness only
+// when the send carries a reply_to. Error is set on a --strict / --block-on-stale
+// rejection (OK=false).
 type SendResponse struct {
 	OK        bool             `json:"ok"`
 	ID        string           `json:"id,omitempty"`
 	Queued    int              `json:"queued"`
 	Recipient *RecipientStatus `json:"recipient,omitempty"`
 	Delivery  *DeliveryStatus  `json:"delivery,omitempty"`
+	Freshness *ThreadFreshness `json:"thread_freshness,omitempty"`
 	Error     string           `json:"error,omitempty"`
 }
 
@@ -76,6 +100,11 @@ func renderSendResult(stdout io.Writer, res SendResponse, to, format string) {
 				at = "—"
 			}
 			fmt.Fprintf(stdout, "  delivery: %s (%dms, at %s)\n", d.State, d.VerifyMs, at)
+		}
+		if f := res.Freshness; f != nil && f.Stale {
+			fmt.Fprintf(stdout, "  ⚠ %d newer message(s) in this thread since you last spoke: %s\n",
+				len(f.NewerInThread), strings.Join(f.NewerInThread, ", "))
+			fmt.Fprintf(stdout, "    latest in thread: %s\n", f.LatestInThread)
 		}
 		return
 	}
@@ -187,4 +216,58 @@ func waitForDelivery(ctx context.Context, s *store.Store, id string, timeout, po
 		case <-time.After(pollInterval):
 		}
 	}
+}
+
+// resolveThreadFreshness computes the crossed-message signal for a send that
+// carries replyTo (#155). It walks the reply_to chain via the shared
+// store.GetThread primitive (#141) — NOT a bespoke walk — then applies the
+// substrate-knowable definition: a message is "newer in thread you haven't seen"
+// when it is addressed to the sender AND arrived after the sender's own last
+// message in the chain.
+//
+// Ordering uses the rowid (Message.ID), the substrate's true insert/arrival
+// order: id and created_at are co-monotonic (both assigned in the same INSERT),
+// but id is tie-free where created_at can collide at the same millisecond. The
+// sender's new message is not inserted yet, so it never counts as its own
+// baseline or as a newer entry.
+//
+// Baseline = the high-water-mark of what the sender has demonstrably seen: the
+// LATER of (their own last message in the chain, the reply_to target they're
+// replying to). The reply_to target is always folded into the max — the sender
+// is holding the message they reply to, so it (and anything before it) can never
+// count as "newer than you've seen." That is what keeps the signal honest on the
+// common case: replying to the latest message must report not-stale, even though
+// that message is addressed to you and postdates your own last send. Without it,
+// every normal reply-to-the-latest would false-positive (Surveyor review of
+// #189). When the sender hasn't spoken at all, the max collapses to just the
+// reply_to target — the cold-entry case.
+//
+// Returns store.ErrNotFound if replyTo doesn't resolve (the caller maps that to
+// the same "unknown reply-to id" error the insert path would raise).
+func resolveThreadFreshness(ctx context.Context, s *store.Store, replyTo, sender string) (*ThreadFreshness, error) {
+	thread, err := s.GetThread(ctx, replyTo)
+	if err != nil {
+		return nil, err
+	}
+	tf := &ThreadFreshness{YouRepliedTo: replyTo}
+	if n := len(thread); n > 0 {
+		// GetThread returns ascending by id, so the last row is the most
+		// recent message in the chain.
+		tf.LatestInThread = thread[n-1].PublicID
+	}
+
+	var baselineID int64
+	for _, m := range thread {
+		if (m.PublicID == replyTo || m.FromAgent == sender) && m.ID > baselineID {
+			baselineID = m.ID
+		}
+	}
+
+	for _, m := range thread {
+		if m.ToAgent == sender && m.ID > baselineID {
+			tf.NewerInThread = append(tf.NewerInThread, m.PublicID)
+		}
+	}
+	tf.Stale = len(tf.NewerInThread) > 0
+	return tf, nil
 }
