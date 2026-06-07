@@ -76,7 +76,7 @@ Each fix added a structured log line (`quiet_check_err`,
 `delivered_unverified`, `drift_detected`, `drift_check_ambiguous`).
 None of them were instrumented as *metrics* at the time of the
 incident. A rate-of-WARN-per-mailman counter, exposed via a new
-`claude-msg health` or in `status`, would have surfaced incidents
+`tmux-msg-claude health` or in `status`, would have surfaced incidents
 3 and 7 within minutes rather than hours.
 
 ### 2.3 Obvious in retrospect vs structurally non-obvious
@@ -124,7 +124,7 @@ Filed as separate Forgejo issues so each is tracked, sized, and
 resolvable on its own cadence. Ordered by expected operator pain
 reduction (highest-leverage first):
 
-- [x] [#42 — `claude-msg health` subcommand](https://git.frankenbit.de/frankenbit/tmux-msg/issues/42)
+- [x] [#42 — `tmux-msg-claude health` subcommand](https://git.frankenbit.de/frankenbit/tmux-msg/issues/42)
   (priority/high, size/M). One-command scan-and-report of WARN
   rates + crash counts + stale registry entries; replaces the
   morning-coffee `journalctl ... | grep` ritual. The single
@@ -216,7 +216,7 @@ provide **three orthogonal grep handles** for the discipline:
 - **Location**: in-package, in dedicated `pin_test.go` files. One
   file per package; grep `pin_test.go` lists the entire discipline
   surface across the codebase. Post-ADR landing: three files
-  (`cmd/claude-msg/pin_test.go`, `internal/store/pin_test.go`,
+  (`cmd/tmux-msg-claude/pin_test.go`, `internal/store/pin_test.go`,
   `internal/discover/pin_test.go`).
 - **Naming**: `TestPin_<CommitmentSlug>_<Variant>`. The `TestPin_`
   prefix makes mixed-package test runs self-documenting when a pin

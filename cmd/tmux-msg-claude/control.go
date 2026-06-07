@@ -42,7 +42,7 @@ type controlResult struct {
 }
 
 // doControl is the shared validate+insert pipeline behind both the MCP
-// tmux-msg.control tool and the new `claude-msg control` CLI. Returns
+// tmux-msg.control tool and the new `tmux-msg-claude control` CLI. Returns
 // a structured result the caller renders into its preferred shape.
 //
 // Three execution paths:
@@ -171,7 +171,7 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 // runControlCLI parses control-subcommand flags and dispatches to
 // doControl, writing the result as JSON to stdout.
 //
-// Usage: claude-msg control --to AGENT --command NAME [--resume-with TEXT]
+// Usage: tmux-msg-claude control --to AGENT --command NAME [--resume-with TEXT]
 func runControlCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("control", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -221,7 +221,7 @@ func runControlCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if fromName == "" {
 		return writeJSONError(stdout, stderr,
-			"cannot resolve sender: pass --from, set $CLAUDE_AGENT_NAME, or register this pane",
+			"cannot resolve sender: pass --from, set $TMUX_AGENT_NAME, or register this pane",
 			exitUsage)
 	}
 

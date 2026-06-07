@@ -72,7 +72,7 @@ func TestWhoami_TextFormat(t *testing.T) {
 
 func TestWhoami_NoIdentity(t *testing.T) {
 	// This exercises the CLI wrapper, since identity resolution lives there.
-	t.Setenv("CLAUDE_AGENT_NAME", "")
+	t.Setenv("TMUX_AGENT_NAME", "")
 	var stdout, stderr bytes.Buffer
 	exit := runWhoamiCLI([]string{"--db", ":memory:"}, &stdout, &stderr)
 	if exit != exitUsage {

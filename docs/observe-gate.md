@@ -104,7 +104,7 @@ If you start typing in an agent's pane and then walk away, a queued bus message
 can't wait forever. After your input row sits **unchanged for `input-stale-threshold`
 (default 2 minutes)**, the gate decides the draft is abandoned and proceeds — but it
 will **not** silently destroy what you typed. The flush is a three-path decision
-(`cmd/claude-msg/serve.go`, `internal/tmuxio/observe_gate.go`):
+(`cmd/tmux-msg-claude/serve.go`, `internal/tmuxio/observe_gate.go`):
 
 1. **(c) Clear-paste-archive — the primary path.** The gate snapshots your input-row
    content into the bus as a `kind=stranded_draft` row, **self-addressed to the same
@@ -136,13 +136,13 @@ To find it again in the store *after* that self-delivery (the row has moved past
 `queued`), use the SQLite inbox:
 
 ```bash
-claude-msg inbox <agent> --state delivered   # the self-delivered snapshot
-claude-msg inbox <agent> --state ""          # all states, if you're unsure
+tmux-msg-claude inbox <agent> --state delivered   # the self-delivered snapshot
+tmux-msg-claude inbox <agent> --state ""          # all states, if you're unsure
 ```
 
 ## Tuning knobs
 
-All six are **CLI flags** on `claude-msg serve` *and* **TOML knobs** (per-agent or
+All six are **CLI flags** on `tmux-msg-claude serve` *and* **TOML knobs** (per-agent or
 `[defaults]`), resolved through the standard precedence chain — most specific wins:
 
 > **CLI flag > `[agent.<name>]` block > `[defaults]` block > compiled-in default**
@@ -160,7 +160,7 @@ The two delivery-failure toggles (`--notify-on-failed`,
 `--notify-on-delivered-unverified`) are **independent of the gate** — they govern the
 sender-side failure notices, not delivery timing.
 
-Run `claude-msg config show --agent <name>` to see the resolved values for an agent
+Run `tmux-msg-claude config show --agent <name>` to see the resolved values for an agent
 and trace where each one came from.
 
 ## Checking an agent's state yourself
@@ -169,8 +169,8 @@ The same `AgentState` classification the gate uses is available on demand — ha
 before dispatching to a busy agent, or when debugging delivery timing:
 
 ```bash
-claude-msg state --agent <name>              # text
-claude-msg state --agent <name> --format json
+tmux-msg-claude state --agent <name>              # text
+tmux-msg-claude state --agent <name> --format json
 ```
 
 From a Claude session, the MCP tool is **`tmux-msg.agent_state`** (input
@@ -209,5 +209,5 @@ tracked in [#124](https://git.frankenbit.de/frankenbit/tmux-msg/issues/124).)
 - README [§Delivery semantics: the observe-gate](../README.md#delivery-semantics-the-observe-gate) — the concise reference
 - [`diagnostic-playbook.md`](diagnostic-playbook.md) — when an agent says "I missed a message" (sender-side vs bus-side triage)
 - `CHANGELOG.md` `[0.3.0]` (#92/#93 gate), `[0.4.0]` (#94 sweep + strict TOML, #95 📫, #96 multi-line)
-- Source: `internal/tmuxio/observe_gate.go`, `internal/tmuxio/state.go`, `cmd/claude-msg/serve.go`
+- Source: `internal/tmuxio/observe_gate.go`, `internal/tmuxio/state.go`, `cmd/tmux-msg-claude/serve.go`
 - Releases: [v0.3.0](https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.3.0) · [v0.4.0](https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.4.0)

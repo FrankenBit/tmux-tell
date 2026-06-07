@@ -26,7 +26,7 @@ const (
 	deprecatedBinaryRemoval = "v0.11.0" // two-minor floor from the v0.9.0 rename (ADR-0008)
 )
 
-const usage = `usage: claude-msg <subcommand> [args]
+const usage = `usage: tmux-msg-claude <subcommand> [args]
 
 Subcommands:
   send    Queue a message for an agent (validates caps, returns JSON)
@@ -90,7 +90,7 @@ func run(args []string, stdout, stderr *os.File) int {
 		fmt.Fprint(stdout, usage)
 		return exitOK
 	case "-v", "--version", "version":
-		fmt.Fprintf(stdout, "claude-msg %s\n", version.Version)
+		fmt.Fprintf(stdout, "tmux-msg-claude %s\n", version.Version)
 		return exitOK
 	case "send":
 		return runSendCLI(args[1:], stdout, stderr)
@@ -147,7 +147,7 @@ func run(args []string, stdout, stderr *os.File) int {
 	case "mcp":
 		return runMCPCLI(args[1:], os.Stdin, stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "claude-msg: unknown subcommand %q\n\n%s", args[0], usage)
+		fmt.Fprintf(stderr, "tmux-msg-claude: unknown subcommand %q\n\n%s", args[0], usage)
 		return exitUsage
 	}
 }

@@ -34,10 +34,13 @@ every message with `sqlite3`, and uninstall is one script.
 > **Substrate vs CLI-tool flavor.** The substrate is tmux: the pane registry, the
 > paste-and-Enter delivery, the per-pane state detection (idle / busy / popup-open /
 > mid-compaction / awaiting-operator). The CLI tool inside the pane is downstream —
-> `claude-msg` is the binary built for Claude Code today; sibling binaries
-> (`codex-msg`, `copilot-msg`) could be built from the same substrate. The repo name
-> reflects what the substrate *is*, not which tool runs on top. (Originally named
-> `cli-semaphore`; re-grounded on the substrate's primitive in v0.5.0.)
+> `tmux-msg-claude` is the binary built for Claude Code today; sibling binaries
+> (`tmux-msg-codex`, `tmux-msg-copilot`) could be built from the same substrate — the
+> binary name encodes the substrate (`tmux-msg`) plus the CLI-tool adapter (`claude`).
+> The repo name reflects what the substrate *is*, not which tool runs on top.
+> (Originally named `cli-semaphore`; re-grounded on the substrate's primitive in
+> v0.5.0. The adapter binary was `claude-msg` before v0.9.0 — see Install for the
+> deprecation alias.)
 
 ## How it works
 
@@ -45,10 +48,10 @@ every message with `sqlite3`, and uninstall is one script.
    agent-a ──►┌─────────────────────────────────────┐──► mailman@agent-c
    agent-b ──►│  SQLite mailbox (messages, agents)  │    (single writer to its pane)
               └─────────────────────────────────────┘
-   reply ──►  claude-msg send --reply-to <id> --to agent-a "…"
+   reply ──►  tmux-msg-claude send --reply-to <id> --to agent-a "…"
 ```
 
-**Senders** never touch tmux — `claude-msg send` validates the message, checks the
+**Senders** never touch tmux — `tmux-msg-claude send` validates the message, checks the
 caps, and inserts a row. **Mailmen** are per-agent daemons (systemd user services)
 that loop on their inbox, paste the formatted message into the target pane through the
 [observe-gate](#delivery-semantics-the-observe-gate), and mark it delivered. Because
@@ -66,20 +69,31 @@ make build
 sudo ./install.sh        # installs the binary + the systemd user template
 ```
 
-`install.sh` builds `bin/claude-msg`, installs it to `/usr/local/bin/claude-msg`,
+`install.sh` builds `bin/tmux-msg-claude`, installs it to `/usr/local/bin/tmux-msg-claude`,
 creates `/var/lib/tmux-msg/` (holds `messages.db`), and drops the systemd user
-template into `~/.config/systemd/user/`. Then, **as your user (not root)**:
+template (`tmux-msg-claude-mailman@.service`) into `~/.config/systemd/user/`. Pick a
+specific adapter with `--adapter=claude` (the default). Then, **as your user (not
+root)**:
 
 ```bash
 sudo loginctl enable-linger "$USER"   # keep the user manager running across reboots
 systemctl --user daemon-reload        # so the mailman unit is visible
 ```
 
+> **Renamed in v0.9.0 (`claude-msg` → `tmux-msg-claude`, #177).** The binary, the
+> systemd template (`claude-mailman@` → `tmux-msg-claude-mailman@`), and the agent-name
+> env var (`$CLAUDE_AGENT_NAME` → `$TMUX_AGENT_NAME`) were renamed to encode the
+> substrate + adapter. For one deprecation cycle (removed **v0.11.0**, per ADR-0008's
+> two-minor floor) `install.sh` keeps `claude-msg` and `claude-mailman@` working as
+> aliases, and the identity layer still reads `$CLAUDE_AGENT_NAME` as a fallback —
+> each emits a `WARN deprecated_surface_used … removal=v0.11.0` when used. Migrate
+> scripts, units, and env to the new names at your leisure before v0.11.0.
+
 ### What runs as root, and what runs as you
 
 `sudo ./install.sh` asks for root, but root's reach is deliberately narrow.
 **As root** the script does exactly two privileged things: installs the
-binary to `/usr/local/bin/claude-msg` (mode `0755`, owned `root:root`) and
+binary to `/usr/local/bin/tmux-msg-claude` (mode `0755`, owned `root:root`) and
 creates `/var/lib/tmux-msg/` owned by *you*, the operator. **As you** —
 never as root — it runs `go build`, chowns the data dir + the systemd
 template to your account, and (after install) the mailman daemons run in
@@ -102,9 +116,9 @@ two operations need root before you grant it.
 From two panes in the same tmux session:
 
 ```bash
-claude-msg register --name alice     # in pane A — registers + starts alice's mailman
-claude-msg register --name bob       # in pane B
-claude-msg send --to bob "first message across the bus"
+tmux-msg-claude register --name alice     # in pane A — registers + starts alice's mailman
+tmux-msg-claude register --name bob       # in pane B
+tmux-msg-claude send --to bob "first message across the bus"
 ```
 
 `bob`'s pane shows:
@@ -153,7 +167,7 @@ The same fields are available over MCP (`tmux-msg.send` with `strict` /
 struct contract that later disposition features (#157) extend.
 
 To confirm a freshly-registered agent is reachable *without* sending it a message,
-`claude-msg ping bob` probes daemon-up + pane-live (no pane paste) — see
+`tmux-msg-claude ping bob` probes daemon-up + pane-live (no pane paste) — see
 [Reachability probe](#operating-the-bus) under Operating the bus.
 
 ## Message rendering
@@ -230,14 +244,14 @@ Each registered agent has a `delivery_mode`:
 | mode | what the mailman does | the recipient's view |
 |---|---|---|
 | **`paste-and-enter`** *(default)* | pastes into the agent's pane through the observe-gate | messages **appear in the pane** — no inbox polling needed; the substrate pushes |
-| **`mailbox-only`** | does not paste (no pane to push into); messages stay queued | the recipient **polls** `claude-msg inbox` / `tmux-msg.inbox` to read them |
+| **`mailbox-only`** | does not paste (no pane to push into); messages stay queued | the recipient **polls** `tmux-msg-claude inbox` / `tmux-msg.inbox` to read them |
 
 `mailbox-only` makes a plain shell a bus *destination* without an always-on agent
 session — e.g. your own shell: agents `send to=you` and you read when you choose. Set
 it via MCP (`register … delivery_mode=mailbox-only`), CLI (`register --name you
 --delivery-mode mailbox-only`), or a per-agent TOML block. Precedence (highest wins):
 **per-agent block > `[defaults]` > the DB column > compiled default (`paste-and-enter`)**.
-`claude-msg config show` prints the resolved value per agent.
+`tmux-msg-claude config show` prints the resolved value per agent.
 
 ## Delivery semantics: the observe-gate
 
@@ -250,7 +264,7 @@ mid-compaction / unknown) and:
 - **you're typing** → holds, drops a single 📫 in your input row so you know something's
   queued, and delivers once you stop (or, if your draft sits untouched past a
   threshold, archives it safely as a `stranded_draft` bookmark — recover it with
-  `claude-msg stranded` — and then delivers);
+  `tmux-msg-claude stranded` — and then delivers);
 - **busy / compacting / unknown** → waits with progressive backoff, up to a 5-minute
   `MaxWait` cap, then delivers anyway and logs `WARN gate_max_wait` (fail-loud, never
   fail-silent).
@@ -269,7 +283,7 @@ are `state = delivered`: the message IS in the recipient's pane either way, so t
 state isn't a failure. The distinction is carried by a durable `verified` column on
 the row (`1` = verified, `0` = unverified, `NULL` = delivered before this marker
 existed — never retroactively guessed), so it's queryable from the DB rather than only
-from the journal. `claude-msg stats` reports the split; `claude-msg resend <id>` is the
+from the journal. `tmux-msg-claude stats` reports the split; `tmux-msg-claude resend <id>` is the
 recovery path for one you want to re-send (an unverified delivery needs `--force`,
 since the DB can't yet tell a *confirmed* unverified from a verified one per-row — the
 journal does, and surfacing that per-row is the natural next consumer of this marker).
@@ -280,25 +294,25 @@ journal does, and surfacing that per-row is the natural next consumer of this ma
 ## Operating the bus
 
 ```
-claude-msg send   --to Y [--reply-to ID] [--strict] [--wait-for-delivered] [--block-on-stale] "body"  # one-shot
-claude-msg resend ID [--force]                     # replay a failed/unverified message (#157)
-claude-msg ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
-claude-msg inbox  AGENT [--state STATE]            # list messages for AGENT
-claude-msg track  ID [--watch]                     # delivery state of one message
-claude-msg get    ID                               # fetch a processed message by id
-claude-msg status [--today]                        # paused state + queue depths per agent
-claude-msg stats  [--window all|7d|1h] [--agent X] [--pair]  # on-demand bus-traffic aggregates
-claude-msg digest [--since today|week|24h] [--counterparty X]  # campaign-arc narrative summary
-claude-msg tail   [--from X] [--to Y] [--kind K] [--state S]   # live cross-chamber firehose
-claude-msg state  --agent AGENT                    # probe an agent's current activity
-claude-msg health [--since DUR]                    # per-agent operational audit
-claude-msg pause  AGENT | --all                    # halt delivery (queue keeps filling)
-claude-msg resume AGENT | --all
-claude-msg reset  --confirm [--hard]               # purge queued; --hard wipes audit log
-claude-msg log    --thread ID                      # a reply chain, flat-chronological
-claude-msg thread ID [--format tree|json]          # a reply chain, as a parent→child tree
-claude-msg stranded list|show|prune                # recover flushed operator paste snapshots
-claude-msg discover                                # re-derive agents.pane_id from tmux
+tmux-msg-claude send   --to Y [--reply-to ID] [--strict] [--wait-for-delivered] [--block-on-stale] "body"  # one-shot
+tmux-msg-claude resend ID [--force]                     # replay a failed/unverified message (#157)
+tmux-msg-claude ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
+tmux-msg-claude inbox  AGENT [--state STATE]            # list messages for AGENT
+tmux-msg-claude track  ID [--watch]                     # delivery state of one message
+tmux-msg-claude get    ID                               # fetch a processed message by id
+tmux-msg-claude status [--today]                        # paused state + queue depths per agent
+tmux-msg-claude stats  [--window all|7d|1h] [--agent X] [--pair]  # on-demand bus-traffic aggregates
+tmux-msg-claude digest [--since today|week|24h] [--counterparty X]  # campaign-arc narrative summary
+tmux-msg-claude tail   [--from X] [--to Y] [--kind K] [--state S]   # live cross-chamber firehose
+tmux-msg-claude state  --agent AGENT                    # probe an agent's current activity
+tmux-msg-claude health [--since DUR]                    # per-agent operational audit
+tmux-msg-claude pause  AGENT | --all                    # halt delivery (queue keeps filling)
+tmux-msg-claude resume AGENT | --all
+tmux-msg-claude reset  --confirm [--hard]               # purge queued; --hard wipes audit log
+tmux-msg-claude log    --thread ID                      # a reply chain, flat-chronological
+tmux-msg-claude thread ID [--format tree|json]          # a reply chain, as a parent→child tree
+tmux-msg-claude stranded list|show|prune                # recover flushed operator paste snapshots
+tmux-msg-claude discover                                # re-derive agents.pane_id from tmux
 ```
 
 **Kill switch & retention.** `pause` sets `agents.paused = 1`; the mailman stops
@@ -307,7 +321,7 @@ SQLite on disk; on mailman start, any row left `delivering` from a crashed run i
 reset to `queued`. `reset` purges `queued` + `delivering`; `--hard` also wipes the
 delivered audit log; `--confirm` is mandatory.
 
-**Reachability probe.** `claude-msg ping <agent>` answers "is the daemon up + the
+**Reachability probe.** `tmux-msg-claude ping <agent>` answers "is the daemon up + the
 agent registered + its pane reachable?" without the side effect a test `send` has —
 it queues a `kind=ping` row the mailman picks up (proving the daemon is alive) and
 resolves via substrate-health checks (agent registered, pane live), transitioning
@@ -319,7 +333,7 @@ backlogged (`75`). Pinging a non-registered agent fails loud. From MCP, call
 `tmux-msg.ping {"agent": "surveyor"}`. (A `mailbox-only` agent has no mailman, so a
 ping to it reports `timeout`.)
 
-**Tracking delivery.** `claude-msg track <id>` shows where a message is
+**Tracking delivery.** `tmux-msg-claude track <id>` shows where a message is
 (`queued → delivering → delivered`, or `failed` with the reason in `error`);
 `--watch` re-renders on each state change until terminal. From MCP, call
 `tmux-msg.message_status {"id": "9c1d"}`.
@@ -327,7 +341,7 @@ ping to it reports `timeout`.)
 **Diagnosing a failed or unverified message — `resend` (#157).** When a message
 lands `failed`, or lands `delivered` but you can't tell whether it actually
 surfaced in the recipient (a `delivered_unverified` — the paste landed but the
-verify-token never came back in budget), the recovery path is `claude-msg resend
+verify-token never came back in budget), the recovery path is `tmux-msg-claude resend
 <id>`. It replays the original to its recipient as a *new* message whose body is
 byte-identical to the original, carrying a `↻ Replayed: original sent at <ts>`
 chrome marker so the recipient sees it's a re-send, not fresh content. The
@@ -341,7 +355,7 @@ The duplicate guard keeps an accidental re-run from spamming:
   delivered-but-unverified message**: the substrate has no `delivered_unverified`
   column — verified and unverified both read as `delivered`, and only a mailman
   journal line distinguishes them (#169). So recovering an unverified delivery
-  means `claude-msg resend <id> --force`. Once #169 makes the verified/unverified
+  means `tmux-msg-claude resend <id> --force`. Once #169 makes the verified/unverified
   split DB-queryable, a confirmed-unverified message could replay without
   `--force`; until then `--force` is the deliberate "yes, I know it may already
   have arrived" signal.
@@ -350,8 +364,8 @@ The duplicate guard keeps an accidental re-run from spamming:
 
 **Reading a reply thread.** Two views of the same `reply_to` chain (both resolve
 the whole chain from *any* id in it — walk to root, then all descendants):
-`claude-msg log --thread <id>` renders it **flat-chronological** (an audit view);
-`claude-msg thread <id>` renders it as a **parent→child tree** (a navigation /
+`tmux-msg-claude log --thread <id>` renders it **flat-chronological** (an audit view);
+`tmux-msg-claude thread <id>` renders it as a **parent→child tree** (a navigation /
 diagnostic view — "who replied to what, and did it land?"):
 
 ```
@@ -372,7 +386,7 @@ walk to warn you if the thread moved since you last spoke — the `thread_freshn
 block, described under [the send loop](#quickstart). `thread`/`log` *read*
 the chain; `thread_freshness` *guards a write* against replying to a superseded state.
 
-**Bus-traffic stats.** `claude-msg stats` is the in-terminal "show me the bus
+**Bus-traffic stats.** `tmux-msg-claude stats` is the in-terminal "show me the bus
 right now" surface — on-demand aggregates computed straight from the local
 `messages.db`, complementing the continuous observability stack that owns
 dashboard trends. The default reports a per-agent table (sent / received /
@@ -386,7 +400,7 @@ busiest sender→recipient pairs; `--format json` emits machine-readable output
 `status --today` / `health` for that breakdown; making it DB-queryable is
 tracked in #169.
 
-**Campaign digest.** `claude-msg digest` is the *qualitative* sibling to `stats`:
+**Campaign digest.** `tmux-msg-claude digest` is the *qualitative* sibling to `stats`:
 where `stats` answers "how much / how fast," `digest` answers "what conversations
 happened and what's still owed." It reports a by-counterparty table (sent /
 received / threads / closed / in-flight) plus an **in-flight threads** section
@@ -402,7 +416,7 @@ a heuristic, not ground truth: the substrate can't know if a conversation is
 the list. System chrome (`delivery_failure_notice`, `stranded_draft`, `ping`) is
 excluded from thread analysis.
 
-**Live tail.** `claude-msg tail` is the cross-chamber firehose — all bus traffic,
+**Live tail.** `tmux-msg-claude tail` is the cross-chamber firehose — all bus traffic,
 live, filtered to what you care about. It's the view the per-mailman journals and
 single-message `track` couldn't give: when a bug spans two chambers (the #137
 walk-back needed exactly this), `tail --from X --to Y` shows the correlated stream
@@ -429,9 +443,9 @@ a notice that itself fails does not generate another (no wedged-pane cascade). B
 
 **Recovering a flushed paste.** When the observe-gate archives your in-flight
 input before pasting over it (see below), it stores the snapshot as a
-`stranded_draft` bookmark. `claude-msg stranded list` shows your bookmarks (id,
-pane, timestamp, byte-size); `claude-msg stranded show <id>` prints the recovered
-content (`-o file` writes it out, for long pastes); `claude-msg stranded prune
+`stranded_draft` bookmark. `tmux-msg-claude stranded list` shows your bookmarks (id,
+pane, timestamp, byte-size); `tmux-msg-claude stranded show <id>` prints the recovered
+content (`-o file` writes it out, for long pastes); `tmux-msg-claude stranded prune
 --older-than 7d` clears old ones. Note: the snapshot holds whatever the substrate
 captured from the input row — for a large bracketed paste tmux may have shown only
 its `[Pasted text #N +M lines]` placeholder rather than the literal text, so
@@ -444,7 +458,7 @@ journal.
 
 ## Use from Claude Code (MCP)
 
-The same binary speaks MCP over stdio under `claude-msg mcp`, exposing
+The same binary speaks MCP over stdio under `tmux-msg-claude mcp`, exposing
 `tmux-msg.send / control / agents / whoami / inbox / status / register / unregister /
 message_status / agent_state` as native tools. **One user-level config; identity is
 auto-resolved per pane.** Add the server once in `~/.claude.json`:
@@ -453,7 +467,7 @@ auto-resolved per pane.** Add the server once in `~/.claude.json`:
 {
   "mcpServers": {
     "tmux-msg": {
-      "command": "/usr/local/bin/claude-msg",
+      "command": "/usr/local/bin/tmux-msg-claude",
       "args": ["mcp"]
     }
   }
@@ -470,7 +484,7 @@ When the CLI tool in a pane spawns the MCP server, the child inherits `$TMUX_PAN
 > *call `tmux-msg.register name=myname`*
 
 The pane is auto-detected, the row inserted, and the mailman started in the same step.
-Equivalent CLI: `claude-msg register --name myname`.
+Equivalent CLI: `tmux-msg-claude register --name myname`.
 
 The register response includes a **`queued`** count — the number of messages already
 waiting for this agent at register time (#151). A fresh or post-restart session (e.g.
@@ -498,7 +512,7 @@ underscores, dashes preserved, server-name prefix repeated as
 `mcp__<server>__<server>_<tool>`. You can read the live wire names directly:
 
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | claude-msg mcp
+echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | tmux-msg-claude mcp
 ```
 
 > A Claude session started before an MCP-tool rename keeps the names it was
@@ -530,7 +544,7 @@ allowlist of specific (sender, recipient) pairs.
 
 Adding a command, flipping a scope, or adding an edge requires a code change
 (`internal/control/control.go`) — the audit surface is intentionally small. The same
-surface is a CLI subcommand (`claude-msg control --to … --command …`) for scripts and
+surface is a CLI subcommand (`tmux-msg-claude control --to … --command …`) for scripts and
 sessions whose MCP isn't loaded.
 
 **Self-compact with a follow-up.** `/compact` leaves the session at an empty prompt;
@@ -541,7 +555,7 @@ lands after the CLI tool has settled, not into the slash-command parser mid-comp
 
 ### Removing a pane
 
-`tmux-msg.unregister name=oldname` (or `claude-msg unregister`) stops the mailman,
+`tmux-msg.unregister name=oldname` (or `tmux-msg-claude unregister`) stops the mailman,
 drops the agent row, and optionally purges its history (`purge_messages: true`).
 
 ### New tools require a session restart
@@ -550,14 +564,14 @@ MCP tool lists are sent once during the `initialize` handshake and not refreshed
 Updating the binary and restarting the mailmen makes new tools available to *future*
 sessions; sessions started earlier stay pinned to the tool surface they initialized
 with. `mcp-restart-tmux-msg` (#28) re-initializes one session's MCP stdio without
-losing context; for a fleet, `claude-msg refresh-all-mcps` fires it per registered
+losing context; for a fleet, `tmux-msg-claude refresh-all-mcps` fires it per registered
 agent (operator-only — a peer-invokable bulk restart would be a DoS amplification
 class).
 
 ## Identity, names & aliases
 
 **Identity precedence** (shared by the MCP server and the CLI): (1) explicit override
-— `--from` on `send`, `--as` on `whoami`, or `$CLAUDE_AGENT_NAME`; (2) `$TMUX_PANE` →
+— `--from` on `send`, `--as` on `whoami`, or `$TMUX_AGENT_NAME`; (2) `$TMUX_PANE` →
 `agents.pane_id` → name (the default for a registered pane, no env var needed);
 (3) neither → an actionable error pointing at registration. `whoami` reports a
 `source` field (`explicit` / `env` / `pane`) so you can see how identity resolved.
@@ -615,8 +629,8 @@ minor bumps may break compatibility while the shape settles, patch bumps stay
 backward-compatible within a minor. See `CHANGELOG.md` for what shipped per release, and [ADR-0008](docs/adr/0008-deprecation-policy.md) for the post-1.0 deprecation policy (two-minor-cycle floor).
 
 ```bash
-$ claude-msg --version
-claude-msg v0.8.0
+$ tmux-msg-claude --version
+tmux-msg-claude v0.8.0
 ```
 
 A binary built via `make build` stamps the version from `git describe`; a bare

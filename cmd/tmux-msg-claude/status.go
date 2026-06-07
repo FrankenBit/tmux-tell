@@ -13,7 +13,7 @@ import (
 
 // runStatusCLI parses status-subcommand flags and dispatches.
 //
-// Usage: claude-msg status [--format text|json] [--today]
+// Usage: tmux-msg-claude status [--format text|json] [--today]
 func runStatusCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)

@@ -27,7 +27,8 @@ Cadence (clarified per Surveyor review of v0.2.0):
   removal `v1.X+2`), emits a `WARN deprecated_surface_used` log, and gets a
   `### Deprecated` entry here. Pre-1.0 keeps the looseness above.
 
-Run `claude-msg --version` to see what's installed.
+Run `tmux-msg-claude --version` to see what's installed (`claude-msg` works as a
+deprecated alias through v0.11.0).
 
 ## [Unreleased]
 
@@ -125,6 +126,26 @@ Run `claude-msg --version` to see what's installed.
   process (mirroring PR1's `claude-msg`-alias WARN). The `$CLAUDE_AGENT_NAME`
   mentions still present in `--help` / error text are swept in PR3; they remain
   accurate (the var still works) until then.
+
+- **Docs + in-binary help-text sweep for the rename (#177, PR3 of 3 — closes #177).**
+  README, `docs/diagnostic-playbook.md`, and the operator-facing docs (`why`,
+  `observe-gate`, `operator-ux`, `failure-modes`, `security`) now use
+  `tmux-msg-claude` / `tmux-msg-claude-mailman@` / `$TMUX_AGENT_NAME` in command
+  examples, prose, and error-message references. The in-binary surfaces follow: the
+  `usage` text, subcommand `--help` strings, the "cannot resolve identity" errors, and
+  the MCP tool-schema descriptions now name `tmux-msg-claude` / `$TMUX_AGENT_NAME`.
+  README's Install section gains a v0.9.0 rename callout naming the deprecation aliases
+  + the v0.11.0 removal; the substrate-vs-flavor box names the new sibling-adapter
+  convention (`tmux-msg-codex` / `tmux-msg-copilot`). ADRs are left as accepted-state
+  historical records (not retroactively rewritten); the deprecation-alias detection
+  (`claude-msg` name check) and the `name=claude-msg` / `name=CLAUDE_AGENT_NAME` WARN
+  strings deliberately keep the old names — they ARE the deprecation surface.
+  Completes the #177 rename arc (PR1 structural + PR2 env-var + PR3 docs). *The
+  chamber-CLAUDE.md sweep turned out vacuous (chambers reference the bus by its MCP
+  tools, not the binary/env-var names); the remaining operator-side reach is the #180
+  assignee-on-claim addition, tracked in alcatraz-infra#27 (Bosun action). The
+  BookStack runbook (#188) needed no change — it already uses substrate names. Both
+  out of this repo.*
 
 ### Deprecated
 

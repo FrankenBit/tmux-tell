@@ -40,7 +40,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
-	from := fs.String("from", "", "sender agent name (env: CLAUDE_AGENT_NAME)")
+	from := fs.String("from", "", "sender agent name (env: TMUX_AGENT_NAME)")
 	to := fs.String("to", "", "recipient agent name (required)")
 	replyTo := fs.String("reply-to", "", "public_id of the message being replied to")
 	noReplyExpected := fs.Bool("no-reply-expected", false, "signal recipient that no acknowledgment is needed (#145)")
@@ -106,7 +106,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 	// Identity
 	if p.From == "" {
 		return writeJSONError(stdout, stderr,
-			"cannot resolve sender: pass --from, set $CLAUDE_AGENT_NAME, or register this pane",
+			"cannot resolve sender: pass --from, set $TMUX_AGENT_NAME, or register this pane",
 			exitUsage)
 	}
 	if p.To == "" {

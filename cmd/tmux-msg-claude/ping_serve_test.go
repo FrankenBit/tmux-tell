@@ -108,7 +108,7 @@ func TestServe_PingFailedOnDeadPane(t *testing.T) {
 // shape. With no mailman running it lands in the timeout state on a
 // short budget — enough to prove the wiring without flakiness.
 func TestMCPPingHandler_Wiring(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })

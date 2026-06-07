@@ -17,7 +17,7 @@ import (
 // an MCP client (load-bearing for the operator-as-bus-participant use
 // case per #116).
 //
-// Usage: claude-msg register --name <name> [--pane <pane>]
+// Usage: tmux-msg-claude register --name <name> [--pane <pane>]
 //
 //	[--delivery-mode paste-and-enter|mailbox-only]
 //	[--start-mailman=true|false] [--force]

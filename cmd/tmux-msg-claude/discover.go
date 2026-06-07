@@ -13,7 +13,7 @@ import (
 
 // runDiscoverCLI parses discover flags and dispatches.
 //
-// Usage: claude-msg discover [--dry-run] [--apply-aliases] [--format text|json]
+// Usage: tmux-msg-claude discover [--dry-run] [--apply-aliases] [--format text|json]
 func runDiscoverCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
 	fs.SetOutput(stderr)

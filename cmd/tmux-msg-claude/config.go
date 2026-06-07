@@ -13,10 +13,10 @@ import (
 // Today there's one verb (`show`); future verbs (`edit`, `validate`,
 // `migrate`) layer in here.
 //
-// Usage: claude-msg config <verb> [args]
+// Usage: tmux-msg-claude config <verb> [args]
 func runConfigCLI(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: claude-msg config <verb> [args]")
+		fmt.Fprintln(stderr, "usage: tmux-msg-claude config <verb> [args]")
 		fmt.Fprintln(stderr, "verbs:")
 		fmt.Fprintln(stderr, "  show   Print the resolved config for an agent (#54)")
 		return exitUsage
@@ -25,12 +25,12 @@ func runConfigCLI(args []string, stdout, stderr io.Writer) int {
 	case "show":
 		return runConfigShowCLI(args[1:], stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "claude-msg config: unknown verb %q\n", args[0])
+		fmt.Fprintf(stderr, "tmux-msg-claude config: unknown verb %q\n", args[0])
 		return exitUsage
 	}
 }
 
-// runConfigShowCLI implements `claude-msg config show --agent NAME`
+// runConfigShowCLI implements `tmux-msg-claude config show --agent NAME`
 // — prints the fully-resolved config for the given agent so the
 // operator can debug precedence without tracing through TOML manually.
 //

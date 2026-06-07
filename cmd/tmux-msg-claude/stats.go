@@ -12,7 +12,7 @@ import (
 
 // runStatsCLI parses stats-subcommand flags and dispatches.
 //
-// Usage: claude-msg stats [--window all|<N>d|1h|24h] [--agent NAME]
+// Usage: tmux-msg-claude stats [--window all|<N>d|1h|24h] [--agent NAME]
 //
 //	[--pair [--top N]] [--format text|json]
 //

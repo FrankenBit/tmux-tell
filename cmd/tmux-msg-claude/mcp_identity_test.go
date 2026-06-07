@@ -8,7 +8,7 @@ import (
 )
 
 func TestResolveMCPIdentity_PrefersExplicitEnv(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "explicit")
+	t.Setenv("TMUX_AGENT_NAME", "explicit")
 	t.Setenv("TMUX_PANE", "%99")
 	s := newCmdTestStore(t, "explicit") // pane_id=%99 in newCmdTestStore
 
@@ -22,7 +22,7 @@ func TestResolveMCPIdentity_PrefersExplicitEnv(t *testing.T) {
 }
 
 func TestResolveMCPIdentity_TMUXPaneLookup(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "")
+	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "%5")
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })
@@ -40,7 +40,7 @@ func TestResolveMCPIdentity_TMUXPaneLookup(t *testing.T) {
 }
 
 func TestResolveMCPIdentity_NoMatchReturnsEmpty(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "")
+	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "%999") // not registered
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })
@@ -55,7 +55,7 @@ func TestResolveMCPIdentity_NoMatchReturnsEmpty(t *testing.T) {
 }
 
 func TestResolveMCPIdentity_NeitherEnvSet(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "")
+	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "")
 	s := newCmdTestStore(t, "alice")
 

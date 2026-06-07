@@ -155,7 +155,7 @@ func TestTrack_CLI_ReplyToThreaded(t *testing.T) {
 // MCP-side parity: the tool returns the same struct, so the wire
 // shape is byte-identical to the CLI's --format json output.
 func TestMCP_MessageStatus_HappyPath(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 	id := seedMessage(t, s)
 
@@ -168,7 +168,7 @@ func TestMCP_MessageStatus_HappyPath(t *testing.T) {
 }
 
 func TestMCP_MessageStatus_NotFound(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
 	got := callMCPTool(t, s, "tmux-msg.message_status", map[string]any{

@@ -11,7 +11,7 @@ import (
 
 // runResetCLI parses reset flags and dispatches.
 //
-// Usage: claude-msg reset --confirm [--hard] [--agent NAME] [--format json]
+// Usage: tmux-msg-claude reset --confirm [--hard] [--agent NAME] [--format json]
 func runResetCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("reset", flag.ContinueOnError)
 	fs.SetOutput(stderr)

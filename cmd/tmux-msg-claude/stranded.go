@@ -127,10 +127,10 @@ func listStrandedBookmarks(ctx context.Context, s *store.Store, agent string) ([
 
 // runStrandedCLI dispatches the stranded subcommands.
 //
-// Usage: claude-msg stranded <list|show|prune> [args]
+// Usage: tmux-msg-claude stranded <list|show|prune> [args]
 func runStrandedCLI(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: claude-msg stranded <list|show|prune> [args]")
+		fmt.Fprintln(stderr, "usage: tmux-msg-claude stranded <list|show|prune> [args]")
 		return exitUsage
 	}
 	switch args[0] {
@@ -222,7 +222,7 @@ func runStrandedShowCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: claude-msg stranded show <bookmark-id> [-o file]")
+		fmt.Fprintln(stderr, "usage: tmux-msg-claude stranded show <bookmark-id> [-o file]")
 		return exitUsage
 	}
 	id := fs.Arg(0)
@@ -323,7 +323,7 @@ func resolveStrandedAgent(ctx context.Context, s *store.Store, override string) 
 		return "", err
 	}
 	if name == "" {
-		return "", errors.New("cannot resolve agent: pass --agent, set $CLAUDE_AGENT_NAME, or register this pane")
+		return "", errors.New("cannot resolve agent: pass --agent, set $TMUX_AGENT_NAME, or register this pane")
 	}
 	return name, nil
 }

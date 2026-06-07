@@ -69,7 +69,7 @@ func TestPin_WireShapeSingleSoT_CLIAndMCPByteIdentity(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
 	id := seedMessage(t, s)
 	t.Setenv("CLAUDE_MSG_DB", ":memory:")
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 
 	// CLI shape.
 	var stdout bytes.Buffer

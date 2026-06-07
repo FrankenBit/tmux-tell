@@ -127,7 +127,7 @@ type serveOpts struct {
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
 // drives the mailman loop.
 //
-// Usage: claude-msg serve --agent NAME [tuning flags]
+// Usage: tmux-msg-claude serve --agent NAME [tuning flags]
 func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -293,14 +293,14 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	a, err := s.GetAgent(opCtx, opts.Agent)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(stderr, "agent %q not registered — run 'claude-msg discover'\n", opts.Agent)
+			fmt.Fprintf(stderr, "agent %q not registered — run 'tmux-msg-claude discover'\n", opts.Agent)
 			return exitUnavailable
 		}
 		fmt.Fprintf(stderr, "get_agent: %v\n", err)
 		return exitInternal
 	}
 	if a.PaneID == "" {
-		fmt.Fprintf(stderr, "agent %q has no pane_id — run 'claude-msg discover'\n", opts.Agent)
+		fmt.Fprintf(stderr, "agent %q has no pane_id — run 'tmux-msg-claude discover'\n", opts.Agent)
 		return exitUnavailable
 	}
 
@@ -327,7 +327,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 
 	// Mailbox-only short-circuit (#116). When the agent's delivery_mode
 	// is mailbox-only, the mailman daemon has no work to do — messages
-	// stay in state=queued and the operator polls via `claude-msg inbox`.
+	// stay in state=queued and the operator polls via `tmux-msg-claude inbox`.
 	// Exit cleanly so systemd records a Result=success rather than
 	// burning CPU on a poll loop that would never deliver anything. If
 	// the operator later flips delivery_mode back to paste-and-enter,
@@ -828,7 +828,7 @@ func renderStrandedDraftBody(pane, triggerMsgID, content string) string {
 		strandedHeaderLine,
 		strandedPanePrefix + pane,
 		strandedTriggerPrefix + triggerMsgID,
-		"  Recover: claude-msg stranded list  →  claude-msg stranded show <id>",
+		"  Recover: tmux-msg-claude stranded list  →  tmux-msg-claude stranded show <id>",
 		strandedContentMarker,
 		indentForBody(content),
 	}, "\n")
@@ -898,14 +898,14 @@ func handlePing(ctx context.Context, s *store.Store, logger *log.Logger, agent, 
 // pingHealthy reports whether the recipient's registered pane is live —
 // the load-bearing substrate-health signal for a ping (#144). An empty
 // pane id means the agent is registered but has no pane (operator should
-// run `claude-msg discover`); a non-live pane means the agent's session
+// run `tmux-msg-claude discover`); a non-live pane means the agent's session
 // is gone. Both are reachability failures. A LivePanes probe error is
 // itself treated as a failure with the underlying reason surfaced: we
 // can't substantiate reachability, so we don't claim it (sibling to the
 // pre-paste-safety "couldn't substantiate → unsafe" stance).
 func pingHealthy(ctx context.Context, pane string) (reason string, ok bool) {
 	if pane == "" {
-		return "agent registered but has no pane_id (run 'claude-msg discover')", false
+		return "agent registered but has no pane_id (run 'tmux-msg-claude discover')", false
 	}
 	live, err := tmuxio.LivePanes(ctx)
 	if err != nil {

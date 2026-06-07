@@ -44,9 +44,9 @@ type refreshAgentEntry struct {
 
 // runRefreshAllMcpsCLI parses the refresh-all-mcps flags and dispatches.
 //
-// Usage: claude-msg refresh-all-mcps [--format text|json]
+// Usage: tmux-msg-claude refresh-all-mcps [--format text|json]
 //
-// Convenience surface for the bulk version of `claude-msg control
+// Convenience surface for the bulk version of `tmux-msg-claude control
 // --to <agent> --command mcp-restart-tmux-msg`. Iterates the
 // registered agents table and fires the macro per agent, then
 // reports per-agent success/failure + a summary line.
@@ -67,7 +67,7 @@ func runRefreshAllMcpsCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("refresh-all-mcps", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
-	from := fs.String("from", "", "sender agent name (env: CLAUDE_AGENT_NAME; auto-resolved from $TMUX_PANE if registered)")
+	from := fs.String("from", "", "sender agent name (env: TMUX_AGENT_NAME; auto-resolved from $TMUX_PANE if registered)")
 	format := fs.String("format", "text", "text|json")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
@@ -87,7 +87,7 @@ func runRefreshAllMcpsCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if sender == "" {
 		return writeJSONError(stdout, stderr,
-			fmt.Sprintf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table",
+			fmt.Sprintf("cannot resolve sender identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table",
 				os.Getenv("TMUX_PANE")), exitUnavailable)
 	}
 

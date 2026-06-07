@@ -14,13 +14,13 @@ import (
 
 // runWhoamiCLI parses whoami-subcommand flags and dispatches.
 //
-// Usage: claude-msg whoami [--as NAME] [--format text|json]
+// Usage: tmux-msg-claude whoami [--as NAME] [--format text|json]
 func runWhoamiCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("whoami", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
 	asName := fs.String("as", "",
-		"explicit identity (overrides $CLAUDE_AGENT_NAME)")
+		"explicit identity (overrides $TMUX_AGENT_NAME)")
 	format := fs.String("format", "text", "text|json")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
@@ -40,7 +40,7 @@ func runWhoamiCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if name == "" {
 		return writeJSONError(stdout, stderr,
-			"cannot resolve identity: pass --as, set $CLAUDE_AGENT_NAME, or register this pane",
+			"cannot resolve identity: pass --as, set $TMUX_AGENT_NAME, or register this pane",
 			exitUsage)
 	}
 
@@ -64,7 +64,7 @@ func runWhoamiWithStore(ctx context.Context, s *store.Store,
 				"name":       name,
 				"registered": false,
 			})
-			fmt.Fprintf(stderr, "agent %q not in registry — run 'claude-msg discover' or check the install\n", name)
+			fmt.Fprintf(stderr, "agent %q not in registry — run 'tmux-msg-claude discover' or check the install\n", name)
 			return exitUnavailable
 		}
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)

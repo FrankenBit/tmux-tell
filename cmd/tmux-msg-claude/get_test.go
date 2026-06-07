@@ -177,7 +177,7 @@ func TestGet_CLI_JSON_HappyPath(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
 	id, _ := seedGetFixture(t, s)
 	t.Setenv("CLAUDE_MSG_DB", ":memory:")
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 
 	// Inject the store explicitly via direct doGet path; the CLI's
 	// store.Open would point at the env-var DB which doesn't carry our

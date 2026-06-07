@@ -64,7 +64,7 @@ func callMCPTool(t *testing.T, s *store.Store, name string, args map[string]any)
 }
 
 func TestMCP_Send_HappyPath(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
 	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
@@ -81,7 +81,7 @@ func TestMCP_Send_HappyPath(t *testing.T) {
 }
 
 func TestMCP_Send_UnknownRecipient(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
 	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
@@ -96,7 +96,7 @@ func TestMCP_Send_UnknownRecipient(t *testing.T) {
 func TestMCP_Send_BlockOnStale(t *testing.T) {
 	// MCP-path parity for #155: a stale thread + block_on_stale=true returns a
 	// structured ok:false result (not an MCP error) carrying the freshness block.
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 	m1 := tfInsert(t, s, "alice", "bob", "")
 	_ = tfInsert(t, s, "bob", "alice", m1) // crosses in, addressed to alice
@@ -125,7 +125,7 @@ func TestMCP_Send_BlockOnStale(t *testing.T) {
 func TestMCP_Resend_GuardAndForce(t *testing.T) {
 	// MCP-path parity for #157 PR1: a delivered message is refused (structured
 	// ok:false, not an MCP error) without force, and replays with force.
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 	orig := seedResendMsg(t, s, "alice", "bob", "mcp replay body", store.StateDelivered)
 
@@ -152,7 +152,7 @@ func TestMCP_Resend_GuardAndForce(t *testing.T) {
 }
 
 func TestMCP_Resend_UnknownID(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 	got := callMCPTool(t, s, "tmux-msg.resend", map[string]any{"id": "ghost"})
 	if got["_isError"] != true {
@@ -161,7 +161,7 @@ func TestMCP_Resend_UnknownID(t *testing.T) {
 }
 
 func TestMCP_Send_RequiresEnvVar(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "")
+	t.Setenv("TMUX_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")
 
 	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
@@ -174,7 +174,7 @@ func TestMCP_Send_RequiresEnvVar(t *testing.T) {
 }
 
 func TestMCP_Whoami(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
 	got := callMCPTool(t, s, "tmux-msg.whoami", map[string]any{})
@@ -184,7 +184,7 @@ func TestMCP_Whoami(t *testing.T) {
 }
 
 func TestMCP_Agents(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob", "carol")
 
 	got := callMCPTool(t, s, "tmux-msg.agents", map[string]any{})
@@ -198,7 +198,7 @@ func TestMCP_Agents(t *testing.T) {
 }
 
 func TestMCP_Inbox(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "bob")
+	t.Setenv("TMUX_AGENT_NAME", "bob")
 	s := newCmdTestStore(t, "alice", "bob")
 	ctx := context.Background()
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "queued"})

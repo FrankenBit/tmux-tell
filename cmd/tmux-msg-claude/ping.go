@@ -35,7 +35,7 @@ const pingPollInterval = 100 * time.Millisecond
 // (daemon down, paused, or backlogged).
 const pingStateTimeout = "timeout"
 
-// pingResult is the structured response shared by the `claude-msg ping`
+// pingResult is the structured response shared by the `tmux-msg-claude ping`
 // CLI subcommand and the `tmux-msg.ping` MCP tool (#144). OK is true only
 // when the probe reached `delivered` (recipient reachable). State is one
 // of "delivered", "failed", or "timeout".
@@ -66,7 +66,7 @@ type pingCLIParams struct {
 // is transient — queued→delivered with no paste).
 func insertPing(ctx context.Context, s *store.Store, from, to string) (string, error) {
 	if from == "" {
-		return "", errors.New("cannot resolve sender: set $CLAUDE_AGENT_NAME, pass --from, or register this pane")
+		return "", errors.New("cannot resolve sender: set $TMUX_AGENT_NAME, pass --from, or register this pane")
 	}
 	if to == "" {
 		return "", errors.New("recipient agent required")
@@ -159,12 +159,12 @@ func pingProbe(ctx context.Context, s *store.Store, from, to string, timeout, po
 // runPingCLI parses ping-subcommand flags, opens the store, resolves the
 // sender identity, and dispatches to runPingWithStore.
 //
-// Usage: claude-msg ping <agent> [--timeout D] [--format text|json] [--from NAME]
+// Usage: tmux-msg-claude ping <agent> [--timeout D] [--format text|json] [--from NAME]
 func runPingCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ping", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
-	from := fs.String("from", "", "sender agent name (env: CLAUDE_AGENT_NAME)")
+	from := fs.String("from", "", "sender agent name (env: TMUX_AGENT_NAME)")
 	timeout := fs.Duration("timeout", defaultPingTimeout,
 		"bound the wait for a terminal delivery state")
 	format := fs.String("format", "text", "text|json")
@@ -172,7 +172,7 @@ func runPingCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: claude-msg ping <agent> [--timeout D] [--format text|json]")
+		fmt.Fprintln(stderr, "usage: tmux-msg-claude ping <agent> [--timeout D] [--format text|json]")
 		return exitUsage
 	}
 	to := fs.Arg(0)

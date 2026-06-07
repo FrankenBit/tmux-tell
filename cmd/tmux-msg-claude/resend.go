@@ -20,7 +20,7 @@ type resendParams struct {
 // runResendCLI parses the resend-subcommand flags, opens the store, and
 // dispatches to runResendWithStore. The message id is positional:
 //
-//	claude-msg resend <id> [--force] [--format json|text]
+//	tmux-msg-claude resend <id> [--force] [--format json|text]
 //
 // resend replays an existing message to its ORIGINAL recipient with a
 // "Replayed: original sent at <ts>" chrome marker (#157 PR1) — the explicit
@@ -60,7 +60,7 @@ func runResendCLI(args []string, stdout, stderr io.Writer) int {
 func runResendWithStore(ctx context.Context, s *store.Store, p resendParams, stdout, stderr io.Writer) int {
 	if p.OriginalID == "" {
 		return writeJSONError(stdout, stderr,
-			"resend requires a message id: claude-msg resend <id>", exitUsage)
+			"resend requires a message id: tmux-msg-claude resend <id>", exitUsage)
 	}
 
 	orig, err := s.GetMessage(ctx, p.OriginalID)

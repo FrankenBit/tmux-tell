@@ -11,7 +11,7 @@ import (
 // Self-invocation of a self-only command (compact) is the canonical
 // "agent quietly trims its own context" path.
 func TestMCP_Control_SelfInvocation_SelfOnlyCommand(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -45,7 +45,7 @@ func TestMCP_Control_SelfInvocation_SelfOnlyCommand(t *testing.T) {
 
 // Peer-invoking a peer-allowed command (rename) succeeds.
 func TestMCP_Control_PeerInvocation_PeerAllowedCommand(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -63,7 +63,7 @@ func TestMCP_Control_PeerInvocation_PeerAllowedCommand(t *testing.T) {
 // Peer-invoking a self-only command (compact) is blocked at the MCP
 // boundary — the regression this scope split exists to prevent.
 func TestMCP_Control_PeerInvocation_BlockedForSelfOnlyCommand(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -88,7 +88,7 @@ func TestMCP_Control_PeerInvocation_BlockedForSelfOnlyCommand(t *testing.T) {
 }
 
 func TestMCP_Control_RejectsUnknownCommand(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -101,7 +101,7 @@ func TestMCP_Control_RejectsUnknownCommand(t *testing.T) {
 }
 
 func TestMCP_Control_RejectsUnknownRecipient(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -117,7 +117,7 @@ func TestMCP_Control_RejectsUnknownRecipient(t *testing.T) {
 // /compact control row first, then the resume message threaded via
 // reply_to so the audit trail shows the link.
 func TestMCP_Control_CompactWithResume_QueuesBothRows(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -157,7 +157,7 @@ func TestMCP_Control_CompactWithResume_QueuesBothRows(t *testing.T) {
 
 // resume_with on a non-compact command is rejected at the MCP boundary.
 func TestMCP_Control_ResumeWith_RejectedOnNonCompact(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -174,7 +174,7 @@ func TestMCP_Control_ResumeWith_RejectedOnNonCompact(t *testing.T) {
 // already, but the error should be precise rather than relying on the
 // scope rejection landing first).
 func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -191,7 +191,7 @@ func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
 // expands into two control rows: /mcp disable tmux-msg, then
 // /mcp enable tmux-msg (reply_to-threaded for audit).
 func TestMCP_Control_RestartMacro_SelfInvocation_QueuesBothRows(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -232,7 +232,7 @@ func TestMCP_Control_RestartMacro_SelfInvocation_QueuesBothRows(t *testing.T) {
 // preserves the legitimate "operator asks me to restart your MCP"
 // case while raw mcp-disable is locked to self-only.
 func TestMCP_Control_RestartMacro_PeerInvocation_QueuesBothRows(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -267,7 +267,7 @@ func TestMCP_Control_RestartMacro_PeerInvocation_QueuesBothRows(t *testing.T) {
 // is now self-only. A peer attempt must be rejected so a prompt-
 // injected agent can't silently DoS another agent's bus connection.
 func TestMCP_Control_RawDisable_RejectedOnPeer(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
@@ -297,7 +297,7 @@ func TestMCP_Control_RawDisable_RejectedOnPeer(t *testing.T) {
 // Today no other entry shares the macro's text, but the contract
 // should be enforced on name to keep the coupling visible.
 func TestMCP_Control_RestartMacro_DispatchesOnName(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
 	// `help` is a plain command that resolves to "/help", never to
@@ -325,7 +325,7 @@ func TestMCP_Control_RestartMacro_DispatchesOnName(t *testing.T) {
 }
 
 func TestMCP_Control_RequiresIdentity(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "")
+	t.Setenv("TMUX_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")
 
 	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{

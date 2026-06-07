@@ -62,13 +62,13 @@ between three of them, you might.
 ```bash
 # from inside a tmux session:
 git clone https://github.com/FrankenBit/tmux-msg && cd tmux-msg
-make build && sudo ./install.sh          # builds + installs claude-msg and the systemd user unit
+make build && sudo ./install.sh          # builds + installs tmux-msg-claude and the systemd user unit
 systemctl --user daemon-reload           # so the mailman unit is visible
 
 # register two panes (one command in each), then send across the bus
-claude-msg register --name alice         # in pane A
-claude-msg register --name bob           # in pane B
-claude-msg send --to bob "first message across the bus"
+tmux-msg-claude register --name alice         # in pane A
+tmux-msg-claude register --name bob           # in pane B
+tmux-msg-claude send --to bob "first message across the bus"
 ```
 
 That's the whole pitch: stop hand-carrying status between your agents. Let them talk.

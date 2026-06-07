@@ -13,7 +13,7 @@ import (
 
 // runDigestCLI parses digest-subcommand flags and dispatches.
 //
-// Usage: claude-msg digest [--since 24h|7d|today|yesterday|week|all]
+// Usage: tmux-msg-claude digest [--since 24h|7d|today|yesterday|week|all]
 //
 //	[--counterparty NAME] [--format text|json]
 //

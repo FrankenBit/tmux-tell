@@ -116,18 +116,18 @@ func doGet(ctx context.Context, s *store.Store, cfg *config.File,
 
 // runGetCLI parses the get-subcommand flags and dispatches.
 //
-// Usage: claude-msg get <id> [--from <name>] [--format text|json]
+// Usage: tmux-msg-claude get <id> [--from <name>] [--format text|json]
 func runGetCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
-	from := fs.String("from", "", "requesting agent name (env: CLAUDE_AGENT_NAME)")
+	from := fs.String("from", "", "requesting agent name (env: TMUX_AGENT_NAME)")
 	format := fs.String("format", "text", "text|json")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: claude-msg get <id> [flags]")
+		fmt.Fprintln(stderr, "usage: tmux-msg-claude get <id> [flags]")
 		return exitUsage
 	}
 	id := fs.Arg(0)

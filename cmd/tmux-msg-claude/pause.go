@@ -15,8 +15,8 @@ import (
 //
 // Usage:
 //
-//	claude-msg pause  AGENT | --all
-//	claude-msg resume AGENT | --all
+//	tmux-msg-claude pause  AGENT | --all
+//	tmux-msg-claude resume AGENT | --all
 func runPauseCLI(args []string, paused bool, stdout, stderr io.Writer) int {
 	verb := "pause"
 	if !paused {
@@ -36,7 +36,7 @@ func runPauseCLI(args []string, paused bool, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr, "--all and a positional agent are mutually exclusive", exitUsage)
 	case !*all && fs.NArg() != 1:
 		return writeJSONError(stdout, stderr,
-			fmt.Sprintf("usage: claude-msg %s AGENT | --all", verb), exitUsage)
+			fmt.Sprintf("usage: tmux-msg-claude %s AGENT | --all", verb), exitUsage)
 	}
 
 	s, err := store.Open(resolveDBPath(*dbPath))

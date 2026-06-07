@@ -31,7 +31,7 @@ type agentStateResult struct {
 }
 
 // resolveAgentState looks up the agent's pane and probes the agent
-// state. Shared between the CLI subcommand (`claude-msg state`) and
+// state. Shared between the CLI subcommand (`tmux-msg-claude state`) and
 // the MCP tool (`tmux-msg.agent_state`) so both surfaces produce
 // byte-identical JSON. Returns the result + any error from agent
 // resolution or tmux capture.
@@ -48,7 +48,7 @@ func resolveAgentState(ctx context.Context, s *store.Store, agent string) (agent
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			res.State = tmuxio.StateUnknown.String()
-			res.Evidence = tmuxio.Evidence{Reason: fmt.Sprintf("agent %q not registered — run 'claude-msg discover'", agent)}
+			res.Evidence = tmuxio.Evidence{Reason: fmt.Sprintf("agent %q not registered — run 'tmux-msg-claude discover'", agent)}
 			res.CapturedAt = nowRFC3339()
 			return res, fmt.Errorf("agent %q not registered", agent)
 		}
@@ -59,7 +59,7 @@ func resolveAgentState(ctx context.Context, s *store.Store, agent string) (agent
 	}
 	if a.PaneID == "" {
 		res.State = tmuxio.StateUnknown.String()
-		res.Evidence = tmuxio.Evidence{Reason: fmt.Sprintf("agent %q has no pane registered — run 'claude-msg discover'", agent)}
+		res.Evidence = tmuxio.Evidence{Reason: fmt.Sprintf("agent %q has no pane registered — run 'tmux-msg-claude discover'", agent)}
 		res.CapturedAt = nowRFC3339()
 		return res, fmt.Errorf("agent %q has no pane", agent)
 	}
@@ -93,12 +93,12 @@ func nowRFC3339() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
-// runStateCLI implements `claude-msg state --agent NAME` — the
+// runStateCLI implements `tmux-msg-claude state --agent NAME` — the
 // operator-facing CLI sibling to the MCP `tmux-msg.agent_state`
 // tool. Both surfaces consume resolveAgentState so the JSON schema
 // is identical across them.
 //
-// Usage: claude-msg state --agent NAME [--format text|json] [--db PATH]
+// Usage: tmux-msg-claude state --agent NAME [--format text|json] [--db PATH]
 func runStateCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("state", flag.ContinueOnError)
 	fs.SetOutput(stderr)

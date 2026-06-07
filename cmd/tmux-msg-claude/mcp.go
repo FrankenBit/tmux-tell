@@ -19,9 +19,9 @@ import (
 
 // runMCPCLI parses MCP-mode flags, opens the store, and serves on stdio.
 //
-// Usage: claude-msg mcp [--db PATH]
+// Usage: tmux-msg-claude mcp [--db PATH]
 //
-// Identity is resolved from $CLAUDE_AGENT_NAME (explicit override) or
+// Identity is resolved from $TMUX_AGENT_NAME (explicit override) or
 // from $TMUX_PANE looked up in the agents registry. The latter means a
 // pane that's registered (via `discover` or manual INSERT) just works —
 // no per-pane MCP config needed.
@@ -56,7 +56,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("tmux-msg", "0.1.0")
 
 	srv.RegisterTool("tmux-msg.send",
-		"Queue a message for another agent (sender resolved from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-msg.message_status. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155).",
+		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-msg.message_status. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -96,7 +96,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpAgentsHandler(s))
 
 	srv.RegisterTool("tmux-msg.whoami",
-		"Return this session's registration. Identity from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry.",
+		"Return this session's registration. Identity from $TMUX_AGENT_NAME or $TMUX_PANE→registry.",
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpWhoamiHandler(s))
 
@@ -145,10 +145,10 @@ func newMCPServer(s *store.Store) *mcp.Server {
 			"properties": {
 				"name":          {"type": "string", "description": "Agent name (the new identity)"},
 				"pane":          {"type": "string", "description": "Pane id like %5 (default: $TMUX_PANE)"},
-				"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now claude-mailman@NAME (default true; default false when delivery_mode=mailbox-only). Note: start_mailman=true with delivery_mode=mailbox-only is allowed but vestigial — the daemon starts, observes mailbox-only at startup, logs the no-work condition, and exits cleanly. The 'mailman: active' field in the response is momentary in this case."},
+				"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now tmux-msg-claude-mailman@NAME (default true; default false when delivery_mode=mailbox-only). Note: start_mailman=true with delivery_mode=mailbox-only is allowed but vestigial — the daemon starts, observes mailbox-only at startup, logs the no-work condition, and exits cleanly. The 'mailman: active' field in the response is momentary in this case."},
 				"force":         {"type": "boolean", "description": "Overwrite an existing row with the same name (default false)"},
 				"alias":         {"type": "string", "description": "Optional alternative name discover should accept for this canonical agent (e.g. 'Master Bosun of Nimbus' for canonical 'bosun'). Append-only; existing aliases preserved."},
-				"delivery_mode": {"type": "string", "enum": ["paste-and-enter", "mailbox-only"], "description": "How the mailman delivers to this agent (#116). 'paste-and-enter' (default): tmux paste + Enter into the agent's pane — the existing behavior for CLI-tool-hosting panes. 'mailbox-only': messages stay in state=queued; operator polls via claude-msg inbox. Use 'mailbox-only' to register an operator-shell pane as a bus destination (per ADR-0005 wheel-reinvention check)."}
+				"delivery_mode": {"type": "string", "enum": ["paste-and-enter", "mailbox-only"], "description": "How the mailman delivers to this agent (#116). 'paste-and-enter' (default): tmux paste + Enter into the agent's pane — the existing behavior for CLI-tool-hosting panes. 'mailbox-only': messages stay in state=queued; operator polls via tmux-msg-claude inbox. Use 'mailbox-only' to register an operator-shell pane as a bus destination (per ADR-0005 wheel-reinvention check)."}
 			},
 			"required": ["name"]
 		}`),
@@ -208,7 +208,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 
 // mcpPingHandler returns the handler for the tmux-msg.ping MCP tool.
 // Resolves the caller's identity (the ping's sender) and runs the shared
-// pingProbe core — the same code path as the `claude-msg ping` CLI
+// pingProbe core — the same code path as the `tmux-msg-claude ping` CLI
 // subcommand — so both surfaces emit the identical pingResult shape.
 func mcpPingHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
@@ -228,7 +228,7 @@ func mcpPingHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 		if from == "" {
-			return nil, fmt.Errorf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+			return nil, fmt.Errorf("cannot resolve sender identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		timeout := defaultPingTimeout
 		if in.TimeoutSeconds > 0 {
@@ -248,7 +248,7 @@ func mcpPingHandler(s *store.Store) mcp.ToolHandler {
 
 // mcpAgentStateHandler returns the handler for the
 // tmux-msg.agent_state MCP tool. Wraps resolveAgentState (shared
-// with the CLI subcommand `claude-msg state`) so both surfaces emit
+// with the CLI subcommand `tmux-msg-claude state`) so both surfaces emit
 // the same JSON schema — durable shape that Binnacle's M6b can
 // consume verbatim per #74's carry-forward spec.
 func mcpAgentStateHandler(s *store.Store) mcp.ToolHandler {
@@ -305,7 +305,7 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 		if from == "" {
-			return nil, fmt.Errorf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+			return nil, fmt.Errorf("cannot resolve sender identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		timeout := defaultDeliveredWaitTimeout
 		if in.Timeout != "" {
@@ -536,7 +536,7 @@ func mcpGetHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 		if requester == "" {
-			return nil, fmt.Errorf("cannot resolve requester identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+			return nil, fmt.Errorf("cannot resolve requester identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		cfg, cfgErr := config.Load()
 		if cfgErr != nil {
@@ -565,7 +565,7 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 		if from == "" {
-			return nil, fmt.Errorf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+			return nil, fmt.Errorf("cannot resolve sender identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		res, err := doControl(ctx, s, controlParams{
 			From:         from,
@@ -636,7 +636,7 @@ func mcpWhoamiHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 		if name == "" {
-			return nil, fmt.Errorf("cannot resolve identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		a, err := s.GetAgent(ctx, name)
 		if err != nil {
@@ -686,7 +686,7 @@ func mcpInboxHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 		if name == "" {
-			return nil, fmt.Errorf("cannot resolve identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		state := store.State(in.State)
 		if state == "" {

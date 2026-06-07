@@ -172,7 +172,7 @@ func TestReorderFlagsFirst_IntegrationWithControlWorkingForm(t *testing.T) {
 // "--to required"; the auto-bind catches the trailing single positional.
 func TestRunControlCLI_AutoBindsPositionalToTo(t *testing.T) {
 	_ = newCmdTestStore(t, "alice", "bob")
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	t.Setenv("CLAUDE_MSG_DB", ":memory:")
 
 	var stdout, stderr bytes.Buffer
@@ -193,7 +193,7 @@ func TestRunControlCLI_AutoBindsPositionalToTo(t *testing.T) {
 // existing flag-only invocation must continue working.
 func TestRunControlCLI_FlagOnlyFormStillWorks(t *testing.T) {
 	_ = newCmdTestStore(t, "alice", "bob")
-	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
 	t.Setenv("CLAUDE_MSG_DB", ":memory:")
 
 	var stdout, stderr bytes.Buffer

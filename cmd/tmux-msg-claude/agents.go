@@ -12,7 +12,7 @@ import (
 
 // runAgentsCLI parses agents-subcommand flags and dispatches.
 //
-// Usage: claude-msg agents [--available] [--format text|json]
+// Usage: tmux-msg-claude agents [--available] [--format text|json]
 func runAgentsCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("agents", flag.ContinueOnError)
 	fs.SetOutput(stderr)

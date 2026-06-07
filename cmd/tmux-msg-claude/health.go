@@ -13,7 +13,7 @@ import (
 
 // runHealthCLI parses health-subcommand flags and dispatches (#42).
 //
-// Usage: claude-msg health [--since DURATION] [--format text|json] [AGENT...]
+// Usage: tmux-msg-claude health [--since DURATION] [--format text|json] [AGENT...]
 //
 // Scans journalctl + systemd for the configured window and reports
 // per-agent operational health: delivery counts, soft-failure WARN

@@ -34,7 +34,7 @@ Mapped against the code as of v0.2.1.
 │ Operator  │ ───────────────────────────────────────► │     Bus      │
 │           │                                          │ (mailmen +   │
 │           │ ◄─────────────────────────────────────── │  store +     │
-└───────────┘  journalctl, sqlite3, claude-msg CLI     │  MCP server) │
+└───────────┘  journalctl, sqlite3, tmux-msg-claude CLI     │  MCP server) │
                                                        └──────────────┘
 ```
 
@@ -51,7 +51,7 @@ Mapped against the code as of v0.2.1.
 ### 1.2 Bus ↔ Agents (Claude Code sessions in tmux panes)
 
 ```
-┌──────────────┐  MCP stdio / claude-msg CLI  ┌────────────────────┐
+┌──────────────┐  MCP stdio / tmux-msg-claude CLI  ┌────────────────────┐
 │   Bus        │ ───────────────────────────► │  Agent (Claude     │
 │              │                              │  Code session)     │
 │              │ ◄─────────────────────────── │  in tmux pane      │
@@ -63,7 +63,7 @@ Mapped against the code as of v0.2.1.
   resolution.
 - **What's enforced**:
   - Identity precedence: explicit override (`--from`,
-    `$CLAUDE_AGENT_NAME`) → `$TMUX_PANE` → agents registry. See
+    `$TMUX_AGENT_NAME`) → `$TMUX_PANE` → agents registry. See
     `internal/identity/identity.go`.
   - Per-recipient queue cap (default 5), per-sender backlog cap
     (default 2), body size cap (16 KB). Atomic in
@@ -165,7 +165,7 @@ single-operator homelab deployment on alcatraz.
 
 - **`$TMUX_PANE` spoofing.** Anyone with shell access can fake any
   agent identity by setting `$TMUX_PANE` to a registered pane's id
-  before calling `claude-msg send`. Accepted under the trust
+  before calling `tmux-msg-claude send`. Accepted under the trust
   model; this is the **single largest item** a future operator
   considering wider deployment must revisit.
 - **No body content scanning.** A compromised agent CAN send
@@ -259,7 +259,7 @@ in one place.
 
 ### 3.5 Mailman-as-single-writer-per-recipient
 
-- **Code**: systemd template `claude-mailman@.service`; one
+- **Code**: systemd template `tmux-msg-claude-mailman@.service`; one
   instance per agent.
 - **Trusted**: systemd ensures exactly-one-instance; the bus
   doesn't enforce single-writer at the store level.

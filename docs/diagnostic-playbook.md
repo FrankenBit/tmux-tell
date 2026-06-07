@@ -39,7 +39,7 @@ Walk three checks in order. **Stop and act** the moment the first one
 identifies the gap; don't continue to the next layer.
 
 > **Quick pre-check (#144).** Before the deep triage, confirm the
-> receiver is even reachable on the bus: `claude-msg ping <receiver>`.
+> receiver is even reachable on the bus: `tmux-msg-claude ping <receiver>`.
 > It probes daemon-up + pane-live without pasting into the pane. A
 > `failed`/`timeout` here means the receiver's mailman is down or its
 > pane is gone — fix that first; the outbox triage below assumes a
@@ -87,7 +87,7 @@ delivery. The mailman log is the authoritative record of what the bus
 tried to put on the receiver's pane.
 
 ```bash
-journalctl --user-unit=claude-mailman@<receiver> \
+journalctl --user-unit=tmux-msg-claude-mailman@<receiver> \
   --since="<T-2min local>" \
   --until="<T+2min local>" \
   --no-pager
@@ -106,7 +106,7 @@ public_id from §1.
 - **Delivering + delivered**: substrate did its job; cross-correlate
   with the receiver pane's state.
 - **Delivering, no delivered, no WARN**: mailman is mid-delivery or
-  stalled. Capture `systemctl --user status claude-mailman@<receiver>`
+  stalled. Capture `systemctl --user status tmux-msg-claude-mailman@<receiver>`
   + the `delivered_at` (or lack of it) in the DB row, file as a bus
   stall.
 - **No `delivering` line at all**: row exists in the DB but the mailman
@@ -145,7 +145,7 @@ Outcomes:
 - **No external action at all**: agent didn't do what was expected.
   Investigate the agent's session log for where the flow stopped.
 
-## Watching it happen live — `claude-msg tail`
+## Watching it happen live — `tmux-msg-claude tail`
 
 The triage above is post-hoc: it reconstructs what happened from the stored
 row + the journal. When the failure is *reproducible* — you can trigger the
@@ -153,14 +153,14 @@ send again — skip the reconstruction and watch it live:
 
 ```bash
 # all bus traffic, live (Ctrl-C to stop)
-claude-msg tail
+tmux-msg-claude tail
 
 # narrow to the pair you suspect, then re-trigger the send
-claude-msg tail --from bosun --to surveyor
+tmux-msg-claude tail --from bosun --to surveyor
 
 # only failures / notices, across everyone
-claude-msg tail --kind delivery_failure_notice
-claude-msg tail --state failed
+tmux-msg-claude tail --kind delivery_failure_notice
+tmux-msg-claude tail --state failed
 ```
 
 `tail` prints each new row as it's inserted and each `queued → delivering →

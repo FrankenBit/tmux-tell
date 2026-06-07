@@ -13,7 +13,7 @@ import (
 
 // runInboxCLI parses inbox-subcommand flags and dispatches.
 //
-// Usage: claude-msg inbox [AGENT] [--state STATE] [--limit N] [--format text|json]
+// Usage: tmux-msg-claude inbox [AGENT] [--state STATE] [--limit N] [--format text|json]
 //
 // AGENT defaults to the calling pane's identity (via the same
 // resolution rules as tmux-msg.whoami).
@@ -29,7 +29,7 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(stderr, "usage: claude-msg inbox [AGENT] [flags]")
+		fmt.Fprintln(stderr, "usage: tmux-msg-claude inbox [AGENT] [flags]")
 		return exitUsage
 	}
 
@@ -51,7 +51,7 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 		}
 		if agent == "" {
 			return writeJSONError(stdout, stderr,
-				"cannot resolve identity: pass AGENT, set $CLAUDE_AGENT_NAME, or register this pane",
+				"cannot resolve identity: pass AGENT, set $TMUX_AGENT_NAME, or register this pane",
 				exitUsage)
 		}
 	}

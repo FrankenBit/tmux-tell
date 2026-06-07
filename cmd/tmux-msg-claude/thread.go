@@ -171,7 +171,7 @@ func renderThreadChildren(w io.Writer, children []*threadNode, prefix string) {
 // runThreadCLI parses thread-subcommand flags, opens the store, and
 // dispatches to runThreadWithStore.
 //
-// Usage: claude-msg thread <id> [--format tree|json]
+// Usage: tmux-msg-claude thread <id> [--format tree|json]
 func runThreadCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("thread", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -181,7 +181,7 @@ func runThreadCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: claude-msg thread <id> [--format tree|json]")
+		fmt.Fprintln(stderr, "usage: tmux-msg-claude thread <id> [--format tree|json]")
 		return exitUsage
 	}
 	id := fs.Arg(0)

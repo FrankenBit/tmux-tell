@@ -14,7 +14,7 @@ import (
 
 // runLogCLI parses log-subcommand flags and dispatches.
 //
-// Usage: claude-msg log --thread <id> [--format text|json]
+// Usage: tmux-msg-claude log --thread <id> [--format text|json]
 func runLogCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("log", flag.ContinueOnError)
 	fs.SetOutput(stderr)
