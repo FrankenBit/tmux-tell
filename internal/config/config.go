@@ -22,6 +22,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -133,6 +134,14 @@ type Block struct {
 	// register-time CLI / MCP path still writes to the DB column;
 	// this knob is the OVERRIDE at mailman-startup time.
 	DeliveryMode *string `toml:"delivery-mode"`
+	// RenderByteMarkerThreshold is the body-byte cutoff above which the
+	// rendered bracket header gains a length marker (#160). Stored as a
+	// human byte-size string (e.g. "512b", "2k", "2.3k"); parsed via
+	// ParseByteSize at mailman startup. Fleet default + per-agent
+	// override via the standard precedence chain. Resolves through
+	// ResolveString, so an absent/empty key falls through to the next
+	// layer and finally to render.DefaultByteMarkerThreshold.
+	RenderByteMarkerThreshold *string `toml:"render-byte-marker-threshold"`
 }
 
 // Load reads the config from the path resolved by:
@@ -328,8 +337,50 @@ func blockStringField(b *Block, field string) *string {
 	switch field {
 	case "delivery-mode":
 		return b.DeliveryMode
+	case "render-byte-marker-threshold":
+		return b.RenderByteMarkerThreshold
 	}
 	return nil
+}
+
+// ParseByteSize parses a human byte-size string into a byte count.
+// Accepted forms (case-insensitive, surrounding whitespace ignored):
+//
+//	"512"   → 512   (bare number = bytes)
+//	"512b"  → 512
+//	"2k"    → 2000  (k = ×1000)
+//	"2.3k"  → 2300
+//	"2kb"   → 2000  (kb accepted as an alias for k)
+//
+// The k multiplier is 1000 (not 1024) to mirror the render-side marker
+// format, where `2.3k` denotes 2300 bytes (#160): an operator setting a
+// threshold should not have to reconcile two bases against the marker it
+// gates. A negative or non-numeric value is an error; callers on the hot
+// path (the mailman) resolve+parse once at startup and WARN-fall-back to
+// the hardcoded default rather than failing delivery.
+func ParseByteSize(s string) (int, error) {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return 0, fmt.Errorf("empty byte-size")
+	}
+	mult := 1.0
+	switch lower := strings.ToLower(t); {
+	case strings.HasSuffix(lower, "kb"):
+		mult, t = 1000, t[:len(t)-2]
+	case strings.HasSuffix(lower, "k"):
+		mult, t = 1000, t[:len(t)-1]
+	case strings.HasSuffix(lower, "b"):
+		mult, t = 1, t[:len(t)-1]
+	}
+	t = strings.TrimSpace(t)
+	v, err := strconv.ParseFloat(t, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid byte-size %q", s)
+	}
+	if v < 0 {
+		return 0, fmt.Errorf("negative byte-size %q", s)
+	}
+	return int(v * mult), nil
 }
 
 // ResolvedView is a fully-resolved per-agent snapshot. Useful for
@@ -350,6 +401,7 @@ type ResolvedView struct {
 	WorkingDeliverImmediately   bool          `json:"working_deliver_immediately"`
 	PrePasteSafetyDisabled      bool          `json:"pre_paste_safety_disabled"`
 	DeliveryMode                string        `json:"delivery_mode,omitempty"`
+	RenderByteMarkerThreshold   string        `json:"render_byte_marker_threshold"`
 	PrivilegedAgents            []string      `json:"privileged_agents"`
 }
 
@@ -370,7 +422,12 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		WorkingDeliverImmediately:   ResolveBool(file, agent, "working-deliver-immediately", false),
 		PrePasteSafetyDisabled:      ResolveBool(file, agent, "pre-paste-safety-disabled", false),
 		DeliveryMode:                ResolveString(file, agent, "delivery-mode", ""),
-		PrivilegedAgents:            resolvePrivilegedAgents(file),
+		// Hardcoded default mirrors render.DefaultByteMarkerThreshold
+		// (512 bytes) as a display string; config can't import render
+		// without a dependency it otherwise doesn't need. Kept in sync by
+		// the doc-comment cross-reference on both consts.
+		RenderByteMarkerThreshold: ResolveString(file, agent, "render-byte-marker-threshold", "512b"),
+		PrivilegedAgents:          resolvePrivilegedAgents(file),
 	}
 }
 

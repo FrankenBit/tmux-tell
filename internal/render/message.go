@@ -59,6 +59,16 @@ func formatClock(iso string) string {
 //
 //	<body>
 //
+// When the body exceeds byteMarkerThreshold, a compact length marker is
+// appended to the header (#160) — `· 2.3k` — so a reader scrolling
+// history can distinguish a two-line ack from a 3K wall of review text,
+// and a sender sees the size cost of what they're about to send:
+//
+//	[Surveyor → Quartermaster · re abad · id 4825 · 2.3k]
+//
+// A threshold < 0 disables the marker. The count is the raw body byte
+// length, formatted via formatBytes.
+//
 // The bracket-header format (per #121) replaced the box-drawing rules
 // that wrapped awkwardly on narrow viewports (mobile chat clients) and
 // hit font-fallback to underline glyphs where U+2500 wasn't available.
@@ -67,20 +77,59 @@ func formatClock(iso string) string {
 // header and body separates the envelope label from content, and the
 // bracket-open at the start of each new header delimits consecutive
 // messages on visual scan.
-func Message(m store.Message) string {
+func Message(m store.Message, byteMarkerThreshold int) string {
 	var nrSuffix string
 	if m.NoReplyExpected {
 		nrSuffix = " · 🔕"
 	}
+	marker := byteMarkerSuffix(m.Body, byteMarkerThreshold)
 	var header string
 	clock := formatClock(m.CreatedAt)
 	if m.ReplyTo.Valid && m.ReplyTo.String != "" {
-		header = fmt.Sprintf("[%s → %s · re %s · id %s%s]",
+		header = fmt.Sprintf("[%s → %s · re %s · id %s%s%s]",
 			titleCase(m.FromAgent), titleCase(m.ToAgent),
-			m.ReplyTo.String, m.PublicID, nrSuffix)
+			m.ReplyTo.String, m.PublicID, nrSuffix, marker)
 	} else {
-		header = fmt.Sprintf("[%s · %s · id %s%s]",
-			titleCase(m.FromAgent), clock, m.PublicID, nrSuffix)
+		header = fmt.Sprintf("[%s · %s · id %s%s%s]",
+			titleCase(m.FromAgent), clock, m.PublicID, nrSuffix, marker)
 	}
 	return fmt.Sprintf("%s\n\n%s\n", header, m.Body)
+}
+
+// DefaultByteMarkerThreshold is the compile-time fallback body-byte
+// cutoff for the bracket-header length marker (#160): a message whose
+// body exceeds this many bytes gains a ` · <size>` suffix. Operators
+// override via the render-byte-marker-threshold TOML key (fleet default
+// + per-agent override). A threshold < 0 disables the marker entirely.
+const DefaultByteMarkerThreshold = 512
+
+// byteMarkerSuffix returns the ` · 2.3k` length-marker fragment for a
+// body that exceeds threshold, or "" when the body is at/under threshold
+// (or when threshold is negative — the explicit-disable sentinel). The
+// count is the raw body byte length (len on a Go string), matching the
+// issue's "body byte-count": multibyte content counts its encoded bytes,
+// which is the paste-size cost that actually matters.
+func byteMarkerSuffix(body string, threshold int) string {
+	if threshold < 0 {
+		return ""
+	}
+	n := len(body)
+	if n <= threshold {
+		return ""
+	}
+	return " · " + formatBytes(n)
+}
+
+// formatBytes renders a byte count in the marker's compact human form:
+// `<n>b` under 1000 bytes, `<n.n>k` (×1000, one decimal) at/above. The
+// 1000-base (not 1024) is deliberate: #160 pins `2.3k` == 2300 bytes, so
+// an operator can map a marker back to a byte count — and a threshold
+// like "2k" back to a marker — without a power-of-two conversion. The
+// lowercase suffix mirrors the `du -h`/`ls -h` visual style even though
+// those tools are 1024-based; the style is borrowed, the math is not.
+func formatBytes(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%db", n)
+	}
+	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }

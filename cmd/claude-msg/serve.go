@@ -116,6 +116,12 @@ type serveOpts struct {
 	// store.DeliveryModeMailboxOnly; invalid values are logged and the
 	// DB column wins (fail-loud, not fail-stop).
 	ConfigDeliveryMode string
+	// ByteMarkerThreshold is the resolved body-byte cutoff above which
+	// the rendered bracket header gains a length marker (#160). Parsed
+	// from the render-byte-marker-threshold TOML string at startup;
+	// defaults to render.DefaultByteMarkerThreshold. A value < 0 disables
+	// the marker.
+	ByteMarkerThreshold int
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -209,6 +215,20 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		*prePasteSafetyDisabled = config.ResolveBool(cfg, *agent, "pre-paste-safety-disabled", *prePasteSafetyDisabled)
 	}
 	configDeliveryMode := config.ResolveString(cfg, *agent, "delivery-mode", "")
+	// Resolve the render length-marker threshold (#160) once at startup.
+	// Stored as a human byte-size string; parse it here so the hot
+	// delivery path holds a plain int. A malformed value WARNs and falls
+	// back to the hardcoded default rather than taking the mailman down —
+	// same fail-loud-not-fail-stop stance as the rest of config resolution.
+	byteMarkerThreshold := render.DefaultByteMarkerThreshold
+	if raw := config.ResolveString(cfg, *agent, "render-byte-marker-threshold", ""); raw != "" {
+		if n, perr := config.ParseByteSize(raw); perr != nil {
+			fmt.Fprintf(stderr, "WARN config: render-byte-marker-threshold %q: %v — using %d\n",
+				raw, perr, byteMarkerThreshold)
+		} else {
+			byteMarkerThreshold = n
+		}
+	}
 	if *agent == "" {
 		fmt.Fprintln(stderr, "--agent required")
 		return exitUsage
@@ -249,6 +269,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		NotifyEmojiDisabled: *notifyEmojiDisabled,
 		PrePasteSafetyDisabled:      *prePasteSafetyDisabled,
 		ConfigDeliveryMode:          configDeliveryMode,
+		ByteMarkerThreshold:         byteMarkerThreshold,
 		DriftSoftFail:               *driftSoftFail,
 		NotifyOnFailed:              *notifyOnFailed,
 		NotifyOnDeliveredUnverified: *notifyOnDeliveredUnverified,
@@ -631,7 +652,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		}
 
 		deliverCtx, cancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
-		derr := deliverOne(deliverCtx, paneForDelivery, msg)
+		derr := deliverOne(deliverCtx, paneForDelivery, msg, opts.ByteMarkerThreshold)
 		cancel()
 
 		// Auto-heal on pane-id drift: if tmux says the pane is gone, ask
@@ -650,7 +671,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					logger.Printf("auto_heal_update_failed err=%v", uerr)
 				} else {
 					retryCtx, rcancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
-					derr = deliverOne(retryCtx, newPane, msg)
+					derr = deliverOne(retryCtx, newPane, msg, opts.ByteMarkerThreshold)
 					rcancel()
 				}
 			} else if lerr != nil {
@@ -896,13 +917,13 @@ func pingHealthy(ctx context.Context, pane string) (reason string, ok bool) {
 // regular messages go through the paste-buffer renderer with verification;
 // control commands type their body directly via send-keys -l so they hit
 // Claude Code's slash-command parser without the chat header.
-func deliverOne(ctx context.Context, pane string, msg *store.Message) error {
+func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarkerThreshold int) error {
 	if msg.Kind == store.KindControl {
 		return tmuxio.SendKeys(ctx, pane, msg.Body)
 	}
 	return tmuxio.Deliver(ctx, tmuxio.DeliverParams{
 		Pane:        pane,
-		Body:        render.Message(*msg),
+		Body:        render.Message(*msg, byteMarkerThreshold),
 		VerifyToken: "id " + msg.PublicID,
 	})
 }

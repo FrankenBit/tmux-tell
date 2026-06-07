@@ -50,6 +50,22 @@ Run `claude-msg --version` to see what's installed.
   section. Resolves the #137 walk-back pain (correlating two mailmen's
   journals by hand).
 
+- **Body-byte length marker in the bracket header (#160).** Messages whose body
+  exceeds a byte threshold (default 512) gain a trailing `· <size>` marker —
+  `[Surveyor → Quartermaster · re abad · id 4825 · 2.3k]` — so a reader scrolling
+  history can distinguish a two-line ack from a 3K wall of review text, and a
+  sender sees the size cost before sending (Surveyor's review-heavy-chamber
+  signal, bus id `a236`). Sizes read `<n>b` under 1000 bytes and `<n.n>k` above
+  (decimal ×1000, so `2.3k` == 2300 bytes; the lowercase suffix borrows the
+  `du -h`/`ls -h` look but not its 1024 base, so a threshold maps cleanly back to
+  a marker). Threshold is configurable via the `render-byte-marker-threshold` TOML
+  key (human byte-size string, e.g. `"2k"`; fleet `[defaults]` + per-`[agent.<name>]`
+  override). Applies on the full bracket-header render path only — the mailman
+  delivery path and `claude-msg log`; the marker is the renderer's, so any future
+  consumer of `render.Message` inherits it. **API note:** `render.Message` now
+  takes a `byteMarkerThreshold int` second argument (a negative value disables the
+  marker); pre-1.0 minor-bump break, internal callers only.
+
 - **`claude-msg digest` — campaign-arc narrative summary (#161).** The
   *qualitative* sibling to `stats`: a by-counterparty table (sent / received /
   threads / closed / in-flight) plus an "in-flight threads (likely need

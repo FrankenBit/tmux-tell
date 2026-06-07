@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/render"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
@@ -34,11 +35,28 @@ func runLogCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	defer s.Close()
 
-	return runLogWithStore(context.Background(), s, *thread, *format, stdout, stderr)
+	// Resolve the render length-marker threshold (#160) against the fleet
+	// default — the `log` viewer renders an arbitrary cross-agent thread,
+	// so there's no single recipient to key a per-agent override on; the
+	// empty-agent resolution falls through to [defaults] then the
+	// hardcoded default. A malformed value WARNs and falls back, matching
+	// the mailman startup path. Config errors don't block the viewer.
+	byteMarkerThreshold := render.DefaultByteMarkerThreshold
+	cfg, _ := config.Load()
+	if raw := config.ResolveString(cfg, "", "render-byte-marker-threshold", ""); raw != "" {
+		if n, perr := config.ParseByteSize(raw); perr != nil {
+			fmt.Fprintf(stderr, "WARN config: render-byte-marker-threshold %q: %v — using %d\n",
+				raw, perr, byteMarkerThreshold)
+		} else {
+			byteMarkerThreshold = n
+		}
+	}
+
+	return runLogWithStore(context.Background(), s, *thread, *format, byteMarkerThreshold, stdout, stderr)
 }
 
 func runLogWithStore(ctx context.Context, s *store.Store,
-	threadID, format string,
+	threadID, format string, byteMarkerThreshold int,
 	stdout, stderr io.Writer,
 ) int {
 	msgs, err := s.GetThread(ctx, threadID)
@@ -65,7 +83,7 @@ func runLogWithStore(ctx context.Context, s *store.Store,
 				fmt.Fprintln(stdout)
 			}
 			// Body block from the renderer + a small footer.
-			fmt.Fprint(stdout, render.Message(m))
+			fmt.Fprint(stdout, render.Message(m, byteMarkerThreshold))
 			fmt.Fprintf(stdout, "  state=%s  created=%s",
 				m.State, m.CreatedAt)
 			if m.DeliveredAt.Valid {

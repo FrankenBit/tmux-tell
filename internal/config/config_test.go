@@ -86,6 +86,83 @@ func TestResolveBool_PrecedenceChain(t *testing.T) {
 	}
 }
 
+// TestRenderByteMarkerThreshold_HonorsConfig pins the #160 length-marker
+// threshold through the full chain: TOML parse → precedence resolution
+// (per-agent override beats fleet default beats hardcoded) → byte-size
+// parse. This is the AC's "threshold honors config (fleet default +
+// per-agent override)" closed loop.
+func TestRenderByteMarkerThreshold_HonorsConfig(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "marker.toml")
+	content := `
+[defaults]
+render-byte-marker-threshold = "1k"
+
+[agent.surveyor]
+render-byte-marker-threshold = "256b"
+`
+	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	f, err := LoadFrom(tmp)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	// Fleet default applies to an agent with no override → "1k" → 1000.
+	fleet := ResolveString(f, "pilot", "render-byte-marker-threshold", "512b")
+	if fleet != "1k" {
+		t.Errorf("fleet default resolve = %q, want %q", fleet, "1k")
+	}
+	if n, perr := ParseByteSize(fleet); perr != nil || n != 1000 {
+		t.Errorf("ParseByteSize(%q) = %d, %v; want 1000, nil", fleet, n, perr)
+	}
+
+	// Per-agent override beats the fleet default for surveyor → "256b" → 256.
+	srv := ResolveString(f, "surveyor", "render-byte-marker-threshold", "512b")
+	if srv != "256b" {
+		t.Errorf("per-agent resolve = %q, want %q", srv, "256b")
+	}
+	if n, perr := ParseByteSize(srv); perr != nil || n != 256 {
+		t.Errorf("ParseByteSize(%q) = %d, %v; want 256, nil", srv, n, perr)
+	}
+
+	// Hardcoded default applies when neither layer sets the key. A File
+	// with no marker config at all falls through to the supplied default.
+	bare := ResolveString(&File{}, "anyone", "render-byte-marker-threshold", "512b")
+	if bare != "512b" {
+		t.Errorf("hardcoded fallback = %q, want %q", bare, "512b")
+	}
+}
+
+func TestParseByteSize(t *testing.T) {
+	ok := map[string]int{
+		"512":    512,
+		"512b":   512,
+		"512B":   512,
+		"2k":     2000,
+		"2K":     2000,
+		"2.3k":   2300,
+		"2kb":    2000,
+		"  1k  ": 1000,
+		"0":      0,
+	}
+	for in, want := range ok {
+		got, err := ParseByteSize(in)
+		if err != nil {
+			t.Errorf("ParseByteSize(%q) errored: %v", in, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("ParseByteSize(%q) = %d, want %d", in, got, want)
+		}
+	}
+	for _, bad := range []string{"", "   ", "abc", "5zz", "-5", "-1k", "k"} {
+		if _, err := ParseByteSize(bad); err == nil {
+			t.Errorf("ParseByteSize(%q) should error, got nil", bad)
+		}
+	}
+}
+
 // TestLoadFrom_ParsesGateDisabled pins TOML parsing of the observe-
 // gate's bool knob. The sibling tests for legacy probe-and-watch
 // fields (QuickPresenceProbe, PromptSentinelGate) were removed in
@@ -226,5 +303,9 @@ func TestResolve_FullSnapshot(t *testing.T) {
 	// PollIntervalMax wasn't set anywhere — should be the hardcoded default.
 	if v.PollIntervalMax != 15*time.Second {
 		t.Errorf("PollIntervalMax = %v, want 15s (hardcoded)", v.PollIntervalMax)
+	}
+	// RenderByteMarkerThreshold wasn't set → hardcoded display default.
+	if v.RenderByteMarkerThreshold != "512b" {
+		t.Errorf("RenderByteMarkerThreshold = %q, want 512b (hardcoded)", v.RenderByteMarkerThreshold)
 	}
 }

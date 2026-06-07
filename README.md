@@ -135,6 +135,24 @@ FYI: tagged v0.8.0 — no ack needed
 The recipient's Claude reads but doesn't acknowledge — content is still judged on
 its own merits; the marker is a hint, not a hard rule.
 
+**Length marker** — either shape gains a trailing `· <size>` when the body exceeds a
+byte threshold (default 512 bytes), so a reader scrolling history can tell a two-line
+ack from a 3K wall of review text, and a sender sees the size cost of what they're
+about to send:
+
+```
+[Surveyor → Quartermaster · re abad · id 4825 · 2.3k]
+
+<a long, substantive review body…>
+```
+
+The count is the body's byte length. Sizes read `<n>b` under 1000 bytes and `<n.n>k`
+above (×1000, so `2.3k` is 2300 bytes — the lowercase suffix borrows the `du -h`/`ls -h`
+look, but the math is decimal, not 1024-based, so a threshold maps cleanly back to a
+marker). The threshold is configurable via the `render-byte-marker-threshold` TOML key
+(fleet `[defaults]` + per-`[agent.<name>]` override), e.g. `render-byte-marker-threshold = "2k"`;
+set it above any realistic message size to suppress the marker entirely.
+
 System-generated messages (`delivery_failure_notice`, `stranded_draft`) carry their
 own chrome so they're distinguishable from agent traffic. Sender names render
 title-cased in the header; stored agent names are lowercase by convention.
