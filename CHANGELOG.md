@@ -21,6 +21,12 @@ Cadence (clarified per Surveyor review of v0.2.0):
   1.0 trigger discussion for the criteria we'd want before the
   major bump.
 
+- **Post-1.0 deprecation** follows the two-minor-cycle floor in
+  [ADR-0008](docs/adr/0008-deprecation-policy.md): a deprecated public surface
+  stays functional for at least two minor cycles (deprecate in `v1.X`, earliest
+  removal `v1.X+2`), emits a `WARN deprecated_surface_used` log, and gets a
+  `### Deprecated` entry here. Pre-1.0 keeps the looseness above.
+
 Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
@@ -56,7 +62,14 @@ Run `claude-msg --version` to see what's installed.
   to the per-row `Message` scans (the bit is consumed via the aggregation seam, not
   rendered).
 
-## [0.8.0] — 2026-06-07
+
+- **`docs/adr/0008` — deprecation policy ADR (#162).** Records the
+  operator-ratified post-1.0 deprecation policy: a **two-minor-cycle floor**
+  (deprecate `v1.X`, earliest removal `v1.X+2`) with discretion to extend,
+  runtime `WARN deprecated_surface_used` logs, a CHANGELOG `### Deprecated`
+  convention, and `deprecated: true` JSON fields where programmatic. Pre-1.0
+  keeps semver-explicit looseness. Cadence notes + README §Versioning cross-link
+  the policy. Completes a Sea-trials 1.0-trigger criterion. Pure docs.## [0.8.0] — 2026-06-07
 
 ### Added
 

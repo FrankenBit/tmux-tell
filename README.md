@@ -604,7 +604,7 @@ CREATE TABLE agents (
 
 tmux-msg follows [Semantic Versioning](https://semver.org/) at the `0.x.y` cadence;
 minor bumps may break compatibility while the shape settles, patch bumps stay
-backward-compatible within a minor. See `CHANGELOG.md` for what shipped per release.
+backward-compatible within a minor. See `CHANGELOG.md` for what shipped per release, and [ADR-0008](docs/adr/0008-deprecation-policy.md) for the post-1.0 deprecation policy (two-minor-cycle floor).
 
 ```bash
 $ claude-msg --version
