@@ -630,7 +630,7 @@ backward-compatible within a minor. See `CHANGELOG.md` for what shipped per rele
 
 ```bash
 $ tmux-msg-claude --version
-tmux-msg-claude v0.8.0
+tmux-msg-claude v0.9.0
 ```
 
 A binary built via `make build` stamps the version from `git describe`; a bare
@@ -644,11 +644,14 @@ subcommand args/flags/exit codes, `--format json` shapes, the DB schema, and the
 exported Go API (`discover` / `store` / `tmuxio`). Each clean cut increments K;
 any break on a tracked surface resets it to 0.
 
-**Current K: 2 of 3.** The `cli-semaphore → tmux-msg` substrate rename (v0.5.0)
-and the MCP wire-protocol rename (v0.6.0) were the last deliberate breaks; v0.7.0
-and v0.8.0 have both been fully additive. One more clean cut reaches K=3 and
-clears that block on the Sea-trials milestone. The live per-release record lives
-in the tracker at [#163](https://git.frankenbit.de/frankenbit/tmux-msg/issues/163).
+**Current K: 3 of 3.** The `cli-semaphore → tmux-msg` substrate rename (v0.5.0)
+and the MCP wire-protocol rename (v0.6.0) were the last deliberate breaks; v0.7.0,
+v0.8.0, and v0.9.0 have each been non-breaking. The v0.9.0 `claude-msg →
+tmux-msg-claude` rename ships with one-cycle aliases + fallback + WARN (per
+ADR-0008) so no operator config breaks at the cutover — deprecation-with-functioning-alias
+preserves K-counter progress. The Sea-trials milestone's K=3 gate clears at
+v0.9.0. The live per-release record lives in the tracker at
+[#163](https://git.frankenbit.de/frankenbit/tmux-msg/issues/163).
 
 ## Development
 

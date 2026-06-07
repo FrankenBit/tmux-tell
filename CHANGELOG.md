@@ -32,6 +32,8 @@ deprecated alias through v0.11.0).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-06-07
+
 ### Added
 
 - **`register` surfaces the queued-message backlog count (#151).** The `register`
@@ -147,6 +149,12 @@ deprecated alias through v0.11.0).
   BookStack runbook (#188) needed no change — it already uses substrate names. Both
   out of this repo.*
 
+- **CONTRIBUTING.md — deprecation-policy surface-scope clarification (#162 follow-up).**
+  The post-1.0 stability section now states the policy covers **all five** public
+  surfaces (per ADR-0008: MCP / CLI / `--format json` / DB + state vocabulary / Go
+  API), distinct from the external-**contract** subset (Go API + DB) a downstream
+  module pins — and links the now-landed ADR-0008 (was "forthcoming"). Pure docs.
+
 ### Deprecated
 
 - **`claude-msg` binary name + `claude-mailman@` systemd template — replaced by
@@ -167,14 +175,6 @@ deprecated alias through v0.11.0).
   name=CLAUDE_AGENT_NAME removal=v0.11.0` once per process when it does.
   **Migration:** set `$TMUX_AGENT_NAME` in chamber env / dispatch packages; the
   fallback is removed in v0.11.0.
-
-### Changed
-
-- **CONTRIBUTING.md — deprecation-policy surface-scope clarification (#162 follow-up).**
-  The post-1.0 stability section now states the policy covers **all five** public
-  surfaces (per ADR-0008: MCP / CLI / `--format json` / DB + state vocabulary / Go
-  API), distinct from the external-**contract** subset (Go API + DB) a downstream
-  module pins — and links the now-landed ADR-0008 (was "forthcoming"). Pure docs.
 
 ### Fixed
 
