@@ -36,6 +36,7 @@ Subcommands:
   track   Show the delivery state of a single message by its public_id
   get     Fetch a processed message by ID (recovery for swallowed deliveries, #111)
   inbox   List queued messages for an agent
+  sent    List messages sent by this agent (outbox view)
   status  Show paused state + queue depths across all agents (--today for journal-sourced today counts)
   stats   On-demand bus-traffic aggregates from the local DB (per-agent counts, latency, top pairs)
   digest  Campaign-arc narrative summary: by-counterparty threads + in-flight follow-ups (#161)
@@ -106,6 +107,8 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runGetCLI(args[1:], stdout, stderr)
 	case "inbox":
 		return runInboxCLI(args[1:], stdout, stderr)
+	case "sent":
+		return runSentCLI(args[1:], stdout, stderr)
 	case "status":
 		return runStatusCLI(args[1:], stdout, stderr)
 	case "stats":

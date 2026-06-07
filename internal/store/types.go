@@ -76,6 +76,12 @@ type Message struct {
 	// without a store lookup. Both invalid/empty for normal messages.
 	ReplayOf   sql.NullString
 	ReplayOfAt sql.NullString
+	// Verified mirrors the #169 `verified` column. 1 = verify-token observed
+	// (confirmed delivery), 0 = delivered_unverified soft-fail (paste landed,
+	// token never surfaced), NULL/invalid = pre-migration row or not yet
+	// delivered. Orthogonal to State: both verified and unverified rows carry
+	// State == StateDelivered.
+	Verified sql.NullInt64
 }
 
 // Agent mirrors a row in the agents table.

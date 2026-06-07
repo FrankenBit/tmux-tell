@@ -317,6 +317,7 @@ tmux-msg-claude send   --to Y[,Z,...] [--reply-to ID] [--strict] [--wait-for-del
 tmux-msg-claude resend ID [--force]                     # replay a failed/unverified message (#157)
 tmux-msg-claude ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
 tmux-msg-claude inbox  AGENT [--state STATE]            # list messages for AGENT
+tmux-msg-claude sent   [--since DUR] [--state STATE] [--to AGENT]  # sender's outbox (#159)
 tmux-msg-claude track  ID [--watch]                     # delivery state of one message
 tmux-msg-claude get    ID                               # fetch a processed message by id
 tmux-msg-claude status [--today]                        # paused state + queue depths per agent

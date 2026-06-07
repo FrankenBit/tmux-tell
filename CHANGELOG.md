@@ -34,6 +34,22 @@ deprecated alias through v0.11.0).
 
 ### Added
 
+- **`sent` — sender's outbox listing (#159).** `tmux-msg-claude sent` lists
+  messages the calling agent has sent, newest-first, defaulting to the last 24 h.
+  Flags: `--since DUR` (any duration or calendar shortcut accepted by `stats`/`digest`
+  — `1h`, `today`, `all`, etc.), `--state STATE`, `--to AGENT`, `--limit N`,
+  `--format text|json`. The special state `delivered_unverified` filters for
+  `state=delivered AND verified=0` rows (soft-fails from #169). Text output: table
+  header + one row per message; footer summarises counts of `delivered_unverified`
+  and `failed` rows with a `tmux-msg-claude resend <id>` recovery hint. JSON output
+  adds `display_state` to each row so callers can distinguish verified/unverified
+  deliveries without client-side column inspection. Operationalises the
+  sender-outbox-first diagnostic playbook in the README: `sent` is now the
+  first-class CLI affordance where the playbook previously said "start from the
+  SQLite store." Sister to `inbox` (recipient-side) and `resend` (recovery).
+  Store: `Message` now carries the `verified` column in all read paths, and
+  `ListFilter` gains `SinceCreatedAt`, `Unverified`, and `OrderDesc` fields.
+
 - **`send --to a,b,c` — multi-recipient fan-out (#158).** Pass a comma-separated
   list to `--to` (CLI) or an array to the `to` field (`tmux-msg.send` MCP) to
   deliver the same message body to multiple recipients in a single call. Each

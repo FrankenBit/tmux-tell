@@ -1,0 +1,203 @@
+package main
+
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io"
+	"time"
+
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+)
+
+// runSentCLI parses sent-subcommand flags and dispatches.
+//
+// Usage: tmux-msg-claude sent [--since DUR] [--state STATE] [--to AGENT]
+//
+//	[--limit N] [--format text|json]
+//
+// STATE may be any of the standard store states (queued, delivering,
+// delivered, failed) or the synthetic "delivered_unverified" which maps to
+// state=delivered AND verified=0.
+func runSentCLI(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("sent", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	since := fs.String("since", "24h",
+		"time window: 24h (default) | 1h | today | all | any duration")
+	stateFlag := fs.String("state", "",
+		"queued|delivering|delivered|failed|delivered_unverified (empty = all)")
+	to := fs.String("to", "", "only messages sent to this agent")
+	limit := fs.Int("limit", 50, "maximum rows to return")
+	format := fs.String("format", "text", "text|json")
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
+		return exitUsage
+	}
+	if fs.NArg() > 0 {
+		fmt.Fprintln(stderr, "usage: tmux-msg-claude sent [flags]")
+		return exitUsage
+	}
+
+	// Validate --state before opening the store.
+	if err := validateSentState(*stateFlag); err != nil {
+		return writeJSONError(stdout, stderr, err.Error(), exitUsage)
+	}
+
+	w, err := parseWindow(*since, time.Now())
+	if err != nil {
+		return writeJSONError(stdout, stderr, err.Error(), exitUsage)
+	}
+	sinceFloor := ""
+	if !w.All {
+		sinceFloor = w.Since.UTC().Format("2006-01-02T15:04:05.000Z")
+	}
+
+	s, err := store.Open(resolveDBPath(*dbPath))
+	if err != nil {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("open store: %v", err), exitInternal)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	agent, _, err := identity.Resolve(ctx, s, "")
+	if err != nil {
+		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+	}
+	if agent == "" {
+		return writeJSONError(stdout, stderr,
+			"cannot resolve identity: set $TMUX_AGENT_NAME or register this pane",
+			exitUsage)
+	}
+
+	return runSentWithStore(ctx, s, agent, *stateFlag, *to, *limit, *since, sinceFloor, *format, stdout, stderr)
+}
+
+// validateSentState returns an error if state is not a known value for --state.
+// The empty string (all states) is always valid.
+func validateSentState(state string) error {
+	switch state {
+	case "", "queued", "delivering", "delivered", "failed", "delivered_unverified":
+		return nil
+	default:
+		return fmt.Errorf("unknown --state %q (want queued|delivering|delivered|failed|delivered_unverified)", state)
+	}
+}
+
+func runSentWithStore(ctx context.Context, s *store.Store,
+	agent, stateFilter, toAgent string,
+	limit int, sinceSpec, sinceFloor string,
+	format string,
+	stdout, stderr io.Writer,
+) int {
+	f := store.ListFilter{
+		FromAgent:      agent,
+		ToAgent:        toAgent,
+		SinceCreatedAt: sinceFloor,
+		Limit:          limit,
+		OrderDesc:      true,
+	}
+
+	switch stateFilter {
+	case "delivered_unverified":
+		f.Unverified = true
+	case "":
+		// no state filter
+	default:
+		f.State = store.State(stateFilter)
+	}
+
+	msgs, err := s.ListMessages(ctx, f)
+	if err != nil {
+		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+	}
+
+	switch format {
+	case "json":
+		out := make([]map[string]any, 0, len(msgs))
+		for _, m := range msgs {
+			row := messageToMap(m)
+			row["display_state"] = displayState(m)
+			out = append(out, row)
+		}
+		_ = writeJSONResult(stdout, out)
+		return exitOK
+
+	case "text", "":
+		windowDesc := sinceSpec
+		if sinceSpec == "" {
+			windowDesc = "24h"
+		}
+		fmt.Fprintf(stdout, "Recent sent (last %s, %d total)\n\n", windowDesc, len(msgs))
+		header := []string{"ID", "TO", "STATE", "CREATED", "DELIVERED", "BODY"}
+		rows := make([][]string, 0, len(msgs))
+		for _, m := range msgs {
+			del := "—"
+			if m.DeliveredAt.Valid {
+				del = wallTime(m.DeliveredAt.String)
+			}
+			rows = append(rows, []string{
+				m.PublicID,
+				m.ToAgent,
+				displayState(m),
+				wallTime(m.CreatedAt),
+				del,
+				shortBody(m.Body, 60),
+			})
+		}
+		renderTextTable(stdout, header, rows)
+
+		// Summary footer for actionable states.
+		var nUnverified, nFailed int
+		for _, m := range msgs {
+			switch displayState(m) {
+			case "delivered_unverified":
+				nUnverified++
+			case "failed":
+				nFailed++
+			}
+		}
+		if nUnverified > 0 || nFailed > 0 {
+			fmt.Fprintln(stdout)
+		}
+		if nUnverified > 0 {
+			fmt.Fprintf(stdout,
+				"%d message(s) in delivered_unverified — run `tmux-msg-claude resend <id>` to recover.\n",
+				nUnverified)
+		}
+		if nFailed > 0 {
+			fmt.Fprintf(stdout,
+				"%d message(s) failed — run `tmux-msg-claude resend <id>` to retry.\n",
+				nFailed)
+		}
+		return exitOK
+
+	default:
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("unknown --format: %s", format), exitUsage)
+	}
+}
+
+// displayState synthesises the human-facing state label. For delivered messages
+// with verified=0, it returns "delivered_unverified" instead of "delivered" so
+// operators can distinguish confirmed deliveries from soft-fails.
+func displayState(m store.Message) string {
+	if m.State == store.StateDelivered && m.Verified.Valid && m.Verified.Int64 == 0 {
+		return "delivered_unverified"
+	}
+	return string(m.State)
+}
+
+// wallTime parses an ISO 8601 UTC timestamp and returns the HH:MM:SS portion
+// formatted in local time. Returns "-" if the timestamp doesn't parse.
+func wallTime(iso string) string {
+	t, err := time.Parse("2006-01-02T15:04:05.000Z", iso)
+	if err != nil {
+		t, err = time.Parse("2006-01-02T15:04:05Z", iso)
+		if err != nil {
+			return "-"
+		}
+	}
+	return t.Local().Format("15:04:05")
+}
