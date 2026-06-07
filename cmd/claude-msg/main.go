@@ -24,6 +24,7 @@ Subcommands:
   inbox   List queued messages for an agent
   status  Show paused state + queue depths across all agents (--today for journal-sourced today counts)
   stats   On-demand bus-traffic aggregates from the local DB (per-agent counts, latency, top pairs)
+  digest  Campaign-arc narrative summary: by-counterparty threads + in-flight follow-ups (#161)
   health  One-command per-agent health audit from journalctl + systemd (#42)
   config  Read/show the host-level config (#54). Subcommands: show
   agents  List registered agents with pane liveness
@@ -77,6 +78,8 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runStatusCLI(args[1:], stdout, stderr)
 	case "stats":
 		return runStatsCLI(args[1:], stdout, stderr)
+	case "digest":
+		return runDigestCLI(args[1:], stdout, stderr)
 	case "health":
 		return runHealthCLI(args[1:], stdout, stderr)
 	case "config":

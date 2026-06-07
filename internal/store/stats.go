@@ -234,6 +234,38 @@ func (s *Store) StatsTotals(ctx context.Context, w StatsWindow) (Totals, error) 
 	return t, nil
 }
 
+// MessagesInWindow returns every message row created within w, ordered by id
+// ASC. It reuses the #147 whereSince window-bounding seam so digest (#161) and
+// stats share one definition of "in this window"; unlike scanStats (which
+// reduces each row to the aggregate-only fields) this returns full Message
+// rows, because thread-structure analysis needs reply_to / public_id / kind /
+// no_reply_expected. Scale is the same on-demand, retention-bounded query
+// stats runs, so loading the window into memory is acceptable.
+func (s *Store) MessagesInWindow(ctx context.Context, w StatsWindow) ([]Message, error) {
+	clause, args := w.whereSince()
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
+		        no_reply_expected, state, created_at, delivered_at, error
+		 FROM messages WHERE `+clause+` ORDER BY id ASC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Message
+	for rows.Next() {
+		var m Message
+		var nre int
+		if err := rows.Scan(
+			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
+			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error); err != nil {
+			return nil, err
+		}
+		m.NoReplyExpected = nre != 0
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // percentile returns the p-th percentile (nearest-rank) of vs in ms, or 0 for
 // an empty slice. Mirrors internal/healthscan.percentileMs's nearest-rank
 // convention so the two latency surfaces agree.

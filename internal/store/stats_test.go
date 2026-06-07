@@ -162,6 +162,34 @@ func TestStatsTotals_Empty(t *testing.T) {
 	}
 }
 
+func TestMessagesInWindow_FullRowsAndFilter(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedStat(t, s, "old", "alice", "bob", "delivered", ts(-48*time.Hour), ts(-48*time.Hour+time.Second))
+	seedStat(t, s, "new", "alice", "bob", "delivered", ts(0), ts(time.Second))
+
+	// All returns full rows (public_id populated, not the reduced statRow).
+	all, err := s.MessagesInWindow(ctx, allWindow())
+	if err != nil {
+		t.Fatalf("MessagesInWindow: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("all = %d rows, want 2", len(all))
+	}
+	if all[0].PublicID != "old" || all[1].PublicID != "new" {
+		t.Errorf("rows = %q,%q, want old,new (id-asc, full rows)", all[0].PublicID, all[1].PublicID)
+	}
+
+	// Window bounds on created_at, sharing the whereSince seam with stats.
+	win, err := s.MessagesInWindow(ctx, StatsWindow{Since: statBase.Add(-1 * time.Hour)})
+	if err != nil {
+		t.Fatalf("MessagesInWindow windowed: %v", err)
+	}
+	if len(win) != 1 || win[0].PublicID != "new" {
+		t.Errorf("windowed = %+v, want only 'new'", win)
+	}
+}
+
 func TestPercentile(t *testing.T) {
 	if got := percentile(nil, 50); got != 0 {
 		t.Errorf("empty p50 = %d, want 0", got)
