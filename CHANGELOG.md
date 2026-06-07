@@ -105,6 +105,16 @@ Run `claude-msg --version` to see what's installed.
   `claude-msg` mentions still present in `--help` text and docs are swept in PR3
   and remain valid via the alias until then.*
 
+- **Agent-name env var `$CLAUDE_AGENT_NAME` → `$TMUX_AGENT_NAME` (#177, PR2 of 3).**
+  The substrate identity layer (`internal/identity`) now reads `$TMUX_AGENT_NAME`
+  preferentially and falls back to `$CLAUDE_AGENT_NAME` for the deprecation cycle,
+  so existing chambers keep resolving identity unchanged — deploy does not force a
+  cutover. When the resolution falls back to the legacy var, it emits
+  `WARN deprecated_surface_used name=CLAUDE_AGENT_NAME removal=v0.11.0` once per
+  process (mirroring PR1's `claude-msg`-alias WARN). The `$CLAUDE_AGENT_NAME`
+  mentions still present in `--help` / error text are swept in PR3; they remain
+  accurate (the var still works) until then.
+
 ### Deprecated
 
 - **`claude-msg` binary name + `claude-mailman@` systemd template — replaced by
@@ -118,6 +128,13 @@ Run `claude-msg --version` to see what's installed.
   removal=v0.11.0` on stderr. **Migration:** switch scripts/units to
   `tmux-msg-claude` / `tmux-msg-claude-mailman@`; the aliases are removed in
   v0.11.0.
+
+- **`$CLAUDE_AGENT_NAME` env var — replaced by `$TMUX_AGENT_NAME` (#177 PR2).**
+  Earliest removal **v0.11.0** (ADR-0008 two-minor floor). The identity layer
+  falls back to it for the cycle and emits `WARN deprecated_surface_used
+  name=CLAUDE_AGENT_NAME removal=v0.11.0` once per process when it does.
+  **Migration:** set `$TMUX_AGENT_NAME` in chamber env / dispatch packages; the
+  fallback is removed in v0.11.0.
 
 ### Changed
 

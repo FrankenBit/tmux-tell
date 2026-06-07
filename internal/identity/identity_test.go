@@ -25,7 +25,8 @@ func openTestStore(t *testing.T, agents map[string]string) *store.Store {
 }
 
 func TestResolve_ExplicitOverrideWins(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "envname")
+	t.Setenv("TMUX_AGENT_NAME", "envname")
+	t.Setenv("CLAUDE_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "%5")
 	s := openTestStore(t, map[string]string{"panebound": "%5"})
 
@@ -40,7 +41,8 @@ func TestResolve_ExplicitOverrideWins(t *testing.T) {
 }
 
 func TestResolve_EnvBeatsRegistry(t *testing.T) {
-	t.Setenv("CLAUDE_AGENT_NAME", "envname")
+	t.Setenv("TMUX_AGENT_NAME", "envname")
+	t.Setenv("CLAUDE_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "%5")
 	s := openTestStore(t, map[string]string{"panebound": "%5"})
 
@@ -55,6 +57,7 @@ func TestResolve_EnvBeatsRegistry(t *testing.T) {
 }
 
 func TestResolve_PaneWhenEnvEmpty(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("CLAUDE_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "%5")
 	s := openTestStore(t, map[string]string{"panebound": "%5"})
@@ -70,6 +73,7 @@ func TestResolve_PaneWhenEnvEmpty(t *testing.T) {
 }
 
 func TestResolve_NoneWhenPaneUnregistered(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("CLAUDE_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "%99")
 	s := openTestStore(t, map[string]string{"otherpane": "%1"})
@@ -84,6 +88,7 @@ func TestResolve_NoneWhenPaneUnregistered(t *testing.T) {
 }
 
 func TestResolve_NoneWhenNothingAvailable(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("CLAUDE_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "")
 	s := openTestStore(t, nil)
