@@ -600,6 +600,20 @@ claude-msg v0.8.0
 A binary built via `make build` stamps the version from `git describe`; a bare
 `go build` reports `dev`.
 
+### Release stability (the K-counter)
+
+The road to `1.0` is gated on **K=3**: three consecutive releases with no
+breaking change across any of the five public surfaces — MCP tool schemas, CLI
+subcommand args/flags/exit codes, `--format json` shapes, the DB schema, and the
+exported Go API (`discover` / `store` / `tmuxio`). Each clean cut increments K;
+any break on a tracked surface resets it to 0.
+
+**Current K: 2 of 3.** The `cli-semaphore → tmux-msg` substrate rename (v0.5.0)
+and the MCP wire-protocol rename (v0.6.0) were the last deliberate breaks; v0.7.0
+and v0.8.0 have both been fully additive. One more clean cut reaches K=3 and
+clears that block on the Sea-trials milestone. The live per-release record lives
+in the tracker at [#163](https://git.frankenbit.de/frankenbit/tmux-msg/issues/163).
+
 ## Development
 
 ```bash

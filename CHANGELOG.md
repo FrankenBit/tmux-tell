@@ -25,6 +25,19 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Added
+
+- **K=3 release-stability tracker — v0.8.0 marks Cycle 2 of 3 (#163).** Establishes
+  the K-counter that gates the road to `1.0`: three consecutive releases with no
+  breaking change across the five public surfaces (MCP tool schemas, CLI args/flags/
+  exit codes, `--format json` shapes, DB schema, exported Go API). After the v0.5.0
+  substrate rename + v0.6.0 MCP wire-protocol rename (the last deliberate breaks),
+  v0.7.0 and v0.8.0 have both been fully additive — **K is now 2 of 3**; one more
+  clean cut reaches K=3 and clears that block on the Sea-trials milestone. README
+  gains a "Release stability (the K-counter)" subsection; the live per-release record
+  is the tracker table in #163. Going forward, each release entry names the K it lands
+  on (this entry establishes the discipline; the next clean cut records "K reaches 3").
+
 ## [0.8.0] — 2026-06-07
 
 ### Added
