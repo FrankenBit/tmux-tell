@@ -12,12 +12,11 @@ import (
 // than re-writing the SQL. All aggregates are sourced from the messages table
 // and bounded by a StatsWindow.
 //
-// Note on the verified/unverified split: the DB cannot distinguish a verified
-// from an unverified delivery — both are state='delivered' (the mailman
-// MarkDelivered's both paths; the only `delivered_unverified` signal is a
-// journal line, see internal/healthscan). So these aggregates count `Delivered`
-// without a verified/unverified breakdown. Making that split DB-queryable is
-// tracked in #169 (DB marker for unverified delivery).
+// Note on the verified/unverified split: a delivered message carries a durable
+// `verified` bit since #169 (1 = verify-token observed, 0 = delivered_unverified
+// soft-fail, NULL = delivered before the marker existed). The scalar aggregates
+// here still count `Delivered` as a whole (state='delivered'); the breakdown is
+// available via DeliveredVerificationCounts, the seam #147 re-consumes.
 
 // StatsWindow bounds an aggregation to messages created within a time window.
 // All=true selects every message regardless of age (the `--window all` case);
@@ -264,6 +263,52 @@ func (s *Store) MessagesInWindow(ctx context.Context, w StatsWindow) ([]Message,
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// VerificationCounts splits delivered messages by their #169 `verified` bit.
+// Verified = confirmed (verify-token observed); Unverified = delivered_unverified
+// soft-fail; Unknown = delivered before the marker existed (verified IS NULL) —
+// never retroactively guessed. Only state='delivered' rows are counted; the
+// three buckets sum to the total delivered count in the window.
+type VerificationCounts struct {
+	Verified   int
+	Unverified int
+	Unknown    int
+}
+
+// DeliveredVerificationCounts splits delivered messages in the window by their
+// verified bit (#169). This is the DB-only seam #147 (`stats`) re-consumes for
+// the verified/unverified breakdown it previously had to leave to journal
+// scraping. The window bounds on created_at, matching the other StatsWindow
+// aggregates (so a stats run reports a consistent denominator across counts).
+func (s *Store) DeliveredVerificationCounts(ctx context.Context, w StatsWindow) (VerificationCounts, error) {
+	clause, args := w.whereSince()
+	q := `SELECT verified, COUNT(*) FROM messages
+	      WHERE state = ? AND ` + clause + `
+	      GROUP BY verified`
+	rows, err := s.db.QueryContext(ctx, q, append([]any{StateDelivered}, args...)...)
+	if err != nil {
+		return VerificationCounts{}, err
+	}
+	defer rows.Close()
+
+	var vc VerificationCounts
+	for rows.Next() {
+		var verified sql.NullInt64
+		var n int
+		if err := rows.Scan(&verified, &n); err != nil {
+			return VerificationCounts{}, err
+		}
+		switch {
+		case !verified.Valid:
+			vc.Unknown += n
+		case verified.Int64 == 1:
+			vc.Verified += n
+		default:
+			vc.Unverified += n
+		}
+	}
+	return vc, rows.Err()
 }
 
 // percentile returns the p-th percentile (nearest-rank) of vs in ms, or 0 for

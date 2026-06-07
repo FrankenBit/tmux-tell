@@ -38,6 +38,24 @@ Run `claude-msg --version` to see what's installed.
   is the tracker table in #163. Going forward, each release entry names the K it lands
   on (this entry establishes the discipline; the next clean cut records "K reaches 3").
 
+- **Durable `verified` marker for delivered messages (#169).** A `delivered_unverified`
+  soft-failure (paste+Enter landed, but the verify-token never surfaced in budget) was
+  previously distinguishable from a confirmed delivery only by a mailman journal line —
+  both wrote `state = delivered`, so nothing reading the messages table could count or
+  trend the split. A new nullable `verified` column now carries it durably: `1` =
+  verified (token observed), `0` = `delivered_unverified` soft-fail, `NULL` = delivered
+  before the marker existed (never retroactively guessed). The mailman's verified branch
+  writes `1` via `MarkDelivered`; the `ErrUnverifiedDelivery` branch writes `0` via the
+  new `MarkDeliveredUnverified` — the `WARN delivered_unverified` journal line is
+  preserved, so `healthscan` (`status --today` / `health`) is unaffected. New store seam
+  `DeliveredVerificationCounts(window)` splits delivered rows into verified / unverified
+  / unknown — the DB-only aggregation #147 (`stats`) re-consumes for the breakdown it
+  previously had to leave to journal scraping; #146 (Prometheus) and #153 (verify-token
+  forensics) become clean SQL too. The marker is orthogonal to `state` (kept
+  `delivered`), so no state-based query changes; the column is intentionally not added
+  to the per-row `Message` scans (the bit is consumed via the aggregation seam, not
+  rendered).
+
 ## [0.8.0] — 2026-06-07
 
 ### Added

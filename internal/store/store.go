@@ -115,6 +115,13 @@ var migrations = []string{
 	// store lookup). Both NULL for normal (non-replay) messages.
 	`ALTER TABLE messages ADD COLUMN replay_of TEXT`,
 	`ALTER TABLE messages ADD COLUMN replay_of_at TEXT`,
+	// #169: durable verified/unverified delivery marker. 1 = verify-token
+	// observed (confirmed delivery), 0 = delivered_unverified soft-fail
+	// (paste landed, token never surfaced), NULL = unknown (pre-migration
+	// delivered rows, or any non-delivered state). Orthogonal to `state`,
+	// which keeps `delivered` for both 1 and 0 — the bit is the only
+	// distinction, where previously only a journal line carried it.
+	`ALTER TABLE messages ADD COLUMN verified INTEGER`,
 }
 
 // Close releases the underlying database handle.

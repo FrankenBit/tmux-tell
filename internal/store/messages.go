@@ -377,16 +377,34 @@ func (s *Store) ClaimNext(ctx context.Context, toAgent string) (*Message, error)
 	return &m, nil
 }
 
-// MarkDelivered transitions a delivering message to 'delivered' and stamps
-// delivered_at. Returns ErrNotFound if no row matches (e.g. the message
-// was reset by RecoverDelivering between Claim and Mark).
+// MarkDelivered transitions a delivering message to 'delivered' (verify-token
+// observed) and stamps delivered_at, writing verified=1. Returns ErrNotFound if
+// no row matches (e.g. the message was reset by RecoverDelivering between Claim
+// and Mark).
 func (s *Store) MarkDelivered(ctx context.Context, publicID string) error {
+	return s.markDelivered(ctx, publicID, 1)
+}
+
+// MarkDeliveredUnverified transitions a delivering message to 'delivered' but
+// records verified=0 — the paste+Enter landed mechanically, but the verify
+// token never surfaced in budget (#169). The DB state stays `delivered` (the
+// message IS in the recipient's pane); only the `verified` bit distinguishes it
+// from a confirmed delivery, where previously the sole signal was a mailman
+// journal line. Same not-found semantics as MarkDelivered.
+func (s *Store) MarkDeliveredUnverified(ctx context.Context, publicID string) error {
+	return s.markDelivered(ctx, publicID, 0)
+}
+
+// markDelivered is the shared core: transition delivering → delivered, stamp
+// delivered_at, and write the verified bit. The verified value is the only
+// difference between the confirmed and unverified paths.
+func (s *Store) markDelivered(ctx context.Context, publicID string, verified int) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE messages
-		 SET state = ?,
+		 SET state = ?, verified = ?,
 		     delivered_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
 		 WHERE public_id = ? AND state = ?`,
-		StateDelivered, publicID, StateDelivering)
+		StateDelivered, verified, publicID, StateDelivering)
 	if err != nil {
 		return fmt.Errorf("store: mark delivered: %w", err)
 	}

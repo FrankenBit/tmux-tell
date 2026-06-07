@@ -260,6 +260,20 @@ It's *near*-read-only: apart from the optional 📫 nudge (opt out with
 your input row. The residual "decided-idle then pasted" race is caught by the
 verify-token + `delivered_unverified` safety net.
 
+**Verified vs unverified deliveries (#169).** After a paste+Enter, the mailman looks
+for a verify token to confirm the message actually surfaced. If it does, the delivery
+is *verified*; if the token never appears in the retry budget (typically the recipient
+was mid-turn and Enter was queued), the message still landed in the pane but the
+delivery is *unverified* — a soft outcome, logged `WARN delivered_unverified`. Both
+are `state = delivered`: the message IS in the recipient's pane either way, so the
+state isn't a failure. The distinction is carried by a durable `verified` column on
+the row (`1` = verified, `0` = unverified, `NULL` = delivered before this marker
+existed — never retroactively guessed), so it's queryable from the DB rather than only
+from the journal. `claude-msg stats` reports the split; `claude-msg resend <id>` is the
+recovery path for one you want to re-send (an unverified delivery needs `--force`,
+since the DB can't yet tell a *confirmed* unverified from a verified one per-row — the
+journal does, and surfacing that per-row is the natural next consumer of this marker).
+
 → **Full operator guide, decision matrix, knobs, and stale-draft recovery:
 [`docs/observe-gate.md`](docs/observe-gate.md).**
 

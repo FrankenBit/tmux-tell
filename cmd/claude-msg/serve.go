@@ -708,7 +708,11 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		case errors.Is(derr, tmuxio.ErrUnverifiedDelivery):
 			logger.Printf("WARN delivered_unverified id=%s — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); marking delivered, operator may need to submit manually",
 				msg.PublicID)
-			if err := s.MarkDelivered(opCtx, msg.PublicID); err != nil {
+			// Same DB state (delivered) as the verified branch, but verified=0
+			// so the soft-fail is durable in the table — not just this WARN
+			// journal line (#169). The line stays: healthscan still derives the
+			// journal-sourced count, and #146/#147 now also read it from the DB.
+			if err := s.MarkDeliveredUnverified(opCtx, msg.PublicID); err != nil {
 				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
 			}
 			maybeInsertFailureNotice(opCtx, s, logger,
