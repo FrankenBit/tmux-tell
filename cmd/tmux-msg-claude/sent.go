@@ -27,7 +27,7 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 	since := fs.String("since", "24h",
 		"time window: 24h (default) | 1h | today | all | any duration")
 	stateFlag := fs.String("state", "",
-		"queued|delivering|delivered|failed|delivered_in_input_box (empty = all)")
+		"queued|delivering|delivered|failed|delivered_in_input_box (empty = all); delivered_unverified accepted as deprecated alias")
 	to := fs.String("to", "", "only messages sent to this agent")
 	limit := fs.Int("limit", 50, "maximum rows to return")
 	format := fs.String("format", "text", "text|json")
@@ -37,6 +37,13 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 	if fs.NArg() > 0 {
 		fmt.Fprintln(stderr, "usage: tmux-msg-claude sent [flags]")
 		return exitUsage
+	}
+
+	// Normalize deprecated --state alias before validation.
+	if *stateFlag == "delivered_unverified" {
+		fmt.Fprintf(stderr,
+			"WARN deprecated_surface_used name=--state delivered_unverified removal=v0.12.0 — use --state delivered_in_input_box instead (ADR-0008)\n")
+		*stateFlag = "delivered_in_input_box"
 	}
 
 	// Validate --state before opening the store.

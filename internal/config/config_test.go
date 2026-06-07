@@ -309,3 +309,39 @@ func TestResolve_FullSnapshot(t *testing.T) {
 		t.Errorf("RenderByteMarkerThreshold = %q, want 512b (hardcoded)", v.RenderByteMarkerThreshold)
 	}
 }
+
+// TestDeprecatedNotifyOnDeliveredUnverifiedTomlKey verifies the backward-compat
+// alias: the old TOML key notify-on-delivered-unverified is accepted and resolves
+// via the same precedence chain as the new key (#140, removal v0.12.0).
+func TestDeprecatedNotifyOnDeliveredUnverifiedTomlKey(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "compat.toml")
+	content := `
+[defaults]
+notify-on-delivered-unverified = false
+`
+	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	f, err := LoadFrom(tmp)
+	if err != nil {
+		t.Fatalf("load: %v (deprecated key must not cause parse error)", err)
+	}
+	// Deprecated key falls through to the resolution chain.
+	if got := ResolveBool(f, "anyagent", "notify-on-delivered-in-input-box", true); got {
+		t.Errorf("ResolveBool = true, want false (deprecated key should carry through)")
+	}
+	// HasDeprecatedNotifyOnDeliveredUnverified must detect it.
+	if !HasDeprecatedNotifyOnDeliveredUnverified(f, "anyagent") {
+		t.Errorf("HasDeprecatedNotifyOnDeliveredUnverified = false; want true for defaults-level key")
+	}
+}
+
+// TestResolvedView_DeprecatedShadowField verifies that the JSON deprecated shadow
+// field NotifyOnDeliveredUnverified mirrors NotifyOnDeliveredInInputBox (#140).
+func TestResolvedView_DeprecatedShadowField(t *testing.T) {
+	v := Resolve(nil, "", "anon")
+	if v.NotifyOnDeliveredInInputBox != v.NotifyOnDeliveredUnverified {
+		t.Errorf("shadow mismatch: InInputBox=%v UnverifiedShadow=%v; must be equal",
+			v.NotifyOnDeliveredInInputBox, v.NotifyOnDeliveredUnverified)
+	}
+}

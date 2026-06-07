@@ -6,6 +6,42 @@ import (
 	"testing"
 )
 
+// TestServe_DeprecatedNotifyOnDeliveredUnverifiedFlag verifies that
+// --notify-on-delivered-unverified emits WARN deprecated_surface_used and
+// maps its value through to the canonical flag (#140).
+func TestServe_DeprecatedNotifyOnDeliveredUnverifiedFlag(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantWarn bool
+	}{
+		{"legacy flag used", []string{"--notify-on-delivered-unverified=false"}, true},
+		{"new flag used", []string{"--notify-on-delivered-in-input-box=false"}, false},
+		{"neither flag", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// runServeCLI will error (no agent, no db) but the deprecation WARN
+			// fires before those checks, so we can observe stderr.
+			var stderr bytes.Buffer
+			args := append([]string{"--agent=testpilot"}, tc.args...)
+			runServeCLI(args, &bytes.Buffer{}, &stderr)
+			got := stderr.String()
+			hasWarn := strings.Contains(got, "WARN deprecated_surface_used name=--notify-on-delivered-unverified")
+			if hasWarn != tc.wantWarn {
+				t.Errorf("args=%v: warn=%v, want %v (stderr=%q)", tc.args, hasWarn, tc.wantWarn, got)
+			}
+			if tc.wantWarn {
+				for _, want := range []string{"removal=v0.12.0", "notify-on-delivered-in-input-box"} {
+					if !strings.Contains(got, want) {
+						t.Errorf("warn missing %q; got %q", want, got)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestWarnIfDeprecatedName(t *testing.T) {
 	cases := []struct {
 		name     string

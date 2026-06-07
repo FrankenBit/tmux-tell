@@ -85,6 +85,9 @@ func (f *File) IsPrivileged(agent string) bool {
 type Block struct {
 	NotifyOnFailed              *bool `toml:"notify-on-failed"`
 	NotifyOnDeliveredInInputBox *bool `toml:"notify-on-delivered-in-input-box"`
+	// NotifyOnDeliveredUnverified is the deprecated alias for NotifyOnDeliveredInInputBox
+	// (renamed v0.10.0 / #140). Accepted for the deprecation cycle; removal v0.12.0.
+	NotifyOnDeliveredUnverified *bool `toml:"notify-on-delivered-unverified"`
 	DriftSoftFail               *bool `toml:"drift-soft-fail"`
 	// GateDisabled disables the observe-only-with-one-named-visibility-
 	// side-effect gate added in #92 (the 📫 typing-notification per #95
@@ -212,6 +215,19 @@ func LoadFrom(path string) (*File, error) {
 	return f, nil
 }
 
+// HasDeprecatedNotifyOnDeliveredUnverified reports whether the deprecated TOML key
+// notify-on-delivered-unverified is set for the given agent (agent-level or defaults),
+// so callers can emit a WARN deprecated_surface_used line. Removal v0.12.0 (#140).
+func HasDeprecatedNotifyOnDeliveredUnverified(file *File, agent string) bool {
+	if file == nil {
+		return false
+	}
+	if b, ok := file.Agent[agent]; ok && b.NotifyOnDeliveredUnverified != nil {
+		return true
+	}
+	return file.Defaults.NotifyOnDeliveredUnverified != nil
+}
+
 // ResolveBool walks the precedence chain for a bool field. The first
 // non-nil value wins; if all layers are nil/empty, hardcoded is the
 // final fallback.
@@ -311,7 +327,10 @@ func blockBoolField(b *Block, field string) *bool {
 	case "notify-on-failed":
 		return b.NotifyOnFailed
 	case "notify-on-delivered-in-input-box":
-		return b.NotifyOnDeliveredInInputBox
+		if b.NotifyOnDeliveredInInputBox != nil {
+			return b.NotifyOnDeliveredInInputBox
+		}
+		return b.NotifyOnDeliveredUnverified // deprecated alias, removal v0.12.0
 	case "drift-soft-fail":
 		return b.DriftSoftFail
 	case "gate-disabled":
@@ -454,6 +473,8 @@ type ResolvedView struct {
 	ConfigPath                  string        `json:"config_path"`
 	NotifyOnFailed              bool          `json:"notify_on_failed"`
 	NotifyOnDeliveredInInputBox bool          `json:"notify_on_delivered_in_input_box"`
+	// Deprecated: same value as NotifyOnDeliveredInInputBox; removal v0.12.0 (#140).
+	NotifyOnDeliveredUnverified bool          `json:"notify_on_delivered_unverified"`
 	DriftSoftFail               bool          `json:"drift_soft_fail"`
 	GateDisabled                bool          `json:"gate_disabled"`
 	PollIntervalMin             time.Duration `json:"poll_interval_min"`
@@ -478,6 +499,7 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		ConfigPath:                  path,
 		NotifyOnFailed:              ResolveBool(file, agent, "notify-on-failed", true),
 		NotifyOnDeliveredInInputBox: ResolveBool(file, agent, "notify-on-delivered-in-input-box", true),
+		NotifyOnDeliveredUnverified: ResolveBool(file, agent, "notify-on-delivered-in-input-box", true), // same value, deprecated shadow
 		DriftSoftFail:               ResolveBool(file, agent, "drift-soft-fail", false),
 		GateDisabled:                ResolveBool(file, agent, "gate-disabled", false),
 		PollIntervalMin:             ResolveDuration(file, agent, "poll-interval-min", 3*time.Second),

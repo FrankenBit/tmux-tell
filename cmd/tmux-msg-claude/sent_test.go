@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -237,6 +238,45 @@ func TestValidateSentState(t *testing.T) {
 	}
 	if err := validateSentState("bogus"); err == nil {
 		t.Error("validateSentState(bogus) = nil, want error")
+	}
+}
+
+// TestSent_DeprecatedStateAlias verifies that --state delivered_unverified emits
+// WARN deprecated_surface_used and returns the same rows as delivered_in_input_box.
+func TestSent_DeprecatedStateAlias(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "messages.db")
+	s, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	for _, name := range []string{"alice", "bob"} {
+		if err := s.UpsertAgent(ctx, name, "%99"); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+	res, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "soft"})
+	_, _ = s.ClaimNext(ctx, "bob")
+	_ = s.MarkDeliveredInInputBox(ctx, res.PublicID)
+	// Set identity env so runSentCLI resolves agent=alice.
+	t.Setenv("TMUX_AGENT_NAME", "alice")
+
+	var stdout, stderr bytes.Buffer
+	exit := runSentCLI([]string{"--db", dbPath, "--state", "delivered_unverified", "--format", "json"}, &stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "WARN deprecated_surface_used name=--state delivered_unverified") {
+		t.Errorf("expected deprecation WARN in stderr; got %q", stderr.String())
+	}
+	var rows []map[string]any
+	_ = json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &rows)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0]["display_state"] != "delivered_in_input_box" {
+		t.Errorf("display_state = %v, want delivered_in_input_box", rows[0]["display_state"])
 	}
 }
 

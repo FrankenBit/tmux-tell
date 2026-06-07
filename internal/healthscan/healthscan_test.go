@@ -91,6 +91,23 @@ func TestScan_HappyPath(t *testing.T) {
 	}
 }
 
+// TestScan_DeprecatedDeliveredUnverifiedShadow verifies the dual-field JSON
+// backward-compat: DeliveredUnverified mirrors DeliveredInInputBox (#140).
+func TestScan_DeprecatedDeliveredUnverifiedShadow(t *testing.T) {
+	ah := AgentHealth{}
+	classifyLines([]string{
+		"[mailman/x] 2026/06/08 00:00:00 WARN delivered_in_input_box id=abc",
+		"[mailman/x] 2026/06/08 00:00:01 WARN delivered_in_input_box id=def",
+	}, &ah)
+	if ah.DeliveredInInputBox != 2 {
+		t.Errorf("DeliveredInInputBox = %d, want 2", ah.DeliveredInInputBox)
+	}
+	if ah.DeliveredUnverified != ah.DeliveredInInputBox {
+		t.Errorf("DeliveredUnverified (%d) != DeliveredInInputBox (%d); shadow must mirror",
+			ah.DeliveredUnverified, ah.DeliveredInInputBox)
+	}
+}
+
 func TestScan_NoDeliveriesNoPercentiles(t *testing.T) {
 	sc := &Scanner{
 		Systemctl: &fakeSystemctl{},

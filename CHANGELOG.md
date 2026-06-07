@@ -102,14 +102,14 @@ deprecated alias through v0.11.0).
 ### Changed
 
 - **Rename `delivered_unverified` → `delivered_in_input_box` (#140).** Substrate-honest
-  naming: the state constant, log token (`WARN delivered_in_input_box`), CLI `--state`
-  value, JSON `display_state`, config key (`notify-on-delivered-in-input-box`), and
-  Go identifiers (`MarkDeliveredInInputBox`, `NotifyOnDeliveredInInputBox`,
-  `DeliveredInInputBox`) are renamed throughout. The old name described what *didn't*
-  happen ("unverified"); the new name describes what *did* ("paste landed in the
-  recipient's input box"). Breaking change for TOML config keys and JSON field names
-  (pre-1.0 scope per the changelog preamble). Frozen ADR prose and CHANGELOG versioned
-  entries retain the old name per the substrate-rename freeze precedent.
+  naming: the log token, CLI `--state` value, JSON `display_state`, config key
+  (`notify-on-delivered-in-input-box`), and Go identifiers (`MarkDeliveredInInputBox`,
+  `NotifyOnDeliveredInInputBox`, `DeliveredInInputBox`) are renamed throughout. The old
+  name described what *didn't* happen ("unverified"); the new name describes what *did*
+  ("paste landed in the recipient's input box"). Deprecated aliases keep the K-counter
+  surfaces live for the two-minor deprecation cycle (see `### Deprecated`). Frozen ADR
+  prose and CHANGELOG versioned entries retain the old name per the substrate-rename
+  freeze precedent.
 
 - **CI — `gofmt` check added to the required pipeline (#202).** The
   `test / go vet + build + test (pull_request)` workflow now runs `gofmt -l .`
@@ -120,6 +120,25 @@ deprecated alias through v0.11.0).
   step folds into the existing test job per the issue's Option A. Same
   discipline-graduating-to-substrate trajectory as Keep-a-Changelog
   conventions and branch protection rules.
+
+### Deprecated
+
+- **Legacy `delivered_unverified` surfaces (#140, earliest removal v0.12.0).**
+  The following surfaces now emit `WARN deprecated_surface_used name=<X> removal=v0.12.0`
+  and continue to function until v0.12.0:
+  - CLI flag `--notify-on-delivered-unverified` — accepted alongside the new
+    `--notify-on-delivered-in-input-box`; when used, the WARN fires once per process
+    and the value maps through to the new flag.
+  - TOML config key `notify-on-delivered-unverified` — accepted alongside the new
+    key; mailman emits the WARN at startup if the old key is in use.
+  - CLI `--state delivered_unverified` (`tmux-msg-claude sent`) — accepted and
+    normalized to `delivered_in_input_box`; the WARN fires once per invocation.
+  - JSON fields `delivered_unverified` (per-agent health payload) and
+    `notify_on_delivered_unverified` (config show) — emitted as deprecated shadows
+    (same value as their `delivered_in_input_box` / `notify_on_delivered_in_input_box`
+    counterparts). Consumers reading the old field still get a value; the shadow fields
+    will be removed in v0.12.0 with no further notice.
+  Two-minor floor from v0.10.0 per ADR-0008. Locks in alongside #177's v0.11.0 removal.
 
 ### Fixed
 

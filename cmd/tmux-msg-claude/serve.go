@@ -167,8 +167,15 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"on a recipient's outbound message transitioning to `failed`, auto-insert a delivery-failure notice back to the original sender (#53)")
 	notifyOnDeliveredInInputBox := fs.Bool("notify-on-delivered-in-input-box", true,
 		"on a recipient's outbound message transitioning to `delivered_in_input_box` (paste+Enter ran but verify token didn't surface), auto-insert a notice back to the original sender (#53)")
+	notifyOnDeliveredUnverifiedLegacy := fs.Bool("notify-on-delivered-unverified", true,
+		"deprecated: use --notify-on-delivered-in-input-box (removal v0.12.0, #140)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
+	}
+	if flagWasSet(fs, "notify-on-delivered-unverified") {
+		fmt.Fprintf(stderr,
+			"WARN deprecated_surface_used name=--notify-on-delivered-unverified removal=v0.12.0 — use --notify-on-delivered-in-input-box instead (ADR-0008)\n")
+		*notifyOnDeliveredInInputBox = *notifyOnDeliveredUnverifiedLegacy
 	}
 
 	// Load host-level config (#54). Missing-file → silent defaults;
@@ -177,6 +184,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	cfg, cfgErr := config.Load()
 	if cfgErr != nil {
 		fmt.Fprintf(stderr, "WARN config: %v — using defaults\n", cfgErr)
+	}
+	if config.HasDeprecatedNotifyOnDeliveredUnverified(cfg, *agent) {
+		fmt.Fprintf(stderr,
+			"WARN deprecated_surface_used name=notify-on-delivered-unverified removal=v0.12.0 — use notify-on-delivered-in-input-box in config instead (ADR-0008)\n")
 	}
 	// Precedence: CLI flags > per-agent block > defaults block >
 	// hardcoded compile-time defaults. fs.Lookup("X").DefValue is the
