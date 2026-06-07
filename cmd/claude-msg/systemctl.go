@@ -55,6 +55,17 @@ func stopMailman(ctx context.Context, agent string) error {
 	return nil
 }
 
+// mailmanActive reports whether the recipient's mailman unit is active, via
+// `systemctl --user is-active`. is-active prints "active" + exits 0 only when
+// the unit is running; any other state ("inactive"/"failed"/unknown) or a
+// non-zero exit reads as not-running. Used by the send-time recipient-status
+// probe (#152) — best-effort, so a systemctl error is treated as "not active"
+// rather than surfaced.
+func mailmanActive(ctx context.Context, agent string) bool {
+	out, _ := systemctlRun(ctx, "is-active", mailmanUnit(agent))
+	return strings.TrimSpace(string(out)) == "active"
+}
+
 func mailmanUnit(agent string) string {
 	return "claude-mailman@" + agent + ".service"
 }
