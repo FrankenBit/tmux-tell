@@ -209,6 +209,8 @@ Run `claude-msg --version` to see what's installed.
   recipient's pane. README diagnostic + new-agent-setup sections and the
   diagnostic-playbook updated.
 
+- **`docs/adr/0007` + `CONTRIBUTING.md` — Binnacle coexist external contract (#179, implements #164 Option B).** ADR-0007 records the coexist decision: tmux-msg stays MIT + standalone, Binnacle consumes it as an external Go module, the MIT+GPL-3.0 combination clean per the FSF compatibility list. New `CONTRIBUTING.md` commits the external contract — the exported Go API + DB schema (columns + state vocabulary) as stability surfaces — under the ratified deprecation policy (#162: pre-1.0 semver-explicit; post-1.0 two-minor-cycle floor + discretion clause + runtime warnings). README pointer added. Pure docs.
+
 - **README `### Canonical name mapping` subsection (#143).** Documents
   the three-layer naming (wire-protocol / source / Claude Code slug /
   docs-prose), the Claude Code slug sanitization rule

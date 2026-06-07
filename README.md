@@ -588,7 +588,7 @@ go test -race -count=1 ./...    # CI runs without -race (the runner lacks cgo)
 
 See [`docs/`](docs/) for the operator guides (observe-gate, diagnostic playbook,
 failure modes, security) and `docs/adr/` for the architecture decision records.
-Contributions welcome — open an issue or a PR.
+Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). **Building on tmux-msg downstream?** `CONTRIBUTING.md` records the external-contract commitments — the exported Go API + DB schema as stability surfaces — for consumers like Binnacle, which composes with tmux-msg as an external Go module ([ADR-0007](docs/adr/0007-binnacle-coexist-external-contract.md)).
 
 ## Removal
 
