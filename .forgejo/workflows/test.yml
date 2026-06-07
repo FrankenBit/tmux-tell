@@ -18,6 +18,15 @@ jobs:
       - name: go version
         run: go version
 
+      - name: gofmt
+        run: |
+          drift=$(gofmt -l .)
+          if [ -n "$drift" ]; then
+            echo "::error::gofmt drift detected. Run 'gofmt -w .' to fix."
+            echo "$drift"
+            exit 1
+          fi
+
       - name: go vet
         run: go vet ./...
 

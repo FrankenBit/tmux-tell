@@ -32,6 +32,18 @@ deprecated alias through v0.11.0).
 
 ## [Unreleased]
 
+### Changed
+
+- **CI — `gofmt` check added to the required pipeline (#202).** The
+  `test / go vet + build + test (pull_request)` workflow now runs `gofmt -l .`
+  before `go vet` and fails when ANY file in the tree carries gofmt drift.
+  Closes the substrate gap that let the pre-#172 17-file drift accumulate
+  undetected — gofmt-cleanliness moves from discipline (Surveyor catches in
+  review) to substrate (CI enforces). No new required-status context: the
+  step folds into the existing test job per the issue's Option A. Same
+  discipline-graduating-to-substrate trajectory as Keep-a-Changelog
+  conventions and branch protection rules.
+
 ## [0.9.0] — 2026-06-07
 
 ### Added
