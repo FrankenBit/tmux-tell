@@ -50,6 +50,18 @@ Run `claude-msg --version` to see what's installed.
   `whereSince` window seam). System chrome (`delivery_failure_notice`,
   `stranded_draft`, `ping`) is excluded from thread analysis.
 
+- **`claude-msg stranded list|show|prune` — paste-snapshot recovery (#142).**
+  Operator-visible recovery for the `stranded_draft` bookmarks the observe-gate
+  archives when a delivery would clobber in-flight operator input (#92). Source
+  probe (AC1): they're `messages` rows with `kind=stranded_draft`, self-addressed.
+  `list` shows id/pane/timestamp/byte-size; `show <id>` prints the recovered
+  content (`-o file` for long pastes); `prune --older-than <dur>` (required;
+  reuses `parseWindow`) clears old ones. The stranded-draft notification now
+  carries a recovery hint. Render/parse share marker constants so they can't
+  drift (`ListFilter` gains a `Kind` filter; new `DeleteStrandedDraftsBefore`).
+  Best-effort on large bracketed pastes — tmux may have captured only its
+  `[Pasted text #N]` placeholder rather than the literal text.
+
 - **`claude-msg thread <id>` — reply-chain tree render (#141).** Renders a
   `reply_to` chain (resolved from any id in it via the existing
   `store.GetThread` seam — walk to root, BFS all descendants) as an ASCII

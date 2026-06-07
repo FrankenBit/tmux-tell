@@ -794,12 +794,19 @@ func archiveStrandedDraft(
 // renderStrandedDraftBody formats the human-readable body of a
 // stranded-draft snapshot. The shape parallels renderFailureNoticeBody
 // for visual consistency in the inbox view.
+// The marker lines are built from the shared stranded* constants
+// (stranded.go) so this renderer and parseStrandedBody can't drift. The
+// recovery-hint line (#142) is emitted BEFORE the content marker so the
+// trailing block stays exactly the cleared content for the parser.
 func renderStrandedDraftBody(pane, triggerMsgID, content string) string {
-	return fmt.Sprintf(`:bookmark: Stranded draft snapshot
-  Pane: %s
-  Triggered by delivery of: %s
-  Cleared content:
-%s`, pane, triggerMsgID, indentForBody(content))
+	return strings.Join([]string{
+		strandedHeaderLine,
+		strandedPanePrefix + pane,
+		strandedTriggerPrefix + triggerMsgID,
+		"  Recover: claude-msg stranded list  →  claude-msg stranded show <id>",
+		strandedContentMarker,
+		indentForBody(content),
+	}, "\n")
 }
 
 // indentForBody indents each line of s by two spaces so multi-line
@@ -808,14 +815,14 @@ func renderStrandedDraftBody(pane, triggerMsgID, content string) string {
 // so they can recover the draft exactly as they typed it.
 func indentForBody(s string) string {
 	if s == "" {
-		return "    (empty)"
+		return strandedBodyIndent + strandedEmptyMarker
 	}
 	var b strings.Builder
 	for i, line := range strings.Split(s, "\n") {
 		if i > 0 {
 			b.WriteByte('\n')
 		}
-		b.WriteString("    ")
+		b.WriteString(strandedBodyIndent)
 		b.WriteString(line)
 	}
 	return b.String()
