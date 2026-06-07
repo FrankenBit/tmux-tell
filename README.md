@@ -203,7 +203,8 @@ claude-msg health [--since DUR]                    # per-agent operational audit
 claude-msg pause  AGENT | --all                    # halt delivery (queue keeps filling)
 claude-msg resume AGENT | --all
 claude-msg reset  --confirm [--hard]               # purge queued; --hard wipes audit log
-claude-msg log    --thread ID                      # follow a reply chain
+claude-msg log    --thread ID                      # a reply chain, flat-chronological
+claude-msg thread ID [--format tree|json]          # a reply chain, as a parent→child tree
 claude-msg discover                                # re-derive agents.pane_id from tmux
 ```
 
@@ -229,6 +230,25 @@ ping to it reports `timeout`.)
 (`queued → delivering → delivered`, or `failed` with the reason in `error`);
 `--watch` re-renders on each state change until terminal. From MCP, call
 `tmux-msg.message_status {"id": "9c1d"}`.
+
+**Reading a reply thread.** Two views of the same `reply_to` chain (both resolve
+the whole chain from *any* id in it — walk to root, then all descendants):
+`claude-msg log --thread <id>` renders it **flat-chronological** (an audit view);
+`claude-msg thread <id>` renders it as a **parent→child tree** (a navigation /
+diagnostic view — "who replied to what, and did it land?"):
+
+```
+○ id=6970 from=quartermaster to=bosun kind=message state=delivered  (PR #397 ready for merge)
+└─ ✓ id=7501 from=bosun to=quartermaster kind=message state=delivered  (PR #397 merged)
+   ├─ ✓ id=6d35 from=quartermaster to=bosun kind=delivery_failure_notice state=delivered  (…)
+   └─ ✗ id=01ff from=quartermaster to=bosun kind=message state=failed  (merge acked)
+      └─ … id=ac44 from=bosun to=quartermaster kind=message state=queued  (state-sync ack)
+```
+
+Glyphs: `○` root · `✓` delivered · `✗` failed · `…` queued/delivering. (There is no
+distinct `delivered_unverified` glyph yet — the substrate stores that soft-failure
+as `delivered`; making it DB-queryable is tracked in #169.) `--format json` emits
+the nested tree for tooling. `thread` is read-only and never touches a pane.
 
 **Bus-traffic stats.** `claude-msg stats` is the in-terminal "show me the bus
 right now" surface — on-demand aggregates computed straight from the local

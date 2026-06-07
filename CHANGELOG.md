@@ -27,6 +27,20 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`claude-msg thread <id>` — reply-chain tree render (#141).** Renders a
+  `reply_to` chain (resolved from any id in it via the existing
+  `store.GetThread` seam — walk to root, BFS all descendants) as an ASCII
+  parent→child tree: `○` root · `✓` delivered · `✗` failed · `…`
+  queued/delivering, with `kind`, `from→to`, `state`, and a body preview per
+  node. `--format tree` (default) for humans, `--format json` for tooling
+  (nested structure). A read-only sibling to `claude-msg log`: `log` is the
+  flat-chronological audit view, `thread` the structural navigation view —
+  both over the same store seam, no walk duplication. Chosen over a
+  `log --tree` flag because the tree is the new command's *default* format,
+  which `log` (flat-text default, script consumers) can't adopt without a
+  breaking change. No distinct `delivered_unverified` glyph — the substrate
+  stores that soft-failure as `delivered`; DB-queryability tracked in #169.
+
 - **`--no-reply-expected` bus-discipline flag on `send` (#145).** Adds
   `no_reply_expected` column to `messages` (INTEGER NOT NULL DEFAULT 0).
   New `--no-reply-expected` flag on `claude-msg send` and `no_reply_expected`

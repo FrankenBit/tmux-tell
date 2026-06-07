@@ -33,7 +33,8 @@ Subcommands:
   pause   Halt one or all mailman daemons
   resume  Resume paused mailmen
   reset   Purge messages (requires --confirm)
-  log     Inspect message threads
+  log     Inspect a reply thread flat-chronological (--thread <id>)
+  thread  Render a reply thread as a parent→child tree (#141)
   discover Re-derive agents.pane_id from current tmux state
   state   Probe a agent's current activity via read-only capture-pane (#71)
   refresh-all-mcps  Bulk-fire mcp-restart-tmux-msg to every registered agent (#62)
@@ -96,6 +97,8 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runResetCLI(args[1:], stdout, stderr)
 	case "log":
 		return runLogCLI(args[1:], stdout, stderr)
+	case "thread":
+		return runThreadCLI(args[1:], stdout, stderr)
 	case "discover":
 		return runDiscoverCLI(args[1:], stdout, stderr)
 	case "state":
