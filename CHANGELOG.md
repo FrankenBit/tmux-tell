@@ -133,8 +133,8 @@ Run `claude-msg --version` to see what's installed.
   deltas in `cmd/tmux-msg-claude/serve.go` (struct-literal alignment and log-concat
   whitespace) plus 16 further files carrying minor whitespace/alignment drift were
   corrected by running `gofmt -w`. The CI workflow runs `go vet` but not `gofmt -d`;
-  a separate tracker should be filed to add the check (out of scope here per the
-  issue's Out-of-scope list).
+  adding the check is tracked as #202 (out of scope here per the issue's
+  Out-of-scope list).
 
 ## [0.8.0] — 2026-06-07
 
