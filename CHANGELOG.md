@@ -34,6 +34,22 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`claude-msg digest` — campaign-arc narrative summary (#161).** The
+  *qualitative* sibling to `stats`: a by-counterparty table (sent / received /
+  threads / closed / in-flight) plus an "in-flight threads (likely need
+  follow-up)" section listing reply-chains whose last word still awaits an
+  answer — the day's-end "what's still owed?" view. Flags: `--since` with
+  calendar shortcuts (`today` / `yesterday` / `week`, alongside `all` / `<N>d`
+  / any duration), `--counterparty NAME`, `--format text|json`. A thread is
+  **closed** when its latest message carries the `🔕` no-reply-expected marker
+  (or the send failed) and **in-flight** otherwise — a documented heuristic,
+  not ground truth. Reuses #147's aggregation layer (`StatsPerAgent` for the
+  sent/received counts, the shared `parseWindow` helper, now extended with the
+  calendar shortcuts) and #141's `buildThreadTree` reply-tree walk; the only
+  net-new store primitive is `MessagesInWindow` (full rows over the same
+  `whereSince` window seam). System chrome (`delivery_failure_notice`,
+  `stranded_draft`, `ping`) is excluded from thread analysis.
+
 - **`claude-msg thread <id>` — reply-chain tree render (#141).** Renders a
   `reply_to` chain (resolved from any id in it via the existing
   `store.GetThread` seam — walk to root, BFS all descendants) as an ASCII

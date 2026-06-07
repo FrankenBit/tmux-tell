@@ -22,6 +22,12 @@ func TestParseWindow(t *testing.T) {
 		{"90m", false, now.Add(-90 * time.Minute)},
 		{"1h30m", false, now.Add(-90 * time.Minute)},
 		{" 7d ", false, now.Add(-7 * 24 * time.Hour)}, // trimmed
+		// calendar shortcuts (#161): local-midnight floor relative to now.
+		{"today", false, time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)},
+		{"morning", false, time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)}, // alias of today
+		{"TODAY", false, time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)},   // case-insensitive
+		{"yesterday", false, time.Date(2026, 6, 6, 0, 0, 0, 0, time.UTC)},
+		{"week", false, time.Date(2026, 5, 31, 0, 0, 0, 0, time.UTC)},
 	}
 	for _, c := range cases {
 		t.Run(c.spec, func(t *testing.T) {

@@ -198,6 +198,7 @@ claude-msg track  ID [--watch]                     # delivery state of one messa
 claude-msg get    ID                               # fetch a processed message by id
 claude-msg status [--today]                        # paused state + queue depths per agent
 claude-msg stats  [--window all|7d|1h] [--agent X] [--pair]  # on-demand bus-traffic aggregates
+claude-msg digest [--since today|week|24h] [--counterparty X]  # campaign-arc narrative summary
 claude-msg state  --agent AGENT                    # probe an agent's current activity
 claude-msg health [--since DUR]                    # per-agent operational audit
 claude-msg pause  AGENT | --all                    # halt delivery (queue keeps filling)
@@ -263,6 +264,22 @@ busiest sender→recipient pairs; `--format json` emits machine-readable output
 `delivered_unverified` signal is a mailman journal line, not a column), so use
 `status --today` / `health` for that breakdown; making it DB-queryable is
 tracked in #169.
+
+**Campaign digest.** `claude-msg digest` is the *qualitative* sibling to `stats`:
+where `stats` answers "how much / how fast," `digest` answers "what conversations
+happened and what's still owed." It reports a by-counterparty table (sent /
+received / threads / closed / in-flight) plus an **in-flight threads** section
+listing the reply-chains whose last word still awaits an answer — the day's-end
+"what do I need to follow up on?" view. `--since` takes the calendar shortcuts
+`today` / `yesterday` / `week` (alongside `all`, `<N>d`, and any duration);
+`--counterparty X` scopes to conversations involving one agent; `--format json`
+emits the structure. A thread counts as **closed** when its latest message is
+marked `🔕` no-reply-expected (or the send failed) and **in-flight** otherwise —
+a heuristic, not ground truth: the substrate can't know if a conversation is
+*semantically* done, so the output says "likely needs follow-up," and setting
+`--no-reply-expected` on a genuine last word is what keeps a closed thread out of
+the list. System chrome (`delivery_failure_notice`, `stranded_draft`, `ping`) is
+excluded from thread analysis.
 
 **Delivery-failure notifications.** When an outbound message hits a terminal-failure
 state (`failed` or `delivered_unverified`), the mailman auto-inserts a
