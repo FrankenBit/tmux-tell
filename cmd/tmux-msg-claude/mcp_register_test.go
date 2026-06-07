@@ -143,6 +143,61 @@ func TestMCP_Register_SystemctlFailureStillReportsRegistration(t *testing.T) {
 	}
 }
 
+func TestMCP_Register_SurfacesQueuedBacklog(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%9")
+	// "backlogged" was registered, received mail, then its pane died; it
+	// now re-registers (force=true) and should learn it has backlog
+	// without a separate inbox poll (#151).
+	s := newCmdTestStore(t, "sender", "backlogged")
+	(&fakeSystemctl{}).install(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		if _, err := s.InsertMessage(ctx, store.InsertParams{
+			FromAgent: "sender", ToAgent: "backlogged", Body: "queued msg",
+		}); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+		"name":  "backlogged",
+		"force": true,
+	})
+	if got["ok"] != true {
+		t.Fatalf("ok = %v; got=%v", got["ok"], got)
+	}
+	q, ok := got["queued"].(float64)
+	if !ok {
+		t.Fatalf("queued missing or wrong type; got=%v", got)
+	}
+	if int(q) != 3 {
+		t.Errorf("queued = %v, want 3", q)
+	}
+	if _, present := got["queued_error"]; present {
+		t.Errorf("unexpected queued_error: %v", got["queued_error"])
+	}
+}
+
+func TestMCP_Register_ZeroQueuedWhenNoBacklog(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%9")
+	s := newCmdTestStore(t) // empty registry, no queued mail
+	(&fakeSystemctl{}).install(t)
+
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+		"name": "fresh",
+	})
+	if got["ok"] != true {
+		t.Fatalf("got=%v", got)
+	}
+	q, ok := got["queued"].(float64)
+	if !ok {
+		t.Fatalf("queued missing or wrong type; got=%v", got)
+	}
+	if int(q) != 0 {
+		t.Errorf("queued = %v, want 0 (present-and-zero, not omitted)", q)
+	}
+}
+
 func TestMCP_Unregister_HappyPath(t *testing.T) {
 	s := newCmdTestStore(t, "doomed", "keep")
 	fs := &fakeSystemctl{}

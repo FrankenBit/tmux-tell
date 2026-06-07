@@ -122,12 +122,27 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	// Surface the recipient's queued-message backlog at register time
+	// (#151) so a fresh or re-registering session learns it has mail
+	// waiting without needing a separate inbox poll — closes the
+	// inbox-poll-not-push gap for the spawn-per-task / post-restart
+	// chamber pattern. Non-fatal: registration already succeeded above,
+	// so a count hiccup degrades to a soft `queued_error` field rather
+	// than failing the register (mirrors the mailman-start soft-fail
+	// precedent below; an honest 0 must not be confused with "unknown").
+	queued, qErr := s.RecipientQueueDepth(ctx, *name)
+
 	out := map[string]any{
 		"ok":            true,
 		"name":          *name,
 		"pane":          resolvedPane,
 		"delivery_mode": *deliveryMode,
 		"registered":    true,
+	}
+	if qErr != nil {
+		out["queued_error"] = qErr.Error()
+	} else {
+		out["queued"] = queued
 	}
 	if start {
 		if err := startMailman(ctx, *name); err != nil {
