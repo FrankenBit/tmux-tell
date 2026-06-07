@@ -33,6 +33,15 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`docs/chamber-dispatch.md` — assignee-on-claim dispatch convention (#180).**
+  Documents the coordination discipline for multi-agent deployments where several
+  agents draw work from one issue tracker and more than one party can dispatch it:
+  claim an issue by assigning it to yourself before starting, and check `assignees`
+  before dispatching. Frames the gap as a substrate boundary — the bus carries
+  coordination *conversations*, not the discoverable *persistent state* "this issue
+  is mine," which belongs on the tracker. Anchored to the 2026-06-07 cross-dispatch
+  collision. CONTRIBUTING gains a pointer under "How we work."
+
 - **K=3 release-stability tracker — v0.8.0 marks Cycle 2 of 3 (#163).** Establishes
   the K-counter that gates the road to `1.0`: three consecutive releases with no
   breaking change across the five public surfaces (MCP tool schemas, CLI args/flags/

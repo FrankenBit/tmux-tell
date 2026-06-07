@@ -38,6 +38,10 @@ push it clean.
   backing ADR.
 - **Reviews.** PRs get a review before merge; substrate-accuracy (claims grounded
   against the actual code, not the issue body) is the bar reviewers hold.
+- **Claiming an issue (multi-agent deployments).** If more than one party hands out
+  work from this tracker, assign the issue to yourself before starting, so the claim
+  is discoverable on the issue itself and not just in side-channel chatter — see
+  [`docs/chamber-dispatch.md`](docs/chamber-dispatch.md).
 
 ## The external contract (downstream consumers)
 
