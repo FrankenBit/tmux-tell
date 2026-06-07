@@ -126,6 +126,41 @@ func TestResolve_PeerScope_EdgeRule(t *testing.T) {
 	}
 }
 
+// TestResolve_PeerScope_EdgeRule_Quartermaster pins the Quartermaster→
+// Pilot /clear edge added in #167, mirroring the Bosun→Pilot edge.
+// Quartermaster is an established dispatcher into Pilot's clear-before-
+// each-task lifecycle (feedback_pilot_clear_before_each_task), so it gets
+// the same narrow edge. The negatives lock in that the edge is exactly
+// quartermaster→pilot and nothing wider — a QM→non-pilot /clear (the
+// blast-radius case the conservative default guards against) stays denied.
+func TestResolve_PeerScope_EdgeRule_Quartermaster(t *testing.T) {
+	// Positive: quartermaster→pilot returns the literal text.
+	got, err := Resolve("clear", ScopePeer, "quartermaster", "pilot")
+	if err != nil {
+		t.Errorf("Resolve(clear, peer, quartermaster→pilot): want /clear, got error %v", err)
+	}
+	if got != "/clear" {
+		t.Errorf("Resolve(clear, peer, quartermaster→pilot) = %q, want /clear", got)
+	}
+
+	// Negative: QM→non-pilot stays denied — the edge is narrow. Covers a
+	// peer chamber (engineer) and a dispatcher peer (bosun) as recipients.
+	for _, recipient := range []string{"engineer", "bosun", "shipwright", "surveyor"} {
+		if _, err := Resolve("clear", ScopePeer, "quartermaster", recipient); !errors.Is(err, ErrScopeDenied) {
+			t.Errorf("Resolve(clear, peer, quartermaster→%s): want ErrScopeDenied, got %v", recipient, err)
+		}
+	}
+	// Negative: edge direction matters — reversed (pilot→quartermaster) denied.
+	if _, err := Resolve("clear", ScopePeer, "pilot", "quartermaster"); !errors.Is(err, ErrScopeDenied) {
+		t.Errorf("Resolve(clear, peer, pilot→quartermaster): want ErrScopeDenied, got %v", err)
+	}
+	// Negative: self scope — same as the Bosun case, PeerEdges isn't
+	// consulted in self scope so clear's Self=false governs.
+	if _, err := Resolve("clear", ScopeSelf, "quartermaster", "quartermaster"); !errors.Is(err, ErrScopeDenied) {
+		t.Errorf("Resolve(clear, self, quartermaster→quartermaster): want ErrScopeDenied, got %v", err)
+	}
+}
+
 // TestResolve_SelfScope_ErrorWording pins the three-branch
 // differentiation introduced in Surveyor's S1 absorb on PR #61.
 // Pre-#60 every Self=false entry also had Peer=true, so the historical
@@ -237,6 +272,28 @@ func TestNamesForScope(t *testing.T) {
 	for i, n := range bosunPilot {
 		if n != wantBosunPilot[i] {
 			t.Fatalf("bosun→pilot[%d] = %q, want %q", i, n, wantBosunPilot[i])
+		}
+	}
+
+	// Peer scope WITH the #167 edge match: quartermaster→pilot also
+	// surfaces "clear", same as the Bosun edge.
+	qmPilot := NamesForScope(ScopePeer, "quartermaster", "pilot")
+	wantQMPilot := []string{"clear", "help", "mcp-enable-tmux-msg", "mcp-restart-tmux-msg", "rename"}
+	if len(qmPilot) != len(wantQMPilot) {
+		t.Fatalf("quartermaster→pilot names = %v, want %v", qmPilot, wantQMPilot)
+	}
+	for i, n := range qmPilot {
+		if n != wantQMPilot[i] {
+			t.Fatalf("quartermaster→pilot[%d] = %q, want %q", i, n, wantQMPilot[i])
+		}
+	}
+
+	// And QM→non-pilot does NOT surface "clear" — the narrow edge holds
+	// for the names listing too (mirrors the Resolve negatives).
+	qmEngineer := NamesForScope(ScopePeer, "quartermaster", "engineer")
+	for _, n := range qmEngineer {
+		if n == "clear" {
+			t.Fatalf("quartermaster→engineer should NOT surface clear; got %v", qmEngineer)
 		}
 	}
 }

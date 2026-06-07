@@ -128,14 +128,25 @@ type Edge struct {
 // the edge silently stops matching and the rescue path goes dark.
 // Surveyor S2 forward-watch on PR #61.
 var PeerEdges = map[string][]Edge{
-	// Bosun → Pilot rescue path: Pilot occasionally hits token
-	// exhaustion where /compact can't recover, and only /clear
-	// restores a usable session. The destructive cost (loses
-	// in-flight work) is accepted because the alternative is a
-	// dead session. Bosun is the one agent routed to make this
-	// call. See #60 for the design + acceptance criteria.
+	// Bosun → Pilot and Quartermaster → Pilot routine-clear /
+	// rescue paths. Two motivations converge on the same edge shape:
+	//   - Rescue: Pilot occasionally hits token exhaustion where
+	//     /compact can't recover, and only /clear restores a usable
+	//     session. The destructive cost (loses in-flight work) is
+	//     accepted because the alternative is a dead session (#60).
+	//   - Routine: Pilot's intended lifecycle is clear-before-each-task
+	//     (feedback_pilot_clear_before_each_task), so its dispatcher
+	//     fires /clear ahead of a fresh dispatch as standard cadence.
+	// Both Bosun (#60) and Quartermaster (#167) are established
+	// dispatchers into that lifecycle, so each gets the edge. The edge
+	// stays narrow (specific sender → pilot) rather than a global
+	// Peer=true: anyone-to-anyone /clear is a blast-radius nightmare,
+	// and other senders (Engineer, Shipwright) get their own edges only
+	// if/when those dispatch patterns emerge — conservative-default-
+	// with-explicit-opt-in (this package's doc-comment).
 	"clear": {
 		{From: "bosun", To: "pilot"},
+		{From: "quartermaster", To: "pilot"},
 	},
 }
 

@@ -34,6 +34,15 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`quartermaster→pilot` `/clear` PeerEdge (#167).** Mirrors the existing
+  `bosun→pilot` edge (#60): Quartermaster is now an established dispatcher into
+  Pilot's clear-before-each-task lifecycle, so it gets the same narrow per-edge
+  exception to invoke the otherwise-globally-denied `/clear`. The edge stays
+  exact (`quartermaster→pilot` only) — QM→any-other-recipient `/clear` remains
+  denied, per the package's conservative-default-with-explicit-opt-in policy;
+  broader sender→pilot edges (Engineer, Shipwright) would each be filed
+  separately if those dispatch patterns emerge.
+
 - **`send` reports recipient registration + reachability (#152).** The `send`
   response (CLI + `tmux-msg.send` MCP) gains a `recipient` block —
   `registered` / `alive` / `delivery_mode` / `mailman_running` / `pane_status`
