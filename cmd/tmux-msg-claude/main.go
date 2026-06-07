@@ -1,4 +1,6 @@
-// Package main is the claude-msg CLI entrypoint.
+// Package main is the tmux-msg-claude CLI entrypoint — the Claude Code adapter
+// for the tmux-msg substrate (renamed from claude-msg per #174 Option 2 / #177;
+// `claude-msg` survives as a deprecated alias through v0.11.0).
 //
 // Subcommand dispatcher only. Each subcommand handler lives in its own file
 // (send.go, inbox.go, status.go, agents.go, whoami.go, …) and is split into
@@ -8,9 +10,20 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/version"
+)
+
+// Deprecated binary alias (#177 / ADR-0008). The binary renamed claude-msg →
+// tmux-msg-claude; install.sh keeps a `claude-msg → tmux-msg-claude` symlink for
+// the deprecation cycle. When invoked through the old name, warn so operators
+// migrate before the alias is removed.
+const (
+	deprecatedBinaryAlias   = "claude-msg"
+	deprecatedBinaryRemoval = "v0.11.0" // two-minor floor from the v0.9.0 rename (ADR-0008)
 )
 
 const usage = `usage: claude-msg <subcommand> [args]
@@ -48,7 +61,21 @@ See https://git.frankenbit.de/frankenbit/tmux-msg for the design notes.
 `
 
 func main() {
+	warnIfDeprecatedName(os.Args[0], os.Stderr)
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// warnIfDeprecatedName emits the ADR-0008 deprecation WARN when the binary is
+// invoked through the legacy `claude-msg` alias (the symlink install.sh keeps
+// for the deprecation cycle). The string matches ADR-0008's worked-example
+// format verbatim so it's greppable across the fleet. Canonical
+// `tmux-msg-claude` invocations are silent.
+func warnIfDeprecatedName(argv0 string, stderr io.Writer) {
+	if filepath.Base(argv0) == deprecatedBinaryAlias {
+		fmt.Fprintf(stderr,
+			"WARN deprecated_surface_used name=%s removal=%s — invoke tmux-msg-claude instead (ADR-0008)\n",
+			deprecatedBinaryAlias, deprecatedBinaryRemoval)
+	}
 }
 
 // run is the testable entrypoint. It returns the exit code.

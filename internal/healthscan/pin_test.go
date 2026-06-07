@@ -60,16 +60,16 @@ func TestPin_HealthScanLatencyCeiling_Under100ms(t *testing.T) {
 	byUnit := make(map[string][]string, mailmenCount)
 	agents := []string{"admin", "bosun", "pilot", "surveyor"}
 	for _, name := range agents {
-		unit := "claude-mailman@" + name + ".service"
+		unit := "tmux-msg-claude-mailman@" + name + ".service"
 		byUnit[unit] = syntheticJournalLines(name, linesPerAgent)
 	}
 
 	sc := &Scanner{
 		Systemctl: &fakeSystemctl{byUnit: map[string]map[string]string{
-			"claude-mailman@admin.service":    {"NRestarts": "0"},
-			"claude-mailman@bosun.service":    {"NRestarts": "0"},
-			"claude-mailman@pilot.service":    {"NRestarts": "0"},
-			"claude-mailman@surveyor.service": {"NRestarts": "0"},
+			"tmux-msg-claude-mailman@admin.service":    {"NRestarts": "0"},
+			"tmux-msg-claude-mailman@bosun.service":    {"NRestarts": "0"},
+			"tmux-msg-claude-mailman@pilot.service":    {"NRestarts": "0"},
+			"tmux-msg-claude-mailman@surveyor.service": {"NRestarts": "0"},
 		}},
 		Journal: &fakeJournal{byUnit: byUnit},
 	}

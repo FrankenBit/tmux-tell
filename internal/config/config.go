@@ -78,7 +78,7 @@ func (f *File) IsPrivileged(agent string) bool {
 // hardcoded compile-time default).
 //
 // Field-type choices intentionally mirror the existing CLI flag types
-// in cmd/claude-msg/serve.go so the wiring stays one-to-one. Pointer
+// in cmd/tmux-msg-claude/serve.go so the wiring stays one-to-one. Pointer
 // fields distinguish "explicitly set" from "zero value": a TOML key
 // that's absent stays nil, allowing the precedence chain to fall
 // through to the next layer.
@@ -406,7 +406,7 @@ type ResolvedView struct {
 }
 
 // Resolve builds the resolved snapshot. Hardcoded defaults mirror
-// the CLI flag defaults in cmd/claude-msg/serve.go.
+// the CLI flag defaults in cmd/tmux-msg-claude/serve.go.
 func Resolve(file *File, path, agent string) ResolvedView {
 	return ResolvedView{
 		Agent:                       agent,

@@ -51,8 +51,8 @@ func TestMCP_Register_HappyPath(t *testing.T) {
 	if a.PaneID != "%9" {
 		t.Errorf("pane_id = %q, want %%9", a.PaneID)
 	}
-	// systemctl --user enable --now claude-mailman@newone.service
-	if len(fs.calls) != 1 || fs.calls[0][2] != "claude-mailman@newone.service" {
+	// systemctl --user enable --now tmux-msg-claude-mailman@newone.service
+	if len(fs.calls) != 1 || fs.calls[0][2] != "tmux-msg-claude-mailman@newone.service" {
 		t.Errorf("systemctl calls = %v", fs.calls)
 	}
 }
@@ -166,11 +166,11 @@ func TestMCP_Unregister_HappyPath(t *testing.T) {
 	if _, err := s.GetAgent(context.Background(), "keep"); err != nil {
 		t.Errorf("keep should still exist: %v", err)
 	}
-	// systemctl disable --now claude-mailman@doomed.service
+	// systemctl disable --now tmux-msg-claude-mailman@doomed.service
 	if len(fs.calls) != 1 {
 		t.Fatalf("calls = %d", len(fs.calls))
 	}
-	if fs.calls[0][2] != "claude-mailman@doomed.service" {
+	if fs.calls[0][2] != "tmux-msg-claude-mailman@doomed.service" {
 		t.Errorf("wrong unit: %v", fs.calls[0])
 	}
 }
@@ -198,7 +198,7 @@ func TestMCP_Unregister_IdempotentOnMissingMailman(t *testing.T) {
 	s := newCmdTestStore(t, "doomed")
 	(&fakeSystemctl{
 		err: errors.New("exit 1"),
-		out: []byte("Unit claude-mailman@doomed.service not loaded."),
+		out: []byte("Unit tmux-msg-claude-mailman@doomed.service not loaded."),
 	}).install(t)
 
 	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{

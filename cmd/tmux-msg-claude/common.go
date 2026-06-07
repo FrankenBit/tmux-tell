@@ -27,7 +27,7 @@ const (
 	capBodyBytes      = 16 * 1024
 )
 
-// Exit codes follow sysexits.h. See cmd/claude-msg/main.go for the
+// Exit codes follow sysexits.h. See cmd/tmux-msg-claude/main.go for the
 // project-wide mapping.
 const (
 	exitOK          = 0

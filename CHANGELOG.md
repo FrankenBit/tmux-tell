@@ -82,6 +82,45 @@ Run `claude-msg --version` to see what's installed.
 
 ### Changed
 
+- **Binary renamed `claude-msg` → `tmux-msg-claude` (#177, PR1 of 3).** The
+  binary name now encodes the substrate (`tmux-msg`) + the CLI-tool adapter
+  (`claude`) per the #174 Option 2 decision — making `tmux-msg-codex` /
+  `tmux-msg-copilot` adapters cleanly addable later (the multi-binary shape, not
+  the adapters themselves, ships here). Concretely: `cmd/claude-msg/` →
+  `cmd/tmux-msg-claude/`; the systemd template `claude-mailman@.service` →
+  `tmux-msg-claude-mailman@.service`; a multi-target `Makefile` (`make build`
+  builds every `cmd/tmux-msg-*/`, `make build-claude` builds one); and
+  `install.sh` gains `--adapter=claude` (default) installing
+  `/usr/local/bin/tmux-msg-claude`. The substrate-vs-adapter boundary is
+  documented in `cmd/tmux-msg-claude/README.md` (no code physically moved out of
+  `cmd/` — the daemon-loop extraction to `internal/` is deferred to whenever a
+  second adapter materializes). The Go module path stays
+  `git.frankenbit.de/frankenbit/tmux-msg` (already substrate-honest). **Migration
+  is seamless during the deprecation cycle** — see Deprecated below; existing
+  `claude-msg …` invocations and `claude-mailman@…` units keep working via
+  aliases. **This rename is a public-surface change: it resets the #163 K=3
+  release-stability counter** — the release carrying it (v0.9.0) starts a fresh
+  cycle toward K=3. *PR2 (the `$CLAUDE_AGENT_NAME` → `$TMUX_AGENT_NAME` env-var
+  rename) and PR3 (docs + chamber-instructions sweep) follow separately; the
+  `claude-msg` mentions still present in `--help` text and docs are swept in PR3
+  and remain valid via the alias until then.*
+
+### Deprecated
+
+- **`claude-msg` binary name + `claude-mailman@` systemd template — replaced by
+  `tmux-msg-claude` / `tmux-msg-claude-mailman@` (#177).** Earliest removal
+  **v0.11.0** (two minor cycles after the v0.9.0 rename, per ADR-0008's floor;
+  this is the policy's inaugural worked example, dogfooded pre-1.0). For the
+  cycle, `install.sh` installs a `claude-msg → tmux-msg-claude` binary symlink and
+  a `claude-mailman@.service → tmux-msg-claude-mailman@.service` systemd template
+  symlink, so nothing breaks at the cutover. Invoking the binary through the
+  `claude-msg` name emits `WARN deprecated_surface_used name=claude-msg
+  removal=v0.11.0` on stderr. **Migration:** switch scripts/units to
+  `tmux-msg-claude` / `tmux-msg-claude-mailman@`; the aliases are removed in
+  v0.11.0.
+
+### Changed
+
 - **CONTRIBUTING.md — deprecation-policy surface-scope clarification (#162 follow-up).**
   The post-1.0 stability section now states the policy covers **all five** public
   surfaces (per ADR-0008: MCP / CLI / `--format json` / DB + state vocabulary / Go

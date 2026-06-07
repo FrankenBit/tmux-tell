@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # Idempotent installer for tmux-msg on alcatraz-like Linux hosts.
 #
-# Run as root (sudo -A ./install.sh). The script:
-#   - installs the claude-msg binary to ${PREFIX}/bin/
+# Run as root (sudo -A ./install.sh [--adapter=claude]). The script:
+#   - installs the tmux-msg-<adapter> binary to ${PREFIX}/bin/
 #   - creates ${DATADIR} owned by the operator user
 #   - drops the systemd user template into the operator's
 #     ~/.config/systemd/user/
+#   - for the claude adapter, also drops the deprecation-cycle aliases
+#     claude-msg → tmux-msg-claude and claude-mailman@ → the new template
+#     (#177 / ADR-0008; removed v0.11.0)
 #
 # The actual mailman enablement (`systemctl --user enable --now
-# claude-mailman@AGENT.service`) is the operator's job — the install
+# tmux-msg-claude-mailman@AGENT.service`) is the operator's job — the install
 # script makes no assumptions about which agents you want serviced.
 #
 # Re-running is safe: existing files are overwritten, the DB is never
@@ -17,6 +20,34 @@ set -euo pipefail
 
 PREFIX=${PREFIX:-/usr/local}
 DATADIR=${DATADIR:-/var/lib/tmux-msg}
+
+# Which adapter to install. The binary name encodes substrate+adapter
+# (tmux-msg-<adapter>); `claude` is the only adapter today, but a future
+# operator picks another once codex/copilot adapters exist (#177). Accept both
+# --adapter=X and an ADAPTER=X env override.
+ADAPTER=${ADAPTER:-claude}
+for arg in "$@"; do
+    case "$arg" in
+        --adapter=*) ADAPTER="${arg#--adapter=}" ;;
+        *) echo "install.sh: unknown argument: $arg (expected --adapter=NAME)" >&2; exit 1 ;;
+    esac
+done
+if [[ -z "$ADAPTER" || ! -d "$(dirname "$0")/cmd/tmux-msg-${ADAPTER}" ]]; then
+    echo "install.sh: no adapter 'cmd/tmux-msg-${ADAPTER}/' in this repo." >&2
+    exit 1
+fi
+BIN_NAME="tmux-msg-${ADAPTER}"
+UNIT_NAME="tmux-msg-${ADAPTER}-mailman@.service"
+
+# Deprecation-cycle aliases (#177 / ADR-0008). Only the claude adapter carries
+# the legacy claude-msg / claude-mailman names; other adapters never had them.
+# Empty → no alias installed.
+LEGACY_BIN=""
+LEGACY_UNIT=""
+if [[ "$ADAPTER" == "claude" ]]; then
+    LEGACY_BIN="claude-msg"
+    LEGACY_UNIT="claude-mailman@.service"
+fi
 
 # Resolve the operator user — the non-root account that owns $DATADIR and
 # runs the mailman daemons. Precedence: an explicit OPERATOR_USER from the
@@ -45,13 +76,15 @@ if [[ -z "$OPERATOR_HOME" ]]; then
     echo "install.sh: cannot resolve home dir for $OPERATOR_USER" >&2
     exit 1
 fi
-USER_SYSTEMD="$OPERATOR_HOME/.config/systemd/user"
+# USER_SYSTEMD may be overridden (testing / bespoke layouts); defaults to the
+# operator's standard user-unit dir.
+USER_SYSTEMD="${USER_SYSTEMD:-$OPERATOR_HOME/.config/systemd/user}"
 
 cd "$(dirname "$0")"
 
 # 1. Build if the binary isn't already in bin/.
-if [[ ! -x bin/claude-msg ]]; then
-    echo "==> building claude-msg"
+if [[ ! -x "bin/$BIN_NAME" ]]; then
+    echo "==> building $BIN_NAME"
     GO=${GO:-go}
     if ! command -v "$GO" >/dev/null 2>&1; then
         # Common alternate Go install path on alcatraz.
@@ -63,12 +96,19 @@ if [[ ! -x bin/claude-msg ]]; then
         fi
     fi
     mkdir -p bin
-    sudo -u "$OPERATOR_USER" "$GO" build -o bin/claude-msg ./cmd/claude-msg
+    sudo -u "$OPERATOR_USER" "$GO" build -o "bin/$BIN_NAME" "./cmd/$BIN_NAME"
 fi
 
 # 2. Install binary (root-owned, world-readable+executable).
-echo "==> installing $PREFIX/bin/claude-msg"
-install -m 0755 -o root -g root bin/claude-msg "$PREFIX/bin/claude-msg"
+echo "==> installing $PREFIX/bin/$BIN_NAME"
+install -m 0755 -o root -g root "bin/$BIN_NAME" "$PREFIX/bin/$BIN_NAME"
+
+# 2b. Deprecation-cycle binary alias: claude-msg → tmux-msg-claude. A relative
+# symlink target keeps it valid regardless of $PREFIX. Removed v0.11.0 (#177).
+if [[ -n "$LEGACY_BIN" ]]; then
+    echo "==> deprecation alias $PREFIX/bin/$LEGACY_BIN → $BIN_NAME (removed v0.11.0)"
+    ln -sfn "$BIN_NAME" "$PREFIX/bin/$LEGACY_BIN"
+fi
 
 # 3. Create the data directory.
 if [[ ! -d "$DATADIR" ]]; then
@@ -79,10 +119,19 @@ else
 fi
 
 # 4. Install the systemd user template.
-echo "==> installing systemd user template"
+echo "==> installing systemd user template $UNIT_NAME"
 install -d -m 0755 -o "$OPERATOR_USER" -g "$OPERATOR_USER" "$USER_SYSTEMD"
 install -m 0644 -o "$OPERATOR_USER" -g "$OPERATOR_USER" \
-    init/claude-mailman@.service "$USER_SYSTEMD/claude-mailman@.service"
+    "init/$UNIT_NAME" "$USER_SYSTEMD/$UNIT_NAME"
+
+# 4b. Deprecation-cycle systemd template alias: claude-mailman@ → the new
+# template. systemd resolves a template-unit symlink, so a pre-rename
+# `systemctl --user … claude-mailman@AGENT` still instantiates the renamed
+# template with the same instance name. Owned by the operator. Removed v0.11.0.
+if [[ -n "$LEGACY_UNIT" ]]; then
+    echo "==> deprecation alias $USER_SYSTEMD/$LEGACY_UNIT → $UNIT_NAME (removed v0.11.0)"
+    sudo -u "$OPERATOR_USER" ln -sfn "$UNIT_NAME" "$USER_SYSTEMD/$LEGACY_UNIT"
+fi
 
 echo
 echo "Install complete."
@@ -92,6 +141,6 @@ echo "  systemctl --user daemon-reload"
 echo "  # ensure your user systemd manager runs at boot:"
 echo "  sudo loginctl enable-linger $OPERATOR_USER"
 echo "  # populate the agents table from the current tmux state:"
-echo "  claude-msg discover"
+echo "  $BIN_NAME discover"
 echo "  # enable a mailman per agent you want to receive messages:"
-echo "  systemctl --user enable --now claude-mailman@surveyor.service"
+echo "  systemctl --user enable --now ${UNIT_NAME%@.service}@surveyor.service"

@@ -335,7 +335,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	if a.DeliveryMode == store.DeliveryModeMailboxOnly {
 		logger.Printf("delivery_mode=mailbox-only — no daemon work; exiting cleanly. " +
 			"NOTE: flip-back is asymmetric — if you later set delivery_mode=paste-and-enter, " +
-			"restart this unit manually (systemctl --user restart claude-mailman@%s)", opts.Agent)
+			"restart this unit manually (systemctl --user restart tmux-msg-claude-mailman@%s)", opts.Agent)
 		if err := sdnotify.Ready(); err != nil {
 			logger.Printf("sdnotify_ready_err err=%v", err)
 		}

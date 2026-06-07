@@ -1,4 +1,4 @@
-// Discipline pins for the cmd/claude-msg package. Per ADR-0001,
+// Discipline pins for the cmd/tmux-msg-claude package. Per ADR-0001,
 // these tests guard architectural commitments rather than behavioral
 // contracts. On failure, triage per ADR-0001 §Triage before changing
 // the assertion. The pin_test.go file location, the TestPin_ prefix,

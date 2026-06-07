@@ -22,7 +22,7 @@ func setSystemctlRunner(r func(ctx context.Context, args ...string) ([]byte, err
 	return prev
 }
 
-// startMailman runs `systemctl --user enable --now claude-mailman@NAME.service`.
+// startMailman runs `systemctl --user enable --now tmux-msg-claude-mailman@NAME.service`.
 // Returns nil on success; the output is included in the error on failure so
 // the operator sees the systemd reason.
 func startMailman(ctx context.Context, agent string) error {
@@ -33,7 +33,7 @@ func startMailman(ctx context.Context, agent string) error {
 	return nil
 }
 
-// stopMailman runs `systemctl --user disable --now claude-mailman@NAME.service`.
+// stopMailman runs `systemctl --user disable --now tmux-msg-claude-mailman@NAME.service`.
 // Treats "not-loaded" output as success so the call is idempotent.
 func stopMailman(ctx context.Context, agent string) error {
 	out, err := systemctlRun(ctx, "disable", "--now", mailmanUnit(agent))
@@ -66,6 +66,11 @@ func mailmanActive(ctx context.Context, agent string) bool {
 	return strings.TrimSpace(string(out)) == "active"
 }
 
+// mailmanUnit is the per-adapter systemd template instance for an agent (#177).
+// The template renamed from claude-mailman@ to tmux-msg-claude-mailman@ when the
+// binary became tmux-msg-claude; install.sh drops a claude-mailman@ → this
+// symlink for the deprecation cycle, so a pre-rename `systemctl … claude-mailman@X`
+// still resolves, but new invocations target the canonical name.
 func mailmanUnit(agent string) string {
-	return "claude-mailman@" + agent + ".service"
+	return "tmux-msg-claude-mailman@" + agent + ".service"
 }
