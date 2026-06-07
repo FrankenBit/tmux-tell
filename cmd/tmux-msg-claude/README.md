@@ -71,3 +71,16 @@ materializes (#177 ships the multi-binary shape, not the codex/copilot adapters)
 
 When that second adapter lands, its issue extracts `serve.go`'s substrate core to
 `internal/serve` and leaves only the adapter-specific composition here.
+
+**Known adapter-name leaks to fix during that extraction** (substrate code that
+currently hardcodes the *claude* adapter's names — a second adapter must
+parameterize them, not copy them):
+
+- `internal/healthscan/healthscan.go` — builds the journald unit query as
+  `tmux-msg-claude-mailman@<agent>.service`. A codex adapter's mailman runs under
+  `tmux-msg-codex-mailman@`, so the unit-name pattern needs to come from the
+  adapter, not a constant.
+- `cmd/tmux-msg-claude/systemctl.go` (`mailmanUnit`) — the adapter side of the
+  same unit name; correct to live here, but the substrate-side consumer
+  (healthscan) must learn the pattern from the adapter once there are two.
+
