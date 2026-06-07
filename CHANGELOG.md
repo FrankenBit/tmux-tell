@@ -69,7 +69,17 @@ Run `claude-msg --version` to see what's installed.
   runtime `WARN deprecated_surface_used` logs, a CHANGELOG `### Deprecated`
   convention, and `deprecated: true` JSON fields where programmatic. Pre-1.0
   keeps semver-explicit looseness. Cadence notes + README §Versioning cross-link
-  the policy. Completes a Sea-trials 1.0-trigger criterion. Pure docs.## [0.8.0] — 2026-06-07
+  the policy. Completes a Sea-trials 1.0-trigger criterion. Pure docs.
+
+### Changed
+
+- **CONTRIBUTING.md — deprecation-policy surface-scope clarification (#162 follow-up).**
+  The post-1.0 stability section now states the policy covers **all five** public
+  surfaces (per ADR-0008: MCP / CLI / `--format json` / DB + state vocabulary / Go
+  API), distinct from the external-**contract** subset (Go API + DB) a downstream
+  module pins — and links the now-landed ADR-0008 (was "forthcoming"). Pure docs.
+
+## [0.8.0] — 2026-06-07
 
 ### Added
 

@@ -55,17 +55,22 @@ Changes that touch either surface are contract changes — treat them as such.
 
 ### Stability commitments
 
-Governed by the project's deprecation policy (ratified via #162; its ADR is a
-Sea-trials follow-up):
+Governed by the project's deprecation policy
+([ADR-0008](docs/adr/0008-deprecation-policy.md)):
 
 - **Pre-1.0 (current).** Semver-explicit looseness: minor bumps (`0.x` → `0.(x+1)`)
   may carry breaking changes, always called out in the `CHANGELOG.md` entry. Pin a
   specific minor if you need stability today.
-- **Post-1.0.** A deprecated API surface (Go exports, DB schema columns, or state
-  vocabulary) stays functional for **at least two minor release cycles** after its
-  deprecation is announced, before removal. Maintainers may **extend** the deprecation
-  window at their discretion for high-impact changes, and deprecated surfaces emit a
-  **runtime warning** when an observed call hits them.
+- **Post-1.0.** A deprecated **public surface** stays functional for **at least two
+  minor release cycles** after its deprecation is announced, before removal.
+  Maintainers may **extend** the window at their discretion for high-impact changes,
+  and deprecated surfaces emit a **runtime warning** when an observed call hits them.
+
+  The policy's grace covers **all five public surfaces** (per ADR-0008): MCP tool
+  schemas; CLI subcommand args / flags / exit codes; `--format json` shapes; the DB
+  schema + state vocabulary; and the exported Go API. The two surfaces named above
+  (the Go API + DB schema) are the **external-contract subset** a downstream module
+  like Binnacle pins; the deprecation grace applies to the broader public-surface set.
 
 If you're building on tmux-msg, pin a version and watch the CHANGELOG; the contract
 above is what you can rely on between pins.
