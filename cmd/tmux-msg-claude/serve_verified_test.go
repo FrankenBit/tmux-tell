@@ -93,7 +93,7 @@ func TestServe_UnverifiedDelivery_WritesVerified0(t *testing.T) {
 		t.Errorf("unverified delivery wrote verified=(%d, valid=%v), want 0", v.Int64, v.Valid)
 	}
 	// The WARN journal line is preserved — healthscan still derives its count.
-	if !strings.Contains(logbuf.String(), "WARN delivered_unverified") {
-		t.Errorf("expected preserved WARN delivered_unverified line; got:\n%s", logbuf.String())
+	if !strings.Contains(logbuf.String(), "WARN delivered_in_input_box") {
+		t.Errorf("expected preserved WARN delivered_in_input_box line; got:\n%s", logbuf.String())
 	}
 }

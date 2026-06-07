@@ -80,7 +80,7 @@ func runConfigShowCLI(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout)
 		fmt.Fprintln(stdout, "FIELD\tVALUE")
 		fmt.Fprintf(stdout, "notify-on-failed\t%t\n", view.NotifyOnFailed)
-		fmt.Fprintf(stdout, "notify-on-delivered-unverified\t%t\n", view.NotifyOnDeliveredUnverified)
+		fmt.Fprintf(stdout, "notify-on-delivered-in-input-box\t%t\n", view.NotifyOnDeliveredInInputBox)
 		fmt.Fprintf(stdout, "drift-soft-fail\t%t\n", view.DriftSoftFail)
 		fmt.Fprintf(stdout, "gate-disabled\t%t\n", view.GateDisabled)
 		fmt.Fprintf(stdout, "poll-interval-min\t%s\n", view.PollIntervalMin)

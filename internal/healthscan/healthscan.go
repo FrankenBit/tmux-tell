@@ -40,7 +40,7 @@ type AgentHealth struct {
 	// Counters for the configured window (typically since midnight
 	// local for status; configurable for health).
 	Delivered           int `json:"delivered"`
-	DeliveredUnverified int `json:"delivered_unverified"`
+	DeliveredInInputBox int `json:"delivered_in_input_box"`
 	Failed              int `json:"failed"`
 	QuietCapExceeded    int `json:"quiet_cap_exceeded"`
 	DriftAmbiguous      int `json:"drift_ambiguous"`
@@ -138,7 +138,7 @@ var (
 	reDelivering = regexp.MustCompile(`(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?) delivering id=(\S+)`)
 	reDelivered  = regexp.MustCompile(`(\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?) delivered id=(\S+)`)
 
-	reUnverified         = regexp.MustCompile(`WARN delivered_unverified`)
+	reUnverified         = regexp.MustCompile(`WARN delivered_in_input_box`)
 	reFailed             = regexp.MustCompile(`deliver_failed`)
 	reQuietCapExceeded   = regexp.MustCompile(`WARN quiet_cap_exceeded`)
 	reDriftAmbiguous     = regexp.MustCompile(`WARN drift_check_ambiguous`)
@@ -155,7 +155,7 @@ func classifyLines(lines []string, ah *AgentHealth) {
 	for _, line := range lines {
 		switch {
 		case reUnverified.MatchString(line):
-			ah.DeliveredUnverified++
+			ah.DeliveredInInputBox++
 		case reFailed.MatchString(line):
 			ah.Failed++
 		case reQuietCapExceeded.MatchString(line):

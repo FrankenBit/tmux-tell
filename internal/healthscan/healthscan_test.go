@@ -43,7 +43,7 @@ func TestScan_HappyPath(t *testing.T) {
 			"tmux-msg-claude-mailman@bosun.service": {
 				"[mailman/bosun] 2026/05/31 12:00:00.000000 delivering id=abc kind=message",
 				"[mailman/bosun] 2026/05/31 12:00:00.500000 delivered id=abc",
-				"[mailman/bosun] 2026/05/31 12:01:00.000000 WARN delivered_unverified id=def",
+				"[mailman/bosun] 2026/05/31 12:01:00.000000 WARN delivered_in_input_box id=def",
 				"[mailman/bosun] 2026/05/31 12:02:00.000000 WARN quiet_cap_exceeded id=ghi",
 				"[mailman/bosun] 2026/05/31 12:03:00.000000 deliver_failed id=jkl err=tmux gone",
 				"[mailman/bosun] 2026/05/31 12:04:00.000000 WARN drift_check_ambiguous id=mno",
@@ -69,8 +69,8 @@ func TestScan_HappyPath(t *testing.T) {
 	if got.Delivered != 1 {
 		t.Errorf("Delivered = %d, want 1", got.Delivered)
 	}
-	if got.DeliveredUnverified != 1 {
-		t.Errorf("DeliveredUnverified = %d, want 1", got.DeliveredUnverified)
+	if got.DeliveredInInputBox != 1 {
+		t.Errorf("DeliveredInInputBox = %d, want 1", got.DeliveredInInputBox)
 	}
 	if got.QuietCapExceeded != 1 {
 		t.Errorf("QuietCapExceeded = %d, want 1", got.QuietCapExceeded)

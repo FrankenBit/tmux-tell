@@ -24,7 +24,7 @@ type resendParams struct {
 //
 // resend replays an existing message to its ORIGINAL recipient with a
 // "Replayed: original sent at <ts>" chrome marker (#157 PR1) — the explicit
-// recovery path for a `delivered_unverified`/`failed` message. It refuses to
+// recovery path for a `delivered_in_input_box`/`failed` message. It refuses to
 // replay an already-`delivered` (or still in-flight) message without --force,
 // to keep an accidental re-run from spamming a duplicate.
 func runResendCLI(args []string, stdout, stderr io.Writer) int {

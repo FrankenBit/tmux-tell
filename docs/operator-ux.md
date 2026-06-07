@@ -40,7 +40,7 @@ actionable` (says what's wrong, not what's next).
 | `control: command not on whitelist; self-invokable: [compact cost help ...]`                              | clear, actionable             | —          | Lists the alternatives. Good                                                                                  |
 | `body required`                                                                                           | clear, not actionable         | paper-cut  | Could be `--body required (or pass body as positional args after the flags)`                                  |
 | `no such message: ghost`                                                                                  | clear, not actionable         | paper-cut  | Could suggest `tmux-msg-claude log --limit 20` to find a recent id                                                 |
-| `WARN delivered_unverified id=X — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); marking delivered, operator may need to submit manually` | clear, actionable | — | Exemplary; explains what happened AND what to do |
+| `WARN delivered_in_input_box id=X — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); message is in recipient's input box pending submit` | clear, actionable | — | Exemplary; explains what happened AND what to do |
 | `WARN quiet_cap_exceeded id=X pane=Y — delivering anyway`                                                 | clear, not-quite-actionable   | paper-cut  | What does the operator do with this WARN? Add: "rerun `tmux-msg-claude discover` if frequent" or similar           |
 | `WARN drift_check_ambiguous ... multiple canonicals ... (resolve via: tmux-msg.register name=<canonical> alias=<unique-suffix> force=true; #47)` | clear, actionable (post-#47) | —          | Recipe now inline in the WARN per #47; operator gets the fix command without needing to grep docs. WARN string is generic enough to cover both the post-v0.2.1 Q(a) exact-collision path and the substring path |
 | `WARN drift_detected_unrecoverable ... discover couldn't find X anywhere`                                 | clear, half-actionable        | paper-cut  | Add a hint: "(is the agent running? `tmux-msg-claude agents` shows current panes)"                                 |
@@ -63,7 +63,7 @@ issue surfaces something larger; until then, batched.
 | `control`               | Good (post-#44)  | —          | Closed by `reorderFlagsFirst` helper + positional-auto-binds-to-`--to`. Operator's natural typing `tmux-msg-claude control alice --command compact` works as expected.                                                                          |
 | `track`                 | Good             | —          | Age computation is nice. Could add `--watch` for poll-until-state-change                                   |
 | `inbox`                 | Good             | —          | Self-default works, `--state` filter useful                                                                |
-| `status`                | Sparse           | friction   | Shows paused state + queue depths. Doesn't show: today's delivered count, today's failed count, today's `delivered_unverified` count, mailman crash count. Adding these would make morning-coffee health-checking one command instead of grepping journalctl |
+| `status`                | Sparse           | friction   | Shows paused state + queue depths. Doesn't show: today's delivered count, today's failed count, today's `delivered_in_input_box` count, mailman crash count. Adding these would make morning-coffee health-checking one command instead of grepping journalctl |
 | `agents`                | Good             | —          | Pane liveness is the right summary                                                                         |
 | `whoami`                | Good             | —          | Source field (env/pane/explicit) is the nice touch                                                         |
 | `serve`                 | n/a              | —          | Operator doesn't run this directly; systemd does                                                           |
@@ -121,7 +121,7 @@ Worth its own issue.
 The "Bosun spent half a day waiting" scenario on 2026-05-31 surfaced
 a blind spot the per-verdict metrics don't fix: the **sender** doesn't
 get a push-signal when their outbound message hits `failed` or
-`delivered_unverified`. Polling `tmux-msg-claude track <id>` works but
+`delivered_in_input_box`. Polling `tmux-msg-claude track <id>` works but
 requires the sender to remember to check.
 
 Post-#53 (currently `[Unreleased]`), the mailman auto-generates a
@@ -129,7 +129,7 @@ Post-#53 (currently `[Unreleased]`), the mailman auto-generates a
 terminal-failure transition. Two toggles control the behavior:
 
 - `--notify-on-failed` (default on) — hard failures
-- `--notify-on-delivered-unverified` (default on) — soft failures
+- `--notify-on-delivered-in-input-box` (default on) — soft failures
 
 The notice carries the original message id, the recipient, the
 failure class, the reason, and a 200-char body preview. Loop

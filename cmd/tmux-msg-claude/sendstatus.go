@@ -14,7 +14,7 @@ import (
 
 // The send-response schema (#152). These are NAMED struct types, deliberately
 // not inlined map[string]any: the send response is a contract that #155
-// (crossed-message freshness) and #157 (delivered_unverified recovery) inherit
+// (crossed-message freshness) and #157 (delivered_in_input_box recovery) inherit
 // and typed-bind against. Adding a field is additive/non-breaking; the existing
 // ok/id/queued keys keep their meaning.
 
@@ -35,7 +35,7 @@ type RecipientStatus struct {
 // store terminal state ("delivered"/"failed") or the synthetic "timeout" when
 // the wait bound elapsed first. VerifyMs is the wait duration.
 //
-// Note: there is no "delivered_unverified" DB state to wait on — the mailman
+// Note: there is no "delivered_in_input_box" DB state to wait on — the mailman
 // records that soft-failure as "delivered" (see #169). So a returned
 // state="delivered" means delivered (verified or not); the verified/unverified
 // split stays out of band per #169.
@@ -71,7 +71,7 @@ type ThreadFreshness struct {
 // original, when it was first sent, what state that original was in at resend
 // time, and whether --force was needed to override the duplicate guard.
 //
-// Note on OriginalState: the substrate has no `delivered_unverified` state —
+// Note on OriginalState: the substrate has no `delivered_in_input_box` state —
 // verified and unverified deliveries both read as "delivered" (#169). So a
 // resend of an unverified message reports OriginalState="delivered" and required
 // --force; the journal-aware distinction that would let unverified recover

@@ -77,7 +77,7 @@ Decision tree on the result:
 |-----------------------------------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
 | **No row**                                    | Sender never reached the bus. Agent-side flow gap.                                | **Stop investigating tmux-msg.** Probe the sender agent's state at the alleged send time.                                  |
 | **`state = 'delivered'`**                     | Bus did its job.                                                                    | Cross-check the receiver pane's state at `delivered_at`. The receiver may not have processed it (UI race, popup collision #59).   |
-| **`state = 'failed'`**                        | Bus tried and failed cleanly.                                                       | Check the `error` column. The `delivered_unverified` notification path should have fired — if it didn't, that's a separate gap.   |
+| **`state = 'failed'`**                        | Bus tried and failed cleanly.                                                       | Check the `error` column. The `delivered_in_input_box` notification path should have fired — if it didn't, that's a separate gap.   |
 | **`state = 'queued'` / `'delivering'` stale** | Genuine delivery stall.                                                             | File a fresh bug citing the row's `public_id` + the receiver's mailman journal excerpt from §2.                                   |
 
 ### 2. Did the receiver's mailman try to deliver?
@@ -100,7 +100,7 @@ timestamps in their respective conventions and the playbook follows
 each layer's default rather than forcing one into the other's frame.
 
 Look for `delivering id=<public_id>` / `delivered id=<public_id>` /
-`WARN delivered_unverified` / `WARN drift_detected` lines for the
+`WARN delivered_in_input_box` / `WARN drift_detected` lines for the
 public_id from §1.
 
 - **Delivering + delivered**: substrate did its job; cross-correlate

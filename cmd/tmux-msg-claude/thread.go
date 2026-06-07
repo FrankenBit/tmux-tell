@@ -19,13 +19,13 @@ import (
 // view). The walk is NOT duplicated here — only the tree rendering is new.
 
 // threadGlyphs. The root carries ○; every other node's glyph maps from
-// its stored delivery state. Note: `delivered_unverified` is NOT a
+// its stored delivery state. Note: `delivered_in_input_box` is NOT a
 // distinct stored state — the mailman records that soft-failure as
 // `delivered` (see internal/store/types.go State set + serve.go's
 // ErrUnverifiedDelivery → MarkDelivered), so the `⚠` glyph from #141's
 // example issue cannot be populated from the current schema. Making
 // verified-vs-unverified DB-queryable is tracked in #169; until then a
-// `delivered_unverified` node renders as `✓`.
+// `delivered_in_input_box` node renders as `✓`.
 const (
 	glyphRoot       = "○"
 	glyphDelivered  = "✓"

@@ -291,13 +291,13 @@ mid-compaction / unknown) and:
 It's *near*-read-only: apart from the optional 📫 nudge (opt out with
 `notify-emoji-disabled`), it mutates nothing while observing — no probe characters in
 your input row. The residual "decided-idle then pasted" race is caught by the
-verify-token + `delivered_unverified` safety net.
+verify-token + `delivered_in_input_box` safety net.
 
 **Verified vs unverified deliveries (#169).** After a paste+Enter, the mailman looks
 for a verify token to confirm the message actually surfaced. If it does, the delivery
 is *verified*; if the token never appears in the retry budget (typically the recipient
 was mid-turn and Enter was queued), the message still landed in the pane but the
-delivery is *unverified* — a soft outcome, logged `WARN delivered_unverified`. Both
+delivery is *unverified* — a soft outcome, logged `WARN delivered_in_input_box`. Both
 are `state = delivered`: the message IS in the recipient's pane either way, so the
 state isn't a failure. The distinction is carried by a durable `verified` column on
 the row (`1` = verified, `0` = unverified, `NULL` = delivered before this marker
@@ -360,7 +360,7 @@ ping to it reports `timeout`.)
 
 **Diagnosing a failed or unverified message — `resend` (#157).** When a message
 lands `failed`, or lands `delivered` but you can't tell whether it actually
-surfaced in the recipient (a `delivered_unverified` — the paste landed but the
+surfaced in the recipient (a `delivered_in_input_box` — the paste landed but the
 verify-token never came back in budget), the recovery path is `tmux-msg-claude resend
 <id>`. It replays the original to its recipient as a *new* message whose body is
 byte-identical to the original, carrying a `↻ Replayed: original sent at <ts>`
@@ -372,7 +372,7 @@ The duplicate guard keeps an accidental re-run from spamming:
 
 - A **`failed`** message replays directly — it never arrived.
 - A **`delivered`** message is refused without `--force`. **This includes a
-  delivered-but-unverified message**: the substrate has no `delivered_unverified`
+  delivered-but-unverified message**: the substrate has no `delivered_in_input_box`
   column — verified and unverified both read as `delivered`, and only a mailman
   journal line distinguishes them (#169). So recovering an unverified delivery
   means `tmux-msg-claude resend <id> --force`. Once #169 makes the verified/unverified
@@ -397,7 +397,7 @@ diagnostic view — "who replied to what, and did it land?"):
 ```
 
 Glyphs: `○` root · `✓` delivered · `✗` failed · `…` queued/delivering. (There is no
-distinct `delivered_unverified` glyph yet — the substrate stores that soft-failure
+distinct `delivered_in_input_box` glyph yet — the substrate stores that soft-failure
 as `delivered`; making it DB-queryable is tracked in #169.) `--format json` emits
 the nested tree for tooling. `thread` is read-only and never touches a pane.
 
@@ -416,7 +416,7 @@ last 24h; `--window` takes `all`, `<N>d` (e.g. `7d`), or any Go duration
 busiest sender→recipient pairs; `--format json` emits machine-readable output
 (also carrying `p95_latency_ms`). The verified-vs-unverified delivery split is
 *not* shown here — both land as `state='delivered'` in the DB (the
-`delivered_unverified` signal is a mailman journal line, not a column), so use
+`delivered_in_input_box` signal is a mailman journal line, not a column), so use
 `status --today` / `health` for that breakdown; making it DB-queryable is
 tracked in #169.
 
@@ -455,11 +455,11 @@ would never see their writes. `tail` polls `MAX(id)` since-last-seen (configurab
 mode keeps these reads safe concurrent with mailman writes.
 
 **Delivery-failure notifications.** When an outbound message hits a terminal-failure
-state (`failed` or `delivered_unverified`), the mailman auto-inserts a
+state (`failed` or `delivered_in_input_box`), the mailman auto-inserts a
 `delivery_failure_notice` back to the sender (original id, recipient, failure class,
 reason, 200-char preview). These bypass the queue caps so they're never dropped, and
 a notice that itself fails does not generate another (no wedged-pane cascade). Both
-`--notify-on-failed` and `--notify-on-delivered-unverified` default on.
+`--notify-on-failed` and `--notify-on-delivered-in-input-box` default on.
 
 **Recovering a flushed paste.** When the observe-gate archives your in-flight
 input before pasting over it (see below), it stores the snapshot as a

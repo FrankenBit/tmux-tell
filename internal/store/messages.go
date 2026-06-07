@@ -403,13 +403,13 @@ func (s *Store) MarkDelivered(ctx context.Context, publicID string) error {
 	return s.markDelivered(ctx, publicID, 1)
 }
 
-// MarkDeliveredUnverified transitions a delivering message to 'delivered' but
-// records verified=0 — the paste+Enter landed mechanically, but the verify
-// token never surfaced in budget (#169). The DB state stays `delivered` (the
-// message IS in the recipient's pane); only the `verified` bit distinguishes it
-// from a confirmed delivery, where previously the sole signal was a mailman
+// MarkDeliveredInInputBox transitions a delivering message to 'delivered' but
+// records verified=0 — the paste+Enter landed mechanically (the message is in
+// the recipient's input box), but the verify token never surfaced in budget
+// (#169). The DB state stays `delivered`; only the `verified` bit distinguishes
+// it from a confirmed delivery, where previously the sole signal was a mailman
 // journal line. Same not-found semantics as MarkDelivered.
-func (s *Store) MarkDeliveredUnverified(ctx context.Context, publicID string) error {
+func (s *Store) MarkDeliveredInInputBox(ctx context.Context, publicID string) error {
 	return s.markDelivered(ctx, publicID, 0)
 }
 

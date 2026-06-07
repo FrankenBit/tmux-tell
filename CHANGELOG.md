@@ -62,9 +62,9 @@ deprecated alias through v0.11.0).
   messages the calling agent has sent, newest-first, defaulting to the last 24 h.
   Flags: `--since DUR` (any duration or calendar shortcut accepted by `stats`/`digest`
   — `1h`, `today`, `all`, etc.), `--state STATE`, `--to AGENT`, `--limit N`,
-  `--format text|json`. The special state `delivered_unverified` filters for
+  `--format text|json`. The special state `delivered_in_input_box` filters for
   `state=delivered AND verified=0` rows (soft-fails from #169). Text output: table
-  header + one row per message; footer summarises counts of `delivered_unverified`
+  header + one row per message; footer summarises counts of `delivered_in_input_box`
   and `failed` rows with a `tmux-msg-claude resend <id>` recovery hint. JSON output
   adds `display_state` to each row so callers can distinguish verified/unverified
   deliveries without client-side column inspection. Operationalises the
@@ -100,6 +100,16 @@ deprecated alias through v0.11.0).
   messages table; existing databases migrate automatically.
 
 ### Changed
+
+- **Rename `delivered_unverified` → `delivered_in_input_box` (#140).** Substrate-honest
+  naming: the state constant, log token (`WARN delivered_in_input_box`), CLI `--state`
+  value, JSON `display_state`, config key (`notify-on-delivered-in-input-box`), and
+  Go identifiers (`MarkDeliveredInInputBox`, `NotifyOnDeliveredInInputBox`,
+  `DeliveredInInputBox`) are renamed throughout. The old name described what *didn't*
+  happen ("unverified"); the new name describes what *did* ("paste landed in the
+  recipient's input box"). Breaking change for TOML config keys and JSON field names
+  (pre-1.0 scope per the changelog preamble). Frozen ADR prose and CHANGELOG versioned
+  entries retain the old name per the substrate-rename freeze precedent.
 
 - **CI — `gofmt` check added to the required pipeline (#202).** The
   `test / go vet + build + test (pull_request)` workflow now runs `gofmt -l .`

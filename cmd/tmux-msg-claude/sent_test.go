@@ -111,7 +111,7 @@ func TestSent_FilterByState(t *testing.T) {
 	}
 }
 
-func TestSent_DeliveredUnverifiedFilter(t *testing.T) {
+func TestSent_DeliveredInInputBoxFilter(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
 	ctx := context.Background()
 	res1, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "verified msg"})
@@ -121,10 +121,10 @@ func TestSent_DeliveredUnverifiedFilter(t *testing.T) {
 	_, _ = s.ClaimNext(ctx, "bob")
 	_ = s.MarkDelivered(ctx, res1.PublicID)
 	_, _ = s.ClaimNext(ctx, "bob")
-	_ = s.MarkDeliveredUnverified(ctx, res2.PublicID)
+	_ = s.MarkDeliveredInInputBox(ctx, res2.PublicID)
 
 	var stdout bytes.Buffer
-	exit := runSentWithStore(ctx, s, "alice", "delivered_unverified", "", 50, "24h", "", "json", &stdout, &bytes.Buffer{})
+	exit := runSentWithStore(ctx, s, "alice", "delivered_in_input_box", "", 50, "24h", "", "json", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -136,17 +136,17 @@ func TestSent_DeliveredUnverifiedFilter(t *testing.T) {
 	if rows[0]["id"] != res2.PublicID {
 		t.Errorf("got id %v, want %s", rows[0]["id"], res2.PublicID)
 	}
-	if rows[0]["display_state"] != "delivered_unverified" {
-		t.Errorf("display_state = %v, want delivered_unverified", rows[0]["display_state"])
+	if rows[0]["display_state"] != "delivered_in_input_box" {
+		t.Errorf("display_state = %v, want delivered_in_input_box", rows[0]["display_state"])
 	}
 }
 
-func TestSent_DisplayStateDeliveredUnverified(t *testing.T) {
+func TestSent_DisplayStateDeliveredInInputBox(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
 	ctx := context.Background()
 	res, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "soft fail"})
 	_, _ = s.ClaimNext(ctx, "bob")
-	_ = s.MarkDeliveredUnverified(ctx, res.PublicID)
+	_ = s.MarkDeliveredInInputBox(ctx, res.PublicID)
 
 	var stdout, stderr bytes.Buffer
 	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "24h", "", "text", &stdout, &stderr)
@@ -154,10 +154,10 @@ func TestSent_DisplayStateDeliveredUnverified(t *testing.T) {
 		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "delivered_unverified") {
-		t.Errorf("expected 'delivered_unverified' in text output, got:\n%s", out)
+	if !strings.Contains(out, "delivered_in_input_box") {
+		t.Errorf("expected 'delivered_in_input_box' in text output, got:\n%s", out)
 	}
-	if !strings.Contains(out, "1 message(s) in delivered_unverified") {
+	if !strings.Contains(out, "1 message(s) in delivered_in_input_box") {
 		t.Errorf("expected footer line in output, got:\n%s", out)
 	}
 }
@@ -229,7 +229,7 @@ func TestSent_UnknownFormat(t *testing.T) {
 }
 
 func TestValidateSentState(t *testing.T) {
-	valid := []string{"", "queued", "delivering", "delivered", "failed", "delivered_unverified"}
+	valid := []string{"", "queued", "delivering", "delivered", "failed", "delivered_in_input_box"}
 	for _, s := range valid {
 		if err := validateSentState(s); err != nil {
 			t.Errorf("validateSentState(%q) = %v, want nil", s, err)
@@ -258,7 +258,7 @@ func TestDisplayState(t *testing.T) {
 		{store.Message{State: store.StateQueued}, "queued"},
 		{store.Message{State: store.StateDelivered}, "delivered"},
 		{store.Message{State: store.StateDelivered, Verified: sqlNullInt64(1)}, "delivered"},
-		{store.Message{State: store.StateDelivered, Verified: sqlNullInt64(0)}, "delivered_unverified"},
+		{store.Message{State: store.StateDelivered, Verified: sqlNullInt64(0)}, "delivered_in_input_box"},
 		{store.Message{State: store.StateFailed}, "failed"},
 	}
 	for _, c := range cases {

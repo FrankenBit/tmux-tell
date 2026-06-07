@@ -81,7 +81,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpSendHandler(s))
 
 	srv.RegisterTool("tmux-msg.resend",
-		"Replay an existing message to its original recipient — the explicit recovery path for a message that landed `delivered_unverified` or `failed` (#157). The replay carries a \"Replayed: original sent at <ts>\" chrome marker so the recipient knows it's a re-send, and the response adds a \"replay\" block {original_id, original_sent_at, original_state, forced}. Refuses to replay an already-`delivered` (verified-or-unverified — the substrate can't distinguish, #169) or still in-flight message unless force=true, to avoid duplicate-spam; a `failed` message replays directly. The replayed body is byte-identical to the original.",
+		"Replay an existing message to its original recipient — the explicit recovery path for a message that landed `delivered_in_input_box` or `failed` (#157). The replay carries a \"Replayed: original sent at <ts>\" chrome marker so the recipient knows it's a re-send, and the response adds a \"replay\" block {original_id, original_sent_at, original_state, forced}. Refuses to replay an already-`delivered` (verified-or-unverified — the substrate can't distinguish, #169) or still in-flight message unless force=true, to avoid duplicate-spam; a `failed` message replays directly. The replayed body is byte-identical to the original.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {

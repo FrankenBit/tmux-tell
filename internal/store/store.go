@@ -116,7 +116,7 @@ var migrations = []string{
 	`ALTER TABLE messages ADD COLUMN replay_of TEXT`,
 	`ALTER TABLE messages ADD COLUMN replay_of_at TEXT`,
 	// #169: durable verified/unverified delivery marker. 1 = verify-token
-	// observed (confirmed delivery), 0 = delivered_unverified soft-fail
+	// observed (confirmed delivery), 0 = delivered_in_input_box soft-fail
 	// (paste landed, token never surfaced), NULL = unknown (pre-migration
 	// delivered rows, or any non-delivered state). Orthogonal to `state`,
 	// which keeps `delivered` for both 1 and 0 — the bit is the only

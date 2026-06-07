@@ -13,7 +13,7 @@ import (
 // and bounded by a StatsWindow.
 //
 // Note on the verified/unverified split: a delivered message carries a durable
-// `verified` bit since #169 (1 = verify-token observed, 0 = delivered_unverified
+// `verified` bit since #169 (1 = verify-token observed, 0 = delivered_in_input_box
 // soft-fail, NULL = delivered before the marker existed). The scalar aggregates
 // here still count `Delivered` as a whole (state='delivered'); the breakdown is
 // available via DeliveredVerificationCounts, the seam #147 re-consumes.
@@ -266,7 +266,7 @@ func (s *Store) MessagesInWindow(ctx context.Context, w StatsWindow) ([]Message,
 }
 
 // VerificationCounts splits delivered messages by their #169 `verified` bit.
-// Verified = confirmed (verify-token observed); Unverified = delivered_unverified
+// Verified = confirmed (verify-token observed); Unverified = delivered_in_input_box
 // soft-fail; Unknown = delivered before the marker existed (verified IS NULL) —
 // never retroactively guessed. Only state='delivered' rows are counted; the
 // three buckets sum to the total delivered count in the window.

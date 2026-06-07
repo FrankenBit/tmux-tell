@@ -75,7 +75,7 @@ the two cases the older heuristic conflated.
 
 The gate does **not** try to close the tiny race between "gate decided idle" and
 "mailman pastes." That residual window is covered by the same post-hoc safety net
-as always — the verify-token check and the `delivered_unverified` notice. What the
+as always — the verify-token check and the `delivered_in_input_box` notice. What the
 observe-gate removes is the *pane mutation* the old gate inflicted while observing.
 
 ## When you're typing: the 📫 notification (#95)
@@ -154,10 +154,10 @@ All six are **CLI flags** on `tmux-msg-claude serve` *and* **TOML knobs** (per-a
 | `--poll-interval-max` / `poll-interval-max` | `15s` | Backoff ceiling per poll. |
 | `--input-stale-threshold` / `input-stale-threshold` | `2m` | How long your draft must sit unchanged before the gate flushes it. |
 | `--notify-emoji-disabled` / `notify-emoji-disabled` | `false` | Suppress the 📫 typing notification for this agent. |
-| `--working-deliver-immediately` / `working-deliver-immediately` | `false` | Opts `working` out of the backoff into the same fast-path as `idle` (#106). Eligibility is `working` ONLY — `awaiting-operator` / `at-rest-in-compaction` / `unknown` stay hard-deferred regardless. Useful for crew-coordination workflows where the recipient's mid-turn keystroke buffer is the right delivery target. The verify-token + `delivered_unverified` notice is the safety net for the small race window between observing `working` and the paste landing. |
+| `--working-deliver-immediately` / `working-deliver-immediately` | `false` | Opts `working` out of the backoff into the same fast-path as `idle` (#106). Eligibility is `working` ONLY — `awaiting-operator` / `at-rest-in-compaction` / `unknown` stay hard-deferred regardless. Useful for crew-coordination workflows where the recipient's mid-turn keystroke buffer is the right delivery target. The verify-token + `delivered_in_input_box` notice is the safety net for the small race window between observing `working` and the paste landing. |
 
 The two delivery-failure toggles (`--notify-on-failed`,
-`--notify-on-delivered-unverified`) are **independent of the gate** — they govern the
+`--notify-on-delivered-in-input-box`) are **independent of the gate** — they govern the
 sender-side failure notices, not delivery timing.
 
 Run `tmux-msg-claude config show --agent <name>` to see the resolved values for an agent

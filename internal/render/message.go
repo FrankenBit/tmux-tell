@@ -110,7 +110,7 @@ func Message(m store.Message, byteMarkerThreshold int) string {
 	if rm := replayMarker(m); rm != "" {
 		// Replay chrome (#157 PR1) sits on its own line between header and
 		// body, so the recipient sees at a glance this is a re-send of an
-		// earlier message (typically a `delivered_unverified`/`failed`
+		// earlier message (typically a `delivered_in_input_box`/`failed`
 		// recovery) rather than fresh content.
 		return fmt.Sprintf("%s\n%s\n\n%s\n", header, rm, m.Body)
 	}

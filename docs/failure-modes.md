@@ -73,7 +73,7 @@ delivery to autonomous receivers). Review's role isn't volume; it's
 ### 2.2 What signal would the journalctl WARN baseline have given us?
 
 Each fix added a structured log line (`quiet_check_err`,
-`delivered_unverified`, `drift_detected`, `drift_check_ambiguous`).
+`delivered_in_input_box`, `drift_detected`, `drift_check_ambiguous`).
 None of them were instrumented as *metrics* at the time of the
 incident. A rate-of-WARN-per-mailman counter, exposed via a new
 `tmux-msg-claude health` or in `status`, would have surfaced incidents

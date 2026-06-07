@@ -117,7 +117,7 @@ func syntheticJournalLines(agent string, count int) []string {
 		}
 		if i%200 == 0 {
 			lines = append(lines,
-				fmt.Sprintf("[mailman/%s] %s WARN delivered_unverified id=%s",
+				fmt.Sprintf("[mailman/%s] %s WARN delivered_in_input_box id=%s",
 					agent, start.Format("2006/01/02 15:04:05.000000"), id))
 		}
 	}

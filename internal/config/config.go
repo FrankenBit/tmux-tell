@@ -84,7 +84,7 @@ func (f *File) IsPrivileged(agent string) bool {
 // through to the next layer.
 type Block struct {
 	NotifyOnFailed              *bool `toml:"notify-on-failed"`
-	NotifyOnDeliveredUnverified *bool `toml:"notify-on-delivered-unverified"`
+	NotifyOnDeliveredInInputBox *bool `toml:"notify-on-delivered-in-input-box"`
 	DriftSoftFail               *bool `toml:"drift-soft-fail"`
 	// GateDisabled disables the observe-only-with-one-named-visibility-
 	// side-effect gate added in #92 (the 📫 typing-notification per #95
@@ -310,8 +310,8 @@ func blockBoolField(b *Block, field string) *bool {
 	switch field {
 	case "notify-on-failed":
 		return b.NotifyOnFailed
-	case "notify-on-delivered-unverified":
-		return b.NotifyOnDeliveredUnverified
+	case "notify-on-delivered-in-input-box":
+		return b.NotifyOnDeliveredInInputBox
 	case "drift-soft-fail":
 		return b.DriftSoftFail
 	case "gate-disabled":
@@ -453,7 +453,7 @@ type ResolvedView struct {
 	Agent                       string        `json:"agent"`
 	ConfigPath                  string        `json:"config_path"`
 	NotifyOnFailed              bool          `json:"notify_on_failed"`
-	NotifyOnDeliveredUnverified bool          `json:"notify_on_delivered_unverified"`
+	NotifyOnDeliveredInInputBox bool          `json:"notify_on_delivered_in_input_box"`
 	DriftSoftFail               bool          `json:"drift_soft_fail"`
 	GateDisabled                bool          `json:"gate_disabled"`
 	PollIntervalMin             time.Duration `json:"poll_interval_min"`
@@ -477,7 +477,7 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		Agent:                       agent,
 		ConfigPath:                  path,
 		NotifyOnFailed:              ResolveBool(file, agent, "notify-on-failed", true),
-		NotifyOnDeliveredUnverified: ResolveBool(file, agent, "notify-on-delivered-unverified", true),
+		NotifyOnDeliveredInInputBox: ResolveBool(file, agent, "notify-on-delivered-in-input-box", true),
 		DriftSoftFail:               ResolveBool(file, agent, "drift-soft-fail", false),
 		GateDisabled:                ResolveBool(file, agent, "gate-disabled", false),
 		PollIntervalMin:             ResolveDuration(file, agent, "poll-interval-min", 3*time.Second),

@@ -100,11 +100,11 @@ type serveOpts struct {
 	// 2026-05-31 motivated this; silent-doesn't-know was the failure
 	// mode).
 	NotifyOnFailed bool
-	// NotifyOnDeliveredUnverified enables the same notice path for the
-	// `delivered_unverified` soft-failure case (paste+Enter completed
+	// NotifyOnDeliveredInInputBox enables the same notice path for the
+	// `delivered_in_input_box` soft-failure case (paste+Enter completed
 	// but the verify token didn't surface). Independent toggle from
 	// NotifyOnFailed; both default on.
-	NotifyOnDeliveredUnverified bool
+	NotifyOnDeliveredInInputBox bool
 	// Walker resolves pane-id drift via the shared discover package. When
 	// nil, runServeWithStore constructs a discover.New() — tests can inject
 	// a fake walker that doesn't touch real tmux/proc.
@@ -165,8 +165,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"when pre-delivery drift detection hits ambiguous or unrecoverable, log WARN and deliver to the (potentially wrong) pane instead of marking the message failed. Default off — fail-loud is safer for autonomous receivers")
 	notifyOnFailed := fs.Bool("notify-on-failed", true,
 		"on a recipient's outbound message transitioning to `failed`, auto-insert a delivery-failure notice back to the original sender (#53)")
-	notifyOnDeliveredUnverified := fs.Bool("notify-on-delivered-unverified", true,
-		"on a recipient's outbound message transitioning to `delivered_unverified` (paste+Enter ran but verify token didn't surface), auto-insert a notice back to the original sender (#53)")
+	notifyOnDeliveredInInputBox := fs.Bool("notify-on-delivered-in-input-box", true,
+		"on a recipient's outbound message transitioning to `delivered_in_input_box` (paste+Enter ran but verify token didn't surface), auto-insert a notice back to the original sender (#53)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -187,8 +187,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	if !flagWasSet(fs, "notify-on-failed") {
 		*notifyOnFailed = config.ResolveBool(cfg, *agent, "notify-on-failed", *notifyOnFailed)
 	}
-	if !flagWasSet(fs, "notify-on-delivered-unverified") {
-		*notifyOnDeliveredUnverified = config.ResolveBool(cfg, *agent, "notify-on-delivered-unverified", *notifyOnDeliveredUnverified)
+	if !flagWasSet(fs, "notify-on-delivered-in-input-box") {
+		*notifyOnDeliveredInInputBox = config.ResolveBool(cfg, *agent, "notify-on-delivered-in-input-box", *notifyOnDeliveredInInputBox)
 	}
 	if !flagWasSet(fs, "drift-soft-fail") {
 		*driftSoftFail = config.ResolveBool(cfg, *agent, "drift-soft-fail", *driftSoftFail)
@@ -272,7 +272,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		ByteMarkerThreshold:         byteMarkerThreshold,
 		DriftSoftFail:               *driftSoftFail,
 		NotifyOnFailed:              *notifyOnFailed,
-		NotifyOnDeliveredUnverified: *notifyOnDeliveredUnverified,
+		NotifyOnDeliveredInInputBox: *notifyOnDeliveredInInputBox,
 	}, logger, stdout, stderr)
 }
 
@@ -706,18 +706,18 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				}
 			}
 		case errors.Is(derr, tmuxio.ErrUnverifiedDelivery):
-			logger.Printf("WARN delivered_unverified id=%s — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); marking delivered, operator may need to submit manually",
+			logger.Printf("WARN delivered_in_input_box id=%s — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); message is in recipient's input box pending submit",
 				msg.PublicID)
 			// Same DB state (delivered) as the verified branch, but verified=0
 			// so the soft-fail is durable in the table — not just this WARN
 			// journal line (#169). The line stays: healthscan still derives the
 			// journal-sourced count, and #146/#147 now also read it from the DB.
-			if err := s.MarkDeliveredUnverified(opCtx, msg.PublicID); err != nil {
+			if err := s.MarkDeliveredInInputBox(opCtx, msg.PublicID); err != nil {
 				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
 			}
 			maybeInsertFailureNotice(opCtx, s, logger,
-				opts.NotifyOnDeliveredUnverified, opts.Agent, msg,
-				"delivered_unverified",
+				opts.NotifyOnDeliveredInInputBox, opts.Agent, msg,
+				"delivered_in_input_box",
 				"paste+Enter completed but verify token didn't surface in time")
 		default:
 			logger.Printf("deliver_failed id=%s err=%v", msg.PublicID, derr)
@@ -747,7 +747,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 // operationally critical and shouldn't be silently dropped on cap.
 //
 // `failureKind` is the human-readable failure-class label ("failed"
-// or "delivered_unverified") used in the notice body.
+// or "delivered_in_input_box") used in the notice body.
 // `reason` is the underlying error message or WARN reason.
 func maybeInsertFailureNotice(
 	ctx context.Context,

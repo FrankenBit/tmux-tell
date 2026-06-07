@@ -79,7 +79,7 @@ type ObserveGateOpts struct {
 	// StateUnknown (the popup-state failure mode #105 surfaced — an
 	// immediate paste into an unrecognized state is the destructive
 	// case) all stay hard-deferred regardless of this flag. The
-	// verify-token retry + delivered_unverified notice is the
+	// verify-token retry + delivered_in_input_box notice is the
 	// load-bearing safety net for the small race-window between
 	// observing StateWorking and the paste actually landing.
 	WorkingDeliverImmediately bool

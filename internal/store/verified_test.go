@@ -36,7 +36,7 @@ func deliverMarked(t *testing.T, s *Store, to string, verified bool) string {
 	if verified {
 		err = s.MarkDelivered(ctx, r.PublicID)
 	} else {
-		err = s.MarkDeliveredUnverified(ctx, r.PublicID)
+		err = s.MarkDeliveredInInputBox(ctx, r.PublicID)
 	}
 	if err != nil {
 		t.Fatalf("mark: %v", err)

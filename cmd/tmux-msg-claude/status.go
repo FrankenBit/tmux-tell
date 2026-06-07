@@ -173,7 +173,7 @@ func renderTodayBlock(stdout io.Writer, rows []agentStatus) {
 		out = append(out, []string{
 			r.Name,
 			itoa(r.Today.Delivered),
-			itoa(r.Today.DeliveredUnverified),
+			itoa(r.Today.DeliveredInInputBox),
 			itoa(r.Today.Failed),
 			itoa(r.Today.QuietCapExceeded),
 			itoa(r.Today.CrashCount),

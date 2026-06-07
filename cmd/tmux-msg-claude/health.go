@@ -95,7 +95,7 @@ func renderHealthText(stdout io.Writer, rows []healthscan.AgentHealth, window ti
 		out = append(out, []string{
 			r.Name,
 			itoa(r.Delivered),
-			itoa(r.DeliveredUnverified),
+			itoa(r.DeliveredInInputBox),
 			itoa(r.Failed),
 			itoa(r.QuietCapExceeded),
 			itoa(r.DriftAmbiguous),
@@ -111,10 +111,10 @@ func renderHealthText(stdout io.Writer, rows []healthscan.AgentHealth, window ti
 	// Surface any actionable signals.
 	var notes []string
 	for _, r := range rows {
-		if r.DeliveredUnverified > 0 {
+		if r.DeliveredInInputBox > 0 {
 			notes = append(notes, fmt.Sprintf(
-				"  %s — %d delivered_unverified (Claude was likely mid-turn; messages sit in input box pending submit)",
-				r.Name, r.DeliveredUnverified))
+				"  %s — %d delivered_in_input_box (paste+Enter ran but verify token didn't surface; message sits in recipient's input box pending submit)",
+				r.Name, r.DeliveredInInputBox))
 		}
 		if r.Failed > 0 {
 			notes = append(notes,

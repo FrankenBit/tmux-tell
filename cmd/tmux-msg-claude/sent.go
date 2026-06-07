@@ -18,7 +18,7 @@ import (
 //	[--limit N] [--format text|json]
 //
 // STATE may be any of the standard store states (queued, delivering,
-// delivered, failed) or the synthetic "delivered_unverified" which maps to
+// delivered, failed) or the synthetic "delivered_in_input_box" which maps to
 // state=delivered AND verified=0.
 func runSentCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("sent", flag.ContinueOnError)
@@ -27,7 +27,7 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 	since := fs.String("since", "24h",
 		"time window: 24h (default) | 1h | today | all | any duration")
 	stateFlag := fs.String("state", "",
-		"queued|delivering|delivered|failed|delivered_unverified (empty = all)")
+		"queued|delivering|delivered|failed|delivered_in_input_box (empty = all)")
 	to := fs.String("to", "", "only messages sent to this agent")
 	limit := fs.Int("limit", 50, "maximum rows to return")
 	format := fs.String("format", "text", "text|json")
@@ -78,10 +78,10 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 // The empty string (all states) is always valid.
 func validateSentState(state string) error {
 	switch state {
-	case "", "queued", "delivering", "delivered", "failed", "delivered_unverified":
+	case "", "queued", "delivering", "delivered", "failed", "delivered_in_input_box":
 		return nil
 	default:
-		return fmt.Errorf("unknown --state %q (want queued|delivering|delivered|failed|delivered_unverified)", state)
+		return fmt.Errorf("unknown --state %q (want queued|delivering|delivered|failed|delivered_in_input_box)", state)
 	}
 }
 
@@ -100,7 +100,7 @@ func runSentWithStore(ctx context.Context, s *store.Store,
 	}
 
 	switch stateFilter {
-	case "delivered_unverified":
+	case "delivered_in_input_box":
 		f.Unverified = true
 	case "":
 		// no state filter
@@ -152,7 +152,7 @@ func runSentWithStore(ctx context.Context, s *store.Store,
 		var nUnverified, nFailed int
 		for _, m := range msgs {
 			switch displayState(m) {
-			case "delivered_unverified":
+			case "delivered_in_input_box":
 				nUnverified++
 			case "failed":
 				nFailed++
@@ -163,7 +163,7 @@ func runSentWithStore(ctx context.Context, s *store.Store,
 		}
 		if nUnverified > 0 {
 			fmt.Fprintf(stdout,
-				"%d message(s) in delivered_unverified — run `tmux-msg-claude resend <id>` to recover.\n",
+				"%d message(s) in delivered_in_input_box — run `tmux-msg-claude resend <id>` to recover.\n",
 				nUnverified)
 		}
 		if nFailed > 0 {
@@ -180,11 +180,11 @@ func runSentWithStore(ctx context.Context, s *store.Store,
 }
 
 // displayState synthesises the human-facing state label. For delivered messages
-// with verified=0, it returns "delivered_unverified" instead of "delivered" so
+// with verified=0, it returns "delivered_in_input_box" instead of "delivered" so
 // operators can distinguish confirmed deliveries from soft-fails.
 func displayState(m store.Message) string {
 	if m.State == store.StateDelivered && m.Verified.Valid && m.Verified.Int64 == 0 {
-		return "delivered_unverified"
+		return "delivered_in_input_box"
 	}
 	return string(m.State)
 }

@@ -85,7 +85,7 @@ type Message struct {
 	ReplayOf   sql.NullString
 	ReplayOfAt sql.NullString
 	// Verified mirrors the #169 `verified` column. 1 = verify-token observed
-	// (confirmed delivery), 0 = delivered_unverified soft-fail (paste landed,
+	// (confirmed delivery), 0 = delivered_in_input_box soft-fail (paste landed,
 	// token never surfaced), NULL/invalid = pre-migration row or not yet
 	// delivered. Orthogonal to State: both verified and unverified rows carry
 	// State == StateDelivered.
