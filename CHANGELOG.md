@@ -121,6 +121,22 @@ deprecated alias through v0.11.0).
   discipline-graduating-to-substrate trajectory as Keep-a-Changelog
   conventions and branch protection rules.
 
+- **ADR-0008 — Reading B (K-counter interaction) codified (#208).** Adds an
+  Amendment section to `docs/adr/0008-deprecation-policy.md` recording the
+  K-counter interaction settled during the v0.9.0 cut conversation:
+  deprecation-with-functioning-alias **preserves** the K-counter (#163),
+  removal **resets** it. Operator-impact alignment is the rationale —
+  Reading A (any deprecation resets K) would punish responsible policy
+  execution; Reading B aligns the counter with what operators feel (does
+  existing config still work?). Worked example threads the v0.9.0 → v0.10.0
+  → v0.11.0 #177 rename arc: deprecate in v0.9.0 (K preserved, K=3) → still
+  under aliases in v0.10.0 (K preserved, K=4) → alias removal earliest
+  v0.11.0 (K resets to 0). Out-of-scope consequences cross-ref the
+  structured `### Deprecated` derive-script (#209) and the cap-vs-keep-
+  raising K decision (#163) explicitly so the addendum doesn't drift into
+  unscoped policy territory. Pure docs — no code surface affected. Closes
+  #208.
+
 ### Deprecated
 
 - **Legacy `delivered_unverified` surfaces (#140, earliest removal v0.12.0).**

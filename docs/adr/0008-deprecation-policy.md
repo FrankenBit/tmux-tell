@@ -1,8 +1,8 @@
 # ADR-0008: Deprecation policy — two-minor-cycle floor (post-1.0)
 
-> **Status**: Accepted
+> **Status**: Accepted (amended 2026-06-08 — see Amendment)
 > **Date**: 2026-06-07
-> **Authors**: operator (ratified 2026-06-07), Herald (ADR)
+> **Authors**: operator (ratified 2026-06-07), Herald (ADR), Quartermaster (amendment)
 
 ## Context
 
@@ -59,6 +59,69 @@ agent **state vocabulary**; and the public Go API for the `discover` /
 earliest-removal version; through the pre-removal cycles it keeps
 functioning and emits the WARN. Any announcement must name a
 forward-compatible replacement or explicitly state there is none.
+
+## Amendment — 2026-06-08 (K-counter interaction)
+
+The original Decision section (above) says **what** the deprecation policy is
+but leaves implicit **how** deprecation/removal interact with the
+K-counter (#163) — the consecutive-non-breaking-releases tracker that gates
+the road to 1.0. The interaction was settled by the operator on 2026-06-07
+during the v0.9.0 cut conversation (the `claude-msg → tmux-msg-claude`
+rename arc, #177); recording it here now so the policy doc itself, not just
+the README + tracker, is the source of truth.
+
+### Reading B — deprecation-with-functioning-alias preserves K
+
+- **Deprecation announcement** that ships with a functioning alias (the
+  surface above) does **NOT** reset the K-counter. Existing operator config
+  keeps working at the cutover — every old invocation, env var, JSON shape,
+  CLI flag emits the WARN but does not break. The release is a clean cut for
+  K-counter purposes, K increments.
+- **Removal** of a deprecated surface (alias goes away) **DOES** reset the
+  K-counter. That's the moment existing config stops working — by the
+  definition of a public-surface break.
+
+### Why this reading (operator-impact alignment)
+
+The K-counter measures **operator-impact breaks**, not policy-change
+announcements. A deprecation announcement with a functioning alias is *policy
+hygiene*, not operator-impacting breakage. The alternative reading (Reading A:
+any deprecation resets K) would punish responsible policy execution — the
+fallback would be *not* deprecating and dropping straight to removal, which is
+strictly worse for operators yet would reset K identically. Aligning the
+counter with what operators actually feel (does existing config still work?)
+is the substrate-honest framing.
+
+### Worked example — the v0.9.0 → v0.11.0 trajectory
+
+The `#177` rename arc (claude-msg → tmux-msg-claude + CLAUDE_AGENT_NAME →
+TMUX_AGENT_NAME + claude-mailman@ template rename), shipped in **v0.9.0**:
+
+- **v0.9.0** (2026-06-07) — *deprecate with functioning aliases.* Old names
+  still work; new names canonical. Each old invocation emits the WARN. **K
+  preserved → K=3 (Sea-trials gate clears).**
+- **v0.10.0** (2026-06-08, this cut) — *still under aliases.* Old names
+  continue to work, WARN still emitted. No new deprecation, no removal. **K
+  preserved → K=4.**
+- **v0.11.0** (earliest) — *remove aliases.* `claude-msg` is no longer on
+  disk; `CLAUDE_AGENT_NAME` no longer resolves identity; `claude-mailman@`
+  template is gone. Existing operator config that hadn't migrated now breaks.
+  **K resets → K=0.**
+
+The two-minor floor (v0.9.0 → v0.11.0 earliest removal) and the K-counter
+interaction compose cleanly: every announcement is K-preserving (provided the
+alias machinery is honored), every removal is the next deliberate K-reset.
+
+### Out-of-scope consequences (deferred to follow-ups)
+
+- **Structured `### Deprecated` CHANGELOG format + derive-script.** The
+  per-release "what's eligible for removal at v<X>" view is filed at #209
+  (deprecation bookkeeping, Option C hybrid). Each `### Deprecated` entry
+  carries a "Deprecated in v<X>; earliest removal v<Y>" line that the script
+  parses to drive the eligibility view.
+- **Cap-vs-keep-raising K-counter past gate.** Operator decided 2026-06-07:
+  K keeps raising past 3 (no cap), retires at 1.0. Recorded in #163 but
+  beyond the scope of this addendum.
 
 ## Alternatives considered
 
