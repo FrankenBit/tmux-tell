@@ -32,6 +32,8 @@ deprecated alias through v0.11.0).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-06-08
+
 ### Added
 
 - **Backlog don't-flood on (re)register (#204).** When an agent registers (or
