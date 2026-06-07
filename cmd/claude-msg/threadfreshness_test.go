@@ -79,6 +79,44 @@ func TestThreadFreshness_NewerToSenderAfterTheirLast(t *testing.T) {
 	}
 }
 
+func TestThreadFreshness_ReplyToLatest_NotStale(t *testing.T) {
+	// The common case + Surveyor's #189 false-positive guard: alice spoke (m1),
+	// bob replied to her (m2). alice replies to m2 — the LATEST message, which
+	// she's demonstrably holding. The reply_to target folds into the baseline,
+	// so m2 must NOT count as newer. (Pre-fix this reported stale on every
+	// normal reply-to-the-latest.)
+	s := newCmdTestStore(t, "alice", "bob")
+	m1 := tfInsert(t, s, "alice", "bob", "")
+	m2 := tfInsert(t, s, "bob", "alice", m1)
+
+	tf, err := resolveThreadFreshness(context.Background(), s, m2, "alice")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tf.Stale || len(tf.NewerInThread) != 0 {
+		t.Errorf("freshness = %+v, want not-stale (replying to the latest)", tf)
+	}
+}
+
+func TestThreadFreshness_ReplyToIntermediate_NotStale(t *testing.T) {
+	// alice replies to m3 (the latest) while an earlier message to her (m2)
+	// also exists. Anchoring to the reply_to target as high-water-mark means m2
+	// — older than what she's holding — is not flagged: she's replying to the
+	// newest, so nothing is "newer than" her anchor.
+	s := newCmdTestStore(t, "alice", "bob")
+	m1 := tfInsert(t, s, "alice", "bob", "")
+	m2 := tfInsert(t, s, "bob", "alice", m1)
+	m3 := tfInsert(t, s, "bob", "alice", m2)
+
+	tf, err := resolveThreadFreshness(context.Background(), s, m3, "alice")
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if tf.Stale || len(tf.NewerInThread) != 0 {
+		t.Errorf("freshness = %+v, want not-stale (replying to latest m3)", tf)
+	}
+}
+
 func TestThreadFreshness_SenderHasntSpoken_AnchorsToReplyToTarget(t *testing.T) {
 	// alice enters a thread cold (never spoke in it). Baseline falls back to
 	// the reply_to target's arrival point; a later message addressed to her

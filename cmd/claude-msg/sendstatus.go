@@ -231,12 +231,16 @@ func waitForDelivery(ctx context.Context, s *store.Store, id string, timeout, po
 // sender's new message is not inserted yet, so it never counts as its own
 // baseline or as a newer entry.
 //
-// Baseline selection:
-//   - If the sender has spoken in the chain, baseline = their last message's id
-//     (the high-water-mark of what they've demonstrably acted on — they sent
-//     after seeing it).
-//   - If the sender has NOT spoken (they're entering the thread cold), baseline =
-//     the reply_to target's id: the state they're explicitly anchoring to.
+// Baseline = the high-water-mark of what the sender has demonstrably seen: the
+// LATER of (their own last message in the chain, the reply_to target they're
+// replying to). The reply_to target is always folded into the max — the sender
+// is holding the message they reply to, so it (and anything before it) can never
+// count as "newer than you've seen." That is what keeps the signal honest on the
+// common case: replying to the latest message must report not-stale, even though
+// that message is addressed to you and postdates your own last send. Without it,
+// every normal reply-to-the-latest would false-positive (Surveyor review of
+// #189). When the sender hasn't spoken at all, the max collapses to just the
+// reply_to target — the cold-entry case.
 //
 // Returns store.ErrNotFound if replyTo doesn't resolve (the caller maps that to
 // the same "unknown reply-to id" error the insert path would raise).
@@ -252,21 +256,10 @@ func resolveThreadFreshness(ctx context.Context, s *store.Store, replyTo, sender
 		tf.LatestInThread = thread[n-1].PublicID
 	}
 
-	// Baseline: the sender's last message in the chain, else the reply_to target.
 	var baselineID int64
-	var senderSpoke bool
 	for _, m := range thread {
-		if m.FromAgent == sender && m.ID > baselineID {
+		if (m.PublicID == replyTo || m.FromAgent == sender) && m.ID > baselineID {
 			baselineID = m.ID
-			senderSpoke = true
-		}
-	}
-	if !senderSpoke {
-		for _, m := range thread {
-			if m.PublicID == replyTo {
-				baselineID = m.ID
-				break
-			}
 		}
 	}
 
