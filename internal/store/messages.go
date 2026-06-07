@@ -517,6 +517,7 @@ type ListFilter struct {
 	ToAgent   string
 	FromAgent string
 	State     State
+	Kind      Kind
 	Limit     int // 0 → 100; capped at 1000.
 }
 
@@ -537,6 +538,10 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	if f.State != "" {
 		wheres = append(wheres, "state = ?")
 		args = append(args, f.State)
+	}
+	if f.Kind != "" {
+		wheres = append(wheres, "kind = ?")
+		args = append(args, f.Kind)
 	}
 	switch {
 	case f.Limit <= 0:

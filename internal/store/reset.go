@@ -34,3 +34,28 @@ func (s *Store) DeleteMessages(ctx context.Context, toAgent string, states []Sta
 	}
 	return res.RowsAffected()
 }
+
+// DeleteStrandedDraftsBefore removes stranded_draft bookmark rows whose
+// created_at is strictly older than cutoff, optionally scoped to one
+// recipient (empty toAgent = all agents). Returns the count deleted.
+// Used by `claude-msg stranded prune --older-than`.
+//
+// created_at is stored as ISO8601 UTC ('%Y-%m-%dT%H:%M:%fZ'), which sorts
+// lexicographically — so a cutoff string in the same format compares
+// correctly with a plain `<`.
+func (s *Store) DeleteStrandedDraftsBefore(ctx context.Context, toAgent, cutoff string) (int64, error) {
+	if cutoff == "" {
+		return 0, fmt.Errorf("store: cutoff required")
+	}
+	q := `DELETE FROM messages WHERE kind = ? AND created_at < ?`
+	args := []any{KindStrandedDraft, cutoff}
+	if toAgent != "" {
+		q += " AND to_agent = ?"
+		args = append(args, toAgent)
+	}
+	res, err := s.db.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, fmt.Errorf("store: prune stranded: %w", err)
+	}
+	return res.RowsAffected()
+}

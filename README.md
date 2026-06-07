@@ -175,7 +175,8 @@ mid-compaction / unknown) and:
 - **idle** → delivers immediately (~3–5s typical);
 - **you're typing** → holds, drops a single 📫 in your input row so you know something's
   queued, and delivers once you stop (or, if your draft sits untouched past a
-  threshold, archives it safely and then delivers);
+  threshold, archives it safely as a `stranded_draft` bookmark — recover it with
+  `claude-msg stranded` — and then delivers);
 - **busy / compacting / unknown** → waits with progressive backoff, up to a 5-minute
   `MaxWait` cap, then delivers anyway and logs `WARN gate_max_wait` (fail-loud, never
   fail-silent).
@@ -206,6 +207,7 @@ claude-msg resume AGENT | --all
 claude-msg reset  --confirm [--hard]               # purge queued; --hard wipes audit log
 claude-msg log    --thread ID                      # a reply chain, flat-chronological
 claude-msg thread ID [--format tree|json]          # a reply chain, as a parent→child tree
+claude-msg stranded list|show|prune                # recover flushed operator paste snapshots
 claude-msg discover                                # re-derive agents.pane_id from tmux
 ```
 
@@ -287,6 +289,16 @@ state (`failed` or `delivered_unverified`), the mailman auto-inserts a
 reason, 200-char preview). These bypass the queue caps so they're never dropped, and
 a notice that itself fails does not generate another (no wedged-pane cascade). Both
 `--notify-on-failed` and `--notify-on-delivered-unverified` default on.
+
+**Recovering a flushed paste.** When the observe-gate archives your in-flight
+input before pasting over it (see below), it stores the snapshot as a
+`stranded_draft` bookmark. `claude-msg stranded list` shows your bookmarks (id,
+pane, timestamp, byte-size); `claude-msg stranded show <id>` prints the recovered
+content (`-o file` writes it out, for long pastes); `claude-msg stranded prune
+--older-than 7d` clears old ones. Note: the snapshot holds whatever the substrate
+captured from the input row — for a large bracketed paste tmux may have shown only
+its `[Pasted text #N +M lines]` placeholder rather than the literal text, so
+recovery is best-effort on big pastes.
 
 **When a message seems to go missing,** walk the sender-first triage in
 [`docs/diagnostic-playbook.md`](docs/diagnostic-playbook.md) — it starts from the
