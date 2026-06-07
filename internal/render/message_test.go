@@ -33,7 +33,7 @@ func TestMessage_Regular(t *testing.T) {
 		ToAgent:   "surveyor",
 		Body:      "please check CI on PR 1234",
 		CreatedAt: fixtureUTC,
-	})
+	}, DefaultByteMarkerThreshold)
 	wantSubstrings := []string{
 		"[Bosun · ",
 		localClockFromUTC(t, fixtureUTC),
@@ -63,7 +63,7 @@ func TestMessage_Reply(t *testing.T) {
 		Body:      "looking now, ETA 3 min",
 		ReplyTo:   sql.NullString{String: "7f3a", Valid: true},
 		CreatedAt: "2026-05-29T11:05:00.000Z",
-	})
+	}, DefaultByteMarkerThreshold)
 	wantSubstrings := []string{
 		"[Surveyor → Bosun · ",
 		"re 7f3a",
@@ -86,7 +86,7 @@ func TestMessage_NoReplyExpected(t *testing.T) {
 		Body:            "FYI: tagged v0.8.0",
 		CreatedAt:       fixtureUTC,
 		NoReplyExpected: true,
-	})
+	}, DefaultByteMarkerThreshold)
 	headerLine, _, _ := strings.Cut(got, "\n")
 	if !strings.Contains(headerLine, "🔕") {
 		t.Errorf("no-reply header missing 🔕 marker: %s", headerLine)
@@ -101,10 +101,112 @@ func TestMessage_NoReplyExpected(t *testing.T) {
 		ToAgent:   "pilot",
 		Body:      "normal message",
 		CreatedAt: fixtureUTC,
-	})
+	}, DefaultByteMarkerThreshold)
 	plainHeader, _, _ := strings.Cut(plain, "\n")
 	if strings.Contains(plainHeader, "🔕") {
 		t.Errorf("regular header should not contain 🔕: %s", plainHeader)
+	}
+}
+
+// headerOf returns just the bracket-header line of a rendered message.
+func headerOf(rendered string) string {
+	h, _, _ := strings.Cut(rendered, "\n")
+	return h
+}
+
+func TestMessage_ShortBodyNoMarker(t *testing.T) {
+	// A body at/under the threshold must NOT gain a length marker (AC:
+	// "short message renders without the marker"). The default threshold
+	// is 512; this body is well under it.
+	got := Message(store.Message{
+		PublicID:  "aa01",
+		FromAgent: "pilot",
+		ToAgent:   "quartermaster",
+		Body:      "ack — picking up #176 now",
+		CreatedAt: "2026-06-07T09:00:00.000Z",
+	}, DefaultByteMarkerThreshold)
+	if header := headerOf(got); hasMarker(header) {
+		t.Errorf("short body should have no length marker: %q", header)
+	}
+}
+
+// hasMarker reports whether a header carries a `· <size>` length marker.
+// The marker is always the last dot-separated field, starts with a digit,
+// and ends in `b` or `k` — the leading-digit check guards against a
+// public_id that happens to end in `b`/`k` ("id ab1k]") being misread as
+// a marker.
+func hasMarker(header string) bool {
+	trimmed := strings.TrimSuffix(header, "]")
+	fields := strings.Split(trimmed, " · ")
+	last := fields[len(fields)-1]
+	if last == "" || last[0] < '0' || last[0] > '9' {
+		return false
+	}
+	return strings.HasSuffix(last, "b") || strings.HasSuffix(last, "k")
+}
+
+func TestMessage_LongBodyGetsMarker(t *testing.T) {
+	// A body above the threshold gains the marker (AC: "long message
+	// renders with the marker"). 2300 bytes → `2.3k` per the 1000-base
+	// format the issue pins.
+	body := strings.Repeat("x", 2300)
+	got := Message(store.Message{
+		PublicID:  "bb02",
+		FromAgent: "surveyor",
+		ToAgent:   "quartermaster",
+		ReplyTo:   sql.NullString{String: "abad", Valid: true},
+		Body:      body,
+		CreatedAt: "2026-06-07T09:01:00.000Z",
+	}, DefaultByteMarkerThreshold)
+	header := headerOf(got)
+	if !strings.Contains(header, "· 2.3k]") {
+		t.Errorf("long body should carry `· 2.3k]` marker: %q", header)
+	}
+	// Marker sits at the end, after the id.
+	if !strings.Contains(header, "id bb02 · 2.3k]") {
+		t.Errorf("marker should follow the id: %q", header)
+	}
+}
+
+func TestMessage_MarkerBoundaryAndDisable(t *testing.T) {
+	const threshold = 512
+	mk := func(n, t int) string {
+		return headerOf(Message(store.Message{
+			PublicID:  "cc03",
+			FromAgent: "bosun",
+			ToAgent:   "pilot",
+			Body:      strings.Repeat("y", n),
+			CreatedAt: "2026-06-07T09:02:00.000Z",
+		}, t))
+	}
+	// Exactly at threshold → no marker (strict ">" semantics).
+	if h := mk(threshold, threshold); hasMarker(h) {
+		t.Errorf("body == threshold should have no marker: %q", h)
+	}
+	// One byte over → marker (sub-1k form: `513b`).
+	if h := mk(threshold+1, threshold); !strings.Contains(h, "· 513b]") {
+		t.Errorf("body == threshold+1 should carry `· 513b]`: %q", h)
+	}
+	// Negative threshold disables the marker even for a huge body.
+	if h := mk(5000, -1); hasMarker(h) {
+		t.Errorf("negative threshold should disable the marker: %q", h)
+	}
+}
+
+func TestFormatBytes(t *testing.T) {
+	cases := map[int]string{
+		0:     "0b",
+		512:   "512b",
+		999:   "999b",
+		1000:  "1.0k",
+		2300:  "2.3k",
+		2347:  "2.3k",
+		15000: "15.0k",
+	}
+	for n, want := range cases {
+		if got := formatBytes(n); got != want {
+			t.Errorf("formatBytes(%d) = %q, want %q", n, got, want)
+		}
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/render"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
@@ -32,7 +33,7 @@ func TestLog_TextRendersAllMessages(t *testing.T) {
 	root, _, leaf := seedThread(t, s)
 
 	var stdout, stderr bytes.Buffer
-	exit := runLogWithStore(context.Background(), s, leaf, "text", &stdout, &stderr)
+	exit := runLogWithStore(context.Background(), s, leaf, "text", render.DefaultByteMarkerThreshold, &stdout, &stderr)
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -53,7 +54,7 @@ func TestLog_JSONReturnsArray(t *testing.T) {
 	root, _, _ := seedThread(t, s)
 
 	var stdout bytes.Buffer
-	exit := runLogWithStore(context.Background(), s, root, "json", &stdout, &bytes.Buffer{})
+	exit := runLogWithStore(context.Background(), s, root, "json", render.DefaultByteMarkerThreshold, &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -69,7 +70,7 @@ func TestLog_JSONReturnsArray(t *testing.T) {
 func TestLog_UnknownIDReturnsDataErr(t *testing.T) {
 	s := newCmdTestStore(t, "alice")
 	var stdout, stderr bytes.Buffer
-	exit := runLogWithStore(context.Background(), s, "deadbeef", "json", &stdout, &stderr)
+	exit := runLogWithStore(context.Background(), s, "deadbeef", "json", render.DefaultByteMarkerThreshold, &stdout, &stderr)
 	if exit != exitDataErr {
 		t.Errorf("exit = %d, want %d", exit, exitDataErr)
 	}
