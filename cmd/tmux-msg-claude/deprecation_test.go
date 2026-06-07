@@ -11,8 +11,8 @@ import (
 // maps its value through to the canonical flag (#140).
 func TestServe_DeprecatedNotifyOnDeliveredUnverifiedFlag(t *testing.T) {
 	cases := []struct {
-		name    string
-		args    []string
+		name     string
+		args     []string
 		wantWarn bool
 	}{
 		{"legacy flag used", []string{"--notify-on-delivered-unverified=false"}, true},

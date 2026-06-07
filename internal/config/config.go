@@ -469,10 +469,10 @@ func ParseByteSize(s string) (int, error) {
 // what the precedence chain decided for an agent without having to
 // trace through TOML manually.
 type ResolvedView struct {
-	Agent                       string        `json:"agent"`
-	ConfigPath                  string        `json:"config_path"`
-	NotifyOnFailed              bool          `json:"notify_on_failed"`
-	NotifyOnDeliveredInInputBox bool          `json:"notify_on_delivered_in_input_box"`
+	Agent                       string `json:"agent"`
+	ConfigPath                  string `json:"config_path"`
+	NotifyOnFailed              bool   `json:"notify_on_failed"`
+	NotifyOnDeliveredInInputBox bool   `json:"notify_on_delivered_in_input_box"`
 	// Deprecated: same value as NotifyOnDeliveredInInputBox; removal v0.12.0 (#140).
 	NotifyOnDeliveredUnverified bool          `json:"notify_on_delivered_unverified"`
 	DriftSoftFail               bool          `json:"drift_soft_fail"`
