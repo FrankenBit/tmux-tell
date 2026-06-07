@@ -252,6 +252,20 @@ Run `claude-msg --version` to see what's installed.
   threading semantics, so a newcomer reading the schema doesn't read "queued" as
   "delivered" or miss reply-threading. Description string only; no behavior change.
 
+### Fixed
+
+- **`install.sh` fails loud on an unresolvable operator user (#175).** Dropped
+  the hardcoded `${USER:-alex}` fallback: the operator account now resolves from
+  `OPERATOR_USER` (env override) → `$SUDO_USER` → `$USER`, with **no** last-resort
+  guess. If none resolves — or it resolves to `root` — the installer errors with
+  exit 1 and a hint to set `OPERATOR_USER=<you>` or use `sudo`, instead of silently
+  chowning `$DATADIR` + the systemd template to a wrong/nonexistent account. Closes
+  two pre-public-release issues: silent misconfiguration, and shipping a maintainer's
+  personal username in a public installer. The README `## Install` section gains a
+  "what runs as root, and what runs as you" subsection documenting the privilege
+  boundary (root writes the binary + creates the data dir; `go build` + the mailman
+  daemons run as the operator).
+
 ## [0.7.0] — 2026-06-06
 
 ### Changed

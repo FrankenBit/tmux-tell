@@ -17,7 +17,22 @@ set -euo pipefail
 
 PREFIX=${PREFIX:-/usr/local}
 DATADIR=${DATADIR:-/var/lib/tmux-msg}
-OPERATOR_USER=${SUDO_USER:-${USER:-alex}}
+
+# Resolve the operator user — the non-root account that owns $DATADIR and
+# runs the mailman daemons. Precedence: an explicit OPERATOR_USER from the
+# environment wins (lets you install for a target user without sudo, e.g.
+# OPERATOR_USER=alice ./install.sh), then sudo's $SUDO_USER, then the
+# invoking $USER. There is deliberately NO hardcoded fallback: guessing a
+# username silently chowns $DATADIR + the systemd template to the wrong
+# (or nonexistent) account, contradicting the project's fail-loud ethos —
+# and a personal username has no business shipping in a public installer.
+OPERATOR_USER=${OPERATOR_USER:-${SUDO_USER:-${USER:-}}}
+if [[ -z "$OPERATOR_USER" || "$OPERATOR_USER" == "root" ]]; then
+    echo "install.sh: cannot determine the operator user (got: '${OPERATOR_USER}')." >&2
+    echo "  Set OPERATOR_USER=<you> or run via sudo (which exports \$SUDO_USER)." >&2
+    echo "  root is rejected: the mailman daemons must run as an unprivileged user." >&2
+    exit 1
+fi
 
 if [[ $EUID -ne 0 ]]; then
     echo "install.sh: must run as root (try: sudo -A ./install.sh)" >&2

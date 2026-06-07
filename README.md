@@ -75,6 +75,28 @@ sudo loginctl enable-linger "$USER"   # keep the user manager running across reb
 systemctl --user daemon-reload        # so the mailman unit is visible
 ```
 
+### What runs as root, and what runs as you
+
+`sudo ./install.sh` asks for root, but root's reach is deliberately narrow.
+**As root** the script does exactly two privileged things: installs the
+binary to `/usr/local/bin/claude-msg` (mode `0755`, owned `root:root`) and
+creates `/var/lib/tmux-msg/` owned by *you*, the operator. **As you** —
+never as root — it runs `go build`, chowns the data dir + the systemd
+template to your account, and (after install) the mailman daemons run in
+your linger-enabled `systemctl --user` session. No daemon ever runs as
+root; root touches nothing but the binary path and the data-dir creation.
+
+The operator account is resolved from `$SUDO_USER` (set by `sudo`), falling
+back to `$USER`. There is **no hardcoded fallback** — if neither resolves
+(or resolves to `root`), the installer fails loud rather than guessing an
+owner. To install for a different target user without `sudo`, set it
+explicitly: `OPERATOR_USER=alice ./install.sh`.
+
+That boundary is the whole point of shipping the installer as a readable
+shell script: the same "audit it in an afternoon" property the bus itself
+offers applies to the install story too — you can confirm exactly which
+two operations need root before you grant it.
+
 ## Quickstart
 
 From two panes in the same tmux session:
