@@ -200,6 +200,7 @@ claude-msg get    ID                               # fetch a processed message b
 claude-msg status [--today]                        # paused state + queue depths per agent
 claude-msg stats  [--window all|7d|1h] [--agent X] [--pair]  # on-demand bus-traffic aggregates
 claude-msg digest [--since today|week|24h] [--counterparty X]  # campaign-arc narrative summary
+claude-msg tail   [--from X] [--to Y] [--kind K] [--state S]   # live cross-chamber firehose
 claude-msg state  --agent AGENT                    # probe an agent's current activity
 claude-msg health [--since DUR]                    # per-agent operational audit
 claude-msg pause  AGENT | --all                    # halt delivery (queue keeps filling)
@@ -282,6 +283,24 @@ a heuristic, not ground truth: the substrate can't know if a conversation is
 `--no-reply-expected` on a genuine last word is what keeps a closed thread out of
 the list. System chrome (`delivery_failure_notice`, `stranded_draft`, `ping`) is
 excluded from thread analysis.
+
+**Live tail.** `claude-msg tail` is the cross-chamber firehose — all bus traffic,
+live, filtered to what you care about. It's the view the per-mailman journals and
+single-message `track` couldn't give: when a bug spans two chambers (the #137
+walk-back needed exactly this), `tail --from X --to Y` shows the correlated stream
+in one terminal. New rows print as they're inserted and `queued → delivered/failed`
+transitions print on the same id (a multi-line lifecycle). Filters compose (AND):
+`--from` / `--to` / `--kind` / `--state` / `--since`. `--since` defaults to `now`
+(start live, no backfill) but takes any `parseWindow` spec (`5m`, `today`, `all`) to
+backfill first. `--format json` emits one object per line for piping. Ctrl-C exits
+cleanly.
+
+The watch mechanism is **rowid-polling**, not SQLite's `update_hook`: the mailmen
+that write rows are *separate processes* from the `tail` CLI, and `update_hook` only
+fires for the connection that registered it (per-connection, same-process), so it
+would never see their writes. `tail` polls `MAX(id)` since-last-seen (configurable
+`--interval`, default 300ms) and re-reads in-flight ids for state transitions; WAL
+mode keeps these reads safe concurrent with mailman writes.
 
 **Delivery-failure notifications.** When an outbound message hits a terminal-failure
 state (`failed` or `delivered_unverified`), the mailman auto-inserts a

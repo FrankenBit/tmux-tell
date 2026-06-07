@@ -579,3 +579,101 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	}
 	return out, rows.Err()
 }
+
+// TailFilter narrows TailRows by *immutable* columns only (from / to / kind /
+// created-at floor). State is deliberately excluded: a live tail (#148) tracks
+// state transitions on rows it has already surfaced, so filtering on state at
+// the query level would hide a row until it entered the wanted state and lose
+// the transition. The CLI applies any --state gate at render time instead.
+type TailFilter struct {
+	From           string
+	To             string
+	Kind           string
+	SinceCreatedAt string // sqliteTimeFormat (T…Z); "" = no floor
+}
+
+// TailRows returns messages with id > afterID matching f, ordered id ASC and
+// capped at limit. It is the cross-process rowid-poll primitive behind
+// `claude-msg tail` (#148): the CLI re-calls it each tick with afterID = the
+// highest id it has seen, so a separate-process mailman's INSERTs surface
+// incrementally. WAL mode (set in Open) makes these reads safe concurrent with
+// mailman writes. State changes on already-seen rows do NOT move the id, so the
+// CLI re-reads in-flight ids via MessagesByIDs for transition rendering.
+func (s *Store) TailRows(ctx context.Context, afterID int64, f TailFilter, limit int) ([]Message, error) {
+	wheres := []string{"id > ?"}
+	args := []any{afterID}
+	if f.From != "" {
+		wheres = append(wheres, "from_agent = ?")
+		args = append(args, f.From)
+	}
+	if f.To != "" {
+		wheres = append(wheres, "to_agent = ?")
+		args = append(args, f.To)
+	}
+	if f.Kind != "" {
+		wheres = append(wheres, "kind = ?")
+		args = append(args, f.Kind)
+	}
+	if f.SinceCreatedAt != "" {
+		wheres = append(wheres, "created_at >= ?")
+		args = append(args, f.SinceCreatedAt)
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	args = append(args, limit)
+
+	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
+	             no_reply_expected, state, created_at, delivered_at, error
+	      FROM messages WHERE ` + strings.Join(wheres, " AND ") +
+		` ORDER BY id ASC LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: tail rows: %w", err)
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+// MessagesByIDs returns the current rows for the given numeric ids, ordered id
+// ASC. `tail` uses it to re-read the live state of in-flight rows it has
+// already surfaced, so queued→delivering→delivered/failed transitions render on
+// the same id. Empty ids → empty result, no query.
+func (s *Store) MessagesByIDs(ctx context.Context, ids []int64) ([]Message, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
+	             no_reply_expected, state, created_at, delivered_at, error
+	      FROM messages WHERE id IN (` + strings.Join(placeholders, ",") + `) ORDER BY id ASC`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: messages by ids: %w", err)
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+// scanMessages drains a full-column message query into a slice. Shared by the
+// readers above (the column order matches the SELECT lists verbatim).
+func scanMessages(rows *sql.Rows) ([]Message, error) {
+	var out []Message
+	for rows.Next() {
+		var m Message
+		var nre int
+		if err := rows.Scan(
+			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
+			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error); err != nil {
+			return nil, err
+		}
+		m.NoReplyExpected = nre != 0
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}

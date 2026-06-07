@@ -145,6 +145,33 @@ Outcomes:
 - **No external action at all**: agent didn't do what was expected.
   Investigate the agent's session log for where the flow stopped.
 
+## Watching it happen live — `claude-msg tail`
+
+The triage above is post-hoc: it reconstructs what happened from the stored
+row + the journal. When the failure is *reproducible* — you can trigger the
+send again — skip the reconstruction and watch it live:
+
+```bash
+# all bus traffic, live (Ctrl-C to stop)
+claude-msg tail
+
+# narrow to the pair you suspect, then re-trigger the send
+claude-msg tail --from bosun --to surveyor
+
+# only failures / notices, across everyone
+claude-msg tail --kind delivery_failure_notice
+claude-msg tail --state failed
+```
+
+`tail` prints each new row as it's inserted and each `queued → delivering →
+delivered/failed` transition on the same id, so a message that stalls in
+`delivering` or flips to `failed` is visible the instant it happens — the
+exact correlation the #137 walk-back had to assemble by hand from two
+mailmen's journals. Filters compose (AND); `--since 5m` backfills recent
+history before going live; `--format json` pipes into `jq`. It's a read-only
+poll over the SQLite store (rowid-polling, WAL-safe), so it never perturbs
+delivery — run it alongside a live repro freely.
+
 ## When this playbook DOES escalate to "bus-side"
 
 The bus IS the failure point when:
