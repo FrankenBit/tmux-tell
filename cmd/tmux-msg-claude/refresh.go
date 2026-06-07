@@ -21,11 +21,11 @@ import (
 // same struct as an aligned table. Don't reconstruct this shape by
 // hand in either path or the two outputs will drift.
 type refreshResult struct {
-	OK       bool                  `json:"ok"`
-	Sender   string                `json:"sender"`
-	Total    int                   `json:"total"`
-	Queued   int                   `json:"queued"`
-	Failed   int                   `json:"failed"`
+	OK     bool                `json:"ok"`
+	Sender string              `json:"sender"`
+	Total  int                 `json:"total"`
+	Queued int                 `json:"queued"`
+	Failed int                 `json:"failed"`
 	Agents []refreshAgentEntry `json:"agents"`
 }
 
@@ -113,9 +113,9 @@ func runRefreshAllMcpsWithStore(ctx context.Context, s *store.Store,
 	sort.Slice(agents, func(i, j int) bool { return agents[i].Name < agents[j].Name })
 
 	result := refreshResult{
-		OK:       true,
-		Sender:   sender,
-		Total:    len(agents),
+		OK:     true,
+		Sender: sender,
+		Total:  len(agents),
 		Agents: make([]refreshAgentEntry, 0, len(agents)),
 	}
 
@@ -206,4 +206,3 @@ func renderRefreshText(w io.Writer, r refreshResult) {
 		}
 	}
 }
-

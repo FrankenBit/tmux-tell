@@ -130,8 +130,8 @@ func TestPin_AtomicCapEnforcement_CrossProcessCeilingForSingleInsert(t *testing.
 	}
 
 	const (
-		cap            = 5
-		concurrentN    = 20
+		cap         = 5
+		concurrentN = 20
 		// Sender-backlog cap defaults are bypassed in the probe
 		// (MaxSenderBacklog left zero). The recipient cap is the
 		// thing under test.

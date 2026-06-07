@@ -266,7 +266,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 			// a CLI flag in v1 — operators can tune via TOML if needed
 			// once the migration settles.
 		},
-		NotifyEmojiDisabled: *notifyEmojiDisabled,
+		NotifyEmojiDisabled:         *notifyEmojiDisabled,
 		PrePasteSafetyDisabled:      *prePasteSafetyDisabled,
 		ConfigDeliveryMode:          configDeliveryMode,
 		ByteMarkerThreshold:         byteMarkerThreshold,
@@ -333,8 +333,8 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	// the operator later flips delivery_mode back to paste-and-enter,
 	// they need to manually restart the unit.
 	if a.DeliveryMode == store.DeliveryModeMailboxOnly {
-		logger.Printf("delivery_mode=mailbox-only — no daemon work; exiting cleanly. " +
-			"NOTE: flip-back is asymmetric — if you later set delivery_mode=paste-and-enter, " +
+		logger.Printf("delivery_mode=mailbox-only — no daemon work; exiting cleanly. "+
+			"NOTE: flip-back is asymmetric — if you later set delivery_mode=paste-and-enter, "+
 			"restart this unit manually (systemctl --user restart tmux-msg-claude-mailman@%s)", opts.Agent)
 		if err := sdnotify.Ready(); err != nil {
 			logger.Printf("sdnotify_ready_err err=%v", err)

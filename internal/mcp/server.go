@@ -40,10 +40,10 @@ type ToolHandler func(ctx context.Context, args json.RawMessage) (any, error)
 // Tool describes a single registered tool the way MCP clients want to see
 // it.
 type Tool struct {
-	Name        string            `json:"name"`
-	Description string            `json:"description"`
-	InputSchema json.RawMessage   `json:"inputSchema"`
-	Handler     ToolHandler       `json:"-"`
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	InputSchema json.RawMessage `json:"inputSchema"`
+	Handler     ToolHandler     `json:"-"`
 }
 
 // Server is the JSON-RPC dispatcher. Construct one with NewServer, attach

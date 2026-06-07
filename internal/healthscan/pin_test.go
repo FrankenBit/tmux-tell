@@ -28,11 +28,11 @@ import (
 // fast enough" into a mechanical check; when the belief stops
 // being true, the pin's failure is the signal to either:
 //
-//   (a) optimise the scan (still external-source, just faster)
-//   (b) migrate to persistent counters per the CHANGELOG[Unreleased]
-//       deferred-architecture flag
-//   (c) retract the commitment via superseding ADR if external-source
-//       was misjudged
+//	(a) optimise the scan (still external-source, just faster)
+//	(b) migrate to persistent counters per the CHANGELOG[Unreleased]
+//	    deferred-architecture flag
+//	(c) retract the commitment via superseding ADR if external-source
+//	    was misjudged
 //
 // All three are legitimate (c)-class diagnoses on triage; what's NOT
 // legitimate is "raise the ceiling because the test failed" without

@@ -19,11 +19,12 @@
 //     views that may drift; the Triage call is what tooling sees.
 //
 // Exit codes:
-//   0 — every in-use slug is registered. CI green.
-//   1 — at least one slug is in use but not in the register. CI red
-//       with a clear pointer to the ADR (so the failing Pilot knows
-//       to either amend the ADR or correct the slug spelling).
-//   2 — internal error (couldn't read the ADR, regex bug, etc.).
+//
+//	0 — every in-use slug is registered. CI green.
+//	1 — at least one slug is in use but not in the register. CI red
+//	    with a clear pointer to the ADR (so the failing Pilot knows
+//	    to either amend the ADR or correct the slug spelling).
+//	2 — internal error (couldn't read the ADR, regex bug, etc.).
 //
 // Run via `make check-pin-slugs` or directly:
 //
@@ -41,10 +42,10 @@ import (
 )
 
 const (
-	exitOK     = 0
-	exitDrift  = 1
-	exitErr    = 2
-	adrPath    = "docs/adr/0001-discipline-pins-as-test-category.md"
+	exitOK      = 0
+	exitDrift   = 1
+	exitErr     = 2
+	adrPath     = "docs/adr/0001-discipline-pins-as-test-category.md"
 	markerStart = "<!-- pin-slug-register-start -->"
 	markerEnd   = "<!-- pin-slug-register-end -->"
 )

@@ -7,9 +7,9 @@
 // silently erodes the commitment. The triage discipline in §Triage of
 // ADR-0001 partitions the diagnosis into:
 //
-//   (a) implementation regressed — fix the code
-//   (b) commitment retracted — file an ADR amendment retracting the pin
-//   (c) pin miswrote — fix the assertion AND satisfy (c.1)+(c.2) per ADR
+//	(a) implementation regressed — fix the code
+//	(b) commitment retracted — file an ADR amendment retracting the pin
+//	(c) pin miswrote — fix the assertion AND satisfy (c.1)+(c.2) per ADR
 //
 // The Triage helper installs a t.Cleanup that surfaces the diagnosis
 // pointer on failure, so the discipline is visible at the failure site

@@ -186,12 +186,12 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 	pollInterval := opts.PollIntervalMin
 
 	var (
-		hashSeen           string
-		hashSeenAt         time.Time
-		lastContent        string
-		iterations         int
-		lastState          State
-		notifiedOfTyping   bool
+		hashSeen         string
+		hashSeenAt       time.Time
+		lastContent      string
+		iterations       int
+		lastState        State
+		notifiedOfTyping bool
 	)
 
 	for {

@@ -6,9 +6,9 @@
 // --cap, and exits with one of three documented codes the parent
 // test counts:
 //
-//   0  the insert (or pair) succeeded — the row(s) landed
-//   2  the insert (or pair) was cap-rejected via ErrRecipientQueueFull
-//   1  any other failure (unexpected — the parent test fails the run)
+//	0  the insert (or pair) succeeded — the row(s) landed
+//	2  the insert (or pair) was cap-rejected via ErrRecipientQueueFull
+//	1  any other failure (unexpected — the parent test fails the run)
 //
 // The point of running this as a separate process per attempt is to
 // exercise SQLite's file-level RESERVED lock + _txlock=immediate +

@@ -9,9 +9,10 @@ import (
 
 // newTestFlagSet creates a FlagSet for testing reorderFlagsFirst.
 // Mirrors the typical control-subcommand flag shape:
-//   --to STRING (value)
-//   --command STRING (value)
-//   --quiet-disabled BOOL
+//
+//	--to STRING (value)
+//	--command STRING (value)
+//	--quiet-disabled BOOL
 func newTestFlagSet() *flag.FlagSet {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.SetOutput(&bytes.Buffer{})

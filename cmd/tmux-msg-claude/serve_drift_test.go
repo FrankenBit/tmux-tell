@@ -149,8 +149,8 @@ func TestServe_SilentDriftDetectionAtDelivery(t *testing.T) {
 	// finds whatever was written via load-buffer (mailman's standard
 	// fake-runner pattern).
 	var (
-		bodyMu  sync.Mutex
-		body    string
+		bodyMu   sync.Mutex
+		body     string
 		paneSeen atomic.Value // tracks the pane id paste-buffer was called against
 	)
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {

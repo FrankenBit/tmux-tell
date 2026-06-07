@@ -127,6 +127,15 @@ Run `claude-msg --version` to see what's installed.
   API), distinct from the external-**contract** subset (Go API + DB) a downstream
   module pins — and links the now-landed ADR-0008 (was "forthcoming"). Pure docs.
 
+### Fixed
+
+- **gofmt hygiene sweep — 17 files corrected (#172).** Two pre-existing formatting
+  deltas in `cmd/tmux-msg-claude/serve.go` (struct-literal alignment and log-concat
+  whitespace) plus 16 further files carrying minor whitespace/alignment drift were
+  corrected by running `gofmt -w`. The CI workflow runs `go vet` but not `gofmt -d`;
+  a separate tracker should be filed to add the check (out of scope here per the
+  issue's Out-of-scope list).
+
 ## [0.8.0] — 2026-06-07
 
 ### Added

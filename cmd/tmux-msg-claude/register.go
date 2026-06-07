@@ -18,9 +18,10 @@ import (
 // case per #116).
 //
 // Usage: claude-msg register --name <name> [--pane <pane>]
-//                            [--delivery-mode paste-and-enter|mailbox-only]
-//                            [--start-mailman=true|false] [--force]
-//                            [--alias <alias>]
+//
+//	[--delivery-mode paste-and-enter|mailbox-only]
+//	[--start-mailman=true|false] [--force]
+//	[--alias <alias>]
 //
 // Mailman lifecycle default: start_mailman defaults true UNLESS
 // delivery_mode is `mailbox-only` (then default false — no daemon

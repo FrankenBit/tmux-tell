@@ -72,8 +72,8 @@ func TestDeliver_HappyPath_PastesAndVerifies(t *testing.T) {
 		return nil, nil
 	})
 	err := Deliver(context.Background(), DeliverParams{
-		Pane: "%3",
-		Body: "rendered body with id 7f3a marker",
+		Pane:        "%3",
+		Body:        "rendered body with id 7f3a marker",
 		VerifyToken: "id 7f3a",
 	})
 	if err != nil {

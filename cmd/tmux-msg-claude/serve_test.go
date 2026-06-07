@@ -301,10 +301,10 @@ func (f *fakeWalker) walker() *discover.Walker {
 
 func TestIsCantFindPaneError(t *testing.T) {
 	cases := map[string]bool{
-		"":                                        false,
-		"some other error":                        false,
+		"":                 false,
+		"some other error": false,
 		"tmuxio: paste-buffer: can't find pane: %7": true,
-		"can't find pane: %42":                    true,
+		"can't find pane: %42":                      true,
 	}
 	for in, want := range cases {
 		t.Run(in, func(t *testing.T) {

@@ -7,16 +7,16 @@ import (
 
 func TestResolve_SelfScope(t *testing.T) {
 	cases := map[string]string{
-		"compact":               "/compact",
-		"rename":                "/rename",
-		"cost":                  "/cost",
-		"help":                  "/help",
+		"compact":              "/compact",
+		"rename":               "/rename",
+		"cost":                 "/cost",
+		"help":                 "/help",
 		"mcp-enable-tmux-msg":  "/mcp enable tmux-msg",
 		"mcp-disable-tmux-msg": "/mcp disable tmux-msg",
 		"mcp-restart-tmux-msg": "/mcp restart tmux-msg",
-		"/compact":              "/compact",
-		"COMPACT":               "/compact",
-		"  cost  ":              "/cost",
+		"/compact":             "/compact",
+		"COMPACT":              "/compact",
+		"  cost  ":             "/cost",
 	}
 	for in, want := range cases {
 		// Self scope passes the same name for sender + recipient.
@@ -35,8 +35,8 @@ func TestResolve_SelfScope(t *testing.T) {
 
 func TestResolve_PeerScope_OnlyPeerAllowed(t *testing.T) {
 	allowed := map[string]string{
-		"rename":                "/rename",
-		"help":                  "/help",
+		"rename":               "/rename",
+		"help":                 "/help",
 		"mcp-enable-tmux-msg":  "/mcp enable tmux-msg",
 		"mcp-restart-tmux-msg": "/mcp restart tmux-msg",
 	}

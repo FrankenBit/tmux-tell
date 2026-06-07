@@ -69,14 +69,14 @@ func TestParseCmdline_NULSeparated(t *testing.T) {
 
 func TestStripTitleIndicators(t *testing.T) {
 	cases := map[string]string{
-		"":                       "",
-		"  ":                     "",
-		"⠐ Bosun":                "Bosun",
-		"✳ Master Bosun":         "Master Bosun",
+		"":                            "",
+		"  ":                          "",
+		"⠐ Bosun":                     "Bosun",
+		"✳ Master Bosun":              "Master Bosun",
 		"   ⠂   Alcatraz Infra Admin": "Alcatraz Infra Admin",
-		"bosun":                  "bosun",
-		"●  Foo":                 "Foo",
-		"!!! something":          "",  // hits ASCII punct, gives up
+		"bosun":                       "bosun",
+		"●  Foo":                      "Foo",
+		"!!! something":               "", // hits ASCII punct, gives up
 	}
 	for in, want := range cases {
 		t.Run(fmt.Sprintf("%q", in), func(t *testing.T) {
