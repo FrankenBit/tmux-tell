@@ -77,11 +77,11 @@ Mapped against the code as of v0.2.1.
 ### 1.3 Agent ↔ Agent (peer messages + peer control)
 
 ```
-┌──────────┐                  Bus                  ┌──────────┐
+┌──────────┐                 Bus                  ┌──────────┐
 │ Sender   │ ───► tmux-msg.send ─► mailman ─────► │ Receiver │
-│ Agent    │                                       │ Agent    │
+│ Agent    │                                      │ Agent    │
 │          │ ───► tmux-msg.control (peer-scope) ─►│          │
-└──────────┘                                       └──────────┘
+└──────────┘                                      └──────────┘
 ```
 
 - **What's enforced**:
