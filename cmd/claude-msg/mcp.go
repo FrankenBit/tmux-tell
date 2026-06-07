@@ -49,7 +49,7 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 }
 
 // newMCPServer wires the tmux-msg.* tools onto an mcp.Server.
-// Tools registered: send / ping / agents / whoami / inbox /
+// Tools registered: send / resend / ping / agents / whoami / inbox /
 // message_status / status / register / control / unregister /
 // agent_state.
 func newMCPServer(s *store.Store) *mcp.Server {
@@ -72,6 +72,18 @@ func newMCPServer(s *store.Store) *mcp.Server {
 			"required": ["to", "body"]
 		}`),
 		mcpSendHandler(s))
+
+	srv.RegisterTool("tmux-msg.resend",
+		"Replay an existing message to its original recipient — the explicit recovery path for a message that landed `delivered_unverified` or `failed` (#157). The replay carries a \"Replayed: original sent at <ts>\" chrome marker so the recipient knows it's a re-send, and the response adds a \"replay\" block {original_id, original_sent_at, original_state, forced}. Refuses to replay an already-`delivered` (verified-or-unverified — the substrate can't distinguish, #169) or still in-flight message unless force=true, to avoid duplicate-spam; a `failed` message replays directly. The replayed body is byte-identical to the original.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"id":    {"type": "string", "description": "public_id of the message to replay"},
+				"force": {"type": "boolean", "description": "Replay even an already-delivered or in-flight message (may duplicate). Required to recover a delivered-but-unverified message, since the DB can't distinguish it from a clean delivery (#169). Default false."}
+			},
+			"required": ["id"]
+		}`),
+		mcpResendHandler(s))
 
 	srv.RegisterTool("tmux-msg.agents",
 		"List registered agents with pane liveness.",
@@ -416,6 +428,81 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, timeout, pingPollInterval)
 	}
 	return resp, nil
+}
+
+// mcpResendHandler returns the handler for the tmux-msg.resend MCP tool.
+// Mirrors runResendWithStore via the shared resendGuard + replayRefusal so the
+// guard policy can't drift between the CLI and MCP surfaces.
+func mcpResendHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		ID    string `json:"id"`
+		Force bool   `json:"force"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		return doResendMCP(ctx, s, resendParams{OriginalID: in.ID, Force: in.Force})
+	}
+}
+
+// doResendMCP is the MCP-side equivalent of runResendWithStore: same fetch +
+// guard + insert cascade, returning structured Go data instead of writing JSON.
+// A guard refusal is a structured ok:false result (not an MCP error) so the
+// caller keeps the replay block; an unknown id / unregistered recipient surface
+// as MCP errors.
+func doResendMCP(ctx context.Context, s *store.Store, p resendParams) (any, error) {
+	if p.OriginalID == "" {
+		return nil, fmt.Errorf("id required")
+	}
+	orig, err := s.GetMessage(ctx, p.OriginalID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, fmt.Errorf("unknown message id: %s", p.OriginalID)
+		}
+		return nil, err
+	}
+	if reason, ok := resendGuard(orig, p.Force); !ok {
+		return replayRefusal(orig, reason), nil
+	}
+	rs, err := resolveRecipientStatus(ctx, s, orig.ToAgent)
+	if err != nil {
+		return nil, err
+	}
+	if !rs.Registered {
+		return nil, fmt.Errorf("original recipient %s is no longer registered", orig.ToAgent)
+	}
+	var replyTo string
+	if orig.ReplyTo.Valid {
+		replyTo = orig.ReplyTo.String
+	}
+	res, err := s.InsertMessage(ctx, store.InsertParams{
+		FromAgent:         orig.FromAgent,
+		ToAgent:           orig.ToAgent,
+		ReplyTo:           replyTo,
+		Body:              orig.Body,
+		NoReplyExpected:   orig.NoReplyExpected,
+		ReplayOf:          orig.PublicID,
+		ReplayOfAt:        orig.CreatedAt,
+		MaxRecipientQueue: capRecipientQueue,
+		MaxSenderBacklog:  capSenderBacklog,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return SendResponse{
+		OK:        true,
+		ID:        res.PublicID,
+		Queued:    res.Queued,
+		Recipient: rs,
+		Replay: &ReplayStatus{
+			OriginalID:     orig.PublicID,
+			OriginalSentAt: orig.CreatedAt,
+			OriginalState:  string(orig.State),
+			Forced:         p.Force,
+		},
+	}, nil
 }
 
 func mcpMessageStatusHandler(s *store.Store) mcp.ToolHandler {

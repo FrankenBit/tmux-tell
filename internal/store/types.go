@@ -56,18 +56,25 @@ const (
 // strings (ISO 8601 UTC) — callers parse to time.Time at presentation time
 // if needed; the store layer is timezone-agnostic.
 type Message struct {
-	ID               int64
-	PublicID         string
-	FromAgent        string
-	ToAgent          string
-	ReplyTo          sql.NullString
-	Body             string
-	Kind             Kind
-	NoReplyExpected  bool
-	State            State
-	CreatedAt        string
-	DeliveredAt      sql.NullString
-	Error            sql.NullString
+	ID              int64
+	PublicID        string
+	FromAgent       string
+	ToAgent         string
+	ReplyTo         sql.NullString
+	Body            string
+	Kind            Kind
+	NoReplyExpected bool
+	State           State
+	CreatedAt       string
+	DeliveredAt     sql.NullString
+	Error           sql.NullString
+	// Replay linkage (#157 PR1), set only on messages created by `resend`.
+	// ReplayOf is the original message's public_id; ReplayOfAt is the
+	// original's created_at (ISO 8601 UTC) — carried on the row so the pure
+	// render layer can show the "Replayed: original sent at <ts>" marker
+	// without a store lookup. Both invalid/empty for normal messages.
+	ReplayOf   sql.NullString
+	ReplayOfAt sql.NullString
 }
 
 // Agent mirrors a row in the agents table.

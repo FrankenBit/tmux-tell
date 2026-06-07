@@ -93,7 +93,43 @@ func Message(m store.Message, byteMarkerThreshold int) string {
 		header = fmt.Sprintf("[%s · %s · id %s%s%s]",
 			titleCase(m.FromAgent), clock, m.PublicID, nrSuffix, marker)
 	}
+	if rm := replayMarker(m); rm != "" {
+		// Replay chrome (#157 PR1) sits on its own line between header and
+		// body, so the recipient sees at a glance this is a re-send of an
+		// earlier message (typically a `delivered_unverified`/`failed`
+		// recovery) rather than fresh content.
+		return fmt.Sprintf("%s\n%s\n\n%s\n", header, rm, m.Body)
+	}
 	return fmt.Sprintf("%s\n\n%s\n", header, m.Body)
+}
+
+// replayMarker returns the "↻ Replayed: original sent at <ts>" chrome line for
+// a message created by `resend` (#157 PR1), or "" for a normal message. The
+// original timestamp rides on the row (ReplayOfAt) so this stays a pure
+// function — no store lookup. The stamp is the original's *send* time, rendered
+// as a full local date-time (not just a clock) because a replay commonly
+// recovers a message from minutes-to-days earlier, where the date matters.
+func replayMarker(m store.Message) string {
+	if !m.ReplayOfAt.Valid || m.ReplayOfAt.String == "" {
+		return ""
+	}
+	return "↻ Replayed: original sent at " + formatStamp(m.ReplayOfAt.String)
+}
+
+// formatStamp renders an ISO 8601 UTC timestamp as a full local "2006-01-02
+// 15:04:05" wall-clock stamp, mirroring formatClock's local-time rationale but
+// keeping the date. Falls back to the raw input if it doesn't parse — better a
+// visible raw stamp than a dropped marker.
+func formatStamp(iso string) string {
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02T15:04:05Z",
+	} {
+		if t, err := time.Parse(layout, iso); err == nil {
+			return t.Local().Format("2006-01-02 15:04:05")
+		}
+	}
+	return iso
 }
 
 // DefaultByteMarkerThreshold is the compile-time fallback body-byte

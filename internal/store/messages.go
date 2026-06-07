@@ -24,6 +24,15 @@ type InsertParams struct {
 	Kind            Kind
 	NoReplyExpected bool // true → sender requests no ack (#145)
 
+	// Replay linkage (#157 PR1). Set by `resend` to mark a message as a
+	// replay of an earlier one: ReplayOf is the original public_id,
+	// ReplayOfAt the original created_at. Empty on a normal send → both
+	// columns stored NULL. The replayed body stays byte-identical to the
+	// original (the marker is metadata, not body content) so PR2's
+	// body-hash dedupe can match a replay against its original.
+	ReplayOf   string
+	ReplayOfAt string
+
 	MaxRecipientQueue int // 0 = no cap check
 	MaxSenderBacklog  int // 0 = no cap check
 }
@@ -278,6 +287,13 @@ func insertOneInTx(ctx context.Context, tx *sql.Tx, p InsertParams) (InsertResul
 	if p.ReplyTo != "" {
 		replyToArg = p.ReplyTo
 	}
+	var replayOfArg, replayOfAtArg any
+	if p.ReplayOf != "" {
+		replayOfArg = p.ReplayOf
+	}
+	if p.ReplayOfAt != "" {
+		replayOfAtArg = p.ReplayOfAt
+	}
 	kind := p.Kind
 	if kind == "" {
 		kind = KindMessage
@@ -294,9 +310,9 @@ func insertOneInTx(ctx context.Context, tx *sql.Tx, p InsertParams) (InsertResul
 			nre = 1
 		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected)
-			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre)
+			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, replay_of, replay_of_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, replayOfArg, replayOfAtArg)
 		if err == nil {
 			publicID = candidate
 			break
@@ -335,14 +351,14 @@ func (s *Store) ClaimNext(ctx context.Context, toAgent string) (*Message, error)
 	var m Message
 	err = tx.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        state, created_at, delivered_at, error
+		        state, created_at, delivered_at, error, replay_of, replay_of_at
 		 FROM messages
 		 WHERE to_agent = ? AND state = ?
 		 ORDER BY id
 		 LIMIT 1`,
 		toAgent, StateQueued).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error)
+		&m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	} else if err != nil {
@@ -438,11 +454,11 @@ func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, erro
 	var nre int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, state, created_at, delivered_at, error
+		        no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
 		 FROM messages WHERE public_id = ?`,
 		publicID).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error)
+		&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt)
 	m.NoReplyExpected = nre != 0
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -477,7 +493,7 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 	escaped := escapeLikePrefix(prefix)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, state, created_at, delivered_at, error
+		        no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
 		 FROM messages WHERE public_id LIKE ? ESCAPE '\' ORDER BY id ASC`,
 		escaped+"%")
 	if err != nil {
@@ -490,7 +506,7 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 		var nre int
 		if err := rows.Scan(&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent,
 			&m.ReplyTo, &m.Body, &m.Kind, &nre, &m.State, &m.CreatedAt,
-			&m.DeliveredAt, &m.Error); err != nil {
+			&m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0
@@ -552,7 +568,7 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	args = append(args, f.Limit)
 
 	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, state, created_at, delivered_at, error
+	             no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
 	      FROM messages`
 	if len(wheres) > 0 {
 		q += " WHERE " + strings.Join(wheres, " AND ")
@@ -571,7 +587,7 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 		var nre int
 		if err := rows.Scan(
 			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error); err != nil {
+			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0
@@ -624,7 +640,7 @@ func (s *Store) TailRows(ctx context.Context, afterID int64, f TailFilter, limit
 	args = append(args, limit)
 
 	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, state, created_at, delivered_at, error
+	             no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
 	      FROM messages WHERE ` + strings.Join(wheres, " AND ") +
 		` ORDER BY id ASC LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -650,7 +666,7 @@ func (s *Store) MessagesByIDs(ctx context.Context, ids []int64) ([]Message, erro
 		args[i] = id
 	}
 	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, state, created_at, delivered_at, error
+	             no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
 	      FROM messages WHERE id IN (` + strings.Join(placeholders, ",") + `) ORDER BY id ASC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -669,7 +685,7 @@ func scanMessages(rows *sql.Rows) ([]Message, error) {
 		var nre int
 		if err := rows.Scan(
 			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error); err != nil {
+			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0

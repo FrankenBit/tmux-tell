@@ -109,6 +109,12 @@ var migrations = []string{
 	`ALTER TABLE agents ADD COLUMN aliases TEXT NOT NULL DEFAULT '[]'`,
 	`ALTER TABLE agents ADD COLUMN delivery_mode TEXT NOT NULL DEFAULT 'paste-and-enter'`,
 	`ALTER TABLE messages ADD COLUMN no_reply_expected INTEGER NOT NULL DEFAULT 0`,
+	// #157 PR1: replay linkage for `resend`. replay_of holds the original
+	// message's public_id; replay_of_at holds its created_at (so the pure
+	// render layer can show "Replayed: original sent at <ts>" without a
+	// store lookup). Both NULL for normal (non-replay) messages.
+	`ALTER TABLE messages ADD COLUMN replay_of TEXT`,
+	`ALTER TABLE messages ADD COLUMN replay_of_at TEXT`,
 }
 
 // Close releases the underlying database handle.

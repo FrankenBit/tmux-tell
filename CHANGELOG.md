@@ -34,6 +34,26 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`claude-msg resend <id>` — replay a failed/unverified message (#157, PR1 of 2).**
+  The explicit recovery path for a message that landed `failed`, or `delivered`
+  but unverified (paste landed, verify-token never returned). `resend` replays the
+  original to its recipient as a *new* message whose body is byte-identical to the
+  original, carrying a `↻ Replayed: original sent at <ts>` chrome marker (rendered
+  in `internal/render`, so it shows on the live delivery, in `log`, and in
+  `thread`). The send response gains a `replay` block (`original_id`,
+  `original_sent_at`, `original_state`, `forced`) — the 5th additive named-block on
+  the #152 `SendResponse` contract, after `recipient`/`delivery`/`thread_freshness`;
+  no existing field reshaped. Available over MCP as `tmux-msg.resend`. **Duplicate
+  guard:** a `failed` message replays directly; a `delivered` message (which
+  silently includes the journal-only `delivered_unverified` case — the DB can't
+  distinguish it, #169) or a still-in-flight message is refused without `--force`.
+  Recovering an unverified delivery therefore means `resend --force` until #169
+  makes the verified/unverified split DB-queryable. Replay linkage rides on two new
+  nullable columns (`replay_of`, `replay_of_at`); the byte-identical body is
+  deliberate — it lets PR2's planned recipient-side body-hash dedupe match a replay
+  against its original. PR2 (recipient-side dedupe in the mailman loop) is a
+  separate follow-up.
+
 - **`send --reply-to` carries a crossed-message `thread_freshness` signal (#155).**
   When a send threads under an earlier message, the response (CLI + `tmux-msg.send`
   MCP) adds a `thread_freshness` block — `{stale, newer_in_thread[], you_replied_to,

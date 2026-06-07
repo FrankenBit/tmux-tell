@@ -122,6 +122,44 @@ func TestMCP_Send_BlockOnStale(t *testing.T) {
 	}
 }
 
+func TestMCP_Resend_GuardAndForce(t *testing.T) {
+	// MCP-path parity for #157 PR1: a delivered message is refused (structured
+	// ok:false, not an MCP error) without force, and replays with force.
+	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice", "bob")
+	orig := seedResendMsg(t, s, "alice", "bob", "mcp replay body", store.StateDelivered)
+
+	// Without force → structured refusal carrying the replay block.
+	got := callMCPTool(t, s, "tmux-msg.resend", map[string]any{"id": orig})
+	if got["_isError"] == true {
+		t.Fatalf("guard refusal should be structured, not an MCP error; got=%v", got)
+	}
+	if got["ok"] != false {
+		t.Errorf("ok = %v, want false; got=%v", got["ok"], got)
+	}
+	if rp, _ := got["replay"].(map[string]any); rp == nil || rp["original_id"] != orig {
+		t.Errorf("replay block = %v, want original_id=%s", got["replay"], orig)
+	}
+
+	// With force → ok:true replay.
+	got2 := callMCPTool(t, s, "tmux-msg.resend", map[string]any{"id": orig, "force": true})
+	if got2["ok"] != true {
+		t.Errorf("force resend ok = %v; got=%v", got2["ok"], got2)
+	}
+	if rp, _ := got2["replay"].(map[string]any); rp == nil || rp["forced"] != true {
+		t.Errorf("replay block = %v, want forced=true", got2["replay"])
+	}
+}
+
+func TestMCP_Resend_UnknownID(t *testing.T) {
+	t.Setenv("CLAUDE_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice", "bob")
+	got := callMCPTool(t, s, "tmux-msg.resend", map[string]any{"id": "ghost"})
+	if got["_isError"] != true {
+		t.Errorf("unknown id should be an MCP error; got=%v", got)
+	}
+}
+
 func TestMCP_Send_RequiresEnvVar(t *testing.T) {
 	t.Setenv("CLAUDE_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")
@@ -201,6 +239,7 @@ func TestMCP_ToolsListContract(t *testing.T) {
 	tools := result["tools"].([]any)
 	want := map[string]bool{
 		"tmux-msg.send":           true,
+		"tmux-msg.resend":         true,
 		"tmux-msg.ping":           true,
 		"tmux-msg.agents":         true,
 		"tmux-msg.whoami":         true,
