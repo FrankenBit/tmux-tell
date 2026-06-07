@@ -23,6 +23,7 @@ type InsertParams struct {
 	Body            string
 	Kind            Kind
 	NoReplyExpected bool // true → sender requests no ack (#145)
+	Quick           bool // true → compact single-line chrome on delivery (#154)
 
 	// Replay linkage (#157 PR1). Set by `resend` to mark a message as a
 	// replay of an earlier one: ReplayOf is the original public_id,
@@ -309,10 +310,14 @@ func insertOneInTx(ctx context.Context, tx *sql.Tx, p InsertParams) (InsertResul
 		if p.NoReplyExpected {
 			nre = 1
 		}
+		q := 0
+		if p.Quick {
+			q = 1
+		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, replay_of, replay_of_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, replayOfArg, replayOfAtArg)
+			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, quick, replay_of, replay_of_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, q, replayOfArg, replayOfAtArg)
 		if err == nil {
 			publicID = candidate
 			break
@@ -349,16 +354,19 @@ func (s *Store) ClaimNext(ctx context.Context, toAgent string) (*Message, error)
 	defer func() { _ = tx.Rollback() }()
 
 	var m Message
+	var nre, q int
 	err = tx.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        state, created_at, delivered_at, error, replay_of, replay_of_at
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at
 		 FROM messages
 		 WHERE to_agent = ? AND state = ?
 		 ORDER BY id
 		 LIMIT 1`,
 		toAgent, StateQueued).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt)
+		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt)
+	m.NoReplyExpected = nre != 0
+	m.Quick = q != 0
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	} else if err != nil {
@@ -469,15 +477,16 @@ func (s *Store) SenderBacklog(ctx context.Context, fromAgent string) (int, error
 // GetMessage returns one message by its public_id, or ErrNotFound.
 func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, error) {
 	var m Message
-	var nre int
+	var nre, q int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at
 		 FROM messages WHERE public_id = ?`,
 		publicID).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt)
+		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt)
 	m.NoReplyExpected = nre != 0
+	m.Quick = q != 0
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -511,7 +520,7 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 	escaped := escapeLikePrefix(prefix)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at
 		 FROM messages WHERE public_id LIKE ? ESCAPE '\' ORDER BY id ASC`,
 		escaped+"%")
 	if err != nil {
@@ -521,13 +530,14 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 	var out []Message
 	for rows.Next() {
 		var m Message
-		var nre int
+		var nre, q int
 		if err := rows.Scan(&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent,
-			&m.ReplyTo, &m.Body, &m.Kind, &nre, &m.State, &m.CreatedAt,
+			&m.ReplyTo, &m.Body, &m.Kind, &nre, &q, &m.State, &m.CreatedAt,
 			&m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0
+		m.Quick = q != 0
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -585,15 +595,15 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	}
 	args = append(args, f.Limit)
 
-	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
+	qry := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
+	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at
 	      FROM messages`
 	if len(wheres) > 0 {
-		q += " WHERE " + strings.Join(wheres, " AND ")
+		qry += " WHERE " + strings.Join(wheres, " AND ")
 	}
-	q += " ORDER BY id ASC LIMIT ?"
+	qry += " ORDER BY id ASC LIMIT ?"
 
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.db.QueryContext(ctx, qry, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: list messages: %w", err)
 	}
@@ -602,13 +612,14 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	var out []Message
 	for rows.Next() {
 		var m Message
-		var nre int
+		var nre, q int
 		if err := rows.Scan(
 			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
+			&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0
+		m.Quick = q != 0
 		out = append(out, m)
 	}
 	return out, rows.Err()
@@ -658,7 +669,7 @@ func (s *Store) TailRows(ctx context.Context, afterID int64, f TailFilter, limit
 	args = append(args, limit)
 
 	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
+	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at
 	      FROM messages WHERE ` + strings.Join(wheres, " AND ") +
 		` ORDER BY id ASC LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -684,7 +695,7 @@ func (s *Store) MessagesByIDs(ctx context.Context, ids []int64) ([]Message, erro
 		args[i] = id
 	}
 	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, state, created_at, delivered_at, error, replay_of, replay_of_at
+	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at
 	      FROM messages WHERE id IN (` + strings.Join(placeholders, ",") + `) ORDER BY id ASC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -700,13 +711,14 @@ func scanMessages(rows *sql.Rows) ([]Message, error) {
 	var out []Message
 	for rows.Next() {
 		var m Message
-		var nre int
+		var nre, q int
 		if err := rows.Scan(
 			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-			&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
+			&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0
+		m.Quick = q != 0
 		out = append(out, m)
 	}
 	return out, rows.Err()

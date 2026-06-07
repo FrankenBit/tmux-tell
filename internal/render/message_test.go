@@ -121,6 +121,88 @@ func TestMessage_Reply(t *testing.T) {
 	}
 }
 
+func TestMessage_Quick_Plain(t *testing.T) {
+	got := Message(store.Message{
+		PublicID:  "1a2b",
+		FromAgent: "bosun",
+		ToAgent:   "pilot",
+		Body:      "acked, ⚓",
+		CreatedAt: "2026-06-07T14:00:00.000Z",
+		Quick:     true,
+	}, DefaultByteMarkerThreshold)
+	// Compact: single line, ✓ prefix, no bracket header.
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Errorf("quick message should render as single line; got %d lines:\n%s", len(lines), got)
+	}
+	for _, w := range []string{"✓", "Bosun", "acked, ⚓"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %q in compact chrome:\n%s", w, got)
+		}
+	}
+	// No bracket header, no id in the output.
+	if strings.Contains(got, "[") || strings.Contains(got, "id 1a2b") {
+		t.Errorf("quick message should not carry bracket header: %s", got)
+	}
+}
+
+func TestMessage_Quick_Reply(t *testing.T) {
+	got := Message(store.Message{
+		PublicID:  "3c4d",
+		FromAgent: "quartermaster",
+		ToAgent:   "bosun",
+		ReplyTo:   sql.NullString{String: "bd19", Valid: true},
+		Body:      "acked, ⚓",
+		CreatedAt: "2026-06-07T14:01:00.000Z",
+		Quick:     true,
+	}, DefaultByteMarkerThreshold)
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Errorf("quick reply should render as single line; got %d lines:\n%s", len(lines), got)
+	}
+	for _, w := range []string{"✓", "Quartermaster", "re bd19", "acked, ⚓"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("missing %q in compact reply chrome:\n%s", w, got)
+		}
+	}
+}
+
+func TestMessage_Quick_NoReplyExpected(t *testing.T) {
+	// 🔕 is preserved as a body prefix in compact mode.
+	got := Message(store.Message{
+		PublicID:        "5e6f",
+		FromAgent:       "bosun",
+		ToAgent:         "pilot",
+		Body:            "FYI: build green",
+		CreatedAt:       "2026-06-07T14:02:00.000Z",
+		Quick:           true,
+		NoReplyExpected: true,
+	}, DefaultByteMarkerThreshold)
+	if !strings.Contains(got, "🔕") {
+		t.Errorf("quick+no-reply message should carry 🔕: %s", got)
+	}
+	lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
+	if len(lines) != 1 {
+		t.Errorf("quick+no-reply should still be single line; got %d lines:\n%s", len(lines), got)
+	}
+}
+
+func TestMessage_Quick_NoByteMarker(t *testing.T) {
+	// Quick messages must NOT carry a byte-marker even for large bodies.
+	body := strings.Repeat("x", 2000)
+	got := Message(store.Message{
+		PublicID:  "7a8b",
+		FromAgent: "bosun",
+		ToAgent:   "pilot",
+		Body:      body,
+		CreatedAt: "2026-06-07T14:03:00.000Z",
+		Quick:     true,
+	}, DefaultByteMarkerThreshold)
+	if hasMarker(headerOf(got)) {
+		t.Errorf("quick message should not carry byte-marker: %s", headerOf(got))
+	}
+}
+
 func TestMessage_NoReplyExpected(t *testing.T) {
 	const fixtureUTC = "2026-06-07T00:00:00.000Z"
 	got := Message(store.Message{

@@ -20,6 +20,7 @@ type sendParams struct {
 	ReplyTo         string
 	Body            string
 	NoReplyExpected bool
+	Quick           bool // compact single-line chrome on delivery (#154)
 	MaxRecipient    int
 	MaxSender       int
 	MaxBody         int
@@ -44,6 +45,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 	to := fs.String("to", "", "recipient agent name (required)")
 	replyTo := fs.String("reply-to", "", "public_id of the message being replied to")
 	noReplyExpected := fs.Bool("no-reply-expected", false, "signal recipient that no acknowledgment is needed (#145)")
+	quick := fs.Bool("quick", false, "render compact single-line chrome in the recipient's pane (#154)")
 	body := fs.String("body", "", "message body (else read from positional args)")
 	maxRecipient := fs.Int("max-recipient-queue", capRecipientQueue,
 		"reject when the recipient's queue depth would exceed this")
@@ -83,6 +85,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		ReplyTo:          *replyTo,
 		Body:             *body,
 		NoReplyExpected:  *noReplyExpected,
+		Quick:            *quick,
 		MaxRecipient:     *maxRecipient,
 		MaxSender:        *maxSender,
 		MaxBody:          *maxBody,
@@ -195,6 +198,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		ReplyTo:           p.ReplyTo,
 		Body:              p.Body,
 		NoReplyExpected:   p.NoReplyExpected,
+		Quick:             p.Quick,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})

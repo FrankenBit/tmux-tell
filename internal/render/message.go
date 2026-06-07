@@ -59,12 +59,23 @@ func formatClock(iso string) string {
 //
 //	<body>
 //
+// When m.Quick is true, the full bracket-header block collapses to a single
+// line (compact chrome, #154) — the load-bearing sender/thread/content fields
+// are preserved, spatial framing is dropped:
+//
+//	✓ Bosun · acked, ⚓               (plain quick)
+//	✓ Surveyor · re 7f3a · acked, ⚓  (quick reply)
+//
 // When the body exceeds byteMarkerThreshold, a compact length marker is
 // appended to the header (#160) — `· 2.3k` — so a reader scrolling
 // history can distinguish a two-line ack from a 3K wall of review text,
 // and a sender sees the size cost of what they're about to send:
 //
 //	[Surveyor → Quartermaster · re abad · id 4825 · 2.3k]
+//
+// The length marker is not applied to quick messages (the one-line chrome
+// is already the compactness signal; size markers are for review-text
+// navigation in full messages).
 //
 // A threshold < 0 disables the marker. The count is the raw body byte
 // length, formatted via formatBytes.
@@ -78,6 +89,9 @@ func formatClock(iso string) string {
 // bracket-open at the start of each new header delimits consecutive
 // messages on visual scan.
 func Message(m store.Message, byteMarkerThreshold int) string {
+	if m.Quick {
+		return messageQuickChrome(m)
+	}
 	var nrSuffix string
 	if m.NoReplyExpected {
 		nrSuffix = " · 🔕"
@@ -101,6 +115,30 @@ func Message(m store.Message, byteMarkerThreshold int) string {
 		return fmt.Sprintf("%s\n%s\n\n%s\n", header, rm, m.Body)
 	}
 	return fmt.Sprintf("%s\n\n%s\n", header, m.Body)
+}
+
+// messageQuickChrome renders the compact single-line form for a quick message
+// (#154). Preserves load-bearing fields — sender, optional thread linkage,
+// content — and drops the spatial framing (no bracket-header block, no blank
+// line between envelope and body).
+//
+//	✓ Bosun · acked, ⚓               (no reply_to)
+//	✓ Surveyor · re 7f3a · acked, ⚓  (with reply_to)
+//
+// The `✓` prefix marks the compact form at a glance so a reader scrolling
+// history can distinguish it from a regular bracket-header message.
+// No-reply-expected (🔕), if set, is preserved as a prefix on the body so it
+// remains visible without a dedicated chrome field.
+func messageQuickChrome(m store.Message) string {
+	sender := titleCase(m.FromAgent)
+	body := m.Body
+	if m.NoReplyExpected {
+		body = "🔕 " + body
+	}
+	if m.ReplyTo.Valid && m.ReplyTo.String != "" {
+		return fmt.Sprintf("✓ %s · re %s · %s\n", sender, m.ReplyTo.String, body)
+	}
+	return fmt.Sprintf("✓ %s · %s\n", sender, body)
 }
 
 // replayMarker returns the "↻ Replayed: original sent at <ts>" chrome line for

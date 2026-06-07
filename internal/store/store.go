@@ -122,6 +122,10 @@ var migrations = []string{
 	// which keeps `delivered` for both 1 and 0 — the bit is the only
 	// distinction, where previously only a journal line carried it.
 	`ALTER TABLE messages ADD COLUMN verified INTEGER`,
+	// #154: compact single-line chrome. 1 = recipient's pane renders the
+	// message as one line (✓ Sender · [re X ·] body) instead of the full
+	// bracket-header block. Opt-in per message; default false.
+	`ALTER TABLE messages ADD COLUMN quick INTEGER NOT NULL DEFAULT 0`,
 }
 
 // Close releases the underlying database handle.

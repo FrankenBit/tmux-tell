@@ -32,6 +32,21 @@ deprecated alias through v0.11.0).
 
 ## [Unreleased]
 
+### Added
+
+- **`send --quick` — compact single-line chrome for routine acks (#154).** Set
+  `--quick` (CLI) or `quick=true` (`tmux-msg.send` MCP) to render a message as
+  a single compact line in the recipient's pane instead of the full bracket-header
+  block. The compact form: `✓ Sender · [re <id> ·] <body>`. Load-bearing fields are
+  preserved (sender, thread linkage when `reply_to` is set, body); spatial framing is
+  dropped (no timestamp, no message id, no blank line). Reduces typing-overhead-to-
+  signal ratio on heavy-coordination days where many necessary acks accumulate. Sister
+  to `--no-reply-expected` (#145): `--no-reply-expected` reduces unnecessary acks;
+  `--quick` reduces the overhead of necessary acks. `no_reply_expected`, if set, is
+  carried as a `🔕` prefix on the body in compact form. The length marker (#160) is not
+  applied to quick messages. Stored as `quick INTEGER NOT NULL DEFAULT 0` in the
+  messages table; existing databases migrate automatically.
+
 ### Changed
 
 - **CI — `gofmt` check added to the required pipeline (#202).** The

@@ -64,6 +64,7 @@ type Message struct {
 	Body            string
 	Kind            Kind
 	NoReplyExpected bool
+	Quick           bool // compact single-line chrome (#154)
 	State           State
 	CreatedAt       string
 	DeliveredAt     sql.NullString

@@ -56,7 +56,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("tmux-msg", "0.1.0")
 
 	srv.RegisterTool("tmux-msg.send",
-		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-msg.message_status. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155).",
+		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-msg.message_status. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155). Set quick=true to render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block — for routine acks where typing-overhead-to-signal ratio is high (#154).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -64,6 +64,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 				"body":              {"type": "string", "description": "Message body"},
 				"reply_to":          {"type": "string", "description": "Optional public_id of the message this replies to; threads the reply (renders the 'Sender → Recipient · re …' header) and enables the thread_freshness crossed-message check"},
 				"no_reply_expected": {"type": "boolean", "description": "Set true to signal the recipient that no acknowledgment is needed — reduces ack-cascade on FYI/status messages (#145). Default false."},
+				"quick":             {"type": "boolean", "description": "Render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block. For routine acks where typing-overhead-to-signal ratio is high. Default false (#154)."},
 				"strict":            {"type": "boolean", "description": "Fail (ok:false) if the recipient is registered but not reachable (pane gone). An UNregistered recipient is always fail-loud regardless of this flag. Default false (#152)."},
 				"wait_for_delivered": {"type": "boolean", "description": "Block until the message reaches a terminal delivery state (delivered/failed) or timeout, returning a \"delivery\" block with state + verify_ms. Default false (#152)."},
 				"timeout":           {"type": "string", "description": "Bound for wait_for_delivered as a Go duration (e.g. \"10s\"). Default 10s."},
@@ -290,6 +291,7 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 		Body             string `json:"body"`
 		ReplyTo          string `json:"reply_to"`
 		NoReplyExpected  bool   `json:"no_reply_expected"`
+		Quick            bool   `json:"quick"`
 		Strict           bool   `json:"strict"`
 		WaitForDelivered bool   `json:"wait_for_delivered"`
 		Timeout          string `json:"timeout"`
@@ -321,6 +323,7 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 			ReplyTo:          in.ReplyTo,
 			Body:             in.Body,
 			NoReplyExpected:  in.NoReplyExpected,
+			Quick:            in.Quick,
 			MaxRecipient:     capRecipientQueue,
 			MaxSender:        capSenderBacklog,
 			MaxBody:          capBodyBytes,
@@ -404,6 +407,7 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		ReplyTo:           p.ReplyTo,
 		Body:              p.Body,
 		NoReplyExpected:   p.NoReplyExpected,
+		Quick:             p.Quick,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})
@@ -483,6 +487,7 @@ func doResendMCP(ctx context.Context, s *store.Store, p resendParams) (any, erro
 		ReplyTo:           replyTo,
 		Body:              orig.Body,
 		NoReplyExpected:   orig.NoReplyExpected,
+		Quick:             orig.Quick,
 		ReplayOf:          orig.PublicID,
 		ReplayOfAt:        orig.CreatedAt,
 		MaxRecipientQueue: capRecipientQueue,

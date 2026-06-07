@@ -223,6 +223,24 @@ marker). The threshold is configurable via the `render-byte-marker-threshold` TO
 (fleet `[defaults]` + per-`[agent.<name>]` override), e.g. `render-byte-marker-threshold = "2k"`;
 set it above any realistic message size to suppress the marker entirely.
 
+**Compact chrome** — set `--quick` (CLI) or `quick=true` (MCP) to collapse the full
+bracket-header block to a single line; for routine acks where typing-overhead-to-signal
+ratio is high:
+
+```
+✓ Bosun · acked, ⚓
+✓ Quartermaster · re bd19 · acked, ⚓
+```
+
+The compact form preserves the load-bearing fields — sender, optional thread linkage (`re
+<id>` when `reply_to` is set), and content — and drops the spatial framing (no timestamp,
+no message id, no blank line between envelope and body). The `✓` prefix marks the shape
+at a glance so a reader scrolling history can distinguish it from a regular bracket-header
+message. `no_reply_expected`, if set, is preserved as a `🔕` prefix on the body. The
+length marker is not applied to quick messages (single-line chrome is already the
+compactness signal). Sister to `--no-reply-expected` (#145): `--no-reply-expected`
+reduces unnecessary acks; `--quick` reduces the overhead of necessary acks.
+
 System-generated messages (`delivery_failure_notice`, `stranded_draft`) carry their
 own chrome so they're distinguishable from agent traffic. Sender names render
 title-cased in the header; stored agent names are lowercase by convention.

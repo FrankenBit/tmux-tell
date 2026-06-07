@@ -114,6 +114,7 @@ func messageToMap(m store.Message) map[string]any {
 		"body":       m.Body,
 		"state":      string(m.State),
 		"created_at": m.CreatedAt,
+		"quick":      m.Quick,
 	}
 	if m.ReplyTo.Valid {
 		out["reply_to"] = m.ReplyTo.String
