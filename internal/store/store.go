@@ -126,6 +126,14 @@ var migrations = []string{
 	// message as one line (✓ Sender · [re X ·] body) instead of the full
 	// bracket-header block. Opt-in per message; default false.
 	`ALTER TABLE messages ADD COLUMN quick INTEGER NOT NULL DEFAULT 0`,
+	// #204: backlog epoch. The highest message id that counts as
+	// "pre-existing backlog" at the agent's last (re)register — stamped by
+	// the register handler when queued > 0. The mailman's don't-flood policy
+	// keys on it: messages with id <= backlog_epoch_id are the backlog that
+	// existed when the session (re)started, distinct from new arrivals
+	// (id > epoch) that deliver normally. NULL = never registered with a
+	// backlog (no epoch in effect → all messages deliver normally).
+	`ALTER TABLE agents ADD COLUMN backlog_epoch_id INTEGER`,
 }
 
 // Close releases the underlying database handle.

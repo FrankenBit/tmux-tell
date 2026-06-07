@@ -147,6 +147,21 @@ type Block struct {
 	// row is inserted. Default 10. Per-sender or fleet override via the
 	// standard precedence chain.
 	MaxRecipientsPerSend *int `toml:"max-recipients-per-send"`
+	// OnRegisterBacklog selects the #204 don't-flood policy applied when an
+	// agent (re)registers with a queued backlog. Two values:
+	//   - "announce" (default): leave the whole backlog queued and deliver a
+	//     single "📬 N queued — run inbox" nudge.
+	//   - "auto-deliver": paste the newest OnRegisterBacklogCap messages and
+	//     announce the rest (or all of them, if the backlog fits the cap).
+	// Resolves through ResolveString; an unrecognized value falls back to
+	// "announce" at the register call-site (the never-floods safe default).
+	OnRegisterBacklog *string `toml:"on-register-backlog"`
+	// OnRegisterBacklogCap is the newest-N delivery cap for the
+	// "auto-deliver" backlog policy (#204); ignored under "announce".
+	// Resolves through ResolveInt (zero is meaningful — cap 0 makes
+	// auto-deliver behave like announce — so absence rides the pointer, not
+	// a zero sentinel). Hardcoded default 3.
+	OnRegisterBacklogCap *int `toml:"on-register-backlog-cap"`
 }
 
 // Load reads the config from the path resolved by:
@@ -359,6 +374,8 @@ func blockStringField(b *Block, field string) *string {
 		return b.DeliveryMode
 	case "render-byte-marker-threshold":
 		return b.RenderByteMarkerThreshold
+	case "on-register-backlog":
+		return b.OnRegisterBacklog
 	}
 	return nil
 }
@@ -382,6 +399,8 @@ func blockIntField(b *Block, field string) *int {
 	switch field {
 	case "max-recipients-per-send":
 		return b.MaxRecipientsPerSend
+	case "on-register-backlog-cap":
+		return b.OnRegisterBacklogCap
 	}
 	return nil
 }
@@ -446,6 +465,8 @@ type ResolvedView struct {
 	DeliveryMode                string        `json:"delivery_mode,omitempty"`
 	RenderByteMarkerThreshold   string        `json:"render_byte_marker_threshold"`
 	MaxRecipientsPerSend        int           `json:"max_recipients_per_send"`
+	OnRegisterBacklog           string        `json:"on_register_backlog"`
+	OnRegisterBacklogCap        int           `json:"on_register_backlog_cap"`
 	PrivilegedAgents            []string      `json:"privileged_agents"`
 }
 
@@ -472,9 +493,29 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		// the doc-comment cross-reference on both consts.
 		RenderByteMarkerThreshold: ResolveString(file, agent, "render-byte-marker-threshold", "512b"),
 		MaxRecipientsPerSend:      ResolveInt(file, agent, "max-recipients-per-send", 10),
+		OnRegisterBacklog:         ResolveString(file, agent, "on-register-backlog", DefaultOnRegisterBacklog),
+		OnRegisterBacklogCap:      ResolveInt(file, agent, "on-register-backlog-cap", DefaultOnRegisterBacklogCap),
 		PrivilegedAgents:          resolvePrivilegedAgents(file),
 	}
 }
+
+// Backlog-policy constants for the #204 don't-flood behavior at
+// (re)register. The register handler resolves on-register-backlog /
+// on-register-backlog-cap through these defaults; an unrecognized policy
+// value falls back to BacklogAnnounce (the never-floods safe default).
+const (
+	// BacklogAnnounce leaves the whole queued backlog in place and delivers
+	// a single nudge. The default policy.
+	BacklogAnnounce = "announce"
+	// BacklogAutoDeliver pastes the newest-N backlog (N = the cap) and
+	// announces the older remainder.
+	BacklogAutoDeliver = "auto-deliver"
+	// DefaultOnRegisterBacklog is the hardcoded fallback policy.
+	DefaultOnRegisterBacklog = BacklogAnnounce
+	// DefaultOnRegisterBacklogCap is the hardcoded fallback newest-N cap for
+	// the auto-deliver policy.
+	DefaultOnRegisterBacklogCap = 3
+)
 
 // resolvePrivilegedAgents returns a copy of the file's privileged-agents
 // list (or nil if the file is nil/empty). The defensive copy prevents

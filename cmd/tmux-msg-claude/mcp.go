@@ -146,7 +146,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpStatusHandler(s))
 
 	srv.RegisterTool("tmux-msg.register",
-		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-bus-participant scenario). The response includes `queued`: the number of messages already waiting for this agent at register time (#151) — a fresh or post-restart session learns it has backlog without a separate inbox poll; check it and run tmux-msg.inbox if >0.",
+		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-bus-participant scenario). The response includes `queued`: the number of messages already waiting for this agent at register time (#151) — a fresh or post-restart session learns it has backlog without a separate inbox poll; check it and run tmux-msg.inbox if >0. When that backlog exists, the don't-flood policy (#204) keeps the mailman from pasting the whole queue at once: by default it leaves the backlog queued and delivers a single `📬 N queued` nudge (the `on-register-backlog` TOML knob can switch to auto-delivering the newest N). The response then also carries `backlog_policy`, `backlog_skipped`, and `backlog_nudge`.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -902,6 +902,13 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 			resp["queued_error"] = qErr.Error()
 		} else {
 			resp["queued"] = queued
+			// #204 don't-flood policy: stamp the claim-floor + insert the
+			// 📬 nudge per the resolved on-register-backlog policy when this
+			// (re)register found a queued backlog. Config load degrades to
+			// defaults on error. Gated on qErr == nil (a count hiccup must
+			// not read as an empty backlog). Mirrors the CLI register path.
+			cfg, _ := config.Load()
+			addBacklogPolicyFields(resp, applyBacklogPolicy(ctx, s, cfg, in.Name, deliveryMode, queued))
 		}
 
 		// Default start_mailman to true — UNLESS delivery_mode is

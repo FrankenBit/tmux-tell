@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
@@ -143,6 +144,14 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		out["queued_error"] = qErr.Error()
 	} else {
 		out["queued"] = queued
+		// #204 don't-flood policy: when this (re)register found a queued
+		// backlog, stamp the claim-floor + insert the 📬 nudge per the
+		// resolved on-register-backlog policy. Config load degrades to
+		// defaults on error (Resolve* treat a nil/empty file as "use
+		// hardcoded"). Gated on qErr == nil so a count hiccup doesn't get
+		// mistaken for an empty backlog.
+		cfg, _ := config.Load()
+		addBacklogPolicyFields(out, applyBacklogPolicy(ctx, s, cfg, *name, *deliveryMode, queued))
 	}
 	if start {
 		if err := startMailman(ctx, *name); err != nil {

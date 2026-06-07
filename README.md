@@ -514,6 +514,25 @@ has backlog without a separate `tmux-msg.inbox` poll: if `queued > 0`, run
 on the rare event the count can't be read, the response carries `queued_error` instead
 and registration still succeeds.
 
+**Don't-flood the backlog (#204).** A pane that comes back after a restart with a deep
+backlog shouldn't have the whole queue pasted into it at once. So when a `paste-and-enter`
+agent (re)registers with `queued > 0`, the register handler stamps a per-agent
+**claim-floor** and the mailman skips queued messages at or below it. The policy is the
+`on-register-backlog` TOML knob:
+
+| `on-register-backlog` | what the mailman does |
+|---|---|
+| **`announce`** *(default)* | leaves the whole backlog queued and delivers one `📬 N queued — run tmux-msg.inbox` nudge |
+| **`auto-deliver`** | pastes the newest `on-register-backlog-cap` messages (default 3) and announces the older remainder; if the backlog fits the cap, all of it delivers and no nudge is sent |
+
+The register response surfaces what happened: `backlog_policy`, `backlog_skipped` (how
+many were left queued), and `backlog_nudge` (the nudge's id). The skipped backlog stays
+in state `queued` — you still read it with `tmux-msg.inbox`; the nudge just makes sure a
+freshly-resumed session *knows* it's there. An unrecognized policy value falls back to
+`announce`. Mailbox-only agents are unaffected (they never get a paste). Precedence is
+the usual **per-`[agent.<name>]` block > `[defaults]` > compiled default**; an
+unrecognized value resolves to `announce`.
+
 ### Canonical name mapping
 
 The same tool is referred to by different sanitized names at different layers — worth

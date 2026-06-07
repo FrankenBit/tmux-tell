@@ -355,14 +355,24 @@ func (s *Store) ClaimNext(ctx context.Context, toAgent string) (*Message, error)
 
 	var m Message
 	var nre, q int
+	// #204 backlog floor: skip any queued row whose id is at or below the
+	// agent's backlog_epoch_id — that is the pre-existing backlog the
+	// register handler decided not to flood the pane with (announce mode
+	// leaves all of it queued; auto-deliver leaves the oldest M−N queued).
+	// COALESCE folds both "no epoch stamped" (NULL) and "floor 0"
+	// (deliver-all) into id > 0, which every real row satisfies, so the
+	// claim behaves exactly as before for agents that never registered
+	// with a backlog. The subquery runs inside the BEGIN IMMEDIATE tx, so
+	// the floor read is consistent with the claim it gates.
 	err = tx.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
 		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified
 		 FROM messages
 		 WHERE to_agent = ? AND state = ?
+		   AND id > COALESCE((SELECT backlog_epoch_id FROM agents WHERE name = ?), 0)
 		 ORDER BY id
 		 LIMIT 1`,
-		toAgent, StateQueued).Scan(
+		toAgent, StateQueued, toAgent).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
 		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified)
 	m.NoReplyExpected = nre != 0
@@ -462,6 +472,60 @@ func (s *Store) RecipientQueueDepth(ctx context.Context, toAgent string) (int, e
 		`SELECT COUNT(*) FROM messages WHERE to_agent = ? AND state = ?`,
 		toAgent, StateQueued).Scan(&n)
 	return n, err
+}
+
+// QueuedBacklogFloor computes the claim-floor for a (re)registering agent's
+// pre-existing queued backlog under the #204 don't-flood policy. It keeps the
+// `keepNewest` highest-id queued messages deliverable and reports the floor
+// at or below which the remaining (older) queued rows are announce-skipped,
+// plus how many rows that is.
+//
+// The single primitive serves both register modes:
+//
+//   - announce mode passes keepNewest = 0 → floor = the highest queued id,
+//     skipped = M (the whole backlog stays queued; one nudge is enough).
+//   - auto-deliver mode passes keepNewest = cap → if the backlog M is within
+//     cap, everything delivers (floor 0, skipped 0, no nudge); otherwise the
+//     newest `keepNewest` deliver and the oldest M−keepNewest are skipped.
+//
+// Returns (0, 0, nil) whenever there is nothing to skip (empty backlog, or
+// keepNewest ≥ M): floor 0 means "no floor" to ClaimNext, and skipped 0 tells
+// the caller to leave the epoch untouched and insert no nudge. The floor is
+// id-ordinal: it is the (keepNewest+1)-th highest queued id, so ClaimNext's
+// `id > floor` predicate keeps exactly the newest `keepNewest` rows.
+//
+// Note on residue interaction (#221): M counts ALL currently-queued rows,
+// including any residue an earlier epoch already skipped. That is deliberate —
+// the nudge's "N queued" then reports the true inbox depth the operator sees.
+// A consequence is that re-registering with a low cap can re-admit a
+// previously-skipped residue row if its id ranks within the newest
+// `keepNewest`; that is consistent with the id-ordinal model and bounded by
+// the cap. Draining residue wholesale is the deferred follow-up #221.
+func (s *Store) QueuedBacklogFloor(ctx context.Context, toAgent string, keepNewest int) (floor int64, skipped int, err error) {
+	if keepNewest < 0 {
+		keepNewest = 0
+	}
+	depth, err := s.RecipientQueueDepth(ctx, toAgent)
+	if err != nil {
+		return 0, 0, fmt.Errorf("store: backlog floor depth: %w", err)
+	}
+	if depth == 0 || keepNewest >= depth {
+		return 0, 0, nil // nothing to skip → no floor, no nudge
+	}
+	// floor = the (keepNewest+1)-th highest queued id. Ordering by id DESC
+	// and skipping the newest `keepNewest` rows lands on the highest id that
+	// must be skipped; ClaimNext's `id > floor` then keeps exactly the newest
+	// keepNewest rows deliverable. keepNewest == 0 ⇒ OFFSET 0 ⇒ the max id.
+	err = s.db.QueryRowContext(ctx,
+		`SELECT id FROM messages
+		 WHERE to_agent = ? AND state = ?
+		 ORDER BY id DESC
+		 LIMIT 1 OFFSET ?`,
+		toAgent, StateQueued, keepNewest).Scan(&floor)
+	if err != nil {
+		return 0, 0, fmt.Errorf("store: backlog floor id: %w", err)
+	}
+	return floor, depth - keepNewest, nil
 }
 
 // SenderBacklog returns the number of queued messages originated by

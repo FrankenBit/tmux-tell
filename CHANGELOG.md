@@ -34,6 +34,30 @@ deprecated alias through v0.11.0).
 
 ### Added
 
+- **Backlog don't-flood on (re)register (#204).** When an agent registers (or
+  re-registers after a restart) with messages already queued, the mailman no
+  longer pastes the whole backlog into the freshly-resumed pane at once. The
+  register handler stamps a per-agent **claim-floor** (`backlog_epoch_id`) and
+  the mailman skips queued rows at or below it. Two policies, selected by the
+  `on-register-backlog` TOML knob (per-`[agent.<name>]` > `[defaults]` >
+  hardcoded `"announce"`):
+  - **`announce`** (default): leave the entire backlog queued and deliver a
+    single synthetic `📬 N queued — run tmux-msg.inbox` nudge.
+  - **`auto-deliver`**: paste the newest `on-register-backlog-cap` messages
+    (default 3) and announce the older remainder; when the whole backlog fits
+    the cap, everything delivers and no nudge is sent.
+  An unrecognized policy value falls back to `announce` (the never-floods safe
+  default). Mailbox-only agents are a no-op (they never get a paste, so there
+  is nothing to flood). The register response gains `backlog_policy`,
+  `backlog_skipped`, and `backlog_nudge` fields alongside the existing `queued`
+  count (#151). The skipped backlog stays in state `queued` — the operator
+  still sees it via `tmux-msg.inbox`; an explicit drain/ack affordance for that
+  residue is tracked as a follow-up (#221). The synthetic nudge rides the
+  normal single-writer mailman path (the register process never pastes), so the
+  delivered-is-pasted invariant (#169) is preserved. Store: `agents` gains a
+  `backlog_epoch_id` column (migrates automatically); `ClaimNext` skips rows at
+  or below the floor.
+
 - **`sent` — sender's outbox listing (#159).** `tmux-msg-claude sent` lists
   messages the calling agent has sent, newest-first, defaulting to the last 24 h.
   Flags: `--since DUR` (any duration or calendar shortcut accepted by `stats`/`digest`

@@ -85,8 +85,8 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 		deliveryMode string
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -124,10 +124,35 @@ func (s *Store) SetDeliveryMode(ctx context.Context, name, mode string) error {
 	return nil
 }
 
+// SetBacklogEpoch stamps the #204 claim-floor for an agent: the highest
+// message id the mailman should treat as pre-existing backlog and skip on
+// claim. Called by the register handler when a (re)registering agent has a
+// queued backlog the don't-flood policy decided not to paste all at once.
+// Returns ErrNotFound if no agent with that name is registered.
+//
+// The floor only ever advances in practice (new arrivals always get higher
+// ids than any earlier floor), but this setter writes whatever the caller
+// computed — monotonicity is the register handler's policy, not the store's.
+// Does not bump updated_at: the epoch is internal delivery bookkeeping, not a
+// discovery-relevant change, and the register flow's UpsertAgent already
+// touched the row microseconds earlier.
+func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET backlog_epoch_id = ? WHERE name = ?`,
+		floor, name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
+}
+
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -142,7 +167,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 			aliases      string
 			deliveryMode string
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch); err != nil {
 			return nil, err
 		}
 		if pane.Valid {

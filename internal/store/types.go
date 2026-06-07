@@ -50,6 +50,14 @@ const (
 	// into the recipient's pane: a "is the daemon up + agent reachable?"
 	// probe that loads no recipient context.
 	KindPing Kind = "ping"
+	// KindBacklogAnnounce marks the synthetic "📬 N queued — run inbox"
+	// nudge the register handler inserts when an agent (re)registers with a
+	// queued backlog (#204). Like the other synthetic kinds it rides the
+	// normal mailman loop (single-writer-safe — the register process never
+	// pastes), but its body is a one-shot heads-up, not bus content: it tells
+	// a freshly-restarted session it has mail waiting without the mailman
+	// flooding the pane with the whole pre-existing backlog at once.
+	KindBacklogAnnounce Kind = "backlog_announce"
 )
 
 // Message mirrors a row in the messages table. Timestamps are kept as
@@ -105,6 +113,14 @@ type Agent struct {
 	// Default for newly-inserted agents (and the back-compat ALTER's
 	// DEFAULT) is "paste-and-enter".
 	DeliveryMode string
+	// BacklogEpoch is the #204 claim-floor: the highest message id that
+	// counts as pre-existing backlog at the agent's last (re)register.
+	// The mailman's ClaimNext skips queued rows with id <= this value, so
+	// a freshly-restarted session is not flooded with its whole backlog.
+	// Invalid (NULL) when the agent has never registered with a queued
+	// backlog — ClaimNext treats that as "no floor" (deliver everything).
+	// Stamped by the register handler via SetBacklogEpoch; see #204.
+	BacklogEpoch sql.NullInt64
 }
 
 // Delivery-mode constants. Constrained string set; see Agent.DeliveryMode
