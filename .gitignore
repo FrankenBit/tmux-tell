@@ -16,6 +16,7 @@ go.work.sum
 # Build output
 /bin/
 /dist/
+/tmux-msg-claude
 
 # Local SQLite scratch DBs
 *.db
