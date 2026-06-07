@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -70,6 +71,51 @@ func TestRegister_CLI_NameRequired(t *testing.T) {
 	exit := runRegisterCLI([]string{"--pane", "%5"}, &stdout, &stderr)
 	if exit != exitUsage {
 		t.Errorf("exit = %d, want exitUsage", exit)
+	}
+}
+
+// TestRegister_CLI_SurfacesQueuedBacklog exercises the CLI store-open path
+// end-to-end against a temp-file DB (the in-memory newCmdTestStore can't be
+// shared with the CLI's own store.Open). Confirms the `queued` count (#151)
+// reaches the CLI register response, not just the MCP handler.
+func TestRegister_CLI_SurfacesQueuedBacklog(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "messages.db")
+	ctx := context.Background()
+
+	seed, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open seed store: %v", err)
+	}
+	for _, n := range []string{"sender", "backlogged"} {
+		if err := seed.UpsertAgent(ctx, n, "%99"); err != nil {
+			t.Fatalf("seed agent %s: %v", n, err)
+		}
+	}
+	for i := 0; i < 2; i++ {
+		if _, err := seed.InsertMessage(ctx, store.InsertParams{
+			FromAgent: "sender", ToAgent: "backlogged", Body: "hi",
+		}); err != nil {
+			t.Fatalf("seed msg: %v", err)
+		}
+	}
+	_ = seed.Close()
+
+	t.Setenv("CLAUDE_MSG_DB", dbPath)
+	var stdout, stderr bytes.Buffer
+	exit := runRegisterCLI([]string{
+		"--name", "backlogged", "--pane", "%9",
+		"--force", "--start-mailman=false",
+	}, &stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d, want exitOK; stderr=%s", exit, stderr.String())
+	}
+	out := parseJSONResult(t, stdout.Bytes())
+	q, ok := out["queued"].(float64)
+	if !ok {
+		t.Fatalf("queued missing or wrong type; out=%v", out)
+	}
+	if int(q) != 2 {
+		t.Errorf("queued = %v, want 2", q)
 	}
 }
 

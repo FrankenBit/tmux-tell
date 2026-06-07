@@ -139,7 +139,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpStatusHandler(s))
 
 	srv.RegisterTool("tmux-msg.register",
-		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-bus-participant scenario).",
+		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-bus-participant scenario). The response includes `queued`: the number of messages already waiting for this agent at register time (#151) — a fresh or post-restart session learns it has backlog without a separate inbox poll; check it and run tmux-msg.inbox if >0.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -774,6 +774,28 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 			}
 		}
 
+		// Surface the recipient's queued-message backlog at register time
+		// (#151) so a fresh or re-registering session learns it has mail
+		// waiting without a separate inbox poll. Non-fatal: registration
+		// already succeeded, so a count hiccup degrades to a soft
+		// `queued_error` field rather than failing the register (an honest
+		// 0 must not be confused with "unknown"). Mirrors the CLI register
+		// surface so the MCP and CLI responses stay shape-aligned.
+		queued, qErr := s.RecipientQueueDepth(ctx, in.Name)
+
+		resp := map[string]any{
+			"ok":            true,
+			"name":          in.Name,
+			"pane":          pane,
+			"delivery_mode": deliveryMode,
+			"registered":    true,
+		}
+		if qErr != nil {
+			resp["queued_error"] = qErr.Error()
+		} else {
+			resp["queued"] = queued
+		}
+
 		// Default start_mailman to true — UNLESS delivery_mode is
 		// mailbox-only, in which case the implicit default is false
 		// (no daemon needed; messages stay queued for operator polling
@@ -786,29 +808,17 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		if in.StartMailman != nil {
 			start = *in.StartMailman
 		}
-		mailmanState := "skipped"
 		if start {
 			if err := startMailman(ctx, in.Name); err != nil {
-				return map[string]any{
-					"ok":            true,
-					"name":          in.Name,
-					"pane":          pane,
-					"delivery_mode": deliveryMode,
-					"mailman":       "failed",
-					"mailman_error": err.Error(),
-					"registered":    true,
-				}, nil
+				resp["mailman"] = "failed"
+				resp["mailman_error"] = err.Error()
+				return resp, nil
 			}
-			mailmanState = "active"
+			resp["mailman"] = "active"
+		} else {
+			resp["mailman"] = "skipped"
 		}
-		return map[string]any{
-			"ok":            true,
-			"name":          in.Name,
-			"pane":          pane,
-			"delivery_mode": deliveryMode,
-			"mailman":       mailmanState,
-			"registered":    true,
-		}, nil
+		return resp, nil
 	}
 }
 

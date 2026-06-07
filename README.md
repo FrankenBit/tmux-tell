@@ -472,6 +472,14 @@ When the CLI tool in a pane spawns the MCP server, the child inherits `$TMUX_PAN
 The pane is auto-detected, the row inserted, and the mailman started in the same step.
 Equivalent CLI: `claude-msg register --name myname`.
 
+The register response includes a **`queued`** count — the number of messages already
+waiting for this agent at register time (#151). A fresh or post-restart session (e.g.
+the spawn-per-task pattern, or a chamber that lost its pane and re-registers) learns it
+has backlog without a separate `tmux-msg.inbox` poll: if `queued > 0`, run
+`tmux-msg.inbox` to read it. The count is informational and never blocks registration;
+on the rare event the count can't be read, the response carries `queued_error` instead
+and registration still succeeds.
+
 ### Canonical name mapping
 
 The same tool is referred to by different sanitized names at different layers — worth

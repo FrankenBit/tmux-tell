@@ -33,6 +33,17 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`register` surfaces the queued-message backlog count (#151).** The `register`
+  response (CLI + `tmux-msg.register` MCP) now includes a `queued` field — the number
+  of messages already waiting for this agent at register time. Closes the
+  inbox-poll-not-push gap for the spawn-per-task / post-restart chamber pattern: a
+  fresh session learns it has backlog without a separate `inbox` poll (run
+  `tmux-msg.inbox` if `queued > 0`). Reuses the existing `store.RecipientQueueDepth`
+  helper. Non-fatal by design — registration already succeeded, so a count read-error
+  degrades to a soft `queued_error` field (an honest `0` is never confused with
+  "unknown"). The richer announce-paste + auto-deliver-backlog + per-agent TOML-knob
+  paths from the original #151 proposal are deferred to the follow-up #204.
+
 - **`docs/chamber-dispatch.md` — assignee-on-claim dispatch convention (#180).**
   Documents the coordination discipline for multi-agent deployments where several
   agents draw work from one issue tracker and more than one party can dispatch it:
