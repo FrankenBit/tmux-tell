@@ -25,6 +25,13 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
+### Changed
+
+- **`whereSince()` reader-startle comment (#176).** Added a one-line
+  comment at the `return "1=1"` site in `internal/store/stats.go`
+  clarifying it is a compile-time constant for `--window all` with no
+  user input interpolated. No behavior change.
+
 ### Added
 
 - **`claude-msg thread <id>` — reply-chain tree render (#141).** Renders a

@@ -35,6 +35,8 @@ const sqliteTimeFormat = "2006-01-02T15:04:05.000Z"
 // always-true clause and no arg, so callers can compose uniformly.
 func (w StatsWindow) whereSince() (clause string, args []any) {
 	if w.All {
+		// Compile-time constant for --window all; no user input is
+		// interpolated here — safe to compose directly into a WHERE clause.
 		return "1=1", nil
 	}
 	return "created_at >= ?", []any{w.Since.UTC().Format(sqliteTimeFormat)}
