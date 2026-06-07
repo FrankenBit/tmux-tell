@@ -25,12 +25,7 @@ Run `claude-msg --version` to see what's installed.
 
 ## [Unreleased]
 
-### Changed
-
-- **`whereSince()` reader-startle comment (#176).** Added a one-line
-  comment at the `return "1=1"` site in `internal/store/stats.go`
-  clarifying it is a compile-time constant for `--window all` with no
-  user input interpolated. No behavior change.
+## [0.8.0] — 2026-06-07
 
 ### Added
 
@@ -238,6 +233,11 @@ Run `claude-msg --version` to see what's installed.
 
 ### Changed
 
+- **`whereSince()` reader-startle comment (#176).** Added a one-line
+  comment at the `return "1=1"` site in `internal/store/stats.go`
+  clarifying it is a compile-time constant for `--window all` with no
+  user input interpolated. No behavior change.
+
 - **README rewritten for the public launch (closes #156; restructures the #143 canonical-name-mapping section added in #166 into the streamlined layout).** Restructured
   landing-page-first: leads with the "Why" pitch (links `docs/why.md`), genericized
   off the alcatraz-specific examples (substrate-first per ADR-0003), condensed the
@@ -265,6 +265,10 @@ Run `claude-msg --version` to see what's installed.
   "what runs as root, and what runs as you" subsection documenting the privilege
   boundary (root writes the binary + creates the data dir; `go build` + the mailman
   daemons run as the operator).
+
+- **`docs/security.md` ASCII alignment (#192).** Centered the "Bus" label between
+  the Sender and Receiver boxes in the §1.3 Agent ↔ Agent diagram. Purely cosmetic;
+  no policy change.
 
 ## [0.7.0] — 2026-06-06
 

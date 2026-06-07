@@ -594,7 +594,7 @@ backward-compatible within a minor. See `CHANGELOG.md` for what shipped per rele
 
 ```bash
 $ claude-msg --version
-claude-msg v0.7.0
+claude-msg v0.8.0
 ```
 
 A binary built via `make build` stamps the version from `git describe`; a bare
