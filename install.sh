@@ -71,9 +71,13 @@ if [[ $EUID -ne 0 ]]; then
 fi
 
 # Resolve operator's home so we can install the systemd template there.
-OPERATOR_HOME=$(getent passwd "$OPERATOR_USER" | cut -d: -f6)
+# `|| true` defangs `set -euo pipefail`: getent exits 2 when the user is not
+# found, and `pipefail` propagates that — without the override the script
+# would die silently on exit-2 before the friendly error below runs.
+OPERATOR_HOME=$(getent passwd "$OPERATOR_USER" | cut -d: -f6 || true)
 if [[ -z "$OPERATOR_HOME" ]]; then
     echo "install.sh: cannot resolve home dir for $OPERATOR_USER" >&2
+    echo "  (getent passwd $OPERATOR_USER returned no entry — is the user spelled right?)" >&2
     exit 1
 fi
 # USER_SYSTEMD may be overridden (testing / bespoke layouts); defaults to the
@@ -95,7 +99,11 @@ if [[ ! -x "bin/$BIN_NAME" ]]; then
             exit 1
         fi
     fi
-    mkdir -p bin
+    # Create bin/ owned by the operator — the build step below runs as
+    # OPERATOR_USER, and a root-owned bin/ left over from a prior install run
+    # would block its writes. `install -d` is idempotent and re-applies
+    # ownership on an existing dir, fixing a stale root-owned bin/ in place.
+    install -d -m 0755 -o "$OPERATOR_USER" -g "$OPERATOR_USER" bin
     sudo -u "$OPERATOR_USER" "$GO" build -o "bin/$BIN_NAME" "./cmd/$BIN_NAME"
 fi
 

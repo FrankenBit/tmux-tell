@@ -44,6 +44,22 @@ deprecated alias through v0.11.0).
   discipline-graduating-to-substrate trajectory as Keep-a-Changelog
   conventions and branch protection rules.
 
+### Fixed
+
+- **`install.sh` robustness — `bin/` ownership + `getent` exit-2 shadowing (#193).**
+  Two latent issues observed during Shipwright's #175 work, swept here:
+  1. The fallback `go build` path created `bin/` as root, then ran the build as
+     `OPERATOR_USER` — which couldn't write into the root-owned directory.
+     `bin/` is now created via `install -d -o "$OPERATOR_USER" -g "$OPERATOR_USER"`,
+     idempotently re-applying ownership on an existing dir as well so a stale
+     root-owned `bin/` from a prior aborted run gets fixed in place.
+  2. `getent passwd "$OPERATOR_USER"` exits 2 when the user is not found;
+     under `set -euo pipefail` that propagated and aborted the script before
+     the explicit "cannot resolve home dir" error rendered, so an `OPERATOR_USER=<typo>`
+     died silently with exit 2 instead of surfacing the friendly message
+     from #175. The substitution now ends `|| true` so the empty-result guard
+     fires as intended, and the error message names the misspelled user.
+
 ## [0.9.0] — 2026-06-07
 
 ### Added
