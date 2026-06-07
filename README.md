@@ -93,8 +93,27 @@ claude-msg send --to bob "first message across the bus"
 first message across the bus
 ```
 
-That's the whole loop. `send` returns `{"ok":true,"id":"7f3a","queued":1}` on success
-(or `{"ok":false,"error":"…"}` with a sysexits-style exit code on failure).
+That's the whole loop. `send` returns `{"ok":true,"id":"7f3a","queued":1, "recipient":{…}}`
+on success (or `{"ok":false,"error":"…"}` with a sysexits-style exit code on failure).
+
+The `recipient` block (#152) reports the recipient's **send-time disposition** so the
+sender knows where the message is headed: `registered`, `alive` (pane present),
+`delivery_mode`, `mailman_running`, and `pane_status` (`live`/`paused`/`unknown`). An
+**unregistered** recipient is always fail-loud (the message is *not* queued — a typo
+shouldn't sit unclaimed forever). Two opt-in flags refine this:
+
+- `--strict` — also fail (`ok:false`) when the recipient is registered but **not
+  reachable** (pane gone). Without it, a registered-but-dead recipient still queues
+  (the message waits for the pane to return) and the block reports `alive:false`.
+- `--wait-for-delivered [--timeout 10s]` — block until the message reaches a terminal
+  delivery state, then return a `delivery` block (`state` + `verify_ms`) — the
+  synchronous "delivered?" confirmation without a follow-up `track`/`message_status`
+  poll. (The verified-vs-unverified split isn't surfaced here — both are `delivered`
+  in the DB, per #169.)
+
+The same fields are available over MCP (`tmux-msg.send` with `strict` /
+`wait_for_delivered` / `timeout`). The response schema is a named struct contract that
+later disposition features (#155, #157) extend.
 
 To confirm a freshly-registered agent is reachable *without* sending it a message,
 `claude-msg ping bob` probes daemon-up + pane-live (no pane paste) — see
@@ -210,7 +229,7 @@ verify-token + `delivered_unverified` safety net.
 ## Operating the bus
 
 ```
-claude-msg send   --to Y [--reply-to ID] [--no-reply-expected] "body"   # one-shot
+claude-msg send   --to Y [--reply-to ID] [--strict] [--wait-for-delivered] "body"  # one-shot
 claude-msg ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
 claude-msg inbox  AGENT [--state STATE]            # list messages for AGENT
 claude-msg track  ID [--watch]                     # delivery state of one message

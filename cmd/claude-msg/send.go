@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
@@ -22,6 +23,12 @@ type sendParams struct {
 	MaxRecipient    int
 	MaxSender       int
 	MaxBody         int
+
+	// Recipient-status options (#152).
+	Strict           bool          // reject (ok:false) if recipient unreachable
+	WaitForDelivered bool          // block until terminal delivery state or timeout
+	Timeout          time.Duration // bound for WaitForDelivered (default applied if 0)
+	Format           string        // "json" (default) | "text"
 }
 
 // runSendCLI parses send-subcommand flags, opens the store, and dispatches
@@ -41,6 +48,13 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		"reject when the sender's queued backlog would exceed this")
 	maxBody := fs.Int("max-body-bytes", capBodyBytes,
 		"reject bodies larger than this many bytes")
+	strict := fs.Bool("strict", false,
+		"fail (ok:false) if the recipient is not registered or not reachable (#152)")
+	waitForDelivered := fs.Bool("wait-for-delivered", false,
+		"block until the message reaches a terminal delivery state (or --timeout)")
+	timeout := fs.Duration("timeout", defaultDeliveredWaitTimeout,
+		"bound for --wait-for-delivered")
+	format := fs.String("format", "json", "json|text")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -59,14 +73,18 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 	}
 
 	p := sendParams{
-		From:            fromName,
-		To:              *to,
-		ReplyTo:         *replyTo,
-		Body:            *body,
-		NoReplyExpected: *noReplyExpected,
-		MaxRecipient:    *maxRecipient,
-		MaxSender:       *maxSender,
-		MaxBody:         *maxBody,
+		From:             fromName,
+		To:               *to,
+		ReplyTo:          *replyTo,
+		Body:             *body,
+		NoReplyExpected:  *noReplyExpected,
+		MaxRecipient:     *maxRecipient,
+		MaxSender:        *maxSender,
+		MaxBody:          *maxBody,
+		Strict:           *strict,
+		WaitForDelivered: *waitForDelivered,
+		Timeout:          *timeout,
+		Format:           *format,
 	}
 	if p.Body == "" {
 		p.Body = strings.Join(fs.Args(), " ")
@@ -100,14 +118,30 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 			exitDataErr)
 	}
 
-	// Recipient must exist in the registry.
-	if _, err := s.GetAgent(ctx, p.To); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return writeJSONError(stdout, stderr,
-				fmt.Sprintf("unknown recipient: %s", p.To), exitUnavailable)
-		}
+	// Recipient status (#152). This also serves as the registry-existence
+	// check: an unknown recipient is fail-loud, unchanged since #3/#4/#15 —
+	// preserving the day-one safety default. `--strict` additionally rejects
+	// a registered-but-unreachable recipient (pane gone); the dead-pane
+	// dimension. Without --strict, a registered-but-dead recipient still
+	// queues — the message waits for the pane to come back — and the
+	// recipient block reports the disposition so the sender knows.
+	rs, err := resolveRecipientStatus(ctx, s, p.To)
+	if err != nil {
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
+	if !rs.Registered {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("unknown recipient: %s", p.To), exitUnavailable)
+	}
+	if p.Strict && !rs.Alive {
+		renderSendResult(stdout, SendResponse{
+			OK:        false,
+			Recipient: rs,
+			Error:     fmt.Sprintf("recipient %q registered but not reachable (pane %s)", p.To, rs.PaneStatus),
+		}, p.To, p.Format)
+		return exitUnavailable
+	}
+
 	// Sender must exist too. We trust the operator to keep the agents
 	// table aligned with the actual panes — `discover` (#12) does that.
 	if _, err := s.GetAgent(ctx, p.From); err != nil {
@@ -142,10 +176,23 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		}
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
-	_ = writeJSONResult(stdout, map[string]any{
-		"ok":     true,
-		"id":     res.PublicID,
-		"queued": res.Queued,
-	})
+
+	resp := SendResponse{
+		OK:        true,
+		ID:        res.PublicID,
+		Queued:    res.Queued,
+		Recipient: rs,
+	}
+	// Opt-in synchronous delivery confirmation (#152). Bounded by --timeout
+	// (defaulted at flag-parse); the row is already inserted, so a timeout
+	// is informational — the message stays queued.
+	if p.WaitForDelivered {
+		timeout := p.Timeout
+		if timeout <= 0 {
+			timeout = defaultDeliveredWaitTimeout
+		}
+		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, timeout, pingPollInterval)
+	}
+	renderSendResult(stdout, resp, p.To, p.Format)
 	return exitOK
 }

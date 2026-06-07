@@ -56,14 +56,17 @@ func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("tmux-msg", "0.1.0")
 
 	srv.RegisterTool("tmux-msg.send",
-		"Queue a message for another agent (sender resolved from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers; confirm delivery with tmux-msg.message_status. Set reply_to to thread under an earlier message.",
+		"Queue a message for another agent (sender resolved from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-msg.message_status. Set reply_to to thread under an earlier message.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"to":                {"type": "string", "description": "Recipient agent name"},
 				"body":              {"type": "string", "description": "Message body"},
 				"reply_to":          {"type": "string", "description": "Optional public_id of the message this replies to; threads the reply (renders the 'Sender → Recipient · re …' header)"},
-				"no_reply_expected": {"type": "boolean", "description": "Set true to signal the recipient that no acknowledgment is needed — reduces ack-cascade on FYI/status messages (#145). Default false."}
+				"no_reply_expected": {"type": "boolean", "description": "Set true to signal the recipient that no acknowledgment is needed — reduces ack-cascade on FYI/status messages (#145). Default false."},
+				"strict":            {"type": "boolean", "description": "Fail (ok:false) if the recipient is registered but not reachable (pane gone). An UNregistered recipient is always fail-loud regardless of this flag. Default false (#152)."},
+				"wait_for_delivered": {"type": "boolean", "description": "Block until the message reaches a terminal delivery state (delivered/failed) or timeout, returning a \"delivery\" block with state + verify_ms. Default false (#152)."},
+				"timeout":           {"type": "string", "description": "Bound for wait_for_delivered as a Go duration (e.g. \"10s\"). Default 10s."}
 			},
 			"required": ["to", "body"]
 		}`),
@@ -270,10 +273,13 @@ func resolveMCPIdentity(ctx context.Context, s *store.Store) (string, error) {
 
 func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
-		To              string `json:"to"`
-		Body            string `json:"body"`
-		ReplyTo         string `json:"reply_to"`
-		NoReplyExpected bool   `json:"no_reply_expected"`
+		To               string `json:"to"`
+		Body             string `json:"body"`
+		ReplyTo          string `json:"reply_to"`
+		NoReplyExpected  bool   `json:"no_reply_expected"`
+		Strict           bool   `json:"strict"`
+		WaitForDelivered bool   `json:"wait_for_delivered"`
+		Timeout          string `json:"timeout"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -287,15 +293,26 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 		if from == "" {
 			return nil, fmt.Errorf("cannot resolve sender identity: set $CLAUDE_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
+		timeout := defaultDeliveredWaitTimeout
+		if in.Timeout != "" {
+			d, err := time.ParseDuration(in.Timeout)
+			if err != nil {
+				return nil, fmt.Errorf("invalid timeout %q: %w", in.Timeout, err)
+			}
+			timeout = d
+		}
 		p := sendParams{
-			From:            from,
-			To:              in.To,
-			ReplyTo:         in.ReplyTo,
-			Body:            in.Body,
-			NoReplyExpected: in.NoReplyExpected,
-			MaxRecipient:    capRecipientQueue,
-			MaxSender:       capSenderBacklog,
-			MaxBody:         capBodyBytes,
+			From:             from,
+			To:               in.To,
+			ReplyTo:          in.ReplyTo,
+			Body:             in.Body,
+			NoReplyExpected:  in.NoReplyExpected,
+			MaxRecipient:     capRecipientQueue,
+			MaxSender:        capSenderBacklog,
+			MaxBody:          capBodyBytes,
+			Strict:           in.Strict,
+			WaitForDelivered: in.WaitForDelivered,
+			Timeout:          timeout,
 		}
 		// Re-use the validation + cap logic from the CLI by going
 		// directly through the store ourselves but mirroring the checks.
@@ -316,11 +333,24 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 	if p.MaxBody > 0 && len(p.Body) > p.MaxBody {
 		return nil, fmt.Errorf("body too large (%d > %d bytes)", len(p.Body), p.MaxBody)
 	}
-	if _, err := s.GetAgent(ctx, p.To); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return nil, fmt.Errorf("unknown recipient: %s", p.To)
-		}
+	// Recipient status (#152) doubles as the registry-existence check:
+	// unknown recipient stays fail-loud (day-one safety, #3/#4/#15).
+	rs, err := resolveRecipientStatus(ctx, s, p.To)
+	if err != nil {
 		return nil, err
+	}
+	if !rs.Registered {
+		return nil, fmt.Errorf("unknown recipient: %s", p.To)
+	}
+	// --strict additionally rejects a registered-but-unreachable recipient
+	// (pane gone). Returned as a structured ok:false result (not a Go error)
+	// so the caller still gets the recipient block.
+	if p.Strict && !rs.Alive {
+		return SendResponse{
+			OK:        false,
+			Recipient: rs,
+			Error:     fmt.Sprintf("recipient %q registered but not reachable (pane %s)", p.To, rs.PaneStatus),
+		}, nil
 	}
 	if _, err := s.GetAgent(ctx, p.From); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
@@ -345,11 +375,20 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		}
 		return nil, err
 	}
-	return map[string]any{
-		"ok":     true,
-		"id":     res.PublicID,
-		"queued": res.Queued,
-	}, nil
+	resp := SendResponse{
+		OK:        true,
+		ID:        res.PublicID,
+		Queued:    res.Queued,
+		Recipient: rs,
+	}
+	if p.WaitForDelivered {
+		timeout := p.Timeout
+		if timeout <= 0 {
+			timeout = defaultDeliveredWaitTimeout
+		}
+		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, timeout, pingPollInterval)
+	}
+	return resp, nil
 }
 
 func mcpMessageStatusHandler(s *store.Store) mcp.ToolHandler {

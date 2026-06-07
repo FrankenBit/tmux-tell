@@ -34,6 +34,22 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`send` reports recipient registration + reachability (#152).** The `send`
+  response (CLI + `tmux-msg.send` MCP) gains a `recipient` block —
+  `registered` / `alive` / `delivery_mode` / `mailman_running` / `pane_status`
+  — queried fresh at send-time from the registry + `tmux` + `systemctl`. New
+  opt-ins: `--strict` / `strict` (fail when a *registered* recipient is
+  unreachable — pane gone) and `--wait-for-delivered` / `wait_for_delivered`
+  + `--timeout` (block for a terminal delivery state, returning a `delivery`
+  block with `state` + `verify_ms`). The response is now a **named struct
+  schema** (`SendResponse` / `RecipientStatus` / `DeliveryStatus`), the
+  contract #155 + #157 inherit, rather than an inline map. Purely additive —
+  `ok` / `id` / `queued` keep their meaning. **An unregistered recipient
+  stays fail-loud regardless of `--strict`** (preserving the day-one safety
+  default — the `default queue for unknown` originally sketched in the issue
+  was based on a misread of live code, which has rejected unknown recipients
+  since #3/#4/#15; see PR for the surfaced fork).
+
 - **`claude-msg tail` — live diagnostic firehose (#148).** A cross-chamber,
   read-only `tail -f` over bus traffic: new rows print as inserted and
   `queued → delivering → delivered/failed` transitions print on the same id.
