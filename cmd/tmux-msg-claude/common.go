@@ -22,9 +22,10 @@ const defaultDBLocation = "/var/lib/tmux-msg/messages.db"
 // senders can never overshoot the cap — at most `capRecipientQueue`
 // inserts succeed regardless of concurrency.
 const (
-	capRecipientQueue = 5
-	capSenderBacklog  = 2
-	capBodyBytes      = 16 * 1024
+	capRecipientQueue       = 5
+	capSenderBacklog        = 2
+	capBodyBytes            = 16 * 1024
+	capMaxRecipientsPerSend = 10
 )
 
 // Exit codes follow sysexits.h. See cmd/tmux-msg-claude/main.go for the

@@ -142,6 +142,11 @@ type Block struct {
 	// ResolveString, so an absent/empty key falls through to the next
 	// layer and finally to render.DefaultByteMarkerThreshold.
 	RenderByteMarkerThreshold *string `toml:"render-byte-marker-threshold"`
+	// MaxRecipientsPerSend caps how many recipients a single `send --to a,b,c`
+	// call may address (#158). Sends exceeding the cap fail-loud before any
+	// row is inserted. Default 10. Per-sender or fleet override via the
+	// standard precedence chain.
+	MaxRecipientsPerSend *int `toml:"max-recipients-per-send"`
 }
 
 // Load reads the config from the path resolved by:
@@ -253,6 +258,21 @@ func ResolveString(file *File, agent, field string, hardcoded string) string {
 	return hardcoded
 }
 
+// ResolveInt walks the precedence chain for an int field. The first
+// non-nil value wins; if all layers are nil, hardcoded is the final fallback.
+func ResolveInt(file *File, agent, field string, hardcoded int) int {
+	if file == nil {
+		return hardcoded
+	}
+	if n := agentIntField(file, agent, field); n != nil {
+		return *n
+	}
+	if n := defaultIntField(file, field); n != nil {
+		return *n
+	}
+	return hardcoded
+}
+
 // agentBoolField returns the agent-block's pointer for the named
 // field, or nil if the agent block doesn't exist or the field wasn't
 // set.
@@ -343,6 +363,29 @@ func blockStringField(b *Block, field string) *string {
 	return nil
 }
 
+func agentIntField(file *File, agent, field string) *int {
+	if file.Agent == nil {
+		return nil
+	}
+	block, ok := file.Agent[agent]
+	if !ok {
+		return nil
+	}
+	return blockIntField(&block, field)
+}
+
+func defaultIntField(file *File, field string) *int {
+	return blockIntField(&file.Defaults, field)
+}
+
+func blockIntField(b *Block, field string) *int {
+	switch field {
+	case "max-recipients-per-send":
+		return b.MaxRecipientsPerSend
+	}
+	return nil
+}
+
 // ParseByteSize parses a human byte-size string into a byte count.
 // Accepted forms (case-insensitive, surrounding whitespace ignored):
 //
@@ -402,6 +445,7 @@ type ResolvedView struct {
 	PrePasteSafetyDisabled      bool          `json:"pre_paste_safety_disabled"`
 	DeliveryMode                string        `json:"delivery_mode,omitempty"`
 	RenderByteMarkerThreshold   string        `json:"render_byte_marker_threshold"`
+	MaxRecipientsPerSend        int           `json:"max_recipients_per_send"`
 	PrivilegedAgents            []string      `json:"privileged_agents"`
 }
 
@@ -427,6 +471,7 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		// without a dependency it otherwise doesn't need. Kept in sync by
 		// the doc-comment cross-reference on both consts.
 		RenderByteMarkerThreshold: ResolveString(file, agent, "render-byte-marker-threshold", "512b"),
+		MaxRecipientsPerSend:      ResolveInt(file, agent, "max-recipients-per-send", 10),
 		PrivilegedAgents:          resolvePrivilegedAgents(file),
 	}
 }

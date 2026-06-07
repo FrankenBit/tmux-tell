@@ -34,6 +34,18 @@ deprecated alias through v0.11.0).
 
 ### Added
 
+- **`send --to a,b,c` — multi-recipient fan-out (#158).** Pass a comma-separated
+  list to `--to` (CLI) or an array to the `to` field (`tmux-msg.send` MCP) to
+  deliver the same message body to multiple recipients in a single call. Each
+  recipient gets its own message id and independent delivery — there are no
+  shared-id semantics. Response shape: `{ok, messages:[{to,id,queued,recipient,...},...]}`;
+  scalar single-recipient shape preserved for back-compat. Per-recipient outcomes
+  are independent: an unknown or cap-full recipient fails its own row without
+  aborting delivery to the remaining recipients (outer `ok` reflects whether ALL
+  rows succeeded). Pairs naturally with `--quick` for compact fan-out acks.
+  Spam guard: configurable `max-recipients-per-send` TOML knob (default 10) rejects
+  sends that exceed the per-call recipient cap before any row is inserted.
+
 - **`send --quick` — compact single-line chrome for routine acks (#154).** Set
   `--quick` (CLI) or `quick=true` (`tmux-msg.send` MCP) to render a message as
   a single compact line in the recipient's pane instead of the full bracket-header

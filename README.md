@@ -252,6 +252,7 @@ title-cased in the header; stored agent names are lowercase by convention.
 | Per-recipient queue depth | 5 | a pane that isn't draining is wedged — fail fast, don't accumulate |
 | Per-sender backlog | 2 | one runaway agent can't starve the others |
 | Body size | 16 KB | anything bigger should be a file reference, not a tmux paste |
+| Recipients per send | 10 | limits blast radius on multi-recipient fan-out (#158); configurable via `max-recipients-per-send` |
 
 `send` rejects with `{"ok":false}` when a cap is exceeded.
 
@@ -312,7 +313,7 @@ journal does, and surfacing that per-row is the natural next consumer of this ma
 ## Operating the bus
 
 ```
-tmux-msg-claude send   --to Y [--reply-to ID] [--strict] [--wait-for-delivered] [--block-on-stale] "body"  # one-shot
+tmux-msg-claude send   --to Y[,Z,...] [--reply-to ID] [--strict] [--wait-for-delivered] [--block-on-stale] "body"  # one-shot; --to a,b,c fans to multiple recipients (#158)
 tmux-msg-claude resend ID [--force]                     # replay a failed/unverified message (#157)
 tmux-msg-claude ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
 tmux-msg-claude inbox  AGENT [--state STATE]            # list messages for AGENT

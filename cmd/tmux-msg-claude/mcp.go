@@ -56,11 +56,17 @@ func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("tmux-msg", "0.1.0")
 
 	srv.RegisterTool("tmux-msg.send",
-		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-msg.message_status. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155). Set quick=true to render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block — for routine acks where typing-overhead-to-signal ratio is high (#154).",
+		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-msg.message_status. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155). Set quick=true to render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block — for routine acks where typing-overhead-to-signal ratio is high (#154). Multi-recipient: pass to as an array (e.g. [\"bosun\",\"surveyor\"]) to fan the message to multiple recipients in a single call — each recipient gets its own message id; the response shape changes to {ok,messages:[{to,id,queued,recipient,...},...]} (#158).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"to":                {"type": "string", "description": "Recipient agent name"},
+				"to": {
+					"description": "Recipient agent name (string) or list of names (array of strings) for fan-out (#158)",
+					"oneOf": [
+						{"type": "string"},
+						{"type": "array", "items": {"type": "string"}, "minItems": 1}
+					]
+				},
 				"body":              {"type": "string", "description": "Message body"},
 				"reply_to":          {"type": "string", "description": "Optional public_id of the message this replies to; threads the reply (renders the 'Sender → Recipient · re …' header) and enables the thread_freshness crossed-message check"},
 				"no_reply_expected": {"type": "boolean", "description": "Set true to signal the recipient that no acknowledgment is needed — reduces ack-cascade on FYI/status messages (#145). Default false."},
@@ -287,20 +293,24 @@ func resolveMCPIdentity(ctx context.Context, s *store.Store) (string, error) {
 
 func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
-		To               string `json:"to"`
-		Body             string `json:"body"`
-		ReplyTo          string `json:"reply_to"`
-		NoReplyExpected  bool   `json:"no_reply_expected"`
-		Quick            bool   `json:"quick"`
-		Strict           bool   `json:"strict"`
-		WaitForDelivered bool   `json:"wait_for_delivered"`
-		Timeout          string `json:"timeout"`
-		BlockOnStale     bool   `json:"block_on_stale"`
+		To               json.RawMessage `json:"to"` // string or []string (#158)
+		Body             string          `json:"body"`
+		ReplyTo          string          `json:"reply_to"`
+		NoReplyExpected  bool            `json:"no_reply_expected"`
+		Quick            bool            `json:"quick"`
+		Strict           bool            `json:"strict"`
+		WaitForDelivered bool            `json:"wait_for_delivered"`
+		Timeout          string          `json:"timeout"`
+		BlockOnStale     bool            `json:"block_on_stale"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
 		if err := json.Unmarshal(args, &in); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		toList, err := parseMCPToField(in.To)
+		if err != nil {
+			return nil, err
 		}
 		from, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
@@ -317,25 +327,118 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 			}
 			timeout = d
 		}
+		cfg, _ := config.Load()
+		maxRPS := config.ResolveInt(cfg, from, "max-recipients-per-send", capMaxRecipientsPerSend)
 		p := sendParams{
-			From:             from,
-			To:               in.To,
-			ReplyTo:          in.ReplyTo,
-			Body:             in.Body,
-			NoReplyExpected:  in.NoReplyExpected,
-			Quick:            in.Quick,
-			MaxRecipient:     capRecipientQueue,
-			MaxSender:        capSenderBacklog,
-			MaxBody:          capBodyBytes,
-			Strict:           in.Strict,
-			WaitForDelivered: in.WaitForDelivered,
-			Timeout:          timeout,
-			BlockOnStale:     in.BlockOnStale,
+			From:                 from,
+			ReplyTo:              in.ReplyTo,
+			Body:                 in.Body,
+			NoReplyExpected:      in.NoReplyExpected,
+			Quick:                in.Quick,
+			MaxRecipient:         capRecipientQueue,
+			MaxSender:            capSenderBacklog,
+			MaxBody:              capBodyBytes,
+			MaxRecipientsPerSend: maxRPS,
+			Strict:               in.Strict,
+			WaitForDelivered:     in.WaitForDelivered,
+			Timeout:              timeout,
+			BlockOnStale:         in.BlockOnStale,
 		}
-		// Re-use the validation + cap logic from the CLI by going
-		// directly through the store ourselves but mirroring the checks.
+		if len(toList) > 1 {
+			p.ToRecipients = toList
+			return doMultiSendMCP(ctx, s, p)
+		}
+		if len(toList) == 1 {
+			p.To = toList[0]
+		}
 		return doSendMCP(ctx, s, p)
 	}
+}
+
+// parseMCPToField decodes the `to` field which may be a JSON string or a
+// JSON array of strings (#158). Returns an error when the field is absent,
+// empty, or neither shape.
+func parseMCPToField(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("to required")
+	}
+	var arr []string
+	if err := json.Unmarshal(raw, &arr); err == nil {
+		if len(arr) == 0 {
+			return nil, fmt.Errorf("to: array must not be empty")
+		}
+		return arr, nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if s == "" {
+			return nil, fmt.Errorf("to required")
+		}
+		return []string{s}, nil
+	}
+	return nil, fmt.Errorf("to must be a string or array of strings")
+}
+
+// doMultiSendMCP is the MCP-side equivalent of runMultiSendWithStore: runs
+// cross-call validation once, then fans the send to each recipient
+// independently, collecting per-recipient outcomes. Returns MultiSendResponse.
+func doMultiSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
+	if p.Body == "" {
+		return nil, fmt.Errorf("body required")
+	}
+	if p.MaxBody > 0 && len(p.Body) > p.MaxBody {
+		return nil, fmt.Errorf("body too large (%d > %d bytes)", len(p.Body), p.MaxBody)
+	}
+	if p.MaxRecipientsPerSend > 0 && len(p.ToRecipients) > p.MaxRecipientsPerSend {
+		return nil, fmt.Errorf("too many recipients: %d (max %d per send)", len(p.ToRecipients), p.MaxRecipientsPerSend)
+	}
+	if _, err := s.GetAgent(ctx, p.From); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, fmt.Errorf("unknown sender: %s", p.From)
+		}
+		return nil, err
+	}
+	var freshness *ThreadFreshness
+	if p.ReplyTo != "" {
+		tf, err := resolveThreadFreshness(ctx, s, p.ReplyTo, p.From)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, fmt.Errorf("unknown reply-to id: %s", p.ReplyTo)
+			}
+			return nil, err
+		}
+		freshness = tf
+		if p.BlockOnStale && tf.Stale {
+			return nil, fmt.Errorf("thread has %d newer message(s) addressed to you since you last spoke",
+				len(tf.NewerInThread))
+		}
+	}
+
+	results := make([]MultiSendResult, 0, len(p.ToRecipients))
+	anyFailed := false
+	for _, to := range p.ToRecipients {
+		sp := p
+		sp.To = to
+		resp, err := sendOneRecipient(ctx, s, sp)
+		if err != nil {
+			return nil, err
+		}
+		mr := MultiSendResult{
+			To:        to,
+			OK:        resp.OK,
+			ID:        resp.ID,
+			Queued:    resp.Queued,
+			Recipient: resp.Recipient,
+			Delivery:  resp.Delivery,
+			Freshness: freshness,
+			Error:     resp.Error,
+		}
+		if !resp.OK {
+			anyFailed = true
+		}
+		results = append(results, mr)
+	}
+	return MultiSendResponse{OK: !anyFailed, Messages: results}, nil
 }
 
 // doSendMCP is the MCP-side equivalent of runSendWithStore. We use the

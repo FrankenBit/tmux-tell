@@ -98,6 +98,29 @@ type SendResponse struct {
 	Error     string           `json:"error,omitempty"`
 }
 
+// MultiSendResult is one recipient's outcome within a multi-recipient send
+// (#158). Identical to SendResponse but carries the recipient name at the top
+// level so the caller can correlate each row without parsing the recipient block.
+type MultiSendResult struct {
+	To        string           `json:"to"`
+	OK        bool             `json:"ok"`
+	ID        string           `json:"id,omitempty"`
+	Queued    int              `json:"queued"`
+	Recipient *RecipientStatus `json:"recipient,omitempty"`
+	Delivery  *DeliveryStatus  `json:"delivery,omitempty"`
+	Freshness *ThreadFreshness `json:"thread_freshness,omitempty"`
+	Error     string           `json:"error,omitempty"`
+}
+
+// MultiSendResponse is the top-level response shape for a multi-recipient send.
+// OK is true only when every recipient row succeeded. When any row fails (unknown
+// recipient, cap exceeded, strict rejection) OK is false, but the Messages array
+// still carries the per-recipient breakdown so the caller can retry selectively.
+type MultiSendResponse struct {
+	OK       bool              `json:"ok"`
+	Messages []MultiSendResult `json:"messages"`
+}
+
 // renderSendResult writes a SendResponse in the requested format. JSON (the
 // default, back-compatible) emits the full structure; text emits a brief
 // human one-liner per the #152 "brief one-liner in text" AC. Used by the CLI;
