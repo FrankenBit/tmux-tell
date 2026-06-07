@@ -34,6 +34,11 @@ func parseWindow(spec string, now time.Time) (store.StatsWindow, error) {
 	if s == "all" {
 		return store.StatsWindow{All: true}, nil
 	}
+	if s == "now" {
+		// Floor == now: nothing in the past matches. `tail` uses this as its
+		// default (#148) — start live with no backfill.
+		return store.StatsWindow{Since: now}, nil
+	}
 	// Calendar shortcuts resolve to a local-midnight floor relative to now.
 	// They predate the duration parse so "today"/"week" aren't mistaken for
 	// malformed durations.

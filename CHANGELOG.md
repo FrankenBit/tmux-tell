@@ -34,6 +34,22 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`claude-msg tail` — live diagnostic firehose (#148).** A cross-chamber,
+  read-only `tail -f` over bus traffic: new rows print as inserted and
+  `queued → delivering → delivered/failed` transitions print on the same id.
+  Compositional filters (AND): `--from` / `--to` / `--kind` / `--state` /
+  `--since` (reuses #147's `parseWindow`, now also accepting `now` — the
+  default, start-live-no-backfill). `--format json` emits one object per line;
+  Ctrl-C exits cleanly. The watch mechanism is **rowid-polling**, not SQLite's
+  `update_hook`: the mailmen that write rows are separate processes from the
+  `tail` CLI, and `update_hook` is per-connection/same-process so it would
+  never see their writes — `tail` polls `MAX(id)` since-last-seen
+  (`--interval`, default 300ms) and re-reads in-flight ids for transitions,
+  WAL-safe alongside mailman writes. New store primitives `TailRows` +
+  `MessagesByIDs`; the diagnostic playbook gains a "watching it happen live"
+  section. Resolves the #137 walk-back pain (correlating two mailmen's
+  journals by hand).
+
 - **`claude-msg digest` — campaign-arc narrative summary (#161).** The
   *qualitative* sibling to `stats`: a by-counterparty table (sent / received /
   threads / closed / in-flight) plus an "in-flight threads (likely need
