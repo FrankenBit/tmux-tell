@@ -56,17 +56,18 @@ func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("tmux-msg", "0.1.0")
 
 	srv.RegisterTool("tmux-msg.send",
-		"Queue a message for another agent (sender resolved from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-msg.message_status. Set reply_to to thread under an earlier message.",
+		"Queue a message for another agent (sender resolved from $CLAUDE_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-msg.message_status. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"to":                {"type": "string", "description": "Recipient agent name"},
 				"body":              {"type": "string", "description": "Message body"},
-				"reply_to":          {"type": "string", "description": "Optional public_id of the message this replies to; threads the reply (renders the 'Sender → Recipient · re …' header)"},
+				"reply_to":          {"type": "string", "description": "Optional public_id of the message this replies to; threads the reply (renders the 'Sender → Recipient · re …' header) and enables the thread_freshness crossed-message check"},
 				"no_reply_expected": {"type": "boolean", "description": "Set true to signal the recipient that no acknowledgment is needed — reduces ack-cascade on FYI/status messages (#145). Default false."},
 				"strict":            {"type": "boolean", "description": "Fail (ok:false) if the recipient is registered but not reachable (pane gone). An UNregistered recipient is always fail-loud regardless of this flag. Default false (#152)."},
 				"wait_for_delivered": {"type": "boolean", "description": "Block until the message reaches a terminal delivery state (delivered/failed) or timeout, returning a \"delivery\" block with state + verify_ms. Default false (#152)."},
-				"timeout":           {"type": "string", "description": "Bound for wait_for_delivered as a Go duration (e.g. \"10s\"). Default 10s."}
+				"timeout":           {"type": "string", "description": "Bound for wait_for_delivered as a Go duration (e.g. \"10s\"). Default 10s."},
+				"block_on_stale":    {"type": "boolean", "description": "With reply_to: fail (ok:false) instead of queueing when the thread_freshness check finds the thread moved since you last spoke (newer messages addressed to you arrived after your last message in the chain). Default false — staleness is reported but the send still succeeds (#155)."}
 			},
 			"required": ["to", "body"]
 		}`),
@@ -280,6 +281,7 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 		Strict           bool   `json:"strict"`
 		WaitForDelivered bool   `json:"wait_for_delivered"`
 		Timeout          string `json:"timeout"`
+		BlockOnStale     bool   `json:"block_on_stale"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -313,6 +315,7 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 			Strict:           in.Strict,
 			WaitForDelivered: in.WaitForDelivered,
 			Timeout:          timeout,
+			BlockOnStale:     in.BlockOnStale,
 		}
 		// Re-use the validation + cap logic from the CLI by going
 		// directly through the store ourselves but mirroring the checks.
@@ -358,6 +361,29 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		}
 		return nil, err
 	}
+	// Thread-freshness (#155) — mirrors runSendWithStore. Runs before the
+	// insert so block_on_stale can refuse without queueing. A registered-
+	// but-stale thread returns a structured ok:false result (not a Go error)
+	// so the caller keeps the freshness block.
+	var freshness *ThreadFreshness
+	if p.ReplyTo != "" {
+		tf, err := resolveThreadFreshness(ctx, s, p.ReplyTo, p.From)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return nil, fmt.Errorf("unknown reply-to id: %s", p.ReplyTo)
+			}
+			return nil, err
+		}
+		freshness = tf
+		if p.BlockOnStale && tf.Stale {
+			return SendResponse{
+				OK:        false,
+				Recipient: rs,
+				Freshness: tf,
+				Error:     fmt.Sprintf("thread has %d newer message(s) addressed to you since you last spoke", len(tf.NewerInThread)),
+			}, nil
+		}
+	}
 	// Cap enforcement lives inside InsertMessage's transaction since
 	// #29 — no pre-check needed.
 	res, err := s.InsertMessage(ctx, store.InsertParams{
@@ -380,6 +406,7 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		ID:        res.PublicID,
 		Queued:    res.Queued,
 		Recipient: rs,
+		Freshness: freshness,
 	}
 	if p.WaitForDelivered {
 		timeout := p.Timeout

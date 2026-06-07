@@ -34,6 +34,24 @@ Run `claude-msg --version` to see what's installed.
 
 ### Added
 
+- **`send --reply-to` carries a crossed-message `thread_freshness` signal (#155).**
+  When a send threads under an earlier message, the response (CLI + `tmux-msg.send`
+  MCP) adds a `thread_freshness` block — `{stale, newer_in_thread[], you_replied_to,
+  latest_in_thread}`. `newer_in_thread` lists messages in the reply chain that are
+  **addressed to the sender and newer than the high-water-mark of what they've
+  seen** (their last message *or* the message they're replying to, whichever is
+  later) — "the thread moved past what you're anchored to." This is the
+  substrate-knowable reading of the crossed-reply problem (async replies cross in
+  flight; you `reply_to` a state an unread inbound may have superseded). It
+  deliberately does *not* claim "messages you haven't *processed*" — the substrate
+  tracks `delivered` (paste landed), not attended-to — so that framing from the
+  original issue was corrected during refinement. By default `stale` is
+  informational and the send still succeeds; the new `--block-on-stale` /
+  `block_on_stale` opt-in turns it into a hard refusal (`ok:false`) so the sender
+  can re-read first. Additive `ThreadFreshness` field on the #152 `SendResponse`
+  struct; reuses the shared `store.GetThread` reply-chain walk (#141) rather than a
+  bespoke query.
+
 - **`quartermaster→pilot` `/clear` PeerEdge (#167).** Mirrors the existing
   `bosun→pilot` edge (#60): Quartermaster is now an established dispatcher into
   Pilot's clear-before-each-task lifecycle, so it gets the same narrow per-edge
