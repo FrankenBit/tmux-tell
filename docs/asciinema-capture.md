@@ -183,8 +183,9 @@ sleep 0.5
 head -3 /tmp/observe-gate-demo-mailman.log   # should print "starting pane=%NN"
 ```
 
-For a one-take recording the foreground mailman is fine; the production pattern
-is `systemctl --user` mailmen with the production cadence, overkill here.
+For a one-take recording this backgrounded mailman (with the PID-file teardown in
+Step 7) is fine; the production pattern is `systemctl --user` mailmen with the
+production cadence, overkill here.
 
 ### Step 4 — start the asciinema recording, then attach to tmux
 
