@@ -82,6 +82,38 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   (their cross-vendor-via-hooks vs tmux-msg's persistent-Claude-chambers-via-observe-gate),
   and concedes the use cases each fits better. No feature-matrix; just the honest pointer.
 
+- **Consumer surfaces now read the durable `verified` column (#230).** The
+  `verified` column shipped in #169 and #213 reframed the docs to "the column
+  exists but consumer X doesn't surface it yet"; this wires the remaining
+  consumers to it so those passages read truthfully against the binary. `sent`,
+  `inbox`, `track`, `get`, `thread`, and the MCP `message_status` / `inbox`
+  tools render a delivered-but-unverified message as `delivered_in_input_box`
+  (the `thread` tree marks it `⚠`); `stats` prints a `Delivered split: verified
+  / in-input-box / pre-marker` line sourced from the column; `status --today`
+  sources its verified counts from the column (failed / crash / cap-exceeded
+  counts stay journalctl-sourced, with the journal as defensive backup). A
+  pre-#169 row (`verified = NULL`) is reported as a distinct *pre-marker* count,
+  never retroactively guessed. New store seam `VerificationCountsByAgent`
+  (per-agent companion to `DeliveredVerificationCounts`). Cross-refs: #169
+  (column), #213 (docs reconcile).
+
+### Deprecated
+
+- **`resend --force` against a `delivered_in_input_box` (delivered-but-unverified)
+  message — no longer needed (#230).**
+  Deprecated in v0.13.0; earliest removal v0.15.0.
+
+  The `verified` column (#169) now lets `resend` recognize a delivered-but-
+  unverified message directly, so replaying one is the sanctioned recovery and
+  no longer requires `--force` (operator decision (C), 2026-06-08). Passing
+  `--force` against such a message is still accepted but emits
+  `WARN deprecated_surface_used name=resend_force_unverified removal=v0.15.0`
+  once per process. `--force` remains required (and un-deprecated) for replaying
+  a confirmed delivery (`verified = 1`) or a pre-marker delivery
+  (`verified = NULL`), where the substrate can't confirm the message wasn't
+  seen. ADR-0008's third real deprecation cycle, after #177's alias arc and
+  #140's notify-on-* family.
+
 ## [0.12.0] — 2026-06-08
 
 ### Added

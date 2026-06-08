@@ -93,7 +93,7 @@ func doGet(ctx context.Context, s *store.Store, cfg *config.File,
 			To:        m.ToAgent,
 			Body:      m.Body,
 			Kind:      string(m.Kind),
-			State:     string(m.State),
+			State:     displayState(m),
 			CreatedAt: m.CreatedAt,
 		}
 		if m.DeliveredAt.Valid {

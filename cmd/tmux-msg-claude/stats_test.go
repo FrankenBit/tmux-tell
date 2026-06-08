@@ -76,7 +76,7 @@ func TestStatsCLI_Text(t *testing.T) {
 		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
 	}
 	out := stdout.String()
-	for _, want := range []string{"AGENT", "alice", "bob", "Totals: 5 messages", "#169"} {
+	for _, want := range []string{"AGENT", "alice", "bob", "Totals: 5 messages", "Delivered split:"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("text output missing %q; got:\n%s", want, out)
 		}

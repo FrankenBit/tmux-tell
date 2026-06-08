@@ -31,14 +31,16 @@ type RecipientStatus struct {
 }
 
 // DeliveryStatus is the terminal delivery outcome, populated only when
-// --wait-for-delivered (CLI) / wait_for_delivered (MCP) is set. State is a
-// store terminal state ("delivered"/"failed") or the synthetic "timeout" when
-// the wait bound elapsed first. VerifyMs is the wait duration.
+// --wait-for-delivered (CLI) / wait_for_delivered (MCP) is set. State is the
+// display-state ("delivered" / "delivered_in_input_box" / "failed") or the
+// synthetic "timeout" when the wait bound elapsed first. VerifyMs is the wait
+// duration.
 //
-// Note: there is no "delivered_in_input_box" DB state to wait on — the mailman
-// records that soft-failure as "delivered" (see #169). So a returned
-// state="delivered" means delivered (verified or not); the verified/unverified
-// split stays out of band per #169.
+// The soft-fail is now surfaced: a paste+Enter that landed but whose verify
+// token never appeared is stored as state=delivered with verified=0 (#169), and
+// waitForDelivery renders that via displayState as "delivered_in_input_box"
+// (#230) so the waiter can distinguish it from a confirmed delivery. A pre-#169
+// row (verified=NULL) still reads as plain "delivered".
 type DeliveryStatus struct {
 	State       string `json:"state"`
 	DeliveredAt string `json:"delivered_at,omitempty"`
@@ -71,11 +73,12 @@ type ThreadFreshness struct {
 // original, when it was first sent, what state that original was in at resend
 // time, and whether --force was needed to override the duplicate guard.
 //
-// Note on OriginalState: the substrate has no `delivered_in_input_box` state —
-// verified and unverified deliveries both read as "delivered" (#169). So a
-// resend of an unverified message reports OriginalState="delivered" and required
-// --force; the journal-aware distinction that would let unverified recover
-// without --force is gated on #169.
+// Note on OriginalState: this is the display-state of the original at resend
+// time (#230). A delivered-but-unverified original reports
+// OriginalState="delivered_in_input_box" (verified=0, #169) and — under the
+// (C) deprecation — replays WITHOUT --force, so Forced=false. A confirmed
+// "delivered" (verified=1) or pre-#169 "delivered" (verified=NULL) original
+// still requires --force, so Forced=true on those replays.
 type ReplayStatus struct {
 	OriginalID     string `json:"original_id"`
 	OriginalSentAt string `json:"original_sent_at,omitempty"`
@@ -245,7 +248,7 @@ func waitForDelivery(ctx context.Context, s *store.Store, id string, timeout, po
 	for {
 		m, err := s.GetMessage(ctx, id)
 		if err == nil && (m.State == store.StateDelivered || m.State == store.StateFailed) {
-			ds := &DeliveryStatus{State: string(m.State), VerifyMs: time.Since(start).Milliseconds()}
+			ds := &DeliveryStatus{State: displayState(*m), VerifyMs: time.Since(start).Milliseconds()}
 			if m.DeliveredAt.Valid {
 				ds.DeliveredAt = m.DeliveredAt.String
 			}

@@ -90,6 +90,33 @@ func TestDeliveredVerificationCounts_Split(t *testing.T) {
 	}
 }
 
+func TestVerificationCountsByAgent_Split(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	deliverMarked(t, s, "bob", true)                                              // bob verified=1
+	deliverMarked(t, s, "bob", false)                                             // bob verified=0
+	seedStat(t, s, "oldbob", "alice", "bob", "delivered", ts(0), ts(time.Second)) // bob NULL
+	deliverMarked(t, s, "carol", true)                                            // carol verified=1
+	// Non-delivered rows excluded; dave never receives a delivered row.
+	seedStat(t, s, "qb", "alice", "bob", "queued", ts(0), "")
+	seedStat(t, s, "fd", "alice", "dave", "failed", ts(0), ts(time.Second))
+
+	got, err := s.VerificationCountsByAgent(ctx, allWindow())
+	if err != nil {
+		t.Fatalf("counts: %v", err)
+	}
+	if want := (VerificationCounts{Verified: 1, Unverified: 1, Unknown: 1}); got["bob"] != want {
+		t.Errorf("bob = %+v, want %+v", got["bob"], want)
+	}
+	if want := (VerificationCounts{Verified: 1}); got["carol"] != want {
+		t.Errorf("carol = %+v, want %+v", got["carol"], want)
+	}
+	if _, ok := got["dave"]; ok {
+		t.Errorf("dave should be absent (no delivered rows), got %+v", got["dave"])
+	}
+}
+
 func TestDeliveredVerificationCounts_WindowBounds(t *testing.T) {
 	// The split honors the StatsWindow (created_at), matching the other
 	// aggregates' denominator.

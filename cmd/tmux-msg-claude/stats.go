@@ -52,6 +52,11 @@ type statsResult struct {
 	Agents   []store.AgentStat `json:"agents"`
 	TopPairs []store.PairStat  `json:"top_pairs,omitempty"`
 	Totals   store.Totals      `json:"totals"`
+	// Verification is the delivered-message verified/unverified/pre-marker
+	// split for the window, sourced from the #169 `verified` column (#230).
+	// Verified = confirmed; Unverified = delivered_in_input_box soft-fail;
+	// Unknown = pre-marker rows (verified=NULL).
+	Verification store.VerificationCounts `json:"verification"`
 }
 
 func runStatsWithStore(ctx context.Context, s *store.Store, w store.StatsWindow,
@@ -62,6 +67,10 @@ func runStatsWithStore(ctx context.Context, s *store.Store, w store.StatsWindow,
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
 	totals, err := s.StatsTotals(ctx, w)
+	if err != nil {
+		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+	}
+	verification, err := s.DeliveredVerificationCounts(ctx, w)
 	if err != nil {
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
@@ -94,7 +103,7 @@ func runStatsWithStore(ctx context.Context, s *store.Store, w store.StatsWindow,
 		}
 	}
 
-	res := statsResult{Window: windowSpec, Agents: agents, TopPairs: pairs, Totals: totals}
+	res := statsResult{Window: windowSpec, Agents: agents, TopPairs: pairs, Totals: totals, Verification: verification}
 
 	if format == "json" {
 		if err := writeJSONResult(stdout, res); err != nil {
@@ -146,9 +155,13 @@ func renderStatsText(w io.Writer, res statsResult, showPairs bool) {
 		fmt.Fprintf(w, ", acknowledged %d", t.Acknowledged)
 	}
 	fmt.Fprintln(w)
-	// The verified/unverified split is not DB-derivable (both are state=delivered;
-	// see #169). Operators wanting it use `status --today` / `health` (journal-sourced).
-	fmt.Fprintln(w, "(verified/unverified split: see `status --today` — not DB-queryable yet, #169)")
+	// Delivered verified/unverified split, sourced from the #169 `verified`
+	// column (#230). Bus-wide for the window (like Totals), independent of any
+	// --agent filter on the table above. Pre-marker = verified=NULL rows from
+	// before the column existed.
+	vc := res.Verification
+	fmt.Fprintf(w, "Delivered split: verified %d, in-input-box %d, pre-marker %d\n",
+		vc.Verified, vc.Unverified, vc.Unknown)
 }
 
 // fmtLatency renders a millisecond latency for the text table: "-" for none,

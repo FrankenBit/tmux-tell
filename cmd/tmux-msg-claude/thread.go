@@ -19,16 +19,17 @@ import (
 // view). The walk is NOT duplicated here — only the tree rendering is new.
 
 // threadGlyphs. The root carries ○; every other node's glyph maps from
-// its stored delivery state. Note: `delivered_in_input_box` is NOT a
-// distinct stored state — the mailman records that soft-failure as
-// `delivered` (see internal/store/types.go State set + serve.go's
-// ErrUnverifiedDelivery → MarkDelivered), so the `⚠` glyph from #141's
-// example issue cannot be populated from the current schema. Making
-// verified-vs-unverified DB-queryable is tracked in #169; until then a
-// `delivered_in_input_box` node renders as `✓`.
+// its delivery state. The `verified` column (#169) is now wired through
+// (#230): a delivered-but-unverified node (`delivered_in_input_box`, the
+// soft-fail where paste+Enter landed but the verify token never surfaced)
+// renders with the `⚠` glyph from #141's example, distinct from a confirmed
+// delivery's `✓`. The node carries the display-state (via displayState), so
+// the glyph and the `state=` field agree. A pre-#169 row (verified=NULL)
+// stays `✓` — the column can't claim a soft-fail it doesn't know about.
 const (
 	glyphRoot         = "○"
 	glyphDelivered    = "✓"
+	glyphUnverified   = "⚠"
 	glyphFailed       = "✗"
 	glyphInFlight     = "…"
 	glyphAcknowledged = "·"
@@ -76,7 +77,7 @@ func buildThreadTree(msgs []store.Message) (*threadNode, error) {
 			From:            m.FromAgent,
 			To:              m.ToAgent,
 			Kind:            string(m.Kind),
-			State:           string(m.State),
+			State:           displayState(m),
 			NoReplyExpected: m.NoReplyExpected,
 			CreatedAt:       m.CreatedAt,
 			Body:            m.Body,
@@ -110,19 +111,23 @@ func buildThreadTree(msgs []store.Message) (*threadNode, error) {
 	return root, nil
 }
 
-// stateGlyph maps a stored delivery state to its tree glyph. Unknown
-// states render as `?` (defensive — advisory-not-authoritative, per the
-// substrate-class-of-claim convention) rather than being silently rolled
-// up to a known glyph.
+// stateGlyph maps a node's display-state to its tree glyph. The node's
+// State is the displayState synthesis (#230), so the soft-fail
+// `delivered_in_input_box` arrives here as its own string and maps to ⚠,
+// distinct from a confirmed `delivered`'s ✓. Unknown states render as `?`
+// (defensive — advisory-not-authoritative, per the substrate-class-of-claim
+// convention) rather than being silently rolled up to a known glyph.
 func stateGlyph(state string) string {
-	switch store.State(state) {
-	case store.StateDelivered:
+	switch state {
+	case string(store.StateDelivered):
 		return glyphDelivered
-	case store.StateFailed:
+	case displayStateDeliveredInInputBox:
+		return glyphUnverified
+	case string(store.StateFailed):
 		return glyphFailed
-	case store.StateQueued, store.StateDelivering:
+	case string(store.StateQueued), string(store.StateDelivering):
 		return glyphInFlight
-	case store.StateAcknowledged:
+	case string(store.StateAcknowledged):
 		return glyphAcknowledged
 	default:
 		return glyphUnknown

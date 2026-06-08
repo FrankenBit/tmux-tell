@@ -158,7 +158,7 @@ func messageToMap(m store.Message) map[string]any {
 		"from":       m.FromAgent,
 		"to":         m.ToAgent,
 		"body":       m.Body,
-		"state":      string(m.State),
+		"state":      displayState(m),
 		"created_at": m.CreatedAt,
 		"quick":      m.Quick,
 	}

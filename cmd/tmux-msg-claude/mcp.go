@@ -81,12 +81,12 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpSendHandler(s))
 
 	srv.RegisterTool("tmux-msg.resend",
-		"Replay an existing message to its original recipient — the explicit recovery path for a message that landed `delivered_in_input_box` or `failed` (#157). The replay carries a \"Replayed: original sent at <ts>\" chrome marker so the recipient knows it's a re-send, and the response adds a \"replay\" block {original_id, original_sent_at, original_state, forced}. Refuses to replay an already-`delivered` (verified-or-unverified — the substrate can't distinguish, #169) or still in-flight message unless force=true, to avoid duplicate-spam; a `failed` message replays directly. The replayed body is byte-identical to the original.",
+		"Replay an existing message to its original recipient — the explicit recovery path for a message that landed `delivered_in_input_box` or `failed` (#157). The replay carries a \"Replayed: original sent at <ts>\" chrome marker so the recipient knows it's a re-send, and the response adds a \"replay\" block {original_id, original_sent_at, original_state, forced}. A `failed` or `delivered_in_input_box` (delivered-but-unverified, #169) message replays directly — no force needed. Refuses to replay a confirmed-`delivered` (verified) or pre-#169 delivered (unknown) or still in-flight message unless force=true, to avoid duplicate-spam. The replayed body is byte-identical to the original.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"id":    {"type": "string", "description": "public_id of the message to replay"},
-				"force": {"type": "boolean", "description": "Replay even an already-delivered or in-flight message (may duplicate). Required to recover a delivered-but-unverified message, since the DB can't distinguish it from a clean delivery (#169). Default false."}
+				"force": {"type": "boolean", "description": "Replay even a confirmed-delivered or in-flight message (may duplicate). NOT needed for a delivered_in_input_box (delivered-but-unverified) message — the verified column (#169) recognizes the soft-fail and replays it directly; passing force there is deprecated (#230). Default false."}
 			},
 			"required": ["id"]
 		}`),
@@ -588,6 +588,10 @@ func doResendMCP(ctx context.Context, s *store.Store, p resendParams) (any, erro
 		}
 		return nil, err
 	}
+	// #230 (C): deprecation WARN to the daemon log when --force is passed
+	// against a delivered_in_input_box message (no longer needed). Once per
+	// process — the MCP daemon serves many resends in one lifetime.
+	maybeWarnResendForceUnverified(os.Stderr, orig, p.Force)
 	if reason, ok := resendGuard(orig, p.Force); !ok {
 		return replayRefusal(orig, reason), nil
 	}
@@ -625,7 +629,7 @@ func doResendMCP(ctx context.Context, s *store.Store, p resendParams) (any, erro
 		Replay: &ReplayStatus{
 			OriginalID:     orig.PublicID,
 			OriginalSentAt: orig.CreatedAt,
-			OriginalState:  string(orig.State),
+			OriginalState:  displayState(*orig),
 			Forced:         p.Force,
 		},
 	}, nil

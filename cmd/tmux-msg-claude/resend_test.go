@@ -102,7 +102,9 @@ func TestResend_DeliveredRefusedWithoutForce(t *testing.T) {
 func TestResend_DeliveredWithForceReplays(t *testing.T) {
 	s := resendStore(t)
 	withReachability(t, map[string]bool{"%3": true}, true)
-	orig := seedResendMsg(t, s, "alice", "bob", "recover this unverified one", store.StateDelivered)
+	// seedResendMsg's StateDelivered path uses MarkDelivered → verified=1, the
+	// confirmed-delivery case that still requires --force under #230 (C).
+	orig := seedResendMsg(t, s, "alice", "bob", "recover this confirmed one", store.StateDelivered)
 
 	var stdout, stderr bytes.Buffer
 	exit := runResendWithStore(context.Background(), s,

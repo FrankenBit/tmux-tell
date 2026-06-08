@@ -20,7 +20,7 @@ func runStatusCLI(args []string, stdout, stderr io.Writer) int {
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
 	format := fs.String("format", "text", "text|json")
 	today := fs.Bool("today", false,
-		"include a per-agent today-block (deliveries / unverified / failed / crashes / cap-exceeded counts since 00:00 local) sourced from journalctl + systemd (#45)")
+		"include a per-agent today-block (deliveries / unverified / pre-marker / failed / crashes / cap-exceeded counts since 00:00 local). Verified split is sourced from the #169 `verified` column (#230); failed / crashes / cap-exceeded + latency stay journalctl + systemd-sourced (#45)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -49,6 +49,14 @@ type agentStatus struct {
 	// journalctl + systemd via the healthscan package. Pointer so
 	// JSON output cleanly omits it when not requested.
 	Today *healthscan.AgentHealth `json:"today,omitempty"`
+
+	// TodayVerified is the since-midnight verified/unverified/pre-marker
+	// split for this agent, sourced from the #169 `verified` column (#230) —
+	// the column-authoritative replacement for the journal-derived verified
+	// counts. Populated alongside Today when --today is passed; nil when the
+	// agent had no delivered rows in-window. Failed/crash/cap-exceeded counts
+	// stay in Today (journal-sourced); only the verified split moves here.
+	TodayVerified *store.VerificationCounts `json:"today_verified,omitempty"`
 }
 
 func runStatusWithStore(ctx context.Context, s *store.Store,
@@ -103,8 +111,9 @@ func runStatusWithStore(ctx context.Context, s *store.Store,
 		for i, r := range rows {
 			names[i] = r.Name
 		}
+		now := time.Now()
 		scanner := healthscan.New()
-		todayBlock, err := scanner.Scan(ctx, names, healthscan.SinceMidnight(time.Now()))
+		todayBlock, err := scanner.Scan(ctx, names, healthscan.SinceMidnight(now))
 		if err != nil {
 			// External-source failure shouldn't kill the core status
 			// table. Surface a non-fatal warning + proceed without
@@ -114,6 +123,23 @@ func runStatusWithStore(ctx context.Context, s *store.Store,
 			for i := range rows {
 				th := todayBlock[i]
 				rows[i].Today = &th
+			}
+		}
+
+		// #230: the verified split is now column-authoritative. Source it from
+		// the same since-midnight window as the journal scan, keyed per agent.
+		// A store failure here is non-fatal (the journal-sourced Today block
+		// still renders); we just leave TodayVerified nil and fall back.
+		y, mo, d := now.Date()
+		midnight := store.StatsWindow{Since: time.Date(y, mo, d, 0, 0, 0, 0, now.Location())}
+		if vca, vErr := s.VerificationCountsByAgent(ctx, midnight); vErr != nil {
+			fmt.Fprintf(stderr, "warn: --today verified split failed: %v\n", vErr)
+		} else {
+			for i := range rows {
+				if vc, ok := vca[rows[i].Name]; ok {
+					vcCopy := vc
+					rows[i].TodayVerified = &vcCopy
+				}
 			}
 		}
 	}
@@ -147,9 +173,11 @@ func runStatusWithStore(ctx context.Context, s *store.Store,
 	}
 }
 
-// renderTodayBlock prints the journalctl-sourced per-agent today
-// counts (#45). Skipped silently when no row has a Today field set
-// (scan failed; warning already emitted to stderr).
+// renderTodayBlock prints the per-agent today counts (#45). The
+// delivered / in-input-box / pre-marker columns are sourced from the #169
+// `verified` column (#230, via TodayVerified); failed / cap-exceeded /
+// crashes / latency stay journalctl-sourced (via Today). Skipped silently
+// when no row has a Today field set (scan failed; warning already emitted).
 func renderTodayBlock(stdout io.Writer, rows []agentStatus) {
 	hasAny := false
 	for _, r := range rows {
@@ -163,17 +191,26 @@ func renderTodayBlock(stdout io.Writer, rows []agentStatus) {
 	}
 	fmt.Fprintln(stdout)
 	fmt.Fprintln(stdout, "TODAY (since 00:00 local):")
-	header := []string{"NAME", "DELIVERED", "UNVERIFIED", "FAILED", "CAPHIT", "CRASHES", "P50ms", "P99ms"}
+	header := []string{"NAME", "DELIVERED", "IN-INPUT-BOX", "PRE-MARKER", "FAILED", "CAPHIT", "CRASHES", "P50ms", "P99ms"}
 	out := make([][]string, 0, len(rows))
 	for _, r := range rows {
 		if r.Today == nil {
-			out = append(out, []string{r.Name, "-", "-", "-", "-", "-", "-", "-"})
+			out = append(out, []string{r.Name, "-", "-", "-", "-", "-", "-", "-", "-"})
 			continue
+		}
+		// Verified split from the column (#230); zero-value when the agent had
+		// no delivered rows in-window (TodayVerified nil → all zeros).
+		var delivered, inInputBox, preMarker int
+		if v := r.TodayVerified; v != nil {
+			inInputBox = v.Unverified
+			preMarker = v.Unknown
+			delivered = v.Verified + v.Unverified + v.Unknown
 		}
 		out = append(out, []string{
 			r.Name,
-			itoa(r.Today.Delivered),
-			itoa(r.Today.DeliveredInInputBox),
+			itoa(delivered),
+			itoa(inInputBox),
+			itoa(preMarker),
 			itoa(r.Today.Failed),
 			itoa(r.Today.QuietCapExceeded),
 			itoa(r.Today.CrashCount),

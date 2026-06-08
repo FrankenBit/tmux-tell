@@ -317,6 +317,46 @@ func (s *Store) DeliveredVerificationCounts(ctx context.Context, w StatsWindow) 
 	return vc, rows.Err()
 }
 
+// VerificationCountsByAgent splits delivered messages in the window by their
+// #169 `verified` bit, keyed by recipient (to_agent). It is the per-agent
+// companion to DeliveredVerificationCounts (which aggregates across all agents),
+// used by `status --today` (#230) to source each agent's verified/unverified
+// split from the column instead of journalctl. Only state='delivered' rows are
+// counted; the three buckets per agent sum to that agent's delivered count in
+// the window. Agents with no delivered rows in-window are absent from the map.
+func (s *Store) VerificationCountsByAgent(ctx context.Context, w StatsWindow) (map[string]VerificationCounts, error) {
+	clause, args := w.whereSince()
+	q := `SELECT to_agent, verified, COUNT(*) FROM messages
+	      WHERE state = ? AND ` + clause + `
+	      GROUP BY to_agent, verified`
+	rows, err := s.db.QueryContext(ctx, q, append([]any{StateDelivered}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := map[string]VerificationCounts{}
+	for rows.Next() {
+		var agent string
+		var verified sql.NullInt64
+		var n int
+		if err := rows.Scan(&agent, &verified, &n); err != nil {
+			return nil, err
+		}
+		vc := out[agent]
+		switch {
+		case !verified.Valid:
+			vc.Unknown += n
+		case verified.Int64 == 1:
+			vc.Verified += n
+		default:
+			vc.Unverified += n
+		}
+		out[agent] = vc
+	}
+	return out, rows.Err()
+}
+
 // percentile returns the p-th percentile (nearest-rank) of vs in ms, or 0 for
 // an empty slice. Mirrors internal/healthscan.percentileMs's nearest-rank
 // convention so the two latency surfaces agree.

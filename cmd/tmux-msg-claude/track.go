@@ -58,7 +58,7 @@ func doTrack(ctx context.Context, s *store.Store, id string) (*trackResult, erro
 		ID:        m.PublicID,
 		From:      m.FromAgent,
 		To:        m.ToAgent,
-		State:     string(m.State),
+		State:     displayState(*m),
 		Kind:      string(m.Kind),
 		CreatedAt: m.CreatedAt,
 	}

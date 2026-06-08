@@ -186,12 +186,22 @@ func runSentWithStore(ctx context.Context, s *store.Store,
 	}
 }
 
+// displayStateDeliveredInInputBox is the synthetic display-state label for a
+// delivered message whose verify-token never surfaced (verified=0, #169). It is
+// not a stored State value — the row's State stays `delivered`; this label only
+// distinguishes the soft-fail at the presentation layer. Single-sourced here so
+// every consumer surface (sent / inbox / track / get / thread / sendstatus)
+// renders the same string (#230).
+const displayStateDeliveredInInputBox = "delivered_in_input_box"
+
 // displayState synthesises the human-facing state label. For delivered messages
 // with verified=0, it returns "delivered_in_input_box" instead of "delivered" so
-// operators can distinguish confirmed deliveries from soft-fails.
+// operators can distinguish confirmed deliveries from soft-fails. A delivered
+// message with verified=1 (confirmed) or verified=NULL (pre-#169 row) renders as
+// plain "delivered" — the column can't claim a soft-fail it doesn't know about.
 func displayState(m store.Message) string {
 	if m.State == store.StateDelivered && m.Verified.Valid && m.Verified.Int64 == 0 {
-		return "delivered_in_input_box"
+		return displayStateDeliveredInInputBox
 	}
 	return string(m.State)
 }
