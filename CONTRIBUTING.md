@@ -45,6 +45,13 @@ reads safe concurrent with mailman writes.
   backing ADR.
 - **Reviews.** PRs get a review before merge; substrate-accuracy (claims grounded
   against the actual code, not the issue body) is the bar reviewers hold.
+- **Schema-affecting changes touch the docs schema block.** Any change to the DB
+  schema — a new `CREATE TABLE`, a new column, a column-semantics shift, or a
+  state-vocab addition — must update the storage schema block in
+  [`docs/reference.md`](docs/reference.md) §Storage schema in the same PR.
+  Recurring gap surfaced across PRs (#229, #255, #257, #259); making it
+  implementer-side discipline keeps the schema block honest against the shipped
+  binary without a per-PR reviewer sweep.
 - **Claiming an issue (multi-agent deployments).** If more than one party hands out
   work from this tracker, assign the issue to yourself before starting, so the claim
   is discoverable on the issue itself and not just in side-channel chatter — see

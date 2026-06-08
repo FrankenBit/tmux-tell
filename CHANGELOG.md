@@ -33,6 +33,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-08
+
 ### Added
 
 - **Recipient-side delivery deduplication — `dedupe-window` TOML knob (#157 PR2, #157).** The mailman now closes the `delivered_in_input_box` ambiguity loop automatically. Before delivering any message, the mailman checks whether a prior `delivered_in_input_box` row from the same sender with the same body exists within the `dedupe-window` (default `"60s"`). If found, it re-verifies the original's verify-token against the recipient's pane scrollback: if visible it confirms the original and absorbs the replay; if not, the replay delivers normally. The absorb path: original upgraded to `verified=1`, duplicate marked `failed` (reason: `dedupe_absorbed`), `dedupe_notice` inserted back to sender. Configure per-agent or fleet-wide:
