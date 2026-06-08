@@ -35,6 +35,29 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **Operator-presence routing — `send --to operator` (#228).** A new
+  reserved sender-facing recipient string `operator` resolves at send
+  time to the chamber the operator is currently or was most recently
+  attached to, via a two-step substrate observation: (1) `tmux
+  list-clients` poll matches an attached client's active pane against
+  registered chamber pane_ids; (2) fallback to a single-slot
+  "last-seen-in" presence record. The substrate updates the slot on
+  every successful step-1 resolution, so subsequent sends route to the
+  last-known chamber even with no client currently attached. New
+  `presence` table holds the slot (single key today:
+  `operator.last_seen_in`); a new `tmuxio.ActiveClientPanes` helper
+  wraps `tmux list-clients -aF '#{client_active_pane}'` with the same
+  soft-failure semantics as the existing `LivePanes` helper. Substitution
+  happens in `runSendWithStore` / `doSendMCP` / `doMultiSendMCP` before
+  the registry lookup — `to: ["alice", "operator"]` independently
+  substitutes only the `operator` entry. Fails-loud when no observation
+  has ever landed AND the slot is unset (or points at an unregistered
+  chamber): no silent drop. Composes with #224's chamber → operator
+  attention signal: chamber-side declaration + substrate-side routing
+  are sibling halves of the operator-attention loop. Substrate addition
+  is additive (new table + new send path; no schema changes to messages
+  / agents) — K-preserving per ADR-0008 §Amendment A (Reading B).
+
 - **Configurable message retention policy — `retention` TOML knob + mailman background sweep (#245, #150 PR2).** Each mailman now runs a periodic goroutine that deletes `delivered` and `failed` rows older than the configured window. Default `"infinite"` preserves zero behavior change for existing deploys. Configure per-agent or fleet-wide in `/etc/tmux-msg/config.toml`:
   ```toml
   [defaults]

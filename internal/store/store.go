@@ -143,6 +143,17 @@ var migrations = []string{
 	// tools. Auto-cleared to "idle" on the chamber's next register call (the
 	// chamber resumed; whatever it was waiting on is presumed resolved).
 	`ALTER TABLE agents ADD COLUMN attention_state TEXT NOT NULL DEFAULT 'idle'`,
+	// #228: presence slot for operator-presence routing. Single-key K/V table
+	// recording substrate observations of where the operator currently is or
+	// was last attached. The send_to_operator path resolves the special
+	// recipient "operator" via this slot: look up the chamber the operator is
+	// at right now (or was last attached to). Single-row-per-key shape;
+	// today the only key in use is "operator.last_seen_in".
+	`CREATE TABLE IF NOT EXISTS presence (
+		key        TEXT PRIMARY KEY,
+		value      TEXT NOT NULL,
+		updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+	)`,
 }
 
 // Close releases the underlying database handle.

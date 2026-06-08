@@ -123,6 +123,13 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 // When p.ToRecipients carries more than one name, runSendWithStore dispatches
 // to runMultiSendWithStore (#158) and returns its result verbatim.
 func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout, stderr io.Writer) int {
+	// #228: resolve special recipient "operator" before any cap-check or
+	// registry lookup. Substitutes either p.To or p.ToRecipients entries.
+	// A failed resolution fails the send fail-loud (#152 semantic) rather
+	// than silently dropping.
+	if err := resolveOperatorInSendParams(ctx, s, &p); err != nil {
+		return writeJSONError(stdout, stderr, err.Error(), exitUnavailable)
+	}
 	if len(p.ToRecipients) > 1 {
 		return runMultiSendWithStore(ctx, s, p, stdout, stderr)
 	}

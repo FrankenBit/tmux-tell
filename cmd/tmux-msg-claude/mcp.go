@@ -401,6 +401,10 @@ func parseMCPToField(raw json.RawMessage) ([]string, error) {
 // cross-call validation once, then fans the send to each recipient
 // independently, collecting per-recipient outcomes. Returns MultiSendResponse.
 func doMultiSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
+	// #228: resolve special recipient "operator" in any ToRecipients entry.
+	if err := resolveOperatorInSendParams(ctx, s, &p); err != nil {
+		return nil, err
+	}
 	if p.Body == "" {
 		return nil, fmt.Errorf("body required")
 	}
@@ -463,6 +467,10 @@ func doMultiSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, err
 // same validation cascade but return structured Go data instead of writing
 // JSON to a Writer.
 func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
+	// #228: resolve special recipient "operator" first.
+	if err := resolveOperatorInSendParams(ctx, s, &p); err != nil {
+		return nil, err
+	}
 	if p.To == "" {
 		return nil, fmt.Errorf("to required")
 	}

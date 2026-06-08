@@ -254,6 +254,51 @@ The reserved-recipient convention is enforced: `flag_operator` fails-loud if
 `operator-attention` is not registered — substrate-honest about the setup
 prerequisite rather than silently swallowing the attention request.
 
+## Operator-presence routing — `send --to operator`
+
+Sister substrate to the attention signal above (#228). When a chamber wants to
+reach the operator directly — *"Bosun has an urgent question for whoever's at
+the keyboard"* — addressing `operator` as a recipient routes the message to the
+chamber the operator is currently attached to, or was last attached to.
+
+```bash
+tmux-msg-claude send --to operator "PR #999 needs your read before merge"
+```
+
+The substrate resolves `operator` at send time via two steps (always in order):
+
+1. **`tmux list-clients` observation.** The substrate asks tmux which pane each
+   attached client is currently focused on. If any client is on a registered
+   chamber's pane, that chamber wins — substrate-honest "the operator is here
+   right now."
+
+2. **Last-seen-in fallback.** When tmux reports no client at a chamber pane
+   (operator stepped to their own shell, or detached), the substrate falls back
+   to a single-slot record of where the operator was most recently observed. The
+   slot is updated automatically on every successful step-1 resolution, so
+   subsequent sends route to the last-known chamber even with no client
+   currently attached.
+
+If neither step yields a registered chamber (substrate has never observed the
+operator at a chamber, or the slot's target has been unregistered), the send
+fails-loud rather than silently routing to nowhere. The operator's first
+attached observation lights up the slot for all future sends.
+
+**Substrate-honest single-operator assumption.** A tmux session is per-user;
+multi-operator-per-session is not modeled. If tmux reports multiple attached
+clients (e.g. operator on laptop + a phone forwarder), the substrate uses the
+first match — the next observation pass corrects it if the picture changes.
+
+**Composes with `--to a,b,operator`.** Multi-recipient sends substitute every
+`operator` entry independently and pass other recipients through unchanged.
+
+**Composes with [`flag_operator`](#chamber--operator-attention-signal).**
+A chamber that needs operator attention can pair `flag_operator(prompt)`
+(declarative signal) with `send --to operator "<urgent reply or follow-up>"`
+(operator-routed message) — the first surfaces the chamber in the operator's
+ATTENTION column; the second lands a message in whichever chamber pane the
+operator is reading.
+
 
 **Kill switch & retention.** `pause` sets `agents.paused = 1`; the mailman stops
 injecting (messages keep queuing up to the cap) until `resume`. History is free —
