@@ -301,11 +301,13 @@ delivery is *unverified* — a soft outcome, logged `WARN delivered_in_input_box
 are `state = delivered`: the message IS in the recipient's pane either way, so the
 state isn't a failure. The distinction is carried by a durable `verified` column on
 the row (`1` = verified, `0` = unverified, `NULL` = delivered before this marker
-existed — never retroactively guessed), so it's queryable from the DB rather than only
-from the journal. `tmux-msg-claude stats` reports the split; `tmux-msg-claude resend <id>` is the
-recovery path for one you want to re-send (an unverified delivery needs `--force`,
-since the DB can't yet tell a *confirmed* unverified from a verified one per-row — the
-journal does, and surfacing that per-row is the natural next consumer of this marker).
+existed — never retroactively guessed), so the split is queryable from the DB rather
+than only from the journal: `tmux-msg-claude sent --state delivered_in_input_box` lists the
+soft-fail deliveries, and the `verified` bit drives each row's displayed state. Not
+every surface consults the column yet — `stats` still reports `delivered` without the
+split, and `resend <id>` still needs `--force` to replay a delivered-but-unverified
+message (it doesn't yet read the bit, so it can't tell a confirmed-unverified delivery
+from a verified one) — those are the natural next consumers of this marker.
 
 → **Full operator guide, decision matrix, knobs, and stale-draft recovery:
 [`docs/observe-gate.md`](docs/observe-gate.md).**
@@ -372,11 +374,11 @@ The duplicate guard keeps an accidental re-run from spamming:
 
 - A **`failed`** message replays directly — it never arrived.
 - A **`delivered`** message is refused without `--force`. **This includes a
-  delivered-but-unverified message**: the substrate has no `delivered_in_input_box`
-  column — verified and unverified both read as `delivered`, and only a mailman
-  journal line distinguishes them (#169). So recovering an unverified delivery
-  means `tmux-msg-claude resend <id> --force`. Once #169 makes the verified/unverified
-  split DB-queryable, a confirmed-unverified message could replay without
+  delivered-but-unverified message**: the durable `verified` column now records the
+  soft-fail (`verified = 0`), but `resend` doesn't yet consult it — verified and
+  unverified both look like `delivered` to the duplicate guard. So recovering an
+  unverified delivery means `tmux-msg-claude resend <id> --force`. Once `resend` reads
+  the `verified` bit, a confirmed-unverified message could replay without
   `--force`; until then `--force` is the deliberate "yes, I know it may already
   have arrived" signal.
 - A still **in-flight** message (`queued`/`delivering`) is likewise refused
@@ -397,9 +399,10 @@ diagnostic view — "who replied to what, and did it land?"):
 ```
 
 Glyphs: `○` root · `✓` delivered · `✗` failed · `…` queued/delivering. (There is no
-distinct `delivered_in_input_box` glyph yet — the substrate stores that soft-failure
-as `delivered`; making it DB-queryable is tracked in #169.) `--format json` emits
-the nested tree for tooling. `thread` is read-only and never touches a pane.
+distinct `delivered_in_input_box` glyph yet — `thread` shows that soft-failure as
+`delivered`; it doesn't yet read the `verified` column that would let it mark the
+split.) `--format json` emits the nested tree for tooling. `thread` is read-only and
+never touches a pane.
 
 When you *write* into a chain with `send --reply-to <id>`, the substrate runs the same
 walk to warn you if the thread moved since you last spoke — the `thread_freshness`
@@ -415,10 +418,10 @@ last 24h; `--window` takes `all`, `<N>d` (e.g. `7d`), or any Go duration
 (`1h`/`90m`); `--agent X` scopes to one agent; `--pair --top N` shows the
 busiest sender→recipient pairs; `--format json` emits machine-readable output
 (also carrying `p95_latency_ms`). The verified-vs-unverified delivery split is
-*not* shown here — both land as `state='delivered'` in the DB (the
-`delivered_in_input_box` signal is a mailman journal line, not a column), so use
-`status --today` / `health` for that breakdown; making it DB-queryable is
-tracked in #169.
+*not* shown here — `stats` doesn't yet read the durable `verified` column, so both
+land in the table as `state='delivered'`. Use `tmux-msg-claude sent --state
+delivered_in_input_box`, or the journal-sourced `status --today` / `health`, for that
+breakdown.
 
 **Campaign digest.** `tmux-msg-claude digest` is the *qualitative* sibling to `stats`:
 where `stats` answers "how much / how fast," `digest` answers "what conversations
@@ -649,7 +652,8 @@ CREATE TABLE messages (
   state         TEXT NOT NULL DEFAULT 'queued', -- queued|delivering|delivered|failed
   created_at    TEXT NOT NULL DEFAULT (datetime('now','subsec')),
   delivered_at  TEXT,
-  error         TEXT
+  error         TEXT,
+  verified      INTEGER                         -- 1=verified, 0=unverified (delivered_in_input_box), NULL=pre-#169 (never retroactively guessed)
 );
 CREATE INDEX ix_msg_queue ON messages(to_agent, state, id);
 

@@ -56,6 +56,17 @@ deprecated alias through v0.11.0).
   three flags (`quick`, `no_reply_expected`, fan-out) survive the round-trip
   through the store.
 
+- **README: reconcile the `verified`-marker docs with the shipped binary (#213).**
+  The durable `verified` column (#169) shipped — the migration exists
+  (`internal/store/store.go`) and `tmux-msg-claude sent --state delivered_in_input_box`
+  queries it — but the README still described it as unbuilt in several places: the
+  Storage schema omitted the column, and the `stats` / `resend` / `thread` passages
+  said the split was "not DB-queryable / tracked in #169." Corrected to match shipped
+  behavior — the column exists and is DB-queryable, while `stats` / `resend` / `thread`
+  / `mcp` / `status` don't *consume* it yet (that consumer-plumbing is tracked
+  separately as #230). Also fixed an internal contradiction: one passage claimed
+  `stats` reports the verified/unverified split — it does not.
+
 ## [0.10.0] — 2026-06-08
 
 ### Added
