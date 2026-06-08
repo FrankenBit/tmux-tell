@@ -196,14 +196,14 @@ func TestStateCLI_MailboxOnlyAgent_ShortCircuitsToIdle(t *testing.T) {
 	// installFakeAgentState would normally satisfy the AgentState
 	// probe; here we DON'T install it, so any call to tmuxio.AgentState
 	// would fail. The short-circuit must bypass the probe entirely.
-	s := newCmdTestStore(t, "operator")
-	if err := s.SetDeliveryMode(context.Background(), "operator",
+	s := newCmdTestStore(t, "alice")
+	if err := s.SetDeliveryMode(context.Background(), "alice",
 		store.DeliveryModeMailboxOnly); err != nil {
 		t.Fatalf("set delivery_mode: %v", err)
 	}
 
 	var stdout, stderr bytes.Buffer
-	exit := runStateWithStore(context.Background(), s, "operator", "json",
+	exit := runStateWithStore(context.Background(), s, "alice", "json",
 		&stdout, &stderr)
 	if exit != exitOK {
 		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())

@@ -90,6 +90,12 @@ func TestResolveOperatorTarget_SlotReferencesUnregistered(t *testing.T) {
 	if err == nil {
 		t.Errorf("resolve to unregistered slot target should error; got nil")
 	}
+	// Pin substrate-honest error framing: the message must name the
+	// "unregistered chamber" condition so the sender can distinguish
+	// it from the never-observed case (Surveyor N1 on PR #257).
+	if err != nil && !strings.Contains(err.Error(), "unregistered chamber") {
+		t.Errorf("error should mention 'unregistered chamber'; got %q", err.Error())
+	}
 }
 
 // TestResolveOperatorTarget_NeverObserved pins the bootstrap case: no

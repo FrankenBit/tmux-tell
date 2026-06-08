@@ -56,6 +56,12 @@ func resolveOperatorTarget(ctx context.Context, s *store.Store) (string, error) 
 		if _, gerr := s.GetAgent(ctx, last); gerr == nil {
 			return last, nil
 		}
+		// Slot exists but points at an unregistered chamber. Substrate-
+		// honest fail-loud rather than falling through to the
+		// never-observed branch (which would wrap a nil error and emit
+		// "%!w(<nil>)") — the operator was once at that chamber, but
+		// the chamber is gone.
+		return "", fmt.Errorf("operator presence slot points at unregistered chamber %q — re-attach to a registered chamber pane to re-seed the slot", last)
 	}
 	// Step 3: fail-loud.
 	if errors.Is(err, store.ErrNotFound) {

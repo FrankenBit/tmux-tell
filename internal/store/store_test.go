@@ -614,3 +614,31 @@ func TestAddAlias_SelfRebindIsFine(t *testing.T) {
 		t.Errorf("re-adding own alias should not collide: %v", err)
 	}
 }
+
+// TestUpsertAgent_RejectsReservedRoutingName pins the substrate-honest
+// rejection of routing primitives at registration time (Surveyor N3 on
+// PR #257). A chamber registering as "operator" would shadow the
+// send-side resolver — the resolver matches against the literal name
+// before resolving, so the phantom registration would harvest
+// operator-directed traffic.
+func TestUpsertAgent_RejectsReservedRoutingName(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	err := s.UpsertAgent(ctx, "operator", "%9")
+	if !errors.Is(err, ErrReservedRoutingName) {
+		t.Errorf("want ErrReservedRoutingName, got %v", err)
+	}
+}
+
+// TestAddAlias_RejectsReservedRoutingName pins the same reservation on
+// the alias path: a real chamber claiming "operator" as an alias would
+// shadow the same routing primitive (Surveyor N3 on PR #257).
+func TestAddAlias_RejectsReservedRoutingName(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%5")
+	err := s.AddAlias(ctx, "alice", "operator")
+	if !errors.Is(err, ErrReservedRoutingName) {
+		t.Errorf("want ErrReservedRoutingName, got %v", err)
+	}
+}

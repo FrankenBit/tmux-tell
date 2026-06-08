@@ -22,13 +22,13 @@ func TestServe_ConfigDeliveryMode_OverridesDB(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
-	_ = s.UpsertAgent(ctx, "operator", "%5")
+	_ = s.UpsertAgent(ctx, "alice", "%5")
 	// DB says paste-and-enter (default from migration).
-	if err := s.SetDeliveryMode(ctx, "operator", store.DeliveryModePasteAndEnter); err != nil {
+	if err := s.SetDeliveryMode(ctx, "alice", store.DeliveryModePasteAndEnter); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
-	opts := fastOpts("operator")
+	opts := fastOpts("alice")
 	opts.ConfigDeliveryMode = store.DeliveryModeMailboxOnly // config overrides
 
 	logbuf := &bytes.Buffer{}
@@ -47,7 +47,7 @@ func TestServe_ConfigDeliveryMode_OverridesDB(t *testing.T) {
 	}
 
 	// DB column should remain unchanged (runtime override only).
-	a, _ := s.GetAgent(ctx, "operator")
+	a, _ := s.GetAgent(ctx, "alice")
 	if a.DeliveryMode != store.DeliveryModePasteAndEnter {
 		t.Errorf("DB column = %s, want %s (config override should NOT persist)",
 			a.DeliveryMode, store.DeliveryModePasteAndEnter)
@@ -62,12 +62,12 @@ func TestServe_ConfigDeliveryMode_InvalidLogsAndFallsBack(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
-	_ = s.UpsertAgent(ctx, "operator", "%5")
-	if err := s.SetDeliveryMode(ctx, "operator", store.DeliveryModeMailboxOnly); err != nil {
+	_ = s.UpsertAgent(ctx, "alice", "%5")
+	if err := s.SetDeliveryMode(ctx, "alice", store.DeliveryModeMailboxOnly); err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
-	opts := fastOpts("operator")
+	opts := fastOpts("alice")
 	opts.ConfigDeliveryMode = "bogus-mode" // invalid
 
 	logbuf := &bytes.Buffer{}

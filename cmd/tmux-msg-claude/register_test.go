@@ -36,12 +36,12 @@ func TestRegister_CLI_DefaultsToPasteAndEnter(t *testing.T) {
 }
 
 func TestRegister_CLI_AcceptsMailboxOnly(t *testing.T) {
-	s := newCmdTestStore(t, "operator")
+	s := newCmdTestStore(t, "alice")
 	ctx := context.Background()
-	if err := s.SetDeliveryMode(ctx, "operator", store.DeliveryModeMailboxOnly); err != nil {
+	if err := s.SetDeliveryMode(ctx, "alice", store.DeliveryModeMailboxOnly); err != nil {
 		t.Fatalf("set delivery_mode: %v", err)
 	}
-	a, err := s.GetAgent(ctx, "operator")
+	a, err := s.GetAgent(ctx, "alice")
 	if err != nil {
 		t.Fatalf("get_agent: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestRegister_CLI_RejectsInvalidDeliveryMode(t *testing.T) {
 	t.Setenv("CLAUDE_MSG_DB", ":memory:")
 	t.Setenv("TMUX_PANE", "%5")
 	var stdout, stderr bytes.Buffer
-	exit := runRegisterCLI([]string{"--name", "operator", "--delivery-mode", "bogus"},
+	exit := runRegisterCLI([]string{"--name", "alice", "--delivery-mode", "bogus"},
 		&stdout, &stderr)
 	if exit != exitUsage {
 		t.Errorf("exit = %d, want exitUsage (%d)", exit, exitUsage)

@@ -622,7 +622,7 @@ than guess — add an explicit alias on the one you meant.
 
 ## Storage schema
 
-SQLite (WAL mode), two tables; the DB lives at `/var/lib/tmux-msg/messages.db`:
+SQLite (WAL mode), three tables; the DB lives at `/var/lib/tmux-msg/messages.db`:
 
 ```sql
 CREATE TABLE messages (
@@ -650,7 +650,19 @@ CREATE TABLE agents (
   backlog_epoch_id INTEGER,                       -- #204 claim-floor (NULL = no epoch)
   attention_state  TEXT NOT NULL DEFAULT 'idle'   -- 'idle' | 'busy' | 'awaiting_operator' (#224)
 );
+
+CREATE TABLE presence (
+  key        TEXT PRIMARY KEY,                -- e.g. 'operator.last_seen_in' (#228)
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 ```
+
+The `presence` table holds substrate-level observation slots that are
+neither per-message nor per-agent. Today the only slot is
+`operator.last_seen_in`, written by the `send --to operator` resolver
+each time it observes the operator attached at a registered chamber's
+pane (see §Operator-presence routing).
 
 ## Install internals: what runs as root
 

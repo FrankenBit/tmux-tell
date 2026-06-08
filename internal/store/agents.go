@@ -15,6 +15,9 @@ func (s *Store) UpsertAgent(ctx context.Context, name, paneID string) error {
 	if name == "" {
 		return errors.New("store: agent name required")
 	}
+	if ReservedRoutingName(name) {
+		return fmt.Errorf("%w: %q", ErrReservedRoutingName, name)
+	}
 
 	if paneID == "" {
 		_, err := s.db.ExecContext(ctx,
@@ -214,6 +217,13 @@ func (s *Store) SetAttentionState(ctx context.Context, name, state string) error
 // never has to choose between two canonicals at delivery time.
 var ErrAliasCollision = errors.New("store: alias collides with an existing canonical agent")
 
+// ErrReservedRoutingName is returned by UpsertAgent / SetAliases /
+// AddAlias when a caller tries to register or alias one of the
+// substrate's reserved routing primitives (see ReservedRoutingName).
+// Substrate-honest fail-loud: a real chamber registering as a
+// routing primitive would shadow the resolver (#228).
+var ErrReservedRoutingName = errors.New("store: name is reserved as a routing primitive")
+
 // SetAliases replaces the alias list for an agent. Empty slice removes
 // all aliases. Returns ErrNotFound if no agent with that name exists,
 // or ErrAliasCollision if any requested alias is already claimed by
@@ -265,6 +275,11 @@ func (s *Store) AddAlias(ctx context.Context, name, alias string) error {
 func (s *Store) checkAliasCollisions(ctx context.Context, name string, aliases []string) error {
 	if len(aliases) == 0 {
 		return nil
+	}
+	for _, candidate := range aliases {
+		if ReservedRoutingName(candidate) {
+			return fmt.Errorf("%w: alias %q", ErrReservedRoutingName, candidate)
+		}
 	}
 	all, err := s.ListAgents(ctx)
 	if err != nil {

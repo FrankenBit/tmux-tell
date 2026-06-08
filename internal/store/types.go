@@ -175,3 +175,27 @@ func ValidAttentionState(s string) bool {
 		s == AttentionStateBusy ||
 		s == AttentionStateAwaitingOperator
 }
+
+// ReservedRoutingName reports whether name is reserved as a routing
+// primitive (a virtual recipient resolved at delivery-prep time) and
+// therefore cannot be registered as a real agent name or alias.
+//
+// Routing primitives:
+//   - "operator" (#228) — resolves to the chamber the operator is
+//     currently or was most-recently attached to. A real chamber
+//     registering as "operator" would shadow the resolver: the
+//     send-side substitution would match against the literal name
+//     before ever calling into resolveOperatorTarget, and a phantom
+//     chamber could harvest operator-directed traffic.
+//
+// Other reserved names like "operator-attention" (#224) are NOT in
+// this list because they ARE real recipients (the operator pre-
+// registers them as mailbox-only agents); they are reserved by
+// convention, not by substrate enforcement.
+//
+// ErrReservedRoutingName is the error returned when a reserved name
+// is attempted; callers should surface it to the operator as a clear
+// "pick a different name" signal.
+func ReservedRoutingName(name string) bool {
+	return name == "operator"
+}
