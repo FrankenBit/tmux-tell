@@ -1,6 +1,8 @@
 // Package main is the tmux-msg-claude CLI entrypoint — the Claude Code adapter
 // for the tmux-msg substrate (renamed from claude-msg per #174 Option 2 / #177;
-// `claude-msg` survives as a deprecated alias through v0.11.0).
+// `claude-msg` survives as a deprecated alias through v1.0 — extension from the
+// v0.11.0 two-minor-floor earliest per ADR-0008 §Discretion clause, operator
+// decision 2026-06-08).
 //
 // Subcommand dispatcher only. Each subcommand handler lives in its own file
 // (send.go, inbox.go, status.go, agents.go, whoami.go, …) and is split into
@@ -23,7 +25,7 @@ import (
 // migrate before the alias is removed.
 const (
 	deprecatedBinaryAlias   = "claude-msg"
-	deprecatedBinaryRemoval = "v0.11.0" // two-minor floor from the v0.9.0 rename (ADR-0008)
+	deprecatedBinaryRemoval = "v1.0" // extended from v0.11.0 per ADR-0008 §Discretion clause (operator decision 2026-06-08)
 )
 
 const usage = `usage: tmux-msg-claude <subcommand> [args]

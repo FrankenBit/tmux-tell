@@ -24,7 +24,7 @@ import (
 const (
 	envAgentName       = "TMUX_AGENT_NAME"
 	legacyEnvAgentName = "CLAUDE_AGENT_NAME"
-	envVarRemoval      = "v0.11.0"
+	envVarRemoval      = "v1.0" // extended from v0.11.0 per ADR-0008 §Discretion clause (operator decision 2026-06-08)
 )
 
 // deprecationWarnWriter is where the legacy-env-var deprecation WARN goes, and

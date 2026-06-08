@@ -28,9 +28,12 @@ Cadence (clarified per Surveyor review of v0.2.0):
   `### Deprecated` entry here. Pre-1.0 keeps the looseness above.
 
 Run `tmux-msg-claude --version` to see what's installed (`claude-msg` works as a
-deprecated alias through v0.11.0).
+deprecated alias through the v1.0 stability boundary — earliest removal extended
+at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-08).
 
 ## [Unreleased]
+
+## [0.11.0] — 2026-06-08
 
 ### Added
 
@@ -84,6 +87,27 @@ deprecated alias through v0.11.0).
   `claude-msg`" section near the end (a fresh install has nothing to migrate). No
   behavioral content changed; the provenance still lives in this CHANGELOG and the
   ADRs.
+
+### Deprecated
+
+- **`claude-msg` binary alias + `claude-mailman@` systemd template alias +
+  `$CLAUDE_AGENT_NAME` env var fallback — earliest removal extended from v0.11.0
+  to v1.0 per ADR-0008 §Discretion clause (#177 extension).**
+  Deprecated in v0.9.0; earliest removal v1.0.0.
+
+  Per the operator's decision 2026-06-08, the alias machinery for the v0.9.0
+  rename arc (#177) is held in place through the v1.0 stability boundary
+  instead of removed at the v0.11.0 two-minor-floor earliest. Rationale:
+  maximize migration comfort for existing operator config; the alias machinery
+  is cheap to maintain (a symlink + a systemd template alias + an identity-layer
+  env-var fallback); v1.0 is the natural stability cutover where removing the
+  alias machinery composes with the broader 1.0 surface freeze. The binary's
+  WARN log now emits `removal=v1.0` (was `removal=v0.11.0`) — codified in
+  `cmd/tmux-msg-claude/main.go:26` (`deprecatedBinaryRemoval`) and
+  `internal/identity/identity.go:27` (`envVarRemoval`) — and `docs/reference.md`
+  §Migrating from `claude-msg` carries the same updated horizon. K-counter
+  remains preserved by the alias machinery per ADR-0008 §Amendment A (Reading B);
+  v0.11.0 increments K to 5.
 
 ### Fixed
 

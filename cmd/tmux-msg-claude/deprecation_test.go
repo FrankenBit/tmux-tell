@@ -66,7 +66,7 @@ func TestWarnIfDeprecatedName(t *testing.T) {
 			if tc.wantWarn {
 				// The removal version + the migration pointer must be present so
 				// the WARN is actionable + greppable (ADR-0008 worked example).
-				for _, want := range []string{"removal=v0.11.0", "tmux-msg-claude"} {
+				for _, want := range []string{"removal=v1.0", "tmux-msg-claude"} {
 					if !strings.Contains(got, want) {
 						t.Errorf("warn missing %q; got %q", want, got)
 					}

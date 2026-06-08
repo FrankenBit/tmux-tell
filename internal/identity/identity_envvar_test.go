@@ -65,7 +65,7 @@ func TestEnvFallback_LegacyVar_Warns(t *testing.T) {
 	for _, want := range []string{
 		"WARN deprecated_surface_used",
 		"name=CLAUDE_AGENT_NAME",
-		"removal=v0.11.0",
+		"removal=v1.0",
 		"TMUX_AGENT_NAME", // points at the replacement
 	} {
 		if !strings.Contains(got, want) {

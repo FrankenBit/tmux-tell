@@ -517,15 +517,17 @@ subcommand args/flags/exit codes, `--format json` shapes, the DB schema, and the
 exported Go API (`discover` / `store` / `tmuxio`). Each clean cut increments K;
 any break on a tracked surface resets it to 0.
 
-**Current K: 4** (Sea-trials K=3 gate cleared at v0.9.0; the counter keeps
+**Current K: 5** (Sea-trials K=3 gate cleared at v0.9.0; the counter keeps
 raising past the gate and retires at v1.0). The `cli-semaphore → tmux-msg`
 substrate rename (v0.5.0) and the MCP wire-protocol rename (v0.6.0) were the
-last deliberate breaks; v0.7.0, v0.8.0, v0.9.0, and v0.10.0 have each been
-non-breaking. v0.10.0 ships a second K-preserving deprecation arc —
+last deliberate breaks; v0.7.0, v0.8.0, v0.9.0, v0.10.0, and v0.11.0 have
+each been non-breaking. v0.10.0 ships a second K-preserving deprecation arc —
 `delivered_unverified → delivered_in_input_box` with CLI flag / TOML
 key / `--state` value / JSON shadow-field aliases per ADR-0008's two-minor
 floor (earliest removal v0.12.0) — alongside the v0.9.0 `claude-msg →
-tmux-msg-claude` aliases that continue to function through v0.11.0. Per
+tmux-msg-claude` aliases that, per the v0.11.0 extension (ADR-0008
+§Discretion clause, operator decision 2026-06-08), continue to function
+through the v1.0 stability boundary. Per
 ADR-0008's [Reading B amendment](docs/adr/0008-deprecation-policy.md#amendment-a--2026-06-08-k-counter-interaction):
 deprecation-with-functioning-alias preserves K-counter progress; only removal
 resets it. The live per-release record lives in the tracker at
@@ -537,9 +539,10 @@ A fresh install has nothing to migrate — skip this. If you ran a release befor
 v0.9.0, the adapter binary was renamed there: `claude-msg` → `tmux-msg-claude`, the
 systemd template (`claude-mailman@` → `tmux-msg-claude-mailman@`), and the agent-name
 env var (`$CLAUDE_AGENT_NAME` → `$TMUX_AGENT_NAME`) — all to encode the substrate plus
-its adapter. For one deprecation cycle (removed **v0.11.0**, per
-[ADR-0008](docs/adr/0008-deprecation-policy.md)'s two-minor floor) `install.sh` keeps
-`claude-msg` and `claude-mailman@` working as aliases, and the identity layer still
-reads `$CLAUDE_AGENT_NAME` as a fallback — each emits a
-`WARN deprecated_surface_used … removal=v0.11.0` when used. Migrate scripts, units,
-and env to the new names at your leisure before then.
+its adapter. The aliases stay functional through the v1.0 stability boundary
+(extended at the v0.11.0 cut from the two-minor-floor earliest of v0.11.0 per
+[ADR-0008](docs/adr/0008-deprecation-policy.md)'s §Discretion clause; operator
+decision 2026-06-08): `install.sh` keeps `claude-msg` and `claude-mailman@` working
+as aliases, and the identity layer still reads `$CLAUDE_AGENT_NAME` as a fallback —
+each emits a `WARN deprecated_surface_used … removal=v1.0` when used. Migrate
+scripts, units, and env to the new names at your leisure before then.
