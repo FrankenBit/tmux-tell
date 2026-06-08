@@ -26,6 +26,13 @@ CI runs `go vet`, `go build`, and `go test` **without** `-race` (the runner imag
 lacks a C compiler / cgo, which the race detector needs) — so run `-race` locally and
 push it clean.
 
+**`tail` watch mechanism — rowid-polling, not `update_hook`.** The mailmen that write
+rows are *separate processes* from the `tail` CLI, and SQLite's `update_hook` only fires
+for the connection that registered it (per-connection, same-process), so it would never
+see their writes. `tail` polls `MAX(id)` since-last-seen (configurable `--interval`,
+default 300ms) and re-reads in-flight ids for state transitions; WAL mode keeps these
+reads safe concurrent with mailman writes.
+
 ## How we work
 
 - **CHANGELOG.** Every change-carrying PR adds an entry under `## [Unreleased]` in

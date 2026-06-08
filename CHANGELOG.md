@@ -47,6 +47,16 @@ deprecated alias through v0.11.0).
 
 ### Changed
 
+- **README: split into a lean landing page + `docs/reference.md` operator manual (#214).**
+  The 729-line README served an evaluating stranger and a committed operator at once and
+  read as a wall of text. Split along that seam: the landing README (232 lines) keeps
+  pitch → what-it-is/isn't → install → quickstart (cut at the rendered-output win) → the
+  observe-gate differentiator → MCP setup → "where to go next"; the full command
+  reference, message-rendering chrome, MCP details, identity/storage/migration, and the
+  K-counter mechanics move verbatim to the new `docs/reference.md`. The `tail`
+  rowid-polling implementation note moves to `CONTRIBUTING.md`. Restructure only — no
+  behavioral or factual content changed; every fact remains reachable.
+
 - **ADR-0008 amended (Amendment B) — structured `### Deprecated` CHANGELOG
   format (#209).** Codifies a machine-parseable shape for `### Deprecated`
   entries: a title line (`- **<surface> — replaced by <replacement>
