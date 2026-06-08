@@ -142,6 +142,14 @@ type serveOpts struct {
 	// RetentionSweepInterval is how often the background retention goroutine
 	// wakes to prune old delivered+failed rows. Default 1h.
 	RetentionSweepInterval time.Duration
+	// DedupeWindow is the look-back window for the recipient-side delivery
+	// dedupe (#157 PR2). When > 0, the mailman checks each incoming message
+	// against prior delivered_in_input_box rows from the same sender within
+	// this window: if the original is now visible in scrollback it is confirmed
+	// and the duplicate is absorbed; otherwise the replay is delivered normally.
+	// 0 disables the check entirely — zero behavior change for existing deploys.
+	// Default config.DefaultDedupeWindow (60s).
+	DedupeWindow time.Duration
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -291,6 +299,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	// zero behavior change.
 	retention := config.ResolveString(cfg, *agent, "retention", config.DefaultRetention)
 	retentionSweepInterval := config.ResolveDuration(cfg, *agent, "retention-sweep-interval", config.DefaultRetentionSweepInterval)
+	// Dedupe window (#157 PR2). TOML-only knob; resolved once at startup.
+	// Default 60s; "0s" disables the dedupe check entirely.
+	dedupeWindow := config.ResolveDuration(cfg, *agent, "dedupe-window", config.DefaultDedupeWindow)
 
 	if *agent == "" {
 		fmt.Fprintln(stderr, "--agent required")
@@ -339,6 +350,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		NotifyOnDeliveredInInputBox: *notifyOnDeliveredInInputBox,
 		Retention:                   retention,
 		RetentionSweepInterval:      retentionSweepInterval,
+		DedupeWindow:                dedupeWindow,
 	}, logger, stdout, stderr)
 }
 
@@ -618,6 +630,47 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					return exitOK
 				}
 				continue
+			}
+		}
+
+		// Recipient-side dedupe (#157 PR2). Before entering the observe-gate
+		// (which may hold for seconds), check whether a prior delivery attempt
+		// for the same body from the same sender landed as delivered_in_input_box
+		// within the configured window. If the original is now visible in pane
+		// scrollback, confirm it (mark verified=1) and absorb this duplicate
+		// (mark failed + notify sender). If not visible, deliver the replay.
+		// DedupeWindow=0 disables the check entirely — zero behavior change.
+		if opts.DedupeWindow > 0 {
+			cutoff := time.Now().Add(-opts.DedupeWindow).UTC().Format(strandedTimeFormat)
+			prior, merr := s.FindDedupeMatch(opCtx, msg.FromAgent, msg.ToAgent, msg.Body, cutoff)
+			if merr != nil {
+				logger.Printf("WARN dedupe_match_err id=%s err=%v — delivering anyway", msg.PublicID, merr)
+			} else if prior != nil {
+				verifyToken := "id " + prior.PublicID
+				visible, verr := tmuxio.CheckTokenVisible(opCtx, paneForDelivery, verifyToken)
+				if verr != nil {
+					logger.Printf("WARN dedupe_reverify_err id=%s original=%s err=%v — delivering anyway",
+						msg.PublicID, prior.PublicID, verr)
+				} else if visible {
+					if err := s.MarkVerifiedByDedupe(opCtx, prior.PublicID); err != nil {
+						logger.Printf("WARN dedupe_mark_verified_err original=%s err=%v", prior.PublicID, err)
+					}
+					absorbReason := "dedupe_absorbed: original " + prior.PublicID +
+						" confirmed via scrollback re-verify"
+					if err := s.MarkFailed(opCtx, msg.PublicID, absorbReason); err != nil {
+						logger.Printf("WARN dedupe_absorb_err id=%s err=%v", msg.PublicID, err)
+					}
+					logger.Printf("dedupe_absorbed id=%s original=%s", msg.PublicID, prior.PublicID)
+					m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateFailed)
+					insertDedupeNotice(opCtx, s, logger, opts.Agent, msg, prior.PublicID)
+					if stopOrSleep(stopCtx, opts.InterMessageDelay) {
+						return exitOK
+					}
+					continue
+				}
+				// Original not visible in scrollback — deliver the replay normally.
+				logger.Printf("dedupe_original_gone id=%s original=%s — delivering replay",
+					msg.PublicID, prior.PublicID)
 			}
 		}
 
@@ -1150,6 +1203,39 @@ func sleepRespectingWatchdog(stopCtx context.Context, d, pingEvery time.Duration
 			_ = sdnotify.Watchdog()
 		}
 	}
+}
+
+// insertDedupeNotice sends a positive resolution notice to the original sender
+// when the dedupe path confirms the original and absorbs a replay (#157 PR2).
+// Distinct from KindDeliveryFailureNotice — this is a success signal, not a
+// failure. Loop prevention: if the absorbed message is itself a notice, skip
+// (mirrors the same guard in maybeInsertFailureNotice).
+func insertDedupeNotice(
+	ctx context.Context,
+	s *store.Store,
+	logger *log.Logger,
+	this string,
+	replay *store.Message,
+	originalID string,
+) {
+	if replay.Kind == store.KindDeliveryFailureNotice || replay.Kind == store.KindDedupeNotice {
+		return
+	}
+	body := fmt.Sprintf(":white_check_mark: Dedupe resolved\n  Replay id: %s\n  Original id: %s (now confirmed delivered via scrollback re-verify)\n  Replay dropped; no further action needed.",
+		replay.PublicID, originalID)
+	res, err := s.InsertNotice(ctx, store.InsertParams{
+		FromAgent: this,
+		ToAgent:   replay.FromAgent,
+		Body:      body,
+		Kind:      store.KindDedupeNotice,
+	})
+	if err != nil {
+		logger.Printf("dedupe_notice_err replay_id=%s to=%s err=%v",
+			replay.PublicID, replay.FromAgent, err)
+		return
+	}
+	logger.Printf("dedupe_notice_inserted notice_id=%s replay_id=%s original_id=%s to=%s",
+		res.PublicID, replay.PublicID, originalID, replay.FromAgent)
 }
 
 // runRetentionSweep is the background goroutine that periodically deletes

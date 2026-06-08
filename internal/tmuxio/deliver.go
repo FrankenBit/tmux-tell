@@ -275,6 +275,21 @@ func uniqueBufferName() string {
 	return fmt.Sprintf("inject-%d-%s", os.Getpid(), hex.EncodeToString(b[:]))
 }
 
+// CheckTokenVisible reports whether token currently appears anywhere in the
+// given pane's recent scrollback (up to 500 lines). A single capture-pane
+// call — no retry. Returns false on any tmux error (can't substantiate
+// visibility → treat as not visible, letting the caller deliver the replay).
+//
+// Used by the dedupe path (#157 PR2) to re-verify a prior
+// delivered_in_input_box message without touching the recipient's pane.
+func CheckTokenVisible(ctx context.Context, pane, token string) (bool, error) {
+	out, err := tmuxRun(ctx, nil, "capture-pane", "-p", "-S", "-500", "-t", pane)
+	if err != nil {
+		return false, fmt.Errorf("tmuxio: capture-pane: %w", err)
+	}
+	return strings.Contains(string(out), token), nil
+}
+
 func trim(s string, n int) string {
 	if len(s) <= n {
 		return s

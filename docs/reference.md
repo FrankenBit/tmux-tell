@@ -369,6 +369,34 @@ The duplicate guard keeps an accidental re-run from spamming:
 - A still **in-flight** message (`queued`/`delivering`) is likewise refused
   without `--force` — wait for a terminal state, or force a duplicate knowingly.
 
+**Automatic replay deduplication (TOML).** After a `resend`, the mailman closes
+the ambiguity loop automatically. Before delivering any message, it checks whether
+a prior `delivered_in_input_box` row from the same sender with the same body exists
+within the `dedupe-window` (default 60 s). If found, it re-verifies the original's
+`id <public_id>` token against the recipient's pane scrollback:
+
+- **Original now visible** — the message was actually processed. The original is
+  promoted to confirmed-`delivered` (`verified = 1`), the replay is absorbed (marked
+  `failed` with reason `dedupe_absorbed`), and a `dedupe_notice` is inserted back to
+  the sender confirming the resolution.
+- **Original not visible** — the message genuinely never landed. The replay proceeds
+  through normal delivery.
+
+Configure per-agent or fleet-wide:
+
+```toml
+[defaults]
+dedupe-window = "60s"   # default; set to "0s" to disable
+
+[agent.operator]
+dedupe-window = "0s"    # operator pane: disable dedupe (scrollback too short)
+```
+
+Precedence: per-agent block > `[defaults]` > hardcoded 60 s. `dedupe-window = "0s"`
+disables the check entirely — zero behavior change for existing deploys. The check
+is scoped to the serving agent (single-writer invariant) and never touches in-flight
+rows.
+
 **Reading a reply thread.** Two views of the same `reply_to` chain (both resolve
 the whole chain from *any* id in it — walk to root, then all descendants):
 `tmux-msg-claude log --thread <id>` renders it **flat-chronological** (an audit view);

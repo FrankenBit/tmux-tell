@@ -647,6 +647,58 @@ func (s *Store) MarkAcknowledgedBatch(ctx context.Context, toAgent string, epoch
 	return res.RowsAffected()
 }
 
+// FindDedupeMatch returns the most recent delivered+unverified message from
+// fromAgent to toAgent whose body matches exactly and whose created_at is
+// newer than cutoff. Returns nil (no error) when no match exists.
+//
+// Used by the mailman's dedupe path (#157 PR2): before delivering a message,
+// check whether a prior delivery attempt for the same body landed as
+// delivered_in_input_box (verified=0) within the dedupe window. If found,
+// the mailman re-verifies the original in pane scrollback and either confirms
+// it (absorbing the duplicate) or delivers the replay.
+func (s *Store) FindDedupeMatch(ctx context.Context, fromAgent, toAgent, body, cutoff string) (*Message, error) {
+	var m Message
+	var nre, q int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after
+		 FROM messages
+		 WHERE from_agent = ? AND to_agent = ? AND body = ?
+		   AND state = ? AND verified = 0 AND created_at > ?
+		 ORDER BY id DESC LIMIT 1`,
+		fromAgent, toAgent, body, StateDelivered, cutoff).Scan(
+		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
+		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter)
+	m.NoReplyExpected = nre != 0
+	m.Quick = q != 0
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: find dedupe match: %w", err)
+	}
+	return &m, nil
+}
+
+// MarkVerifiedByDedupe upgrades a delivered_in_input_box row to confirmed-
+// delivered: sets verified=1 on a delivered row that currently has verified=0.
+// Used by the mailman's dedupe path (#157 PR2) when a scrollback re-verify
+// confirms the original message was actually processed by the recipient.
+// Returns ErrNotFound when no matching delivered+unverified row exists.
+func (s *Store) MarkVerifiedByDedupe(ctx context.Context, publicID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET verified = 1
+		 WHERE public_id = ? AND state = ? AND verified = 0`,
+		publicID, StateDelivered)
+	if err != nil {
+		return fmt.Errorf("store: mark verified by dedupe: %w", err)
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: mark verified by dedupe %q: %w", publicID, ErrNotFound)
+	}
+	return nil
+}
+
 // GetMessage returns one message by its public_id, or ErrNotFound.
 func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, error) {
 	var m Message

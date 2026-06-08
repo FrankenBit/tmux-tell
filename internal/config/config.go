@@ -199,6 +199,15 @@ type Block struct {
 	// goroutine wakes to prune old rows. Default 1h. Standard Go duration
 	// syntax. Resolves through ResolveDuration.
 	RetentionSweepInterval *time.Duration `toml:"retention-sweep-interval"`
+	// DedupeWindow is the look-back window for the mailman's recipient-side
+	// delivery dedupe (#157 PR2). When a new message arrives whose body
+	// matches a prior delivered_in_input_box row from the same sender within
+	// this window, the mailman re-verifies the original via scrollback: if
+	// now visible it confirms the original and absorbs the duplicate; if not
+	// visible it delivers the replay. Default 60s. "0s" (or 0) disables
+	// the check entirely — zero behavior change for existing deploys. Resolves
+	// through ResolveDuration (per-agent > defaults > compiled default).
+	DedupeWindow *time.Duration `toml:"dedupe-window"`
 }
 
 // Load reads the config from the path resolved by:
@@ -404,6 +413,8 @@ func blockDurField(b *Block, field string) *time.Duration {
 		return b.InputStaleThreshold
 	case "retention-sweep-interval":
 		return b.RetentionSweepInterval
+	case "dedupe-window":
+		return b.DedupeWindow
 	}
 	return nil
 }
@@ -534,6 +545,7 @@ type ResolvedView struct {
 	VerifyRetryBudget           string        `json:"verify_retry_budget"`
 	Retention                   string        `json:"retention"`
 	RetentionSweepInterval      time.Duration `json:"retention_sweep_interval"`
+	DedupeWindow                time.Duration `json:"dedupe_window"`
 	PrivilegedAgents            []string      `json:"privileged_agents"`
 }
 
@@ -567,6 +579,7 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		VerifyRetryBudget:         ResolveString(file, agent, "verify-retry-budget", DefaultVerifyRetryBudget),
 		Retention:                 ResolveString(file, agent, "retention", DefaultRetention),
 		RetentionSweepInterval:    ResolveDuration(file, agent, "retention-sweep-interval", DefaultRetentionSweepInterval),
+		DedupeWindow:              ResolveDuration(file, agent, "dedupe-window", DefaultDedupeWindow),
 		PrivilegedAgents:          resolvePrivilegedAgents(file),
 	}
 }
@@ -602,6 +615,11 @@ const DefaultRetention = "infinite"
 
 // DefaultRetentionSweepInterval is the fallback sweep cadence (#245).
 const DefaultRetentionSweepInterval = time.Hour
+
+// DefaultDedupeWindow is the fallback look-back window for the mailman's
+// recipient-side delivery dedupe (#157 PR2). 60 seconds covers any reasonable
+// resend-after-unverified cycle. Set dedupe-window = "0s" in TOML to disable.
+const DefaultDedupeWindow = 60 * time.Second
 
 // resolvePrivilegedAgents returns a copy of the file's privileged-agents
 // list (or nil if the file is nil/empty). The defensive copy prevents
