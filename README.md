@@ -31,16 +31,11 @@ every message with `sqlite3`, and uninstall is one script.
   scheduler. It moves a message from one pane into another, safely, while a human
   might also be using that pane.
 
-> **Substrate vs CLI-tool flavor.** The substrate is tmux: the pane registry, the
-> paste-and-Enter delivery, the per-pane state detection (idle / busy / popup-open /
-> mid-compaction / awaiting-operator). The CLI tool inside the pane is downstream —
-> `tmux-msg-claude` is the binary built for Claude Code today; sibling binaries
-> (`tmux-msg-codex`, `tmux-msg-copilot`) could be built from the same substrate — the
-> binary name encodes the substrate (`tmux-msg`) plus the CLI-tool adapter (`claude`).
-> The repo name reflects what the substrate *is*, not which tool runs on top.
-> (Originally named `cli-semaphore`; re-grounded on the substrate's primitive in
-> v0.5.0. The adapter binary was `claude-msg` before v0.9.0 — see Install for the
-> deprecation alias.)
+> **Why the name has two parts.** `tmux-msg` is the substrate — the tmux pane
+> registry, the paste-and-Enter delivery, the per-pane state detection. The
+> `tmux-msg-claude` binary is that substrate plus the adapter for the CLI tool in the
+> pane (Claude Code today). The repo name reflects what the substrate *is*, not which
+> tool runs on top.
 
 ## How it works
 
@@ -79,15 +74,6 @@ root)**:
 sudo loginctl enable-linger "$USER"   # keep the user manager running across reboots
 systemctl --user daemon-reload        # so the mailman unit is visible
 ```
-
-> **Renamed in v0.9.0 (`claude-msg` → `tmux-msg-claude`, #177).** The binary, the
-> systemd template (`claude-mailman@` → `tmux-msg-claude-mailman@`), and the agent-name
-> env var (`$CLAUDE_AGENT_NAME` → `$TMUX_AGENT_NAME`) were renamed to encode the
-> substrate + adapter. For one deprecation cycle (removed **v0.11.0**, per ADR-0008's
-> two-minor floor) `install.sh` keeps `claude-msg` and `claude-mailman@` working as
-> aliases, and the identity layer still reads `$CLAUDE_AGENT_NAME` as a fallback —
-> each emits a `WARN deprecated_surface_used … removal=v0.11.0` when used. Migrate
-> scripts, units, and env to the new names at your leisure before v0.11.0.
 
 ### What runs as root, and what runs as you
 
@@ -132,7 +118,7 @@ first message across the bus
 That's the whole loop. `send` returns `{"ok":true,"id":"7f3a","queued":1, "recipient":{…}}`
 on success (or `{"ok":false,"error":"…"}` with a sysexits-style exit code on failure).
 
-The `recipient` block (#152) reports the recipient's **send-time disposition** so the
+The `recipient` block reports the recipient's **send-time disposition** so the
 sender knows where the message is headed: `registered`, `alive` (pane present),
 `delivery_mode`, `mailman_running`, and `pane_status` (`live`/`paused`/`unknown`). An
 **unregistered** recipient is always fail-loud (the message is *not* queued — a typo
@@ -145,12 +131,12 @@ shouldn't sit unclaimed forever). Two opt-in flags refine this:
   delivery state, then return a `delivery` block (`state` + `verify_ms`) — the
   synchronous "delivered?" confirmation without a follow-up `track`/`message_status`
   poll. (The verified-vs-unverified split isn't surfaced here — both are `delivered`
-  in the DB, per #169.)
+  in the DB.)
 - `--block-on-stale` — with `--reply-to`, refuse the send (`ok:false`) when the thread
   has moved since you last spoke. See the `thread_freshness` block below.
 
 When the send carries `--reply-to <id>`, the response adds a **`thread_freshness`**
-block (#155) — the crossed-message guard. Async bus traffic means replies cross in
+block — the crossed-message guard. Async bus traffic means replies cross in
 flight: you `reply_to` a thread-state that an inbound you haven't read may already have
 superseded. The block reports `{stale, newer_in_thread[], you_replied_to,
 latest_in_thread}`, where `newer_in_thread` lists messages in the reply chain that are
@@ -158,13 +144,13 @@ latest_in_thread}`, where `newer_in_thread` lists messages in the reply chain th
 moved since you last spoke." That's a substrate-knowable signal (reply_to walk + arrival
 order + to/from); it deliberately does *not* claim "messages you haven't *processed*",
 which the substrate can't know — a `delivered` paste is in your context stream but may
-not be attended-to (per #155's semantic correction; see also #169). By default `stale`
+not be attended-to. By default `stale`
 is informational and the send still succeeds; `--block-on-stale` turns it into a hard
 refusal so you can re-read before replying.
 
 The same fields are available over MCP (`tmux-msg.send` with `strict` /
 `wait_for_delivered` / `timeout` / `block_on_stale`). The response schema is a named
-struct contract that later disposition features (#157) extend.
+struct contract that later disposition features extend.
 
 To confirm a freshly-registered agent is reachable *without* sending it a message,
 `tmux-msg-claude ping bob` probes daemon-up + pane-live (no pane paste) — see
@@ -238,7 +224,7 @@ no message id, no blank line between envelope and body). The `✓` prefix marks 
 at a glance so a reader scrolling history can distinguish it from a regular bracket-header
 message. `no_reply_expected`, if set, is preserved as a `🔕` prefix on the body. The
 length marker is not applied to quick messages (single-line chrome is already the
-compactness signal). Sister to `--no-reply-expected` (#145): `--no-reply-expected`
+compactness signal). Sister to `--no-reply-expected`: `--no-reply-expected`
 reduces unnecessary acks; `--quick` reduces the overhead of necessary acks.
 
 System-generated messages (`delivery_failure_notice`, `stranded_draft`) carry their
@@ -252,7 +238,7 @@ title-cased in the header; stored agent names are lowercase by convention.
 | Per-recipient queue depth | 5 | a pane that isn't draining is wedged — fail fast, don't accumulate |
 | Per-sender backlog | 2 | one runaway agent can't starve the others |
 | Body size | 16 KB | anything bigger should be a file reference, not a tmux paste |
-| Recipients per send | 10 | limits blast radius on multi-recipient fan-out (#158); configurable via `max-recipients-per-send` |
+| Recipients per send | 10 | limits blast radius on multi-recipient fan-out; configurable via `max-recipients-per-send` |
 
 `send` rejects with `{"ok":false}` when a cap is exceeded.
 
@@ -293,7 +279,7 @@ It's *near*-read-only: apart from the optional 📫 nudge (opt out with
 your input row. The residual "decided-idle then pasted" race is caught by the
 verify-token + `delivered_in_input_box` safety net.
 
-**Verified vs unverified deliveries (#169).** After a paste+Enter, the mailman looks
+**Verified vs unverified deliveries.** After a paste+Enter, the mailman looks
 for a verify token to confirm the message actually surfaced. If it does, the delivery
 is *verified*; if the token never appears in the retry budget (typically the recipient
 was mid-turn and Enter was queued), the message still landed in the pane but the
@@ -315,11 +301,11 @@ from a verified one) — those are the natural next consumers of this marker.
 ## Operating the bus
 
 ```
-tmux-msg-claude send   --to Y[,Z,...] [--reply-to ID] [--strict] [--wait-for-delivered] [--block-on-stale] "body"  # one-shot; --to a,b,c fans to multiple recipients (#158)
-tmux-msg-claude resend ID [--force]                     # replay a failed/unverified message (#157)
+tmux-msg-claude send   --to Y[,Z,...] [--reply-to ID] [--strict] [--wait-for-delivered] [--block-on-stale] "body"  # one-shot; --to a,b,c fans to multiple recipients
+tmux-msg-claude resend ID [--force]                     # replay a failed/unverified message
 tmux-msg-claude ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
 tmux-msg-claude inbox  AGENT [--state STATE]            # list messages for AGENT
-tmux-msg-claude sent   [--since DUR] [--state STATE] [--to AGENT]  # sender's outbox (#159)
+tmux-msg-claude sent   [--since DUR] [--state STATE] [--to AGENT]  # sender's outbox
 tmux-msg-claude track  ID [--watch]                     # delivery state of one message
 tmux-msg-claude get    ID                               # fetch a processed message by id
 tmux-msg-claude status [--today]                        # paused state + queue depths per agent
@@ -360,7 +346,7 @@ ping to it reports `timeout`.)
 `--watch` re-renders on each state change until terminal. From MCP, call
 `tmux-msg.message_status {"id": "9c1d"}`.
 
-**Diagnosing a failed or unverified message — `resend` (#157).** When a message
+**Diagnosing a failed or unverified message — `resend`.** When a message
 lands `failed`, or lands `delivered` but you can't tell whether it actually
 surfaced in the recipient (a `delivered_in_input_box` — the paste landed but the
 verify-token never came back in budget), the recovery path is `tmux-msg-claude resend
@@ -441,10 +427,10 @@ excluded from thread analysis.
 
 **Live tail.** `tmux-msg-claude tail` is the cross-chamber firehose — all bus traffic,
 live, filtered to what you care about. It's the view the per-mailman journals and
-single-message `track` couldn't give: when a bug spans two chambers (the #137
-walk-back needed exactly this), `tail --from X --to Y` shows the correlated stream
-in one terminal. New rows print as they're inserted and `queued → delivered/failed`
-transitions print on the same id (a multi-line lifecycle). Filters compose (AND):
+single-message `track` couldn't give: when a bug spans two chambers, `tail --from X
+--to Y` shows the correlated stream in one terminal. New rows print as they're
+inserted and `queued → delivered/failed` transitions print on the same id (a
+multi-line lifecycle). Filters compose (AND):
 `--from` / `--to` / `--kind` / `--state` / `--since`. `--since` defaults to `now`
 (start live, no backfill) but takes any `parseWindow` spec (`5m`, `today`, `all`) to
 backfill first. `--format json` emits one object per line for piping. Ctrl-C exits
@@ -510,14 +496,14 @@ The pane is auto-detected, the row inserted, and the mailman started in the same
 Equivalent CLI: `tmux-msg-claude register --name myname`.
 
 The register response includes a **`queued`** count — the number of messages already
-waiting for this agent at register time (#151). A fresh or post-restart session (e.g.
+waiting for this agent at register time. A fresh or post-restart session (e.g.
 the spawn-per-task pattern, or a chamber that lost its pane and re-registers) learns it
 has backlog without a separate `tmux-msg.inbox` poll: if `queued > 0`, run
 `tmux-msg.inbox` to read it. The count is informational and never blocks registration;
 on the rare event the count can't be read, the response carries `queued_error` instead
 and registration still succeeds.
 
-**Don't-flood the backlog (#204).** A pane that comes back after a restart with a deep
+**Don't-flood the backlog.** A pane that comes back after a restart with a deep
 backlog shouldn't have the whole queue pasted into it at once. So when a `paste-and-enter`
 agent (re)registers with `queued > 0`, the register handler stamps a per-agent
 **claim-floor** and the mailman skips queued messages at or below it. The policy is the
@@ -579,7 +565,7 @@ allowlist of specific (sender, recipient) pairs.
 | `rename`  | ✓ | ✓ | useful for `<Project> #<Issue>` tab automation |
 | `cost`    | ✓ | ✗ | self-only — output goes to the recipient |
 | `help`    | ✓ | ✓ | harmless either way |
-| `clear`   | ✗ | ✗ | **edge-only** rescue path when `/compact` can't recover from token exhaustion (#60); loses in-flight work |
+| `clear`   | ✗ | ✗ | **edge-only** rescue path when `/compact` can't recover from token exhaustion; loses in-flight work |
 | `mcp-enable-tmux-msg`  | ✓ | ✓ | refresh the tool surface after deploying a new `tmux-msg.*` tool — no context loss |
 | `mcp-disable-tmux-msg` | ✓ | ✗ | self-only: raw peer-disable is a DoS surface; use the restart macro |
 | `mcp-restart-tmux-msg` | ✓ | ✓ | macro: `disable` + `enable` as two rows for a peer-safe reconnect |
@@ -605,7 +591,7 @@ drops the agent row, and optionally purges its history (`purge_messages: true`).
 MCP tool lists are sent once during the `initialize` handshake and not refreshed.
 Updating the binary and restarting the mailmen makes new tools available to *future*
 sessions; sessions started earlier stay pinned to the tool surface they initialized
-with. `mcp-restart-tmux-msg` (#28) re-initializes one session's MCP stdio without
+with. `mcp-restart-tmux-msg` re-initializes one session's MCP stdio without
 losing context; for a fleet, `tmux-msg-claude refresh-all-mcps` fires it per registered
 agent (operator-only — a peer-invokable bulk restart would be a DoS amplification
 class).
@@ -653,7 +639,7 @@ CREATE TABLE messages (
   created_at    TEXT NOT NULL DEFAULT (datetime('now','subsec')),
   delivered_at  TEXT,
   error         TEXT,
-  verified      INTEGER                         -- 1=verified, 0=unverified (delivered_in_input_box), NULL=pre-#169 (never retroactively guessed)
+  verified      INTEGER                         -- 1=verified, 0=unverified (delivered_in_input_box), NULL=unmarked (pre-migration, or not yet delivered)
 );
 CREATE INDEX ix_msg_queue ON messages(to_agent, state, id);
 
@@ -692,7 +678,7 @@ raising past the gate and retires at v1.0). The `cli-semaphore → tmux-msg`
 substrate rename (v0.5.0) and the MCP wire-protocol rename (v0.6.0) were the
 last deliberate breaks; v0.7.0, v0.8.0, v0.9.0, and v0.10.0 have each been
 non-breaking. v0.10.0 ships a second K-preserving deprecation arc —
-`delivered_unverified → delivered_in_input_box` (#140) with CLI flag / TOML
+`delivered_unverified → delivered_in_input_box` with CLI flag / TOML
 key / `--state` value / JSON shadow-field aliases per ADR-0008's two-minor
 floor (earliest removal v0.12.0) — alongside the v0.9.0 `claude-msg →
 tmux-msg-claude` aliases that continue to function through v0.11.0. Per
@@ -712,6 +698,19 @@ go test -race -count=1 ./...    # CI runs without -race (the runner lacks cgo)
 See [`docs/`](docs/) for the operator guides (observe-gate, diagnostic playbook,
 failure modes, security) and `docs/adr/` for the architecture decision records.
 Contributions welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md). **Building on tmux-msg downstream?** `CONTRIBUTING.md` records the external-contract commitments — the exported Go API + DB schema as stability surfaces — for consumers like Binnacle, which composes with tmux-msg as an external Go module ([ADR-0007](docs/adr/0007-binnacle-coexist-external-contract.md)).
+
+## Migrating from `claude-msg`
+
+A fresh install has nothing to migrate — skip this. If you ran a release before
+v0.9.0, the adapter binary was renamed there: `claude-msg` → `tmux-msg-claude`, the
+systemd template (`claude-mailman@` → `tmux-msg-claude-mailman@`), and the agent-name
+env var (`$CLAUDE_AGENT_NAME` → `$TMUX_AGENT_NAME`) — all to encode the substrate plus
+its adapter. For one deprecation cycle (removed **v0.11.0**, per
+[ADR-0008](docs/adr/0008-deprecation-policy.md)'s two-minor floor) `install.sh` keeps
+`claude-msg` and `claude-mailman@` working as aliases, and the identity layer still
+reads `$CLAUDE_AGENT_NAME` as a fallback — each emits a
+`WARN deprecated_surface_used … removal=v0.11.0` when used. Migrate scripts, units,
+and env to the new names at your leisure before then.
 
 ## Removal
 

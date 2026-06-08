@@ -64,6 +64,17 @@ deprecated alias through v0.11.0).
   (step 4) is the operator's surface for "which surfaces did I promise to
   remove?".
 
+- **README: de-insider pass for the public launch (#215).** Dropped the inline
+  `(#NNN)` issue-reference breadcrumbs throughout — they resolve to nothing for a
+  reader on the public GitHub mirror (the K-counter's `#163` tracker stays, in its
+  existing full-URL form). Demoted two insider blockquotes out of the newcomer's
+  first screen: the "substrate vs adapter" naming aside is compressed to the one
+  line that actually explains the binary name, and the `claude-msg → tmux-msg-claude`
+  migration story moved out of the fresh-install path into a new "Migrating from
+  `claude-msg`" section near the end (a fresh install has nothing to migrate). No
+  behavioral content changed; the provenance still lives in this CHANGELOG and the
+  ADRs.
+
 ### Fixed
 
 - **`ListFilter.Unverified + State` silent impossible WHERE (#220 Item 1).**
