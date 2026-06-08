@@ -43,6 +43,34 @@ push it clean.
   is discoverable on the issue itself and not just in side-channel chatter — see
   [`docs/chamber-dispatch.md`](docs/chamber-dispatch.md).
 
+## Release cuts
+
+The cut sequence (run from a clean main on the cut branch):
+
+1. **Sync state.** `git fetch origin && git checkout -b i/v<X.Y.Z>-release-cut
+   origin/main`
+2. **CHANGELOG header.** Move `[Unreleased]` content under
+   `## [<X.Y.Z>] — <YYYY-MM-DD>`; leave `## [Unreleased]` as the empty shell.
+3. **README version pin.** Update the `--version` example to v<X.Y.Z>.
+4. **Deprecation eligibility check.** Run `./scripts/deprecations.sh --for
+   v<X.Y.Z>` and confirm the cleared-for-removal list matches intent. If a
+   listed surface is NOT being removed this cut, document the extension reason
+   in the cut PR — the two-minor floor is a guarantee, not a ceiling
+   ([ADR-0008](docs/adr/0008-deprecation-policy.md) §Discretion clause).
+5. **Pre-commit checks.** `gofmt -l .` clean; `go vet ./...` clean; `go test
+   -race -count=1 ./...` green.
+6. **Cut PR.** Open the cut PR; reviewer approves; merge on green.
+7. **Tag + Forgejo release.** From the merged main: `git tag v<X.Y.Z> && git
+   push origin v<X.Y.Z>`. Forgejo release notes come from the `[<X.Y.Z>]`
+   CHANGELOG block.
+8. **Deploy.** `./install.sh` against the freshly-built binary; verify the
+   mailman lifecycle + a smoke round-trip on the target host.
+
+Deprecation-policy hygiene per ADR-0008 (the two-minor floor + the structured
+`### Deprecated` format from §Amendment B) is enforced at step 4 — the
+derive-script is the operator's surface for "which surfaces did I promise
+two cycles ago, and is this the cut where they come off?".
+
 ## The external contract (downstream consumers)
 
 tmux-msg is consumed as a standalone module by downstream projects — notably

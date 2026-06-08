@@ -32,6 +32,38 @@ deprecated alias through v0.11.0).
 
 ## [Unreleased]
 
+### Added
+
+- **Deprecation eligibility derive-script — `scripts/deprecations.sh` (#209).**
+  Per [ADR-0008](docs/adr/0008-deprecation-policy.md) §Amendment B, a thin bash
+  script walks `CHANGELOG.md` to surface each `### Deprecated` entry's
+  `(deprecated-in, earliest-removal)` version pin. Used at release-cut time via
+  `--for v<X.Y.Z>` to confirm the cleared-for-removal list before the cut;
+  `--all` produces the full table. Permissive parser handles canonical entries
+  (Amendment B's structured format) and pre-canonical legacy entries (extracts
+  what it can, surfaces a `[legacy format]` tag) without silently dropping
+  either. Entries without an extractable version-pin are surfaced as unpinned
+  — eyeballed manually at cut time.
+
+### Changed
+
+- **ADR-0008 amended (Amendment B) — structured `### Deprecated` CHANGELOG
+  format (#209).** Codifies a machine-parseable shape for `### Deprecated`
+  entries: a title line (`- **<surface> — replaced by <replacement>
+  (#<issue>).**`) followed by a version-pin line (`Deprecated in v<X.Y.Z>;
+  earliest removal v<A.B.C>.`), with free-form prose after. The CHANGELOG
+  remains the single source of truth (no separate registry; Option C hybrid
+  per operator decision 2026-06-07). Existing v0.9.0 / v0.10.0 entries follow
+  the near-equivalent legacy shape — the derive-script handles them
+  permissively; new entries should adopt the canonical form.
+
+- **`CONTRIBUTING.md` — release-cut runbook section (#209).** Adds a
+  step-by-step §Release cuts section codifying the cut sequence (sync →
+  CHANGELOG → README version → `scripts/deprecations.sh --for v<X.Y.Z>` →
+  pre-commit → cut PR → tag → deploy). The deprecation-eligibility check
+  (step 4) is the operator's surface for "which surfaces did I promise to
+  remove?".
+
 ### Fixed
 
 - **`ListFilter.Unverified + State` silent impossible WHERE (#220 Item 1).**

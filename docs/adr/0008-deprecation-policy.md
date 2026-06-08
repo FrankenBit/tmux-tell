@@ -1,8 +1,8 @@
 # ADR-0008: Deprecation policy — two-minor-cycle floor (post-1.0)
 
-> **Status**: Accepted (amended 2026-06-08 — see Amendment)
+> **Status**: Accepted (amended 2026-06-08 — see Amendment A + Amendment B)
 > **Date**: 2026-06-07
-> **Authors**: operator (ratified 2026-06-07), Herald (ADR), Quartermaster (amendment)
+> **Authors**: operator (ratified 2026-06-07), Herald (ADR), Quartermaster (amendments)
 
 ## Context
 
@@ -60,7 +60,7 @@ earliest-removal version; through the pre-removal cycles it keeps
 functioning and emits the WARN. Any announcement must name a
 forward-compatible replacement or explicitly state there is none.
 
-## Amendment — 2026-06-08 (K-counter interaction)
+## Amendment A — 2026-06-08 (K-counter interaction)
 
 The original Decision section (above) says **what** the deprecation policy is
 but leaves implicit **how** deprecation/removal interact with the
@@ -118,10 +118,109 @@ alias machinery is honored), every removal is the next deliberate K-reset.
   per-release "what's eligible for removal at v<X>" view is filed at #209
   (deprecation bookkeeping, Option C hybrid). Each `### Deprecated` entry
   carries a "Deprecated in v<X>; earliest removal v<Y>" line that the script
-  parses to drive the eligibility view.
+  parses to drive the eligibility view. *(Landed via §Amendment B,
+  2026-06-08.)*
 - **Cap-vs-keep-raising K-counter past gate.** Operator decided 2026-06-07:
   K keeps raising past 3 (no cap), retires at 1.0. Recorded in #163 but
   beyond the scope of this addendum.
+
+## Amendment B — 2026-06-08 (structured `### Deprecated` CHANGELOG format)
+
+The Decision section requires every deprecation announcement to land as a
+`[Unreleased] ### Deprecated` entry naming the surface, the earliest-removal
+version, and the replacement. As deprecations stack across releases — feature
+A deprecated in v0.9.0 (earliest removal v0.11.0), feature B in v0.10.0
+(earliest removal v0.12.0), etc. — the question "*which surfaces are eligible
+for removal at v<X.Y.Z>?*" becomes a grep-and-reason exercise that scales
+poorly and is silently easy to miss.
+
+This amendment codifies a machine-parseable shape for each `### Deprecated`
+entry so a thin derive-script can produce the removal-eligibility view per
+cut. The CHANGELOG remains the **single source of truth** — no separate
+registry. Ratified by the operator 2026-06-07 (Option C hybrid: CHANGELOG-
+as-SoT + derive-script).
+
+### Structured entry format
+
+Each `### Deprecated` entry has TWO structured lines (the rest is free-form
+prose):
+
+1. **Title line.** A markdown bullet whose bold opening names the deprecated
+   surface(s) in backticks, the replacement, and the issue ref:
+
+       - **`<surface-name>` — replaced by `<replacement>` (#<issue>).**
+
+2. **Version-pin line.** Immediately after the title line, on its own line,
+   indented to nest under the bullet:
+
+       Deprecated in v<X.Y.Z>; earliest removal v<A.B.C>.
+
+Following lines are free-form (rationale, migration prose, sub-surface
+enumeration). The derive-script greps for the two structured lines; the
+free-form body is human-only.
+
+### Worked example (canonical)
+
+    ### Deprecated
+
+    - **`claude-msg` binary name + `claude-mailman@` systemd template —
+      replaced by `tmux-msg-claude` / `tmux-msg-claude-mailman@` (#177).**
+      Deprecated in v0.9.0; earliest removal v0.11.0.
+
+      For the cycle, `install.sh` installs a `claude-msg → tmux-msg-claude`
+      binary symlink … (rationale + migration prose continues)
+
+The pre-amendment v0.9.0 and v0.10.0 entries (`claude-msg` /
+`$CLAUDE_AGENT_NAME` / `delivered_unverified` family) carry a
+near-equivalent shape — title line + an "Earliest removal v<X.Y.Z>" pin
+embedded in body prose — that the derive-script handles permissively as
+legacy-conforming entries (surfaces with a soft warning). Going forward,
+new entries should follow the canonical shape above.
+
+### Derive-script — `scripts/deprecations.sh`
+
+A bash script consuming `CHANGELOG.md` and producing the removal-
+eligibility view per release. Modes:
+
+- `--for v<X.Y.Z>` — list surfaces whose earliest_removal ≤ v<X.Y.Z>
+  (cleared for removal at that cut); split into **cleared** / **not-yet-
+  eligible** / **legacy-needs-eyeballing**.
+- `--all` — full table (section × deprecated-in × earliest-removal ×
+  surface) across the whole CHANGELOG.
+
+The script is permissive: entries that don't fit the canonical shape fall
+back to section-header inference (deprecated-in = section version) or
+surface as legacy entries needing manual confirmation, rather than being
+silently dropped.
+
+### Release-cut runbook step
+
+Before cutting v<X.Y.Z>, the runbook adds a step (in `CONTRIBUTING.md`
+§Release cuts):
+
+> Run `./scripts/deprecations.sh --for v<X.Y.Z>` and confirm the cleared
+> list matches intent. If a listed surface is NOT being removed this cut,
+> document the extension reason in the cut PR — the floor is a guarantee,
+> not a ceiling (per Decision §Discretion clause).
+
+### Out of scope (deferred to follow-ups)
+
+- **CI auto-fail on un-removed eligible surfaces at a release-cut PR.**
+  Could be a future hardening; not load-bearing for this amendment.
+- **Separate registry file** (`docs/deprecations.yaml` or equivalent) —
+  explicitly rejected in favor of CHANGELOG-as-single-source-of-truth.
+- **Parsing `### Removed` blocks to subtract already-removed surfaces** from
+  `--for` output. The script reports eligibility from `### Deprecated`
+  entries only; the operator manually cross-references against past
+  `### Removed` blocks. Could be a future improvement once the deprecation
+  list grows enough that manual cross-reference becomes load-bearing.
+
+### References
+
+- #209 — this amendment's tracking issue
+- `scripts/deprecations.sh` — the derive-script
+- `CONTRIBUTING.md` §Release cuts — the runbook step
+- Keep a Changelog `### Deprecated`: <https://keepachangelog.com/en/1.1.0/>
 
 ## Alternatives considered
 
