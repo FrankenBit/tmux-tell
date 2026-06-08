@@ -96,6 +96,17 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   production load; the knob ships as a safety valve for future
   large-payload hubs.
 
+### Changed
+
+- **`docs/why.md`: answer the two pitch-gap questions (#234).** Adds a "But why not
+  just…?" section with two subsections — *…raw `tmux send-keys`?* (the observe-gate,
+  the single-writer invariant, delivery-state durability, name-not-pane addressing) and
+  *…a single session with subagents?* (persistent specialist context, real parallelism,
+  the nuanced token economics, role discipline). Both stay substrate-honest — each
+  concedes the case where you *don't* need tmux-msg before making its own. The landing
+  README's "Where to go next" pointer notes the comparisons. Surfaced by the operator
+  during #214 review.
+
 ### Fixed
 
 - **`install.sh` alias-horizon strings (#237).** Five `(removed v0.11.0)` strings

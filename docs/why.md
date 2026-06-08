@@ -57,6 +57,62 @@ thing in an afternoon.
 If you run one agent at a time, you don't need this. If you've ever been the relay
 between three of them, you might.
 
+## But why not just…?
+
+### …raw `tmux send-keys`?
+
+You can paste into another pane with `tmux send-keys` today — no install required.
+For one message, to one idle pane, that's genuinely all you need.
+
+It stops being enough the moment the pane isn't idle. `send-keys` fires immediately:
+into a half-typed command, into a `/compact`, into the middle of a running turn. Two
+of them racing into the same pane interleave into garbage. And once it's sent it's
+gone — no record of whether it arrived, no way to ask "did the reviewer actually get
+that?"
+
+tmux-msg is `send-keys` with the sharp edges filed off:
+
+- **It waits for a safe moment** — the [observe-gate](observe-gate.md) holds the paste
+  until you've stopped typing, instead of landing on top of your sentence.
+- **One writer per pane.** A per-recipient mailman serializes delivery, so two senders
+  can't collide in the same input row.
+- **Every message is a row** (`queued → delivering → delivered/failed`) — the sender
+  knows it landed, the recipient can grep the history.
+- **You address by name, not pane.** Panes get renumbered; `bob` stays `bob`.
+
+`send-keys` is the primitive. tmux-msg is the bus you'd end up building on top of it
+anyway — the waiting, the serialization, the delivery record, the names.
+
+### …a single session with subagents?
+
+Also fair — and not always in tmux-msg's favor. If you have one task and want a couple
+of short-lived helpers, having a single session spin up subagents is simpler and
+cheaper. Do that.
+
+The multi-session pattern earns its keep when the work is *ongoing and parallel*:
+
+- **The sessions remember.** A long-lived pane builds up its own context — the project's
+  history, the feedback it's been given, the decisions it made last week. A subagent
+  starts cold every dispatch; a standing session is a specialist who already knows the
+  codebase.
+- **They genuinely run at once.** Three reviews, two implementations, and a release cut
+  can all be live in their own panes, each with its own context window. A single
+  orchestrator driving subagents serializes through *one* context window — and relaying
+  each subagent's findings back through it spends tokens too. The bill isn't obviously
+  lower; it's spent differently.
+- **Each pane holds a role.** A standing session is calibrated — a reviewer reviews, an
+  implementer implements, each at its own model tier. A subagent inherits whatever
+  framing the orchestrator hands it.
+
+The honest trade: persistent specialist context and real parallelism, paid for in idle
+tokens (a warm context isn't free) and the discipline to let sessions rest between
+bursts. For a one-shot, not worth it. For a project you come back to every day, it
+usually is.
+
+And none of it works without addressable messaging between the sessions — without it,
+*you* are back to being the relay, alt-tabbing between panes. Which is the whole
+problem tmux-msg exists to take off your hands.
+
 ## Try it in about two minutes
 
 ```bash

@@ -252,7 +252,8 @@ default-preserved; `--purge` wipes it).
 - **[Operator reference](docs/reference.md)** — every command, flag, and edge-case
   semantic: send/reply flags, message-rendering chrome, the full command set, MCP
   details, the storage schema, and migrating from `claude-msg`.
-- **[Why tmux-msg?](docs/why.md)** — the longer pitch.
+- **[Why tmux-msg?](docs/why.md)** — the longer pitch, and why this over raw
+  `tmux send-keys` or a single session with subagents.
 - **[The observe-gate](docs/observe-gate.md)** — how safe-moment delivery decides.
 - **[Diagnostic playbook](docs/diagnostic-playbook.md)** — when a message seems to go missing.
 - **[Trust boundaries & threat model](docs/security.md)** · **[Architecture decisions](docs/adr/)** · **[Contributing](CONTRIBUTING.md)**.
