@@ -635,6 +635,9 @@ type ListFilter struct {
 // ListMessages returns messages matching the filter, ordered by id ASC by
 // default (or id DESC when f.OrderDesc is true).
 func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, error) {
+	if f.Unverified && f.State != "" && f.State != StateDelivered {
+		return nil, fmt.Errorf("store: ListFilter: Unverified=true requires State to be empty or %q", StateDelivered)
+	}
 	var (
 		wheres []string
 		args   []any

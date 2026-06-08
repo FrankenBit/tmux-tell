@@ -32,6 +32,30 @@ deprecated alias through v0.11.0).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ListFilter.Unverified + State` silent impossible WHERE (#220 Item 1).**
+  `ListMessages` now returns an error when `Unverified=true` is combined with a
+  `State` value other than empty or `"delivered"`. Previously this emitted
+  `WHERE state='queued' AND state='delivered' AND verified=0`, always returning
+  zero rows silently. The CLI `sent --state` mutex was already in place; no
+  user-visible behaviour change. New tests cover both valid combos and the
+  rejected path.
+
+- **`parseMCPToField` branch test coverage (#220 Item 2).** Added direct tests
+  for the multi-recipient (array form), single-recipient (scalar form), and
+  invalid-shape (number, null) branches of `parseMCPToField` — previously
+  exercised only indirectly.
+
+- **`ClaimNext` `NoReplyExpected` scan regression test (#220 Item 2).** The
+  `no_reply_expected` column was already scanned correctly; this test pins that
+  behaviour so a future scan-list change catches the gap immediately.
+
+- **Quick + `no_reply_expected` + multi-recipient 3-way combined test (#220
+  Item 2).** New tests for both the CLI and MCP send paths confirm that all
+  three flags (`quick`, `no_reply_expected`, fan-out) survive the round-trip
+  through the store.
+
 ## [0.10.0] — 2026-06-08
 
 ### Added

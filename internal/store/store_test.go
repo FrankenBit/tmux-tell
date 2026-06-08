@@ -161,6 +161,37 @@ func TestClaimNext_FIFO(t *testing.T) {
 	}
 }
 
+// TestClaimNext_NoReplyExpectedRoundTrip pins the scan of the no_reply_expected
+// column in ClaimNext (#220 S1): a message inserted with NoReplyExpected=true
+// must arrive with that field set after the claim transition.
+func TestClaimNext_NoReplyExpectedRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	if err := s.UpsertAgent(ctx, "alice", "%1"); err != nil {
+		t.Fatalf("upsert alice: %v", err)
+	}
+	if err := s.UpsertAgent(ctx, "bob", "%2"); err != nil {
+		t.Fatalf("upsert bob: %v", err)
+	}
+
+	_, err := s.InsertMessage(ctx, InsertParams{
+		FromAgent:       "alice",
+		ToAgent:         "bob",
+		Body:            "fyi",
+		NoReplyExpected: true,
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	m, err := s.ClaimNext(ctx, "bob")
+	if err != nil || m == nil {
+		t.Fatalf("claim: m=%v err=%v", m, err)
+	}
+	if !m.NoReplyExpected {
+		t.Errorf("NoReplyExpected = false after claim; want true (scan regression)")
+	}
+}
+
 func TestClaimNext_ScopedToRecipient(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

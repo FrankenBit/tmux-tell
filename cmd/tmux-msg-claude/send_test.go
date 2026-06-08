@@ -57,6 +57,55 @@ func TestSend_HappyPath(t *testing.T) {
 	}
 }
 
+// TestSend_QuickNoReplyExpectedMultiRecipient exercises the 3-way combined
+// path: quick + no_reply_expected + multi-recipient fan-out via the CLI surface
+// (#220 S1 test-gap closure).
+// TestSend_QuickNoReplyExpectedMultiRecipient exercises the 3-way combined
+// path: quick + no_reply_expected + multi-recipient fan-out via the CLI surface
+// (#220 S1 test-gap closure).
+func TestSend_QuickNoReplyExpectedMultiRecipient(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bob", "carol", "dave")
+	var stdout, stderr bytes.Buffer
+	exit := runSendWithStore(context.Background(), s, sendParams{
+		From:            "alice",
+		ToRecipients:    []string{"bob", "carol", "dave"},
+		Body:            "quick fyi",
+		Quick:           true,
+		NoReplyExpected: true,
+		MaxRecipient:    5,
+		MaxSender:       5, // above cap to allow 3 queued messages from alice
+		MaxBody:         16 * 1024,
+	}, &stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
+	}
+	got := parseJSONResult(t, stdout.Bytes())
+	if got["ok"] != true {
+		t.Errorf("ok = %v, want true; got=%v", got["ok"], got)
+	}
+	msgs, ok := got["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages field missing or wrong type; got=%v", got)
+	}
+	if len(msgs) != 3 {
+		t.Errorf("messages = %d, want 3", len(msgs))
+	}
+	// Verify both flags survive the round-trip through the store.
+	ctx := context.Background()
+	for _, to := range []string{"bob", "carol", "dave"} {
+		m, err := s.ClaimNext(ctx, to)
+		if err != nil || m == nil {
+			t.Fatalf("ClaimNext(%s): m=%v err=%v", to, m, err)
+		}
+		if !m.Quick {
+			t.Errorf("recipient %s: Quick = false, want true", to)
+		}
+		if !m.NoReplyExpected {
+			t.Errorf("recipient %s: NoReplyExpected = false, want true", to)
+		}
+	}
+}
+
 func TestSend_ValidationErrors(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
 

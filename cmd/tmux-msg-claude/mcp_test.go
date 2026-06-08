@@ -197,6 +197,88 @@ func TestMCP_Agents(t *testing.T) {
 	}
 }
 
+// TestParseMCPToField_* pins the two parse shapes and the rejection paths for
+// the `to` field (#158, #220 S1 test-gap closure).
+
+func TestParseMCPToField_MultiRecipient(t *testing.T) {
+	raw := json.RawMessage(`["alice","bob"]`)
+	got, err := parseMCPToField(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 || got[0] != "alice" || got[1] != "bob" {
+		t.Errorf("got %v, want [alice bob]", got)
+	}
+}
+
+func TestParseMCPToField_SingleRecipient(t *testing.T) {
+	raw := json.RawMessage(`"alice"`)
+	got, err := parseMCPToField(raw)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 || got[0] != "alice" {
+		t.Errorf("got %v, want [alice]", got)
+	}
+}
+
+func TestParseMCPToField_InvalidShape(t *testing.T) {
+	for _, bad := range []json.RawMessage{
+		json.RawMessage(`42`),
+		json.RawMessage(`null`),
+		json.RawMessage(`{}`),
+		json.RawMessage(``),
+	} {
+		if _, err := parseMCPToField(bad); err == nil {
+			t.Errorf("parseMCPToField(%s) should error, got nil", bad)
+		}
+	}
+}
+
+// TestMCP_Send_QuickNoReplyExpectedMultiRecipient exercises the 3-way combined
+// path: quick + no_reply_expected + multi-recipient fan-out via the MCP surface
+// (#220 S1 test-gap closure). Two recipients keeps the test within the
+// hardcoded capSenderBacklog=2 per-sender cap.
+func TestMCP_Send_QuickNoReplyExpectedMultiRecipient(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "alice")
+	s := newCmdTestStore(t, "alice", "bob", "carol")
+
+	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
+		"to":                []string{"bob", "carol"},
+		"body":              "quick fyi",
+		"quick":             true,
+		"no_reply_expected": true,
+	})
+	if got["_isError"] == true {
+		t.Fatalf("unexpected MCP error: %v", got)
+	}
+	if got["ok"] != true {
+		t.Errorf("ok = %v, want true; got=%v", got["ok"], got)
+	}
+	// Multi-recipient response carries a "messages" array, one entry per recipient.
+	msgs, ok := got["messages"].([]any)
+	if !ok {
+		t.Fatalf("messages field missing or wrong type; got=%v", got)
+	}
+	if len(msgs) != 2 {
+		t.Errorf("messages = %d, want 2", len(msgs))
+	}
+	// Verify quick + no_reply_expected survive the round-trip through the store.
+	ctx := context.Background()
+	for _, to := range []string{"bob", "carol"} {
+		m, err := s.ClaimNext(ctx, to)
+		if err != nil || m == nil {
+			t.Fatalf("ClaimNext(%s): m=%v err=%v", to, m, err)
+		}
+		if !m.Quick {
+			t.Errorf("recipient %s: Quick = false, want true", to)
+		}
+		if !m.NoReplyExpected {
+			t.Errorf("recipient %s: NoReplyExpected = false, want true", to)
+		}
+	}
+}
+
 func TestMCP_Inbox(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "bob")
 	s := newCmdTestStore(t, "alice", "bob")
