@@ -242,9 +242,9 @@ the left, bob (recipient) on the right.
    vanishes), then the rendered message lands at the `❯` prompt as a paste +
    Enter:
    ```
-   ❯ [alice · HH:MM:SS · id XXXX]
+   ❯ [Alice · HH:MM:SS · id XXXX]
 
-     the API changed, look at what I just pushed
+   the API changed, look at what I just pushed
    ```
    The bracket header is part of the real delivery format (matches the README
    message-rendering example) — showing it is a feature, not noise. Claude
