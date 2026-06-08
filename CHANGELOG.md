@@ -33,6 +33,16 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Added
+
+- **`docs/asciinema-capture.md` — the observe-gate demo recipe (#216, recipe pass).**
+  A reproducible recipe for capturing the motion-dependent differentiator (a message
+  holds while you type, lands when you pause) as an asciinema cast: sandbox tmux socket
+  + sandbox DB, the typist-equals-recipient sequence, and the editorial choices folded
+  in (message body, typing content, caption, hosting). The live `.cast` capture is the
+  operator-coordinated follow-up (it can't be synthesized by a chamber); this pass lands
+  the deterministic recipe so the take is one-shot.
+
 ## [0.13.0] — 2026-06-08
 
 ### Added
