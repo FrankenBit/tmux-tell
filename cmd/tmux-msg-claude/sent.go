@@ -30,6 +30,8 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 		"queued|delivering|delivered|failed|delivered_in_input_box (empty = all); delivered_unverified accepted as deprecated alias")
 	to := fs.String("to", "", "only messages sent to this agent")
 	limit := fs.Int("limit", 50, "maximum rows to return")
+	deferred := fs.Bool("deferred", false,
+		"list your deferred (staged-but-not-yet-delivered) messages instead — the pre-staged context awaiting a flush_deferred trigger (#227). Overrides --state.")
 	format := fs.String("format", "text", "text|json")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
@@ -78,7 +80,7 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 			exitUsage)
 	}
 
-	return runSentWithStore(ctx, s, agent, *stateFlag, *to, *limit, *since, sinceFloor, *format, stdout, stderr)
+	return runSentWithStore(ctx, s, agent, *stateFlag, *to, *limit, *since, sinceFloor, *deferred, *format, stdout, stderr)
 }
 
 // validateSentState returns an error if state is not a known value for --state.
@@ -95,6 +97,7 @@ func validateSentState(state string) error {
 func runSentWithStore(ctx context.Context, s *store.Store,
 	agent, stateFilter, toAgent string,
 	limit int, sinceSpec, sinceFloor string,
+	deferred bool,
 	format string,
 	stdout, stderr io.Writer,
 ) int {
@@ -106,11 +109,15 @@ func runSentWithStore(ctx context.Context, s *store.Store,
 		OrderDesc:      true,
 	}
 
-	switch stateFilter {
-	case "delivered_in_input_box":
+	switch {
+	case deferred:
+		// --deferred opts into the otherwise-hidden staged rows (#227) and
+		// overrides any --state filter (the two are contradictory).
+		f.Deferred = true
+	case stateFilter == "delivered_in_input_box":
 		f.Unverified = true
-	case "":
-		// no state filter
+	case stateFilter == "":
+		// no state filter (deferred rows stay hidden by ListMessages default)
 	default:
 		f.State = store.State(stateFilter)
 	}

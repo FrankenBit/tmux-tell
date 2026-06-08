@@ -632,11 +632,12 @@ CREATE TABLE messages (
   to_agent      TEXT NOT NULL,
   reply_to      TEXT REFERENCES messages(public_id),
   body          TEXT NOT NULL,
-  state         TEXT NOT NULL DEFAULT 'queued', -- queued|delivering|delivered|failed
+  state         TEXT NOT NULL DEFAULT 'queued', -- queued|delivering|delivered|failed|acknowledged|deferred
   created_at    TEXT NOT NULL DEFAULT (datetime('now','subsec')),
   delivered_at  TEXT,
   error         TEXT,
-  verified      INTEGER                         -- 1=verified, 0=unverified (delivered_in_input_box), NULL=unmarked (pre-migration, or not yet delivered)
+  verified      INTEGER,                        -- 1=verified, 0=unverified (delivered_in_input_box), NULL=unmarked (pre-migration, or not yet delivered)
+  deliver_after TEXT                            -- #227 deferred-delivery trigger; non-NULL only on state='deferred' (and the row it's promoted into), e.g. 'resume'
 );
 CREATE INDEX ix_msg_queue ON messages(to_agent, state, id);
 

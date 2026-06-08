@@ -33,6 +33,7 @@ const usage = `usage: tmux-msg-claude <subcommand> [args]
 Subcommands:
   send    Queue a message for an agent (validates caps, returns JSON)
   resend  Replay an existing message to its recipient (recovery; #157)
+  flush   Promote your deferred messages for a trigger (e.g. post-/compact: flush --trigger=resume; mirrors tmux-msg.flush_deferred; #227)
   ping    Substrate-only reachability probe — daemon up + agent reachable, no pane paste (mirrors tmux-msg.ping)
   control Send a whitelisted slash-command to a pane (mirrors tmux-msg.control)
   track   Show the delivery state of a single message by its public_id
@@ -99,6 +100,8 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runSendCLI(args[1:], stdout, stderr)
 	case "resend":
 		return runResendCLI(args[1:], stdout, stderr)
+	case "flush":
+		return runFlushCLI(args[1:], stdout, stderr)
 	case "ping":
 		return runPingCLI(args[1:], stdout, stderr)
 	case "control":

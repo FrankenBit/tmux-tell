@@ -177,6 +177,34 @@ point its scrape config at the per-agent `host:port/metrics`. The alcatraz Alloy
 job + the Grafana dashboard JSON (talk-pair heatmap, latency heatmap, unverified-rate
 trend) live in the infra repo, not here.
 
+## Deferred delivery (post-compaction self-handoff)
+
+The mailman is **eager** — it delivers a queued message as soon as the pane is ready.
+That's wrong for one specific pattern: handing your *post-`/compact`* self a note. Send it
+normally and it lands *before* the compaction, gets folded into the summary, and the point
+is lost. Deferred delivery fixes that — you **stage** the message and release it yourself
+once you've resumed:
+
+```bash
+# before /compact — stage orientation for your next self
+tmux-msg-claude send --to me --deliver-after=resume "remember: PR #256 is mid-review, ping Surveyor"
+
+# as part of your post-/compact resume routine — release it into the fresh context
+tmux-msg-claude flush --trigger=resume
+```
+
+A staged message sits in a `deferred` state: invisible to `inbox`, never picked up by the
+mailman, not counted against queue caps. `flush --trigger=resume` (or the
+`tmux-msg.flush_deferred` MCP tool) promotes your matching staged messages to the live
+queue, where the mailman delivers them normally. `flush` is idempotent — calling it with
+nothing staged is a harmless no-op, so it's safe to put in a resume routine
+unconditionally. `tmux-msg-claude sent --deferred` shows what you've got staged.
+
+You can only flush messages addressed to **you**, and a promoted message **jumps the
+backlog floor** (§don't-flood) so re-registering between staging and flushing never skips
+it. v1 ships the `resume` trigger (the post-compaction case); register-on-spawn,
+timestamped reminders, and trigger composition are tracked in #258.
+
 ## Use from Claude Code (MCP)
 
 The same binary speaks MCP over stdio under `tmux-msg-claude mcp`, exposing

@@ -11,6 +11,14 @@ const (
 	StateDelivered    State = "delivered"
 	StateFailed       State = "failed"
 	StateAcknowledged State = "acknowledged" // #221: operator-acked announce-skipped backlog residue
+	// StateDeferred is a pre-`queued` holding state (#227): the row exists
+	// but is not yet eligible for mailman pickup. It carries a non-empty
+	// deliver_after trigger and is promoted to `queued` when that trigger
+	// fires (a flush_deferred call). Deferred rows are invisible to
+	// ClaimNext / inbox / mailman until promoted — the deferral lives in
+	// `state`, not in delivery-cadence policy, so the mailman stays eager
+	// and the single-writer invariant is untouched.
+	StateDeferred State = "deferred"
 )
 
 // Kind distinguishes a paste-rendered chat message from a control command
@@ -85,6 +93,12 @@ type Message struct {
 	// without a store lookup. Both invalid/empty for normal messages.
 	ReplayOf   sql.NullString
 	ReplayOfAt sql.NullString
+	// DeliverAfter mirrors the #227 `deliver_after` column: the trigger that
+	// promotes a deferred row to `queued`. Non-empty only on rows in
+	// StateDeferred (the trigger name, e.g. "resume"); NULL/invalid for normal
+	// messages. Read for visibility (`sent --deferred`); the promotion itself
+	// matches on the column via SQL, not this field.
+	DeliverAfter sql.NullString
 	// Verified mirrors the #169 `verified` column. 1 = verify-token observed
 	// (confirmed delivery), 0 = delivered_in_input_box soft-fail (paste landed,
 	// token never surfaced), NULL/invalid = pre-migration row or not yet

@@ -98,7 +98,11 @@ type SendResponse struct {
 	Delivery  *DeliveryStatus  `json:"delivery,omitempty"`
 	Freshness *ThreadFreshness `json:"thread_freshness,omitempty"`
 	Replay    *ReplayStatus    `json:"replay,omitempty"`
-	Error     string           `json:"error,omitempty"`
+	// DeliverAfter is set (to the trigger name) when the send was deferred
+	// (#227): the row is staged in StateDeferred, NOT queued, and delivers only
+	// after a matching flush_deferred call. Empty on a normal (queued) send.
+	DeliverAfter string `json:"deliver_after,omitempty"`
+	Error        string `json:"error,omitempty"`
 }
 
 // MultiSendResult is one recipient's outcome within a multi-recipient send
@@ -135,6 +139,9 @@ func renderSendResult(stdout io.Writer, res SendResponse, to, format string) {
 		} else if rp := res.Replay; rp != nil {
 			fmt.Fprintf(stdout, "resent id=%s queued=%d (replay of %s, originally sent %s)\n",
 				res.ID, res.Queued, rp.OriginalID, rp.OriginalSentAt)
+		} else if res.DeliverAfter != "" {
+			fmt.Fprintf(stdout, "staged id=%s (deferred until %q — run `flush --trigger=%s` to deliver)\n",
+				res.ID, res.DeliverAfter, res.DeliverAfter)
 		} else {
 			fmt.Fprintf(stdout, "sent id=%s queued=%d\n", res.ID, res.Queued)
 		}

@@ -154,6 +154,12 @@ var migrations = []string{
 		value      TEXT NOT NULL,
 		updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 	)`,
+	// #227: deferred-delivery trigger. Non-NULL only on rows in state
+	// 'deferred' — names the trigger that promotes the row to 'queued' (v1:
+	// "resume", fired by a flush_deferred call). NULL for every normal
+	// message. Additive; deferred rows are invisible to ClaimNext/inbox/
+	// mailman until promoted, so existing flows are unaffected.
+	`ALTER TABLE messages ADD COLUMN deliver_after TEXT`,
 }
 
 // Close releases the underlying database handle.

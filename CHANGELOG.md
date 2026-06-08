@@ -58,6 +58,22 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   is additive (new table + new send path; no schema changes to messages
   / agents) — K-preserving per ADR-0008 §Amendment A (Reading B).
 
+- **Deferred delivery — `deliver_after` / `flush_deferred` (#227, v1: post-compaction self-handoff).**
+  A message can now be **staged** instead of queued. `tmux-msg-claude send
+  --deliver-after=resume` (or `tmux-msg.send {deliver_after:"resume"}`) inserts
+  it in a new `deferred` state — invisible to inbox / ClaimNext / mailman —
+  until the chamber calls `tmux-msg-claude flush --trigger=resume` (or
+  `tmux-msg.flush_deferred {trigger:"resume"}`), typically as part of its
+  post-`/compact` resume routine, so self-handoff orientation lands in the
+  freshly-resumed context instead of being absorbed by the summarizer. New
+  `deferred` state + `deliver_after` column (auto-migrates); `sent --deferred`
+  lists staged messages. Composes with #204: a promoted-deferred row **bypasses
+  the claim-floor** (its `deliver_after` marker exempts it from the id>floor
+  test), so a register between defer and flush can't skip the handoff. A
+  deferred send is single-recipient and bypasses the queue caps (it isn't in
+  the live queue). v1 accepts the `resume` trigger only; `register`-promotion,
+  timestamp scheduling, and `OR`-composition are a surfaced follow-up (#258).
+
 - **Configurable message retention policy — `retention` TOML knob + mailman background sweep (#245, #150 PR2).** Each mailman now runs a periodic goroutine that deletes `delivered` and `failed` rows older than the configured window. Default `"infinite"` preserves zero behavior change for existing deploys. Configure per-agent or fleet-wide in `/etc/tmux-msg/config.toml`:
   ```toml
   [defaults]

@@ -23,9 +23,13 @@ type sendParams struct {
 	Body            string
 	NoReplyExpected bool
 	Quick           bool // compact single-line chrome on delivery (#154)
-	MaxRecipient    int
-	MaxSender       int
-	MaxBody         int
+	// DeliverAfter, when non-empty, defers the message (#227): it is stored in
+	// StateDeferred carrying this trigger and delivers only after a matching
+	// flush_deferred call. v1 accepts "resume" (post-compaction self-handoff).
+	DeliverAfter string
+	MaxRecipient int
+	MaxSender    int
+	MaxBody      int
 
 	// Multi-recipient spam guard (#158). 0 = no cap.
 	MaxRecipientsPerSend int
@@ -66,6 +70,8 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		"bound for --wait-for-delivered")
 	blockOnStale := fs.Bool("block-on-stale", false,
 		"with --reply-to: fail (ok:false) if the thread moved since you last spoke (#155)")
+	deliverAfter := fs.String("deliver-after", "",
+		"defer delivery until a trigger fires (#227): the message is staged (not queued) and delivers only after a matching `flush --trigger=<t>` call. v1 trigger: `resume` (post-compaction self-handoff). Single-recipient only.")
 	format := fs.String("format", "json", "json|text")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
@@ -94,6 +100,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		Body:                 *body,
 		NoReplyExpected:      *noReplyExpected,
 		Quick:                *quick,
+		DeliverAfter:         *deliverAfter,
 		MaxRecipient:         *maxRecipient,
 		MaxSender:            *maxSender,
 		MaxBody:              *maxBody,
@@ -158,6 +165,15 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 			exitDataErr)
 	}
 
+	// Deferred delivery (#227): validate the trigger before any insert. An
+	// unsupported trigger is fail-loud (don't stage a row whose promotion path
+	// doesn't exist).
+	if p.DeliverAfter != "" {
+		if err := validateDeferTrigger(p.DeliverAfter); err != nil {
+			return writeJSONError(stdout, stderr, err.Error(), exitUsage)
+		}
+	}
+
 	// Recipient status (#152). This also serves as the registry-existence
 	// check: an unknown recipient is fail-loud, unchanged since #3/#4/#15 —
 	// preserving the day-one safety default. `--strict` additionally rejects
@@ -173,7 +189,10 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("unknown recipient: %s", p.To), exitUnavailable)
 	}
-	if p.Strict && !rs.Alive {
+	// A deferred send (#227) is inherently future-delivery, so current
+	// unreachability is not a failure — skip the --strict alive gate when
+	// deferring (the recipient just needs to be registered, checked above).
+	if p.Strict && !rs.Alive && p.DeliverAfter == "" {
 		renderSendResult(stdout, SendResponse{
 			OK:        false,
 			Recipient: rs,
@@ -230,6 +249,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		Body:              p.Body,
 		NoReplyExpected:   p.NoReplyExpected,
 		Quick:             p.Quick,
+		DeliverAfter:      p.DeliverAfter,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})
@@ -246,16 +266,19 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 	}
 
 	resp := SendResponse{
-		OK:        true,
-		ID:        res.PublicID,
-		Queued:    res.Queued,
-		Recipient: rs,
-		Freshness: freshness,
+		OK:           true,
+		ID:           res.PublicID,
+		Queued:       res.Queued,
+		Recipient:    rs,
+		Freshness:    freshness,
+		DeliverAfter: p.DeliverAfter, // non-empty → staged, not queued (#227)
 	}
 	// Opt-in synchronous delivery confirmation (#152). Bounded by --timeout
 	// (defaulted at flag-parse); the row is already inserted, so a timeout
-	// is informational — the message stays queued.
-	if p.WaitForDelivered {
+	// is informational — the message stays queued. A deferred send never
+	// delivers within the wait (it's staged until flush), so the wait is
+	// skipped — it would always time out misleadingly.
+	if p.WaitForDelivered && p.DeliverAfter == "" {
 		timeout := p.Timeout
 		if timeout <= 0 {
 			timeout = defaultDeliveredWaitTimeout
@@ -291,6 +314,13 @@ func runMultiSendWithStore(ctx context.Context, s *store.Store, p sendParams, st
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("too many recipients: %d (max %d per send)", len(p.ToRecipients), p.MaxRecipientsPerSend),
 			exitDataErr)
+	}
+	// Deferred delivery is single-recipient only in v1 (#227): the
+	// post-compaction self-handoff case is intra-chamber. Fan-out deferral is
+	// part of the speculative follow-up, not built here.
+	if p.DeliverAfter != "" {
+		return writeJSONError(stdout, stderr,
+			"--deliver-after is single-recipient only (v1, #227): cannot defer a multi-recipient send", exitUsage)
 	}
 	if _, err := s.GetAgent(ctx, p.From); err != nil {
 		if errors.Is(err, store.ErrNotFound) {

@@ -322,6 +322,7 @@ func TestMCP_ToolsListContract(t *testing.T) {
 	want := map[string]bool{
 		"tmux-msg.send":                true,
 		"tmux-msg.resend":              true,
+		"tmux-msg.flush_deferred":      true,
 		"tmux-msg.ping":                true,
 		"tmux-msg.agents":              true,
 		"tmux-msg.whoami":              true,

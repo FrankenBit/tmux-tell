@@ -74,7 +74,8 @@ func newMCPServer(s *store.Store) *mcp.Server {
 				"strict":            {"type": "boolean", "description": "Fail (ok:false) if the recipient is registered but not reachable (pane gone). An UNregistered recipient is always fail-loud regardless of this flag. Default false (#152)."},
 				"wait_for_delivered": {"type": "boolean", "description": "Block until the message reaches a terminal delivery state (delivered/failed) or timeout, returning a \"delivery\" block with state + verify_ms. Default false (#152)."},
 				"timeout":           {"type": "string", "description": "Bound for wait_for_delivered as a Go duration (e.g. \"10s\"). Default 10s."},
-				"block_on_stale":    {"type": "boolean", "description": "With reply_to: fail (ok:false) instead of queueing when the thread_freshness check finds the thread moved since you last spoke (newer messages addressed to you arrived after your last message in the chain). Default false — staleness is reported but the send still succeeds (#155)."}
+				"block_on_stale":    {"type": "boolean", "description": "With reply_to: fail (ok:false) instead of queueing when the thread_freshness check finds the thread moved since you last spoke (newer messages addressed to you arrived after your last message in the chain). Default false — staleness is reported but the send still succeeds (#155)."},
+				"deliver_after":     {"type": "string", "description": "Defer delivery until a trigger fires (#227): the message is STAGED (not queued) and delivers only after a matching flush_deferred call. Primary use: post-compaction self-handoff — send yourself orientation text with deliver_after=\"resume\", then call tmux-msg.flush_deferred{trigger:\"resume\"} as part of your post-/compact resume routine so it lands in the freshly-resumed context rather than being absorbed by the summarizer. v1 accepts only \"resume\". Single-recipient only. The response carries deliver_after to confirm staging."}
 			},
 			"required": ["to", "body"]
 		}`),
@@ -91,6 +92,16 @@ func newMCPServer(s *store.Store) *mcp.Server {
 			"required": ["id"]
 		}`),
 		mcpResendHandler(s))
+
+	srv.RegisterTool("tmux-msg.flush_deferred",
+		"Promote your own deferred messages for a trigger to delivery (#227). A deferred message (sent with deliver_after) is STAGED — invisible to inbox/mailman — until you flush its trigger. Primary use: POST-COMPACTION SELF-HANDOFF. Before /compact, send yourself orientation with deliver_after=\"resume\"; then call this with trigger=\"resume\" as part of your resume routine, so the staged message lands in your freshly-resumed context instead of being absorbed by the summarizer. Idempotent — calling with no matching deferred messages is a no-op (promoted:0), so it's safe to call unconditionally on resume. You can only flush messages addressed to yourself. Returns {ok, trigger, promoted}. v1 trigger: \"resume\".",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"trigger": {"type": "string", "description": "The deferred-delivery trigger to fire. v1 accepts \"resume\". Default \"resume\"."}
+			}
+		}`),
+		mcpFlushDeferredHandler(s))
 
 	srv.RegisterTool("tmux-msg.agents",
 		"List registered agents with pane liveness.",
@@ -320,6 +331,7 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 		WaitForDelivered bool            `json:"wait_for_delivered"`
 		Timeout          string          `json:"timeout"`
 		BlockOnStale     bool            `json:"block_on_stale"`
+		DeliverAfter     string          `json:"deliver_after"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -361,6 +373,7 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 			WaitForDelivered:     in.WaitForDelivered,
 			Timeout:              timeout,
 			BlockOnStale:         in.BlockOnStale,
+			DeliverAfter:         in.DeliverAfter,
 		}
 		if len(toList) > 1 {
 			p.ToRecipients = toList
@@ -480,6 +493,12 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 	if p.MaxBody > 0 && len(p.Body) > p.MaxBody {
 		return nil, fmt.Errorf("body too large (%d > %d bytes)", len(p.Body), p.MaxBody)
 	}
+	// Deferred delivery (#227): validate the trigger before any insert.
+	if p.DeliverAfter != "" {
+		if err := validateDeferTrigger(p.DeliverAfter); err != nil {
+			return nil, err
+		}
+	}
 	// Recipient status (#152) doubles as the registry-existence check:
 	// unknown recipient stays fail-loud (day-one safety, #3/#4/#15).
 	rs, err := resolveRecipientStatus(ctx, s, p.To)
@@ -491,8 +510,9 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 	}
 	// --strict additionally rejects a registered-but-unreachable recipient
 	// (pane gone). Returned as a structured ok:false result (not a Go error)
-	// so the caller still gets the recipient block.
-	if p.Strict && !rs.Alive {
+	// so the caller still gets the recipient block. Skipped for a deferred
+	// send (#227) — future delivery, so current unreachability isn't a failure.
+	if p.Strict && !rs.Alive && p.DeliverAfter == "" {
 		return SendResponse{
 			OK:        false,
 			Recipient: rs,
@@ -537,6 +557,7 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		Body:              p.Body,
 		NoReplyExpected:   p.NoReplyExpected,
 		Quick:             p.Quick,
+		DeliverAfter:      p.DeliverAfter,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})
@@ -547,13 +568,16 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		return nil, err
 	}
 	resp := SendResponse{
-		OK:        true,
-		ID:        res.PublicID,
-		Queued:    res.Queued,
-		Recipient: rs,
-		Freshness: freshness,
+		OK:           true,
+		ID:           res.PublicID,
+		Queued:       res.Queued,
+		Recipient:    rs,
+		Freshness:    freshness,
+		DeliverAfter: p.DeliverAfter, // non-empty → staged, not queued (#227)
 	}
-	if p.WaitForDelivered {
+	// A deferred send never delivers within the wait window (it's staged until
+	// flush), so the wait is skipped — it would always time out misleadingly.
+	if p.WaitForDelivered && p.DeliverAfter == "" {
 		timeout := p.Timeout
 		if timeout <= 0 {
 			timeout = defaultDeliveredWaitTimeout
@@ -561,6 +585,35 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, timeout, pingPollInterval)
 	}
 	return resp, nil
+}
+
+// mcpFlushDeferredHandler returns the handler for the tmux-msg.flush_deferred
+// MCP tool (#227). It resolves the caller's identity and promotes that agent's
+// deferred messages matching the trigger — the chamber-side signal "I'm at
+// <trigger point>, deliver what I staged." Authorization is implicit: the
+// caller can only flush messages addressed to itself (doFlushDeferred →
+// PromoteDeferred is scoped to to_agent = caller).
+func mcpFlushDeferredHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		Trigger string `json:"trigger"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if in.Trigger == "" {
+			in.Trigger = deferTriggerResume
+		}
+		name, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		if name == "" {
+			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+		}
+		return doFlushDeferred(ctx, s, name, in.Trigger)
+	}
 }
 
 // mcpResendHandler returns the handler for the tmux-msg.resend MCP tool.

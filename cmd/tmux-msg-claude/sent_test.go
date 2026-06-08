@@ -25,7 +25,7 @@ func TestSent_TextFormat(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "24h", "", "text", &stdout, &stderr)
+	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "24h", "", false, "text", &stdout, &stderr)
 	if exit != exitOK {
 		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
 	}
@@ -49,7 +49,7 @@ func TestSent_JSONFormat(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "24h", "", "json", &stdout, &stderr)
+	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "24h", "", false, "json", &stdout, &stderr)
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -78,7 +78,7 @@ func TestSent_FilterByTo(t *testing.T) {
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "carol", Body: "to carol"})
 
 	var stdout bytes.Buffer
-	exit := runSentWithStore(ctx, s, "alice", "", "bob", 50, "24h", "", "json", &stdout, &bytes.Buffer{})
+	exit := runSentWithStore(ctx, s, "alice", "", "bob", 50, "24h", "", false, "json", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -101,7 +101,7 @@ func TestSent_FilterByState(t *testing.T) {
 	_, _ = s.ClaimNext(ctx, "bob")
 
 	var stdout bytes.Buffer
-	exit := runSentWithStore(ctx, s, "alice", "queued", "", 50, "24h", "", "json", &stdout, &bytes.Buffer{})
+	exit := runSentWithStore(ctx, s, "alice", "queued", "", 50, "24h", "", false, "json", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -125,7 +125,7 @@ func TestSent_DeliveredInInputBoxFilter(t *testing.T) {
 	_ = s.MarkDeliveredInInputBox(ctx, res2.PublicID)
 
 	var stdout bytes.Buffer
-	exit := runSentWithStore(ctx, s, "alice", "delivered_in_input_box", "", 50, "24h", "", "json", &stdout, &bytes.Buffer{})
+	exit := runSentWithStore(ctx, s, "alice", "delivered_in_input_box", "", 50, "24h", "", false, "json", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -150,7 +150,7 @@ func TestSent_DisplayStateDeliveredInInputBox(t *testing.T) {
 	_ = s.MarkDeliveredInInputBox(ctx, res.PublicID)
 
 	var stdout, stderr bytes.Buffer
-	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "24h", "", "text", &stdout, &stderr)
+	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "24h", "", false, "text", &stdout, &stderr)
 	if exit != exitOK {
 		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
 	}
@@ -171,7 +171,7 @@ func TestSent_SinceFilter(t *testing.T) {
 	// With a floor 1 hour in the future — nothing should match.
 	future := time.Now().Add(time.Hour).UTC().Format("2006-01-02T15:04:05.000Z")
 	var stdout bytes.Buffer
-	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "1h", future, "json", &stdout, &bytes.Buffer{})
+	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "1h", future, false, "json", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -189,7 +189,7 @@ func TestSent_OrderNewestFirst(t *testing.T) {
 	res2, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "second"})
 
 	var stdout bytes.Buffer
-	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "24h", "", "json", &stdout, &bytes.Buffer{})
+	exit := runSentWithStore(ctx, s, "alice", "", "", 50, "24h", "", false, "json", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -210,7 +210,7 @@ func TestSent_OrderNewestFirst(t *testing.T) {
 func TestSent_EmptyOutbox(t *testing.T) {
 	s := newCmdTestStore(t, "alice")
 	var stdout, stderr bytes.Buffer
-	exit := runSentWithStore(context.Background(), s, "alice", "", "", 50, "24h", "", "text", &stdout, &stderr)
+	exit := runSentWithStore(context.Background(), s, "alice", "", "", 50, "24h", "", false, "text", &stdout, &stderr)
 	if exit != exitOK {
 		t.Errorf("exit = %d, want 0", exit)
 	}
@@ -223,7 +223,7 @@ func TestSent_EmptyOutbox(t *testing.T) {
 func TestSent_UnknownFormat(t *testing.T) {
 	s := newCmdTestStore(t, "alice")
 	var stdout, stderr bytes.Buffer
-	exit := runSentWithStore(context.Background(), s, "alice", "", "", 50, "24h", "", "xml", &stdout, &stderr)
+	exit := runSentWithStore(context.Background(), s, "alice", "", "", 50, "24h", "", false, "xml", &stdout, &stderr)
 	if exit != exitUsage {
 		t.Errorf("exit = %d, want %d", exit, exitUsage)
 	}

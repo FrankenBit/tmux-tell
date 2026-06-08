@@ -34,6 +34,15 @@ type InsertParams struct {
 	ReplayOf   string
 	ReplayOfAt string
 
+	// DeliverAfter, when non-empty, inserts the row in StateDeferred carrying
+	// this trigger name (#227) instead of the normal StateQueued. The row is
+	// invisible to ClaimNext / inbox / mailman until a flush_deferred call
+	// promotes it. A deferred insert bypasses the recipient-queue and
+	// sender-backlog caps (it is not in the live queue); InsertMessage forces
+	// the cap args to 0 when this is set, so a caller can't accidentally cap a
+	// pre-queue row.
+	DeliverAfter string
+
 	MaxRecipientQueue int // 0 = no cap check
 	MaxSenderBacklog  int // 0 = no cap check
 }
@@ -75,6 +84,14 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 	}
 	if err := s.validateReplyTo(ctx, p.ReplyTo); err != nil {
 		return InsertResult{}, err
+	}
+	// #227: a deferred row is not in the live queue, so it neither counts
+	// against nor is gated by the recipient-queue / sender-backlog caps.
+	// Force the cap args off here so a caller can't accidentally cap a
+	// pre-queue row (mirrors InsertNotice's cap-bypass discipline).
+	if p.DeliverAfter != "" {
+		p.MaxRecipientQueue = 0
+		p.MaxSenderBacklog = 0
 	}
 
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -314,10 +331,19 @@ func insertOneInTx(ctx context.Context, tx *sql.Tx, p InsertParams) (InsertResul
 		if p.Quick {
 			q = 1
 		}
+		// #227: a non-empty DeliverAfter inserts the row in StateDeferred with
+		// the trigger name in deliver_after; otherwise the row takes the schema
+		// default state ('queued') and a NULL deliver_after.
+		state := StateQueued
+		var deliverAfterArg any
+		if p.DeliverAfter != "" {
+			state = StateDeferred
+			deliverAfterArg = p.DeliverAfter
+		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, quick, replay_of, replay_of_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, q, replayOfArg, replayOfAtArg)
+			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, quick, replay_of, replay_of_at, state, deliver_after)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, q, replayOfArg, replayOfAtArg, state, deliverAfterArg)
 		if err == nil {
 			publicID = candidate
 			break
@@ -364,17 +390,29 @@ func (s *Store) ClaimNext(ctx context.Context, toAgent string) (*Message, error)
 	// claim behaves exactly as before for agents that never registered
 	// with a backlog. The subquery runs inside the BEGIN IMMEDIATE tx, so
 	// the floor read is consistent with the claim it gates.
+	//
+	// #227 deferred composition: a promoted-deferred row keeps its non-NULL
+	// deliver_after marker (PromoteDeferred only flips state, not the column),
+	// and such rows BYPASS the floor (the `deliver_after IS NOT NULL OR …`
+	// branch). A deferred message has an old id (assigned at defer time), so
+	// if a register set the floor above it between defer and flush, the plain
+	// id>floor test would wrongly skip it — exactly the message the chamber
+	// staged for this resume. The marker exemption makes "freshly promoted"
+	// equivalent to "above the floor" without re-assigning the row's id. Normal
+	// queued rows (deliver_after NULL) are unaffected: the floor applies as
+	// before. Still-deferred rows are excluded by the state filter regardless.
 	err = tx.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after
 		 FROM messages
 		 WHERE to_agent = ? AND state = ?
-		   AND id > COALESCE((SELECT backlog_epoch_id FROM agents WHERE name = ?), 0)
+		   AND (deliver_after IS NOT NULL
+		        OR id > COALESCE((SELECT backlog_epoch_id FROM agents WHERE name = ?), 0))
 		 ORDER BY id
 		 LIMIT 1`,
 		toAgent, StateQueued, toAgent).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified)
+		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter)
 	m.NoReplyExpected = nre != 0
 	m.Quick = q != 0
 	if errors.Is(err, sql.ErrNoRows) {
@@ -460,6 +498,25 @@ func (s *Store) RecoverDelivering(ctx context.Context, toAgent string) (int64, e
 		StateQueued, toAgent, StateDelivering)
 	if err != nil {
 		return 0, fmt.Errorf("store: recover delivering: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// PromoteDeferred transitions every StateDeferred row addressed to toAgent
+// whose deliver_after matches trigger to StateQueued, returning the count
+// promoted (#227). It is the store half of flush_deferred: a promoted row,
+// now queued, becomes eligible for the mailman's eager delivery on its next
+// loop. Idempotent — a second call with no remaining matching deferred rows
+// returns (0, nil), not an error (the `state = deferred` guard means an
+// already-promoted row is never re-touched). Scoped to toAgent; the handler
+// enforces that the caller may only flush messages addressed to itself.
+func (s *Store) PromoteDeferred(ctx context.Context, toAgent, trigger string) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET state = ?
+		 WHERE to_agent = ? AND state = ? AND deliver_after = ?`,
+		StateQueued, toAgent, StateDeferred, trigger)
+	if err != nil {
+		return 0, fmt.Errorf("store: promote deferred: %w", err)
 	}
 	return res.RowsAffected()
 }
@@ -596,11 +653,11 @@ func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, erro
 	var nre, q int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after
 		 FROM messages WHERE public_id = ?`,
 		publicID).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified)
+		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter)
 	m.NoReplyExpected = nre != 0
 	m.Quick = q != 0
 	if errors.Is(err, sql.ErrNoRows) {
@@ -636,7 +693,7 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 	escaped := escapeLikePrefix(prefix)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after
 		 FROM messages WHERE public_id LIKE ? ESCAPE '\' ORDER BY id ASC`,
 		escaped+"%")
 	if err != nil {
@@ -649,7 +706,7 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 		var nre, q int
 		if err := rows.Scan(&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent,
 			&m.ReplyTo, &m.Body, &m.Kind, &nre, &q, &m.State, &m.CreatedAt,
-			&m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified); err != nil {
+			&m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0
@@ -682,6 +739,12 @@ type ListFilter struct {
 	SinceCreatedAt string // ISO 8601 UTC floor; "" = no floor
 	Unverified     bool   // true → only state=delivered AND verified=0 rows
 	OrderDesc      bool   // true → ORDER BY id DESC (newest-first); false = id ASC
+	// Deferred controls visibility of #227 deferred rows. false (default):
+	// deferred rows are EXCLUDED unless an explicit State filter asks for them
+	// — so default list/inbox/audit views never leak pre-queue rows. true:
+	// return ONLY state=deferred rows (the `sent --deferred` opt-in). When a
+	// caller sets State explicitly, that filter wins and Deferred is ignored.
+	Deferred bool
 }
 
 // ListMessages returns messages matching the filter, ordered by id ASC by
@@ -705,6 +768,15 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	if f.State != "" {
 		wheres = append(wheres, "state = ?")
 		args = append(args, f.State)
+	} else if f.Deferred {
+		// Opt-in: only deferred rows (#227 `sent --deferred`).
+		wheres = append(wheres, "state = ?")
+		args = append(args, StateDeferred)
+	} else {
+		// Default: hide deferred rows from the all-states view so pre-queue
+		// rows never leak into inbox / audit / list surfaces (#227).
+		wheres = append(wheres, "state != ?")
+		args = append(args, StateDeferred)
 	}
 	if f.Kind != "" {
 		wheres = append(wheres, "kind = ?")
@@ -732,7 +804,7 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 		ord = "DESC"
 	}
 	qry := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified
+	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after
 	      FROM messages`
 	if len(wheres) > 0 {
 		qry += " WHERE " + strings.Join(wheres, " AND ")
@@ -751,7 +823,7 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 		var nre, q int
 		if err := rows.Scan(
 			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-			&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified); err != nil {
+			&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0
@@ -805,7 +877,7 @@ func (s *Store) TailRows(ctx context.Context, afterID int64, f TailFilter, limit
 	args = append(args, limit)
 
 	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified
+	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after
 	      FROM messages WHERE ` + strings.Join(wheres, " AND ") +
 		` ORDER BY id ASC LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -831,7 +903,7 @@ func (s *Store) MessagesByIDs(ctx context.Context, ids []int64) ([]Message, erro
 		args[i] = id
 	}
 	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified
+	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after
 	      FROM messages WHERE id IN (` + strings.Join(placeholders, ",") + `) ORDER BY id ASC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -850,7 +922,7 @@ func scanMessages(rows *sql.Rows) ([]Message, error) {
 		var nre, q int
 		if err := rows.Scan(
 			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-			&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified); err != nil {
+			&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0
