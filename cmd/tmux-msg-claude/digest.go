@@ -123,8 +123,8 @@ func runDigestWithStore(ctx context.Context, s *store.Store, w store.StatsWindow
 // and classifies each as closed or in-flight.
 //
 // Only KindMessage rows participate — system chrome (delivery_failure_notice,
-// stranded_draft, ping, control) is substrate plumbing, not narrative, so it is
-// excluded from thread analysis.
+// dedupe_notice, stranded_draft, ping, control) is substrate plumbing, not
+// narrative, so it is excluded from thread analysis.
 //
 // Close heuristic (the architectural core, pinned in #161's ACs — a heuristic,
 // not ground truth, because the substrate cannot know if a conversation is

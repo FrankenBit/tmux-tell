@@ -117,7 +117,7 @@ length marker is not applied to quick messages (single-line chrome is already th
 compactness signal). Sister to `--no-reply-expected`: `--no-reply-expected`
 reduces unnecessary acks; `--quick` reduces the overhead of necessary acks.
 
-System-generated messages (`delivery_failure_notice`, `stranded_draft`) carry their
+System-generated messages (`delivery_failure_notice`, `dedupe_notice`, `stranded_draft`) carry their
 own chrome so they're distinguishable from agent traffic. Sender names render
 title-cased in the header; stored agent names are lowercase by convention.
 
@@ -450,7 +450,7 @@ marked `🔕` no-reply-expected (or the send failed) and **in-flight** otherwise
 a heuristic, not ground truth: the substrate can't know if a conversation is
 *semantically* done, so the output says "likely needs follow-up," and setting
 `--no-reply-expected` on a genuine last word is what keeps a closed thread out of
-the list. System chrome (`delivery_failure_notice`, `stranded_draft`, `ping`) is
+the list. System chrome (`delivery_failure_notice`, `dedupe_notice`, `stranded_draft`, `ping`) is
 excluded from thread analysis.
 
 **Live tail.** `tmux-msg-claude tail` is the cross-chamber firehose — all bus traffic,

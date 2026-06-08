@@ -1218,7 +1218,7 @@ func insertDedupeNotice(
 	replay *store.Message,
 	originalID string,
 ) {
-	if replay.Kind == store.KindDeliveryFailureNotice || replay.Kind == store.KindDedupeNotice {
+	if replay.Kind != store.KindMessage {
 		return
 	}
 	body := fmt.Sprintf(":white_check_mark: Dedupe resolved\n  Replay id: %s\n  Original id: %s (now confirmed delivered via scrollback re-verify)\n  Replay dropped; no further action needed.",
