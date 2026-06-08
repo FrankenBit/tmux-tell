@@ -85,8 +85,8 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 		deliveryMode string
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -152,7 +152,7 @@ func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) e
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +167,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 			aliases      string
 			deliveryMode string
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState); err != nil {
 			return nil, err
 		}
 		if pane.Valid {
@@ -179,6 +179,32 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// SetAttentionState updates an agent's attention_state (#224). The state is
+// validated against ValidAttentionState before writing — invalid values
+// are rejected with a descriptive error. Returns ErrNotFound if no agent
+// with that name is registered.
+//
+// Does not bump updated_at: attention transitions are operational
+// signals from the chamber, not discovery-relevant changes. (The
+// chamber-attention-signal mechanism is for operator visibility; the
+// agents-table updated_at carries a different semantic.)
+func (s *Store) SetAttentionState(ctx context.Context, name, state string) error {
+	if !ValidAttentionState(state) {
+		return fmt.Errorf("store: invalid attention_state %q (want %q, %q, or %q)",
+			state, AttentionStateIdle, AttentionStateBusy, AttentionStateAwaitingOperator)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET attention_state = ? WHERE name = ?`,
+		state, name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
 }
 
 // ErrAliasCollision is returned by SetAliases/AddAlias when the

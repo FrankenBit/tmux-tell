@@ -134,6 +134,15 @@ var migrations = []string{
 	// (id > epoch) that deliver normally. NULL = never registered with a
 	// backlog (no epoch in effect → all messages deliver normally).
 	`ALTER TABLE agents ADD COLUMN backlog_epoch_id INTEGER`,
+	// #224: chamber → operator attention signal. Three values:
+	//   - "idle"               — default; chamber is reachable, no operator action pending
+	//   - "busy"               — chamber is mid-tool-call (informational; future hook)
+	//   - "awaiting_operator"  — chamber has presented a choice / question and needs the
+	//                            operator to weigh in before continuing
+	// Set explicitly by chambers via the flag_operator / clear_operator_flag
+	// tools. Auto-cleared to "idle" on the chamber's next register call (the
+	// chamber resumed; whatever it was waiting on is presumed resolved).
+	`ALTER TABLE agents ADD COLUMN attention_state TEXT NOT NULL DEFAULT 'idle'`,
 }
 
 // Close releases the underlying database handle.

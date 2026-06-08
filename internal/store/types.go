@@ -122,6 +122,13 @@ type Agent struct {
 	// backlog — ClaimNext treats that as "no floor" (deliver everything).
 	// Stamped by the register handler via SetBacklogEpoch; see #204.
 	BacklogEpoch sql.NullInt64
+	// AttentionState is the chamber → operator attention signal (#224).
+	// Three values: "idle" (default; no operator action pending), "busy"
+	// (chamber mid-tool-call; informational), "awaiting_operator" (chamber
+	// has presented a choice/question and needs the operator to weigh in).
+	// Set explicitly by chambers via flag_operator / clear_operator_flag.
+	// Auto-cleared to "idle" on the chamber's next register call.
+	AttentionState string
 }
 
 // Delivery-mode constants. Constrained string set; see Agent.DeliveryMode
@@ -138,4 +145,33 @@ const (
 // value behavior to leak into the schema).
 func ValidDeliveryMode(s string) bool {
 	return s == DeliveryModePasteAndEnter || s == DeliveryModeMailboxOnly
+}
+
+// Attention-state constants (#224). Constrained string set; the store
+// does not enforce membership at insert-time, so callers should validate
+// via ValidAttentionState before writing.
+const (
+	// AttentionStateIdle is the default — chamber reachable; no operator
+	// action pending. Set by register auto-clear when a chamber comes
+	// back from /compact, restart, or a normal (re)register.
+	AttentionStateIdle = "idle"
+	// AttentionStateBusy is the informational mid-tool-call signal. Not
+	// actively used by any substrate-side mechanism today; reserved for
+	// future hook-driven auto-tracking.
+	AttentionStateBusy = "busy"
+	// AttentionStateAwaitingOperator is the load-bearing case: the
+	// chamber has presented a choice or question and is waiting for the
+	// operator to weigh in. Set by flag_operator, cleared by
+	// clear_operator_flag or by the chamber's next register.
+	AttentionStateAwaitingOperator = "awaiting_operator"
+)
+
+// ValidAttentionState reports whether s is a known attention-state value.
+// Empty string is treated as INVALID (callers should default to
+// AttentionStateIdle explicitly rather than relying on zero-value
+// behavior to leak into the schema).
+func ValidAttentionState(s string) bool {
+	return s == AttentionStateIdle ||
+		s == AttentionStateBusy ||
+		s == AttentionStateAwaitingOperator
 }

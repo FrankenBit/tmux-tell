@@ -191,7 +191,65 @@ tmux-msg-claude log    --thread ID                      # a reply chain, flat-ch
 tmux-msg-claude thread ID [--format tree|json]          # a reply chain, as a parent→child tree
 tmux-msg-claude stranded list|show|prune                # recover flushed operator paste snapshots
 tmux-msg-claude discover                                # re-derive agents.pane_id from tmux
+tmux-msg-claude flag-operator "<body>"                  # signal this chamber needs operator attention (#224)
+tmux-msg-claude clear-operator-flag                     # clear this chamber's awaiting_operator flag
 ```
+
+## Chamber → operator attention signal
+
+Today's `tmux-msg-claude agents` output shows whether a chamber is reachable
+(`pane_status: live` + `mailman_running` + `registered`), but it does not tell
+the operator the load-bearing distinction: *"this chamber has presented a
+choice and is waiting for me to weigh in"*. From the operator's side scanning
+panes, an idle-because-done chamber looks identical to an idle-because-
+awaiting-input chamber.
+
+The attention signal (#224) closes that gap with a three-value state column on
+each registered agent: `idle` (default; no operator action pending), `busy`
+(reserved for future hook-driven mid-tool-call tracking), and
+`awaiting_operator` (chamber explicitly flagged it needs the operator).
+
+**Chamber side.** When a chamber presents a choice it wants the operator to
+weigh in on, it calls `flag_operator(body)` — either as the MCP tool
+`tmux-msg.flag_operator` or via `tmux-msg-claude flag-operator "<body>"`. The
+body is the question / choice text. Two substrate mutations land in sequence
+(best-effort):
+
+1. A message is posted to the reserved `operator-attention` recipient (so the
+   operator can read the actual prompt by tailing that mailbox).
+2. The chamber's `attention_state` flips to `awaiting_operator`.
+
+If step 1 fails (operator-attention not registered, body too large), no
+substrate mutation lands — the call fail-louds and the chamber's state stays
+unchanged. If step 1 succeeds and step 2 fails, the response carries a
+`state_error` field so the chamber sees the partial outcome rather than
+treating it as a silent failure.
+
+The flag clears implicitly on the chamber's next `register` call (back from
+`/compact`, a restart, or a spawn-die cycle) or explicitly via
+`tmux-msg-claude clear-operator-flag` / `tmux-msg.clear_operator_flag`. The
+auto-clear-on-register matches the substrate-honest semantic: a chamber that
+re-registered is alive and ready, so whatever it was waiting on is presumed
+resolved.
+
+**Operator side.** One-time setup: register the reserved recipient as
+`mailbox-only` (no mailman daemon needed; the operator polls):
+
+```bash
+tmux-msg-claude register --name operator-attention --delivery-mode mailbox-only
+```
+
+Then the operator's two surfaces:
+
+- `tmux-msg-claude agents` includes an ATTENTION column listing each chamber's
+  state — quick scan of "who needs me?"
+- `tmux-msg-claude inbox operator-attention` (or `--watch` for live tailing
+  once #149 lands) shows the actual questions chambers have flagged
+
+The reserved-recipient convention is enforced: `flag_operator` fails-loud if
+`operator-attention` is not registered — substrate-honest about the setup
+prerequisite rather than silently swallowing the attention request.
+
 
 **Kill switch & retention.** `pause` sets `agents.paused = 1`; the mailman stops
 injecting (messages keep queuing up to the cap) until `resume`. History is free —
@@ -532,10 +590,14 @@ CREATE TABLE messages (
 CREATE INDEX ix_msg_queue ON messages(to_agent, state, id);
 
 CREATE TABLE agents (
-  name        TEXT PRIMARY KEY,
-  pane_id     TEXT,                        -- "%3", refreshed by discovery
-  paused      INTEGER NOT NULL DEFAULT 0,  -- the kill switch
-  updated_at  TEXT NOT NULL DEFAULT (datetime('now','subsec'))
+  name             TEXT PRIMARY KEY,
+  pane_id          TEXT,                          -- "%3", refreshed by discovery
+  paused           INTEGER NOT NULL DEFAULT 0,    -- the kill switch
+  updated_at       TEXT NOT NULL DEFAULT (datetime('now','subsec')),
+  aliases          TEXT NOT NULL DEFAULT '[]',    -- JSON list of alternative names (#38)
+  delivery_mode    TEXT NOT NULL DEFAULT 'paste-and-enter',  -- 'paste-and-enter' or 'mailbox-only' (#116/#132)
+  backlog_epoch_id INTEGER,                       -- #204 claim-floor (NULL = no epoch)
+  attention_state  TEXT NOT NULL DEFAULT 'idle'   -- 'idle' | 'busy' | 'awaiting_operator' (#224)
 );
 ```
 

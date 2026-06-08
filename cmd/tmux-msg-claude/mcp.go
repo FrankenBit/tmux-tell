@@ -147,6 +147,22 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpStatusHandler(s))
 
+	srv.RegisterTool("tmux-msg.flag_operator",
+		"Signal that this chamber needs operator attention (#224). Posts the body to the reserved \"operator-attention\" recipient AND marks this chamber's attention_state as \"awaiting_operator\". The flag clears implicitly on the chamber's next register call (after the operator answered + chamber resumed) or explicitly via tmux-msg.clear_operator_flag. Body is required — it is the question or choice the chamber wants the operator to weigh in on. The recipient \"operator-attention\" MUST be pre-registered by the operator (as a mailbox-only agent) — chambers cannot register it themselves.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"body": {"type": "string", "description": "The question or choice the chamber wants the operator to weigh in on (required)"}
+			},
+			"required": ["body"]
+		}`),
+		mcpFlagOperatorHandler(s))
+
+	srv.RegisterTool("tmux-msg.clear_operator_flag",
+		"Clear this chamber's awaiting_operator attention signal (#224). Sets attention_state back to \"idle\". Used when the operator answered the chamber's question out of band (typed directly in the pane) and the chamber wants to clear the flag without going through register.",
+		json.RawMessage(`{"type": "object", "properties": {}}`),
+		mcpClearOperatorFlagHandler(s))
+
 	srv.RegisterTool("tmux-msg.register",
 		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-bus-participant scenario). The response includes `queued`: the number of messages already waiting for this agent at register time (#151) — a fresh or post-restart session learns it has backlog without a separate inbox poll; check it and run tmux-msg.inbox if >0. When that backlog exists, the don't-flood policy (#204) keeps the mailman from pasting the whole queue at once: by default it leaves the backlog queued and delivers a single `📬 N queued` nudge (the `on-register-backlog` TOML knob can switch to auto-delivering the newest N). The response then also carries `backlog_policy`, `backlog_skipped`, and `backlog_nudge`.",
 		json.RawMessage(`{
@@ -716,7 +732,7 @@ func mcpAgentsHandler(s *store.Store) mcp.ToolHandler {
 		}
 		out := []agentView{}
 		for _, a := range agents {
-			v := agentView{Name: a.Name, Pane: a.PaneID, Paused: a.Paused}
+			v := agentView{Name: a.Name, Pane: a.PaneID, Paused: a.Paused, AttentionState: a.AttentionState}
 			switch {
 			case a.PaneID == "":
 				v.PaneStatus = "no-pane"

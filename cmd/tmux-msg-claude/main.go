@@ -149,6 +149,10 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runStateCLI(args[1:], stdout, stderr)
 	case "refresh-all-mcps":
 		return runRefreshAllMcpsCLI(args[1:], stdout, stderr)
+	case "flag-operator":
+		return runFlagOperatorCLI(args[1:], stdout, stderr)
+	case "clear-operator-flag":
+		return runClearOperatorFlagCLI(args[1:], stdout, stderr)
 	case "mcp":
 		return runMCPCLI(args[1:], os.Stdin, stdout, stderr)
 	default:

@@ -47,6 +47,10 @@ type agentView struct {
 	PaneStatus string `json:"pane_status"`
 	Paused     bool   `json:"paused"`
 	Queued     int    `json:"queued"`
+	// AttentionState surfaces the #224 chamber → operator attention signal
+	// ("idle" / "busy" / "awaiting_operator"). Empty omitted from JSON so
+	// pre-#224 callers see no schema-shape change.
+	AttentionState string `json:"attention_state,omitempty"`
 }
 
 func runAgentsWithStore(ctx context.Context, s *store.Store,
@@ -61,9 +65,10 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 	rows := make([]agentView, 0, len(agents))
 	for _, a := range agents {
 		v := agentView{
-			Name:   a.Name,
-			Pane:   a.PaneID,
-			Paused: a.Paused,
+			Name:           a.Name,
+			Pane:           a.PaneID,
+			Paused:         a.Paused,
+			AttentionState: a.AttentionState,
 		}
 		switch {
 		case a.PaneID == "":
@@ -90,15 +95,19 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 		_ = writeJSONResult(stdout, rows)
 		return exitOK
 	case "text", "":
-		header := []string{"NAME", "PANE", "STATUS", "PAUSED", "QUEUED"}
+		header := []string{"NAME", "PANE", "STATUS", "PAUSED", "QUEUED", "ATTENTION"}
 		out := make([][]string, 0, len(rows))
 		for _, r := range rows {
 			pane := r.Pane
 			if pane == "" {
 				pane = "-"
 			}
+			attention := r.AttentionState
+			if attention == "" {
+				attention = "idle"
+			}
 			out = append(out, []string{
-				r.Name, pane, r.PaneStatus, yesNo(r.Paused), itoa(r.Queued),
+				r.Name, pane, r.PaneStatus, yesNo(r.Paused), itoa(r.Queued), attention,
 			})
 		}
 		renderTextTable(stdout, header, out)

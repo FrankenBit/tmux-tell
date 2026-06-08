@@ -320,19 +320,21 @@ func TestMCP_ToolsListContract(t *testing.T) {
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
 	want := map[string]bool{
-		"tmux-msg.send":           true,
-		"tmux-msg.resend":         true,
-		"tmux-msg.ping":           true,
-		"tmux-msg.agents":         true,
-		"tmux-msg.whoami":         true,
-		"tmux-msg.inbox":          true,
-		"tmux-msg.status":         true,
-		"tmux-msg.register":       true,
-		"tmux-msg.unregister":     true,
-		"tmux-msg.control":        true,
-		"tmux-msg.message_status": true,
-		"tmux-msg.get":            true,
-		"tmux-msg.agent_state":    true,
+		"tmux-msg.send":                true,
+		"tmux-msg.resend":              true,
+		"tmux-msg.ping":                true,
+		"tmux-msg.agents":              true,
+		"tmux-msg.whoami":              true,
+		"tmux-msg.inbox":               true,
+		"tmux-msg.status":              true,
+		"tmux-msg.register":            true,
+		"tmux-msg.unregister":          true,
+		"tmux-msg.control":             true,
+		"tmux-msg.message_status":      true,
+		"tmux-msg.get":                 true,
+		"tmux-msg.agent_state":         true,
+		"tmux-msg.flag_operator":       true,
+		"tmux-msg.clear_operator_flag": true,
 	}
 	if len(tools) != len(want) {
 		t.Errorf("tools = %d, want %d", len(tools), len(want))

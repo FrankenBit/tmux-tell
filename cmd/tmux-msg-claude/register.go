@@ -111,6 +111,17 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("set delivery_mode: %v", err), exitInternal)
 	}
+	// #224: auto-clear any prior attention_state on (re)register. The chamber
+	// is back and ready; whatever it was awaiting is presumed resolved (or
+	// has been answered out-of-band). Substrate-honest reset so the operator's
+	// attention queue doesn't carry stale "awaiting_operator" signals across
+	// chamber restarts / /compact / spawn-die cycles.
+	if err := s.SetAttentionState(ctx, *name, store.AttentionStateIdle); err != nil {
+		// Non-fatal: registration already succeeded above. A failed
+		// attention-state clear is operationally awkward but doesn't break
+		// the bus. Surface as a soft signal rather than aborting.
+		fmt.Fprintf(stderr, "WARN register: clear attention_state: %v\n", err)
+	}
 	if *alias != "" {
 		if err := s.AddAlias(ctx, *name, *alias); err != nil {
 			if errors.Is(err, store.ErrAliasCollision) {

@@ -45,6 +45,32 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   ```
   Accepted windows: any `parseWindow` spec (`"30d"`, `"7d"`, `"24h"`, etc.). Sweep touches only `delivered` + `failed` rows for the serving agent (single-writer invariant); in-flight rows are never affected. Composes with the existing `reset --older-than` one-off flush (#150 PR1, shipped in v0.12.0).
 
+- **Chamber → operator attention signal (#224).** A new substrate-level
+  three-value state on each registered agent surfaces the load-bearing
+  "this chamber is awaiting operator input" distinction that
+  `tmux-msg-claude agents` couldn't show before. States: `idle` (default;
+  no operator action pending), `busy` (reserved for future hook-driven
+  mid-tool-call tracking), `awaiting_operator` (chamber has presented a
+  choice and is waiting for the operator). New MCP tools
+  `tmux-msg.flag_operator(body)` + `tmux-msg.clear_operator_flag()` and
+  matching CLI subcommands `tmux-msg-claude flag-operator "<body>"` /
+  `clear-operator-flag`. `flag_operator` posts the body to a reserved
+  `operator-attention` recipient (mailbox-only; operator registers it
+  once at setup) AND flips the chamber's `attention_state` to
+  `awaiting_operator` — best-effort across both substrate mutations;
+  if the state-flip fails after the message lands, the response carries
+  a `state_error` field so the chamber knows to investigate rather than
+  treating it as a silent partial success. The flag clears implicitly
+  on the chamber's next `register` call (post-/compact, restart,
+  spawn-die) or explicitly via `clear-operator-flag`. `tmux-msg-claude
+  agents` gains an ATTENTION column for at-a-glance operator visibility;
+  `tmux-msg.agents` includes the same field in its JSON output.
+  Reserved-recipient enforcement: `flag_operator` fails-loud (#152
+  send-to-unregistered semantic) if `operator-attention` is not
+  registered, rather than silently swallowing the attention request.
+  Substrate addition is additive (new column on agents table) —
+  K-preserving per ADR-0008 §Amendment A (Reading B).
+
 ### Changed
 
 - **`docs/why.md`: add a §See also referencing `agents-connector` (#251).** A
