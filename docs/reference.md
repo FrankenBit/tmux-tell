@@ -548,17 +548,18 @@ subcommand args/flags/exit codes, `--format json` shapes, the DB schema, and the
 exported Go API (`discover` / `store` / `tmuxio`). Each clean cut increments K;
 any break on a tracked surface resets it to 0.
 
-**Current K: 5** (Sea-trials K=3 gate cleared at v0.9.0; the counter keeps
+**Current K: 6** (Sea-trials K=3 gate cleared at v0.9.0; the counter keeps
 raising past the gate and retires at v1.0). The `cli-semaphore → tmux-msg`
 substrate rename (v0.5.0) and the MCP wire-protocol rename (v0.6.0) were the
-last deliberate breaks; v0.7.0, v0.8.0, v0.9.0, v0.10.0, and v0.11.0 have
-each been non-breaking. v0.10.0 ships a second K-preserving deprecation arc —
+last deliberate breaks; v0.7.0, v0.8.0, v0.9.0, v0.10.0, v0.11.0, and v0.12.0
+have each been non-breaking. v0.10.0's second K-preserving deprecation arc —
 `delivered_unverified → delivered_in_input_box` with CLI flag / TOML
 key / `--state` value / JSON shadow-field aliases per ADR-0008's two-minor
-floor (earliest removal v0.12.0) — alongside the v0.9.0 `claude-msg →
-tmux-msg-claude` aliases that, per the v0.11.0 extension (ADR-0008
-§Discretion clause, operator decision 2026-06-08), continue to function
-through the v1.0 stability boundary. Per
+floor (originally earliest removal v0.12.0) — was extended at the v0.12.0
+cut to the v1.0 stability boundary (ADR-0008 §Discretion clause, operator
+decision 2026-06-08), composing with the same v0.11.0 extension of the
+v0.9.0 `claude-msg → tmux-msg-claude` arc. Both alias families continue to
+function through v1.0. Per
 ADR-0008's [Reading B amendment](docs/adr/0008-deprecation-policy.md#amendment-a--2026-06-08-k-counter-interaction):
 deprecation-with-functioning-alias preserves K-counter progress; only removal
 resets it. The live per-release record lives in the tracker at

@@ -312,7 +312,7 @@ func TestResolve_FullSnapshot(t *testing.T) {
 
 // TestDeprecatedNotifyOnDeliveredUnverifiedTomlKey verifies the backward-compat
 // alias: the old TOML key notify-on-delivered-unverified is accepted and resolves
-// via the same precedence chain as the new key (#140, removal v0.12.0).
+// via the same precedence chain as the new key (#140, removal v1.0 — extended from v0.12.0 per ADR-0008 §Discretion clause).
 func TestDeprecatedNotifyOnDeliveredUnverifiedTomlKey(t *testing.T) {
 	tmp := filepath.Join(t.TempDir(), "compat.toml")
 	content := `

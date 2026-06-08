@@ -86,7 +86,7 @@ type Block struct {
 	NotifyOnFailed              *bool `toml:"notify-on-failed"`
 	NotifyOnDeliveredInInputBox *bool `toml:"notify-on-delivered-in-input-box"`
 	// NotifyOnDeliveredUnverified is the deprecated alias for NotifyOnDeliveredInInputBox
-	// (renamed v0.10.0 / #140). Accepted for the deprecation cycle; removal v0.12.0.
+	// (renamed v0.10.0 / #140). Accepted for the deprecation cycle; removal v1.0 (extended from v0.12.0 per ADR-0008 §Discretion clause).
 	NotifyOnDeliveredUnverified *bool `toml:"notify-on-delivered-unverified"`
 	DriftSoftFail               *bool `toml:"drift-soft-fail"`
 	// GateDisabled disables the observe-only-with-one-named-visibility-
@@ -239,7 +239,7 @@ func LoadFrom(path string) (*File, error) {
 
 // HasDeprecatedNotifyOnDeliveredUnverified reports whether the deprecated TOML key
 // notify-on-delivered-unverified is set for the given agent (agent-level or defaults),
-// so callers can emit a WARN deprecated_surface_used line. Removal v0.12.0 (#140).
+// so callers can emit a WARN deprecated_surface_used line. Removal v1.0 (extended from v0.12.0 per ADR-0008 §Discretion clause, #140).
 func HasDeprecatedNotifyOnDeliveredUnverified(file *File, agent string) bool {
 	if file == nil {
 		return false
@@ -352,7 +352,7 @@ func blockBoolField(b *Block, field string) *bool {
 		if b.NotifyOnDeliveredInInputBox != nil {
 			return b.NotifyOnDeliveredInInputBox
 		}
-		return b.NotifyOnDeliveredUnverified // deprecated alias, removal v0.12.0
+		return b.NotifyOnDeliveredUnverified // deprecated alias, removal v1.0 (extended from v0.12.0 per ADR-0008 §Discretion clause)
 	case "drift-soft-fail":
 		return b.DriftSoftFail
 	case "gate-disabled":
@@ -499,7 +499,7 @@ type ResolvedView struct {
 	ConfigPath                  string `json:"config_path"`
 	NotifyOnFailed              bool   `json:"notify_on_failed"`
 	NotifyOnDeliveredInInputBox bool   `json:"notify_on_delivered_in_input_box"`
-	// Deprecated: same value as NotifyOnDeliveredInInputBox; removal v0.12.0 (#140).
+	// Deprecated: same value as NotifyOnDeliveredInInputBox; removal v1.0 (extended from v0.12.0 per ADR-0008 §Discretion clause) (#140).
 	NotifyOnDeliveredUnverified bool          `json:"notify_on_delivered_unverified"`
 	DriftSoftFail               bool          `json:"drift_soft_fail"`
 	GateDisabled                bool          `json:"gate_disabled"`

@@ -41,7 +41,7 @@ type AgentHealth struct {
 	// local for status; configurable for health).
 	Delivered           int `json:"delivered"`
 	DeliveredInInputBox int `json:"delivered_in_input_box"`
-	// Deprecated: same value as DeliveredInInputBox; removal v0.12.0 (#140).
+	// Deprecated: same value as DeliveredInInputBox; removal v1.0 (extended from v0.12.0 per ADR-0008 §Discretion clause, #140).
 	DeliveredUnverified int `json:"delivered_unverified"`
 	Failed              int `json:"failed"`
 	QuietCapExceeded    int `json:"quiet_cap_exceeded"`

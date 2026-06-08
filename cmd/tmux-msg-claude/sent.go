@@ -42,7 +42,7 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 	// Normalize deprecated --state alias before validation.
 	if *stateFlag == "delivered_unverified" {
 		fmt.Fprintf(stderr,
-			"WARN deprecated_surface_used name=--state delivered_unverified removal=v0.12.0 — use --state delivered_in_input_box instead (ADR-0008)\n")
+			"WARN deprecated_surface_used name=--state delivered_unverified removal=v1.0 — use --state delivered_in_input_box instead (ADR-0008)\n")
 		*stateFlag = "delivered_in_input_box"
 	}
 

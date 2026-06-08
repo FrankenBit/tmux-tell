@@ -33,6 +33,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-06-08
+
 ### Added
 
 - **`inbox --ack` / `--ack-all` — announce-skipped backlog drain (#221).** The
@@ -106,6 +108,28 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   concedes the case where you *don't* need tmux-msg before making its own. The landing
   README's "Where to go next" pointer notes the comparisons. Surfaced by the operator
   during #214 review.
+
+### Deprecated
+
+- **`delivered_unverified` family aliases (CLI flag + TOML key + `--state` value +
+  JSON shadow fields) — earliest removal extended from v0.12.0 to v1.0 per ADR-0008
+  §Discretion clause (#140 extension).**
+  Deprecated in v0.10.0; earliest removal v1.0.0.
+
+  Per the operator's decision 2026-06-08, the alias machinery for the
+  `delivered_unverified → delivered_in_input_box` rename arc (#140) is held in
+  place through the v1.0 stability boundary instead of removed at the v0.12.0
+  two-minor-floor earliest. Same rationale as the v0.11.0 cut's #177 extension:
+  maximize migration comfort for existing operator config; alias machinery is
+  cheap (TOML-key shim + CLI-flag passthrough + JSON shadow fields + the `--state`
+  value normalization); v1.0 is the natural cutover. The binary's WARN logs now
+  emit `removal=v1.0` (were `removal=v0.12.0`) across all four surfaces:
+  `--notify-on-delivered-unverified` CLI flag (`cmd/tmux-msg-claude/serve.go:185,193`),
+  `notify-on-delivered-unverified` TOML key (`cmd/tmux-msg-claude/serve.go:206`),
+  `--state delivered_unverified` CLI arg (`cmd/tmux-msg-claude/sent.go:45`), and the
+  JSON shadow fields' doc-comments (`internal/config/config.go:89,242,355,502`,
+  `internal/healthscan/healthscan.go:44`). K-counter remains preserved by the alias
+  machinery per ADR-0008 §Amendment A (Reading B); v0.12.0 increments K to 6.
 
 ### Fixed
 

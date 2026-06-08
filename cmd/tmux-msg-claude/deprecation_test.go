@@ -32,7 +32,7 @@ func TestServe_DeprecatedNotifyOnDeliveredUnverifiedFlag(t *testing.T) {
 				t.Errorf("args=%v: warn=%v, want %v (stderr=%q)", tc.args, hasWarn, tc.wantWarn, got)
 			}
 			if tc.wantWarn {
-				for _, want := range []string{"removal=v0.12.0", "notify-on-delivered-in-input-box"} {
+				for _, want := range []string{"removal=v1.0", "notify-on-delivered-in-input-box"} {
 					if !strings.Contains(got, want) {
 						t.Errorf("warn missing %q; got %q", want, got)
 					}

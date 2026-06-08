@@ -182,7 +182,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	notifyOnDeliveredInInputBox := fs.Bool("notify-on-delivered-in-input-box", true,
 		"on a recipient's outbound message transitioning to `delivered_in_input_box` (paste+Enter ran but verify token didn't surface), auto-insert a notice back to the original sender (#53)")
 	notifyOnDeliveredUnverifiedLegacy := fs.Bool("notify-on-delivered-unverified", true,
-		"deprecated: use --notify-on-delivered-in-input-box (removal v0.12.0, #140)")
+		"deprecated: use --notify-on-delivered-in-input-box (removal v1.0 — extended from v0.12.0 per ADR-0008 §Discretion clause, #140)")
 	metricsAddr := fs.String("metrics-addr", "",
 		"expose a Prometheus /metrics endpoint on this address (e.g. ':9099' or '127.0.0.1:9099'). Empty (the default) disables the endpoint entirely — no behavior change for deploys that don't scrape. Per-agent TOML knob: `metrics-addr = \":PORT\"` (each per-agent mailman is its own process, so assign a distinct port per agent). (#146)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
@@ -190,7 +190,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if flagWasSet(fs, "notify-on-delivered-unverified") {
 		fmt.Fprintf(stderr,
-			"WARN deprecated_surface_used name=--notify-on-delivered-unverified removal=v0.12.0 — use --notify-on-delivered-in-input-box instead (ADR-0008)\n")
+			"WARN deprecated_surface_used name=--notify-on-delivered-unverified removal=v1.0 — use --notify-on-delivered-in-input-box instead (ADR-0008)\n")
 		*notifyOnDeliveredInInputBox = *notifyOnDeliveredUnverifiedLegacy
 	}
 
@@ -203,7 +203,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if config.HasDeprecatedNotifyOnDeliveredUnverified(cfg, *agent) {
 		fmt.Fprintf(stderr,
-			"WARN deprecated_surface_used name=notify-on-delivered-unverified removal=v0.12.0 — use notify-on-delivered-in-input-box in config instead (ADR-0008)\n")
+			"WARN deprecated_surface_used name=notify-on-delivered-unverified removal=v1.0 — use notify-on-delivered-in-input-box in config instead (ADR-0008)\n")
 	}
 	// Precedence: CLI flags > per-agent block > defaults block >
 	// hardcoded compile-time defaults. fs.Lookup("X").DefValue is the
