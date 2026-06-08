@@ -85,10 +85,10 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 // The empty string (all states) is always valid.
 func validateSentState(state string) error {
 	switch state {
-	case "", "queued", "delivering", "delivered", "failed", "delivered_in_input_box":
+	case "", "queued", "delivering", "delivered", "failed", "delivered_in_input_box", "acknowledged":
 		return nil
 	default:
-		return fmt.Errorf("unknown --state %q (want queued|delivering|delivered|failed|delivered_in_input_box)", state)
+		return fmt.Errorf("unknown --state %q (want queued|delivering|delivered|failed|delivered_in_input_box|acknowledged)", state)
 	}
 }
 

@@ -54,6 +54,7 @@ type AgentStat struct {
 	Failed       int    `json:"failed"`
 	Queued       int    `json:"queued"`
 	Delivering   int    `json:"delivering"`
+	Acknowledged int    `json:"acknowledged"`
 	P50LatencyMs int    `json:"p50_latency_ms"` // 0 when no delivered messages
 	P95LatencyMs int    `json:"p95_latency_ms"`
 }
@@ -68,11 +69,12 @@ type PairStat struct {
 
 // Totals is the window-wide aggregate across all agents.
 type Totals struct {
-	Total      int `json:"total"`
-	Delivered  int `json:"delivered"`
-	Failed     int `json:"failed"`
-	Queued     int `json:"queued"`
-	Delivering int `json:"delivering"`
+	Total        int `json:"total"`
+	Delivered    int `json:"delivered"`
+	Failed       int `json:"failed"`
+	Queued       int `json:"queued"`
+	Delivering   int `json:"delivering"`
+	Acknowledged int `json:"acknowledged"`
 }
 
 // statRow is one scanned message reduced to the fields the aggregates need.
@@ -150,6 +152,8 @@ func (s *Store) StatsPerAgent(ctx context.Context, w StatsWindow) ([]AgentStat, 
 			a.stat.Queued++
 		case StateDelivering:
 			a.stat.Delivering++
+		case StateAcknowledged:
+			a.stat.Acknowledged++
 		}
 		if r.hasLatency && State(r.state) == StateDelivered {
 			a.latencies = append(a.latencies, r.latencyMs)
@@ -228,6 +232,8 @@ func (s *Store) StatsTotals(ctx context.Context, w StatsWindow) (Totals, error) 
 			t.Queued++
 		case StateDelivering:
 			t.Delivering++
+		case StateAcknowledged:
+			t.Acknowledged++
 		}
 	}
 	return t, nil

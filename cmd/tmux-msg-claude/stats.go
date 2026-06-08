@@ -142,6 +142,9 @@ func renderStatsText(w io.Writer, res statsResult, showPairs bool) {
 	if t.Delivering > 0 {
 		fmt.Fprintf(w, ", delivering %d", t.Delivering)
 	}
+	if t.Acknowledged > 0 {
+		fmt.Fprintf(w, ", acknowledged %d", t.Acknowledged)
+	}
 	fmt.Fprintln(w)
 	// The verified/unverified split is not DB-derivable (both are state=delivered;
 	// see #169). Operators wanting it use `status --today` / `health` (journal-sourced).

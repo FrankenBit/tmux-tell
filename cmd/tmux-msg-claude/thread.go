@@ -27,12 +27,13 @@ import (
 // verified-vs-unverified DB-queryable is tracked in #169; until then a
 // `delivered_in_input_box` node renders as `✓`.
 const (
-	glyphRoot       = "○"
-	glyphDelivered  = "✓"
-	glyphFailed     = "✗"
-	glyphInFlight   = "…"
-	glyphUnknown    = "?"
-	threadPreviewLn = 50
+	glyphRoot         = "○"
+	glyphDelivered    = "✓"
+	glyphFailed       = "✗"
+	glyphInFlight     = "…"
+	glyphAcknowledged = "·"
+	glyphUnknown      = "?"
+	threadPreviewLn   = 50
 )
 
 // threadNode is one node in the rendered reply-tree. It mirrors a
@@ -121,6 +122,8 @@ func stateGlyph(state string) string {
 		return glyphFailed
 	case store.StateQueued, store.StateDelivering:
 		return glyphInFlight
+	case store.StateAcknowledged:
+		return glyphAcknowledged
 	default:
 		return glyphUnknown
 	}

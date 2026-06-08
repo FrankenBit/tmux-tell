@@ -119,8 +119,9 @@ func runResetOlderThan(ctx context.Context, s *store.Store,
 }
 
 // parseResetStateFilter parses the --state flag for reset --older-than.
-// Empty filter defaults to [delivered, failed]. Only those two states are
-// permitted — queued/delivering are in-flight and must not be time-pruned.
+// Empty filter defaults to [delivered, failed]. In-flight states
+// (queued/delivering) are never permitted — only terminal states may be
+// time-pruned.
 func parseResetStateFilter(filter string) ([]store.State, error) {
 	if filter == "" {
 		return []store.State{store.StateDelivered, store.StateFailed}, nil
@@ -132,8 +133,10 @@ func parseResetStateFilter(filter string) ([]store.State, error) {
 			states = append(states, store.StateDelivered)
 		case "failed":
 			states = append(states, store.StateFailed)
+		case "acknowledged":
+			states = append(states, store.StateAcknowledged)
 		default:
-			return nil, fmt.Errorf("--state %q: only 'delivered' and 'failed' are valid with --older-than",
+			return nil, fmt.Errorf("--state %q: only 'delivered', 'failed', and 'acknowledged' are valid with --older-than",
 				strings.TrimSpace(p))
 		}
 	}

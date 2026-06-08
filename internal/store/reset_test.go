@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestDeleteMessages_ByState(t *testing.T) {
@@ -80,5 +81,49 @@ func TestDeleteMessages_RequiresStates(t *testing.T) {
 	s := newTestStore(t)
 	if _, err := s.DeleteMessages(context.Background(), "", nil); err == nil {
 		t.Error("want error for empty states")
+	}
+}
+
+// TestDeleteMessagesBefore_SameDayCutoff pins that the schema's T-format
+// created_at compares correctly with a T-format cutoff on the same day.
+// The schema uses strftime('%Y-%m-%dT%H:%M:%fZ','now') — same format as the
+// cutoff produced by strandedTimeFormat — so lexicographic comparison is
+// consistent and there is no SPACE-vs-T ordering anomaly.
+func TestDeleteMessagesBefore_SameDayCutoff(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	base := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
+	// Seed one "old" row (before base) and one "new" row (after base) using
+	// the schema's T-format directly, so the test exercises the real comparison
+	// path rather than relying on the implicit "all inserted = before future".
+	_, err := s.DB().ExecContext(ctx,
+		`INSERT INTO messages (public_id, from_agent, to_agent, body, kind, state, created_at)
+		 VALUES (?,?,?,?,?,?,?)`,
+		"old1", "a", "b", "x", "message", string(StateDelivered),
+		base.Add(-1*time.Hour).UTC().Format(sqliteTimeFormat))
+	if err != nil {
+		t.Fatalf("seed old: %v", err)
+	}
+	_, err = s.DB().ExecContext(ctx,
+		`INSERT INTO messages (public_id, from_agent, to_agent, body, kind, state, created_at)
+		 VALUES (?,?,?,?,?,?,?)`,
+		"new1", "a", "b", "y", "message", string(StateDelivered),
+		base.Add(1*time.Hour).UTC().Format(sqliteTimeFormat))
+	if err != nil {
+		t.Fatalf("seed new: %v", err)
+	}
+
+	cutoff := base.UTC().Format(sqliteTimeFormat)
+	n, err := s.DeleteMessagesBefore(ctx, "", cutoff, []State{StateDelivered})
+	if err != nil {
+		t.Fatalf("DeleteMessagesBefore: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("deleted = %d, want 1 (only the pre-base row)", n)
+	}
+	rest, _ := s.ListMessages(ctx, ListFilter{})
+	if len(rest) != 1 || rest[0].PublicID != "new1" {
+		t.Errorf("remaining = %v, want [new1]", rest)
 	}
 }
