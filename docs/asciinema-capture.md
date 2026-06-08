@@ -41,22 +41,41 @@ needed.
 
 ### B — what the operator types (in the recipient pane)
 
-**Decided: `git log --oneline -5`**, typed at a human, slightly-deliberate
-cadence so the 📫 has time to appear *mid-keystroke*; the pause before Enter is
-the quiesce trigger.
+**Decided: a partial prompt mid-composition to Claude** — e.g.
+`is the auth header still set on the client` — typed at a human,
+slightly-deliberate cadence so the 📫 has time to appear *mid-keystroke*; the
+pause before Enter is the quiesce trigger. **NO Enter** — the prompt stays
+unsent, half-written.
 
-It reads as genuine mid-work (you're checking "what just got pushed" — which
-pairs with the A message), a half-typed command makes the "don't clobber my
-input" stakes legible, and it's benign if it does run. It is **not** a
-`tmux-msg-claude send …` (the recursive option) — that confuses a first-time
-viewer about what's the tool vs what's the demo.
+A partial prompt is a *strictly better* demo of "won't paste over your
+sentence" than a partial shell command: a half-written question to Claude is
+exactly the thing you don't want a paste clobbering, and it pairs thematically
+with the A message — operator is mid-asking about the code when "the API
+changed, look at what I just pushed" arrives, and the heads-up is *relevant*
+to the half-typed question, held until they pause. (The earlier recipe drafted
+`git log --oneline -5` in a bare shell; the F6 substrate finding — see below —
+moved the recipient pane to real Claude Code, which makes the partial-prompt
+shape both possible and dramatically more on-message.)
 
-> **Dry-run flag for QM (mechanical):** validate how the gate handles the
-> half-typed line on quiesce — does it archive it as a `stranded_draft` before
-> pasting, and is that legible or distracting in a ~15s clip? Pick the cadence
-> that shows **📫-hold → clean-land** most clearly. If the stranded-draft step
-> intrudes, have the operator *complete + Enter* `git log --oneline -5` (it runs
-> harmlessly), then pause on the fresh prompt where the message lands cleanly.
+> **F6 substrate finding (QM dry-run, 2026-06-08, resolved by Herald):** the
+> observe-gate is calibrated for Claude Code's `❯` prompt sentinel
+> (`internal/tmuxio/state.go:288-424` — the AgentState classifier looks for the
+> sentinel + cursor positioning relative to it). A non-Claude shell pane
+> classifies as **StateUnknown**, which is paste-unsafe; the gate loops for
+> MaxWait (~5min default) before timing out — no visible hold-on-typing
+> dynamics. Bob's pane must run real **`claude`** for the demo to show the
+> actual gate behavior. Token cost on a 15-30s take is trivial (~few k tokens)
+> against the substrate-honesty of the recording showing the real chamber
+> experience the README sells. Mechanical recipe below reflects this.
+
+> **Stranded-draft cadence (QM dry-run, 2026-06-08, resolved):** the gate
+> archives the half-typed prompt as a `kind=stranded_draft` substrate row
+> (silent — no pane output), then sends `Ctrl+U` to clear the input row
+> (visible — the typed text vanishes), then pastes the message (visible — body
+> lands in the prompt). The Ctrl+U → paste sequence is fast (sub-poll), reads
+> as "the message takes over the input line." Half-typed-then-paused IS the
+> punchier shape; do not have the operator complete + Enter the prompt before
+> the message arrives.
 
 ### C — the README caption (one line, under the embed)
 
@@ -81,8 +100,10 @@ The mechanical recipe below is written for this shape.
 
 ### Step 1 — sandbox state
 
-Use a separate tmux socket + a separate messages.db so the recording can't see
-(or disturb) the production chamber session.
+Use a separate messages.db so the demo can't write into the production audit
+log. The tmux side stays on the default socket (see note in Step 2 — the
+substrate only talks to the default socket, so the `-L demo` separate-socket
+pattern doesn't work cleanly).
 
 ```bash
 # size the terminal explicitly (asciinema captures the dimensions at start)
@@ -93,37 +114,77 @@ export CLAUDE_MSG_DB=/tmp/observe-gate-demo.db
 rm -f "$CLAUDE_MSG_DB"  # fresh state per recording
 ```
 
-### Step 2 — fresh tmux server with the two demo panes
+### Step 2 — fresh tmux session for the demo
+
+A new tmux **session** on the **default socket** — distinct from any session
+the operator's crew is in. Why default-socket-not-`-L demo`: `tmux-msg-claude`
+always calls `tmux` without `-L` (verified at `internal/tmuxio/{panes,deliver,
+clients}.go`), so panes on a `-L demo` socket are invisible to the substrate's
+discover walker and the pane-status probe. The crew session on the same socket
+is untouched in the recording because asciinema only captures what's inside its
+own attached PTY (the demo session).
 
 ```bash
-# new tmux server on a dedicated socket (-L demo), isolated from any other
-# tmux server already running; new session at the chosen size
-tmux -L demo new-session -d -s observe-gate -x 120 -y 30
+# distinct session name so we don't collide with the crew's "0" session
+tmux new-session -d -s observe-gate-demo -x 120 -y 30
 
-# split into two vertical panes (left / right). Left = alice (the visible
-# SENDER); right = bob (the RECIPIENT, where the operator types and the
-# message lands — the typist == recipient shape).
-tmux -L demo split-window -h -t observe-gate
+# split into two vertical panes. Left = alice (visible SENDER); right = bob
+# (RECIPIENT — where the operator types and the message lands, per the
+# typist == recipient shape).
+tmux split-window -h -t observe-gate-demo
+
+# capture each pane's %ID for the register step
+ALICE_PANE=$(tmux list-panes -t observe-gate-demo -F '#{pane_id} #{pane_index}' | awk '$2==1 {print $1}')
+BOB_PANE=$(  tmux list-panes -t observe-gate-demo -F '#{pane_id} #{pane_index}' | awk '$2==2 {print $1}')
+
+# launch real Claude Code in bob's pane (per F6 substrate finding: the
+# observe-gate's classifier requires the `❯` prompt sentinel, so a generic
+# shell pane never triggers the visible gate dynamics). Token cost on a 30s
+# take is trivial against showing the actual chamber experience.
+tmux send-keys -t "$BOB_PANE" 'claude' Enter
+
+# wait for Claude to reach its first idle prompt before continuing — the
+# splash + initial render takes a few seconds; the operator can check by
+# eye, or you can sleep generously here. The pane should show `❯ ` with an
+# empty input row when ready.
+sleep 8
 ```
 
-### Step 3 — register the two demo agents + start their mailmen
+### Step 3 — register the two demo agents + start bob's mailman
 
-The mailman daemon is what watches each pane and paste-Enters incoming messages
-when the pane is quiescent.
+The mailman daemon is what watches the recipient pane and paste-Enters incoming
+messages when the pane is quiescent. Only bob (the recipient) needs a mailman
+running for this demo; alice is the sender — she sends via a one-shot CLI call,
+no daemon required.
+
+The flags `--input-stale-threshold 3s --poll-interval-min 500ms --poll-interval-max 2s`
+tune the gate's cadence for a ~15s clip (production defaults are 2min stale +
+3-15s poll, which would leave the viewer staring at a frozen frame). `--drift-soft-fail`
+tolerates the demo agents not being discoverable by the production-style shell-
+prompt walker (the demo shells don't carry the production agent-identity marker).
 
 ```bash
-# capture each pane's %ID so register knows where each agent lives
-ALICE_PANE=$(tmux -L demo list-panes -t observe-gate -F '#{pane_id}' | sed -n '1p')
-BOB_PANE=$(tmux  -L demo list-panes -t observe-gate -F '#{pane_id}' | sed -n '2p')
+# register both agents WITHOUT auto-starting mailmen (we'll start bob's manually
+# with the demo-tuned flags below)
+tmux-msg-claude register --name alice --pane "$ALICE_PANE" --start-mailman=false
+tmux-msg-claude register --name bob   --pane "$BOB_PANE"   --start-mailman=false
 
-# register both agents + start mailmen (foreground; they stop when the script
-# ends, so no leftover state)
-tmux-msg-claude register --name alice --pane "$ALICE_PANE" --start-mailman=true
-tmux-msg-claude register --name bob   --pane "$BOB_PANE"   --start-mailman=true
+# start bob's mailman in the background with demo-tuned cadence + soft-fail
+nohup tmux-msg-claude serve --agent bob \
+  --drift-soft-fail \
+  --input-stale-threshold 3s \
+  --poll-interval-min 500ms \
+  --poll-interval-max 2s \
+  > /tmp/observe-gate-demo-mailman.log 2>&1 &
+echo "$!" > /tmp/observe-gate-demo-mailman.pid
+
+# give the mailman a beat to come up
+sleep 0.5
+head -3 /tmp/observe-gate-demo-mailman.log   # should print "starting pane=%NN"
 ```
 
-For a one-take recording the foreground mailmen are fine; the production pattern
-is `systemctl --user` mailmen, overkill here.
+For a one-take recording the foreground mailman is fine; the production pattern
+is `systemctl --user` mailmen with the production cadence, overkill here.
 
 ### Step 4 — start the asciinema recording, then attach to tmux
 
@@ -139,8 +200,8 @@ mkdir -p "$(dirname "$CAST")"
 # file stays small while still showing the meaningful pauses
 asciinema rec --title "tmux-msg observe-gate" --idle-time-limit=2 "$CAST"
 
-# inside the recording shell:
-tmux -L demo attach -t observe-gate
+# inside the recording shell (note: NO -L flag; we're on the default socket):
+tmux attach -t observe-gate-demo
 ```
 
 ### Step 5 — the take (typist == recipient)
@@ -148,36 +209,65 @@ tmux -L demo attach -t observe-gate
 Once attached, the recording is live: two panes side by side, alice (sender) on
 the left, bob (recipient) on the right.
 
-1. **Focus bob's pane (right)** and start typing the B content —
-   `git log --oneline -5` — at a deliberate, human cadence. Get a few characters
-   in; do **not** hit Enter yet.
-2. **While bob is still being typed in,** fire the A message at bob. The cleanest
-   visible shape is to issue it from **alice's pane (left)** so the viewer sees
-   the message *originate* — but the send/typing timing is tight (see the timing
-   flag below); the fallback is a hidden third shell.
+1. **Focus bob's pane (right)** — Claude is at its idle `❯` prompt. Start typing
+   the B content — `is the auth header still set on the client` — at a
+   deliberate, human cadence as if composing a question mid-thought. Get most
+   of the way through (~3-5 words is enough); do **not** hit Enter. The prompt
+   stays unsent, half-written; the cursor sits past the `❯` sentinel.
+2. **While bob's prompt is still being typed,** fire the A message at bob. The
+   cleanest visible shape is to issue it from **alice's pane (left)** so the
+   viewer sees the message *originate* — the send/typing timing is tight but
+   human-doable (see the timing note below); the fallback is a hidden third
+   shell.
    ```bash
    # from alice's pane (visible), or a third shell outside the recording:
    CLAUDE_MSG_DB=/tmp/observe-gate-demo.db \
      tmux-msg-claude send --from alice --to bob "the API changed, look at what I just pushed"
    ```
-3. **In bob's pane:** the 📫 indicator appears — the gate sees bob's pane is
-   actively being typed in, so it **holds** the paste. The message is queued, not
-   yet pasted. *(This is the "aha." If the 📫 doesn't show, the message arrived
-   while bob was idle — retake with the send landing mid-typing.)*
-4. **Operator pauses typing in bob's pane.**
-5. **Within one poll interval** (default ~3–15s, per-agent configurable — see
-   [`docs/observe-gate.md`](observe-gate.md) §Latency), the mailman observes the
-   quiesce and pastes the message into bob's pane + Enter. The 📫 clears; the
-   message body appears as if typed.
-6. **Stop the recording** — `Ctrl-B d` to detach, then `exit` in the recording
-   shell. asciinema writes the `.cast`.
+3. **In bob's pane:** the 📫 indicator appears alongside the half-typed prompt
+   — the gate classifies bob as **StateAwaitingOperator** (cursor past the `❯`
+   sentinel; operator mid-typing per the `state.go:368-377` branch) and
+   **holds** the paste. The message is queued, not yet pasted. *(This is the
+   "aha." If the 📫 doesn't show, the message arrived while bob was idle —
+   retake with the send landing mid-typing.)*
+4. **Operator pauses typing in bob's pane** — the half-typed question stays
+   visible at the prompt; the operator doesn't touch the keyboard.
+5. **Within ~3 seconds** (the demo `--input-stale-threshold`; production default
+   is 2min — see Step 3's flag rationale), the gate decides the draft is
+   abandoned and the mailman fires the archive-then-clear-then-paste sequence:
+   the typed half-prompt + 📫 gets archived as a `kind=stranded_draft` substrate
+   row (silent — operator can recover it later via `tmux-msg-claude stranded
+   show`), then Ctrl+U clears the input row (visible — the half-typed question
+   vanishes), then the rendered message lands at the `❯` prompt as a paste +
+   Enter:
+   ```
+   ❯ [alice · HH:MM:SS · id XXXX]
 
-> **Dry-run flag for QM (timing):** step 2's "send from alice's pane while bob is
-> mid-typing" is the legible shape but timing-sensitive — if bob goes idle (pane
-> switch) before the send lands, the gate delivers immediately and no hold shows.
-> If a live operator can't reliably hit the window, fall back to the hidden
-> third-shell send fired on a beat while they type in bob. Settle this in a dry
-> run before the live take so the operator isn't fighting timing on camera.
+     the API changed, look at what I just pushed
+   ```
+   The bracket header is part of the real delivery format (matches the README
+   message-rendering example) — showing it is a feature, not noise. Claude
+   receives the prompt + begins composing a response.
+6. **Stop the recording the instant the message text lands** — *before*
+   Claude's reply starts rendering. `Ctrl-B d` to detach, then `exit` in the
+   recording shell. asciinema writes the `.cast`. This keeps the clip at
+   ~15-30s and avoids needing Claude to say anything coherent.
+   *(Optional editorial: let Claude start replying — that's also substrate-
+   honest, showing the real chamber-recipient behavior. Either ending is
+   clean; the stop-on-land cut is tighter for the README hook.)*
+
+> **Send-visibility cadence (QM dry-run, 2026-06-08, resolved):** the visible
+> send-from-alice shape works on a ~3-5s window — operator starts typing in bob,
+> moves cursor to alice (or hits the prepared command in alice's history), fires
+> send, moves cursor back to bob to continue typing for ~2-3 more seconds, then
+> pauses. The 3s `--input-stale-threshold` fires shortly after the pause, ~1-2s
+> after the message lands in bob's pane state-machine. The window is tight but
+> human-doable on the first or second take. **Fallback (hidden third shell):**
+> if the operator can't hit the visible window cleanly, pre-arm a third shell
+> outside the recording with the send command and a 4-5s `sleep` prefix; fire it
+> just before attaching, so the send lands while the operator is mid-typing in
+> bob. The third-shell shape loses the visible "alice originated it" beat but
+> recovers determinism.
 
 ### Step 6 — verify the take
 
@@ -195,8 +285,16 @@ Verification checklist:
 ### Step 7 — clean up sandbox state
 
 ```bash
-tmux -L demo kill-server 2>/dev/null     # no effect on the real crew session
-rm -f /tmp/observe-gate-demo.db
+# kill the demo mailman (NOT pkill on the binary name — production mailmen
+# also match that pattern; use the recorded PID)
+[ -f /tmp/observe-gate-demo-mailman.pid ] && kill "$(cat /tmp/observe-gate-demo-mailman.pid)" 2>/dev/null
+
+# kill ONLY the demo session (NOT kill-server — the operator's "0" session
+# lives on the same default socket and must survive)
+tmux kill-session -t observe-gate-demo 2>/dev/null
+
+# remove sandbox state
+rm -f /tmp/observe-gate-demo.db /tmp/observe-gate-demo-mailman.log /tmp/observe-gate-demo-mailman.pid
 unset COLUMNS LINES CLAUDE_MSG_DB
 ```
 
