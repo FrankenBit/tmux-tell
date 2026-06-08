@@ -696,7 +696,7 @@ non-breaking. v0.10.0 ships a second K-preserving deprecation arc —
 key / `--state` value / JSON shadow-field aliases per ADR-0008's two-minor
 floor (earliest removal v0.12.0) — alongside the v0.9.0 `claude-msg →
 tmux-msg-claude` aliases that continue to function through v0.11.0. Per
-ADR-0008's [Reading B amendment](docs/adr/0008-deprecation-policy.md#amendment--2026-06-08-k-counter-interaction):
+ADR-0008's [Reading B amendment](docs/adr/0008-deprecation-policy.md#amendment-a--2026-06-08-k-counter-interaction):
 deprecation-with-functioning-alias preserves K-counter progress; only removal
 resets it. The live per-release record lives in the tracker at
 [#163](https://git.frankenbit.de/frankenbit/tmux-msg/issues/163).
