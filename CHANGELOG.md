@@ -33,6 +33,18 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Added
+
+- **Configurable message retention policy — `retention` TOML knob + mailman background sweep (#245, #150 PR2).** Each mailman now runs a periodic goroutine that deletes `delivered` and `failed` rows older than the configured window. Default `"infinite"` preserves zero behavior change for existing deploys. Configure per-agent or fleet-wide in `/etc/tmux-msg/config.toml`:
+  ```toml
+  [defaults]
+  retention = "30d"
+  retention-sweep-interval = "1h"   # default
+  [agent.operator]
+  retention = "infinite"            # audit log: never auto-delete
+  ```
+  Accepted windows: any `parseWindow` spec (`"30d"`, `"7d"`, `"24h"`, etc.). Sweep touches only `delivered` + `failed` rows for the serving agent (single-writer invariant); in-flight rows are never affected. Composes with the existing `reset --older-than` one-off flush (#150 PR1, shipped in v0.12.0).
+
 ### Changed
 
 - **`docs/why.md`: add a §See also referencing `agents-connector` (#251).** A

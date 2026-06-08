@@ -134,6 +134,14 @@ type serveOpts struct {
 	// drive a delivery, and assert the increments. Production leaves it nil
 	// and lets MetricsAddr drive creation.
 	Metrics *metrics.Metrics
+	// Retention is the resolved per-agent retention window (#245). "infinite"
+	// (the default) disables the background sweep. Any positive duration
+	// string accepted by parseWindow (e.g. "30d", "7d", "24h") enables it.
+	// Resolved from TOML at startup; no CLI flag (config-only surface).
+	Retention string
+	// RetentionSweepInterval is how often the background retention goroutine
+	// wakes to prune old delivered+failed rows. Default 1h.
+	RetentionSweepInterval time.Duration
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -278,6 +286,12 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 			byteMarkerThreshold = n
 		}
 	}
+	// Retention policy (#245). TOML-only knob (no CLI flag); resolved once
+	// at startup. "infinite" is the hardcoded default so absent config →
+	// zero behavior change.
+	retention := config.ResolveString(cfg, *agent, "retention", config.DefaultRetention)
+	retentionSweepInterval := config.ResolveDuration(cfg, *agent, "retention-sweep-interval", config.DefaultRetentionSweepInterval)
+
 	if *agent == "" {
 		fmt.Fprintln(stderr, "--agent required")
 		return exitUsage
@@ -323,6 +337,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		DriftSoftFail:               *driftSoftFail,
 		NotifyOnFailed:              *notifyOnFailed,
 		NotifyOnDeliveredInInputBox: *notifyOnDeliveredInInputBox,
+		Retention:                   retention,
+		RetentionSweepInterval:      retentionSweepInterval,
 	}, logger, stdout, stderr)
 }
 
@@ -441,6 +457,14 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	// retry budget. Nil-safe through m.
 	onVerify := func(elapsed time.Duration, _ bool) {
 		m.ObserveVerifyAttempt(opts.Agent, elapsed.Seconds())
+	}
+
+	// Background retention sweep (#245). "infinite" (the default) disables
+	// the goroutine entirely — zero behavior change for unconfigured deploys.
+	// Single-writer invariant: the goroutine only deletes rows for opts.Agent,
+	// matching the per-agent mailman ownership model.
+	if opts.Retention != "" && opts.Retention != config.DefaultRetention {
+		go runRetentionSweep(stopCtx, s, logger, opts.Agent, opts.Retention, opts.RetentionSweepInterval)
 	}
 
 	for {
@@ -1124,6 +1148,52 @@ func sleepRespectingWatchdog(stopCtx context.Context, d, pingEvery time.Duration
 			return true
 		case <-time.After(wait):
 			_ = sdnotify.Watchdog()
+		}
+	}
+}
+
+// runRetentionSweep is the background goroutine that periodically deletes
+// delivered + failed rows older than the configured retention window (#245).
+// It runs for opts.Agent's rows only (single-writer invariant). The goroutine
+// exits when stopCtx is cancelled (SIGTERM / mailman shutdown).
+//
+// retention is a window spec accepted by parseWindow (e.g. "30d", "7d").
+// interval is the sweep cadence; 0 falls back to DefaultRetentionSweepInterval.
+func runRetentionSweep(stopCtx context.Context, s *store.Store, logger *log.Logger,
+	agent, retention string, interval time.Duration,
+) {
+	if interval <= 0 {
+		interval = config.DefaultRetentionSweepInterval
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	logger.Printf("retention_sweep_started agent=%s retention=%s interval=%s", agent, retention, interval)
+	for {
+		select {
+		case <-stopCtx.Done():
+			return
+		case <-ticker.C:
+			w, err := parseWindow(retention, time.Now())
+			if err != nil {
+				logger.Printf("WARN retention_parse_err retention=%q err=%v — skipping sweep", retention, err)
+				continue
+			}
+			if w.All {
+				// "all" would retain nothing — treat as a misconfiguration and skip.
+				logger.Printf("WARN retention_sweep_skipped retention=%q resolves to All — use a duration like '30d'", retention)
+				continue
+			}
+			cutoff := w.Since.UTC().Format(strandedTimeFormat)
+			n, err := s.DeleteMessagesBefore(context.Background(), agent, cutoff,
+				[]store.State{store.StateDelivered, store.StateFailed})
+			if err != nil {
+				logger.Printf("WARN retention_sweep_err retention=%q err=%v", retention, err)
+				continue
+			}
+			if n > 0 {
+				logger.Printf("retention_sweep_deleted agent=%s retention=%s cutoff=%s n=%d",
+					agent, retention, cutoff, n)
+			}
 		}
 	}
 }

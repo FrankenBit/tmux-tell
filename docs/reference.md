@@ -197,7 +197,28 @@ tmux-msg-claude discover                                # re-derive agents.pane_
 injecting (messages keep queuing up to the cap) until `resume`. History is free —
 SQLite on disk; on mailman start, any row left `delivering` from a crashed run is
 reset to `queued`. `reset` purges `queued` + `delivering`; `--hard` also wipes the
-delivered audit log; `--confirm` is mandatory.
+delivered audit log; `--confirm` is mandatory. `reset --older-than <window>` prunes
+terminal-state rows (`delivered`, `failed`, `acknowledged`) older than the given
+duration (e.g. `7d`, `24h`) — a one-off manual flush.
+
+**Automatic retention (TOML).** The mailman runs a background sweep when
+`retention` is configured. Default is `"infinite"` (no sweep, zero behavior change).
+Set a per-agent or fleet-wide window in `/etc/tmux-msg/config.toml`:
+
+```toml
+[defaults]
+retention = "30d"                 # delete delivered+failed rows older than 30 days
+retention-sweep-interval = "1h"   # how often to sweep (default 1h)
+
+[agent.operator]
+retention = "infinite"            # operator audit log: never auto-delete
+```
+
+Precedence: per-agent block > `[defaults]` > hardcoded `"infinite"`. The sweep only
+deletes `delivered` and `failed` rows for the agent it serves (single-writer
+invariant); in-flight rows (`queued`, `delivering`) are never touched. The one-off
+`reset --older-than` and the daemon sweep are independent — both can run
+simultaneously without interference.
 
 **Reachability probe.** `tmux-msg-claude ping <agent>` answers "is the daemon up + the
 agent registered + its pane reachable?" without the side effect a test `send` has —

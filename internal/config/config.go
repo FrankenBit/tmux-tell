@@ -187,6 +187,18 @@ type Block struct {
 	// tmux_msg_delivery_verify_attempt_seconds histogram to inform
 	// per-agent tuning.
 	VerifyRetryBudget *string `toml:"verify-retry-budget"`
+	// Retention is the per-agent message retention window (#245). The mailman
+	// runs a background sweep that deletes delivered + failed rows older than
+	// this window. "infinite" (the default) disables the sweep entirely —
+	// zero behavior change for existing deploys. Any positive duration (e.g.
+	// "30d", "7d", "24h") enables the sweep. Resolves through ResolveString;
+	// an absent/empty key falls through to the next layer and finally to the
+	// hardcoded default "infinite".
+	Retention *string `toml:"retention"`
+	// RetentionSweepInterval controls how often the background retention
+	// goroutine wakes to prune old rows. Default 1h. Standard Go duration
+	// syntax. Resolves through ResolveDuration.
+	RetentionSweepInterval *time.Duration `toml:"retention-sweep-interval"`
 }
 
 // Load reads the config from the path resolved by:
@@ -390,6 +402,8 @@ func blockDurField(b *Block, field string) *time.Duration {
 		return b.PollIntervalMax
 	case "input-stale-threshold":
 		return b.InputStaleThreshold
+	case "retention-sweep-interval":
+		return b.RetentionSweepInterval
 	}
 	return nil
 }
@@ -421,6 +435,8 @@ func blockStringField(b *Block, field string) *string {
 		return b.MetricsAddr
 	case "verify-retry-budget":
 		return b.VerifyRetryBudget
+	case "retention":
+		return b.Retention
 	}
 	return nil
 }
@@ -516,6 +532,8 @@ type ResolvedView struct {
 	OnRegisterBacklogCap        int           `json:"on_register_backlog_cap"`
 	MetricsAddr                 string        `json:"metrics_addr,omitempty"`
 	VerifyRetryBudget           string        `json:"verify_retry_budget"`
+	Retention                   string        `json:"retention"`
+	RetentionSweepInterval      time.Duration `json:"retention_sweep_interval"`
 	PrivilegedAgents            []string      `json:"privileged_agents"`
 }
 
@@ -547,6 +565,8 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		OnRegisterBacklogCap:      ResolveInt(file, agent, "on-register-backlog-cap", DefaultOnRegisterBacklogCap),
 		MetricsAddr:               ResolveString(file, agent, "metrics-addr", ""),
 		VerifyRetryBudget:         ResolveString(file, agent, "verify-retry-budget", DefaultVerifyRetryBudget),
+		Retention:                 ResolveString(file, agent, "retention", DefaultRetention),
+		RetentionSweepInterval:    ResolveDuration(file, agent, "retention-sweep-interval", DefaultRetentionSweepInterval),
 		PrivilegedAgents:          resolvePrivilegedAgents(file),
 	}
 }
@@ -575,6 +595,13 @@ const (
 // config doesn't import tmuxio. Kept in sync via the doc-comment
 // cross-reference on both consts.
 const DefaultVerifyRetryBudget = "5s"
+
+// DefaultRetention is the hardcoded fallback retention policy (#245). "infinite"
+// means no sweep — zero behavior change for existing deploys.
+const DefaultRetention = "infinite"
+
+// DefaultRetentionSweepInterval is the fallback sweep cadence (#245).
+const DefaultRetentionSweepInterval = time.Hour
 
 // resolvePrivilegedAgents returns a copy of the file's privileged-agents
 // list (or nil if the file is nil/empty). The defensive copy prevents
