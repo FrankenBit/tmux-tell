@@ -107,3 +107,154 @@ func TestInbox_UnknownFormat(t *testing.T) {
 		t.Errorf("exit = %d, want %d", exit, exitUsage)
 	}
 }
+
+// --- #221 ack tests ---
+
+// tfSetBacklogEpoch stamps the backlog epoch directly on an agent row.
+// Used in tests to simulate what the register flow does.
+func tfSetBacklogEpoch(t *testing.T, s *store.Store, agent string) {
+	t.Helper()
+	ctx := context.Background()
+	// Highest queued id addressed to this agent becomes the epoch.
+	msgs, err := s.ListMessages(ctx, store.ListFilter{ToAgent: agent, State: store.StateQueued, Limit: 1000, OrderDesc: true})
+	if err != nil || len(msgs) == 0 {
+		t.Fatalf("tfSetBacklogEpoch: no queued msgs for %s (err=%v)", agent, err)
+	}
+	// GetMessage to get the internal id.
+	m, err := s.GetMessage(ctx, msgs[0].PublicID)
+	if err != nil {
+		t.Fatalf("tfSetBacklogEpoch: get msg: %v", err)
+	}
+	if err := s.SetBacklogEpoch(ctx, agent, m.ID); err != nil {
+		t.Fatalf("tfSetBacklogEpoch: set epoch: %v", err)
+	}
+}
+
+func TestInbox_AckSingle(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bob")
+	ctx := context.Background()
+	res, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "hello"})
+
+	var stdout, stderr bytes.Buffer
+	exit := runInboxAck(ctx, s, "bob", res.PublicID, &stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
+	}
+	got := parseJSONResult(t, stdout.Bytes())
+	if got["ok"] != true {
+		t.Errorf("ok = %v, want true", got["ok"])
+	}
+	if got["id"] != res.PublicID {
+		t.Errorf("id = %v, want %s", got["id"], res.PublicID)
+	}
+
+	// Message must no longer appear in the default queued view.
+	var out bytes.Buffer
+	runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, "json", &out, &bytes.Buffer{})
+	var rows []map[string]any
+	_ = json.Unmarshal(bytes.TrimSpace(out.Bytes()), &rows)
+	if len(rows) != 0 {
+		t.Errorf("queued after ack = %d, want 0", len(rows))
+	}
+}
+
+func TestInbox_AckAll_RoundTrip(t *testing.T) {
+	// Full round-trip: seed backlog, stamp epoch, --ack-all, verify inbox clean + get works.
+	s := newCmdTestStore(t, "alice", "bob")
+	ctx := context.Background()
+
+	var backlogIDs []string
+	for i := 0; i < 3; i++ {
+		res, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "old"})
+		backlogIDs = append(backlogIDs, res.PublicID)
+	}
+	// Stamp backlog epoch (simulates what register does).
+	tfSetBacklogEpoch(t, s, "bob")
+
+	// Insert a new arrival AFTER the epoch stamp — must survive ack-all.
+	newRes, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "new"})
+
+	var stdout, stderr bytes.Buffer
+	exit := runInboxAckAll(ctx, s, "bob", &stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
+	}
+	got := parseJSONResult(t, stdout.Bytes())
+	if got["ok"] != true {
+		t.Errorf("ok = %v, want true", got["ok"])
+	}
+	if ackedN, _ := got["acked"].(float64); int(ackedN) != 3 {
+		t.Errorf("acked = %v, want 3", got["acked"])
+	}
+
+	// Default inbox (queued) must show only the new arrival.
+	var out bytes.Buffer
+	runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, "json", &out, &bytes.Buffer{})
+	var rows []map[string]any
+	_ = json.Unmarshal(bytes.TrimSpace(out.Bytes()), &rows)
+	if len(rows) != 1 || rows[0]["id"] != newRes.PublicID {
+		t.Errorf("queued after ack-all = %v, want only [%s]", rows, newRes.PublicID)
+	}
+
+	// get must still retrieve acknowledged backlog messages.
+	for _, id := range backlogIDs {
+		m, err := s.GetMessage(ctx, id)
+		if err != nil {
+			t.Fatalf("get %s: %v", id, err)
+		}
+		if m.State != store.StateAcknowledged {
+			t.Errorf("msg %s state = %s, want acknowledged", id, m.State)
+		}
+	}
+}
+
+func TestInbox_AckSingle_Idempotent(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bob")
+	ctx := context.Background()
+	res, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "x"})
+
+	var stdout, stderr bytes.Buffer
+	if exit := runInboxAck(ctx, s, "bob", res.PublicID, &stdout, &stderr); exit != exitOK {
+		t.Fatalf("first ack exit = %d; stderr=%s", exit, stderr.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	// Second call must succeed (idempotent).
+	if exit := runInboxAck(ctx, s, "bob", res.PublicID, &stdout, &stderr); exit != exitOK {
+		t.Errorf("second ack exit = %d (want 0); stderr=%s", exit, stderr.String())
+	}
+}
+
+func TestInbox_AckSingle_AuthScope(t *testing.T) {
+	// carol cannot ack bob's message.
+	s := newCmdTestStore(t, "alice", "bob", "carol")
+	ctx := context.Background()
+	res, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "y"})
+
+	var stdout, stderr bytes.Buffer
+	exit := runInboxAck(ctx, s, "carol", res.PublicID, &stdout, &stderr)
+	if exit == exitOK {
+		t.Errorf("carol acking bob's message should fail, got exitOK")
+	}
+}
+
+func TestInbox_DefaultExcludesAcknowledged(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bob")
+	ctx := context.Background()
+	res, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "z"})
+
+	// Ack it.
+	_ = s.MarkAcknowledged(ctx, "bob", res.PublicID)
+
+	// Default inbox (queued) must be empty.
+	var stdout bytes.Buffer
+	exit := runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, "json", &stdout, &bytes.Buffer{})
+	if exit != exitOK {
+		t.Fatalf("exit = %d", exit)
+	}
+	var rows []map[string]any
+	_ = json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &rows)
+	if len(rows) != 0 {
+		t.Errorf("queued inbox includes acknowledged message, want 0 rows; got %v", rows)
+	}
+}

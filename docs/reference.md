@@ -162,6 +162,8 @@ tmux-msg-claude send   --to Y[,Z,...] [--reply-to ID] [--strict] [--wait-for-del
 tmux-msg-claude resend ID [--force]                     # replay a failed/unverified message
 tmux-msg-claude ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
 tmux-msg-claude inbox  AGENT [--state STATE]            # list messages for AGENT
+tmux-msg-claude inbox  AGENT --ack <id>                 # mark one queued message acknowledged (#221)
+tmux-msg-claude inbox  AGENT --ack-all                  # acknowledge all announce-skipped backlog residue (#221)
 tmux-msg-claude sent   [--since DUR] [--state STATE] [--to AGENT]  # sender's outbox
 tmux-msg-claude track  ID [--watch]                     # delivery state of one message
 tmux-msg-claude get    ID                               # fetch a processed message by id
@@ -357,6 +359,24 @@ freshly-resumed session *knows* it's there. An unrecognized policy value falls b
 `announce`. Mailbox-only agents are unaffected (they never get a paste). Precedence is
 the usual **per-`[agent.<name>]` block > `[defaults]` > compiled default**; an
 unrecognized value resolves to `announce`.
+
+**Draining announce-skipped backlog residue (#221).** Announce-skipped messages stay
+`queued` indefinitely (the mailman never re-delivers them; a re-register only advances
+the floor). To clear the residue once you've seen the `📬` nudge, use the ack path:
+
+```bash
+# mark all backlog-residue messages acknowledged (scope = ≤ backlog_epoch_id)
+tmux-msg-claude inbox --ack-all
+
+# mark one specific message acknowledged (idempotent)
+tmux-msg-claude inbox --ack <id>
+```
+
+Acknowledged messages move to state `acknowledged` (a substrate-honest terminal state:
+they were never pasted, so they do not carry `delivered`). They are excluded from the
+default inbox view (`--state queued`) but remain retrievable by ID via `tmux-msg-claude
+get` / `tmux-msg.get` (audit-preserving). The MCP surface is `tmux-msg.inbox` with
+`ack_all: true` or `ack_ids: ["id1", "id2"]`.
 
 ### Canonical name mapping
 

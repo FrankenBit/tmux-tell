@@ -538,6 +538,58 @@ func (s *Store) SenderBacklog(ctx context.Context, fromAgent string) (int, error
 	return n, err
 }
 
+// MarkAcknowledged transitions a single queued message to acknowledged (#221).
+// Only affects messages addressed to toAgent (auth-scope guard). Idempotent:
+// if the message is already acknowledged the call succeeds with no state change.
+// Returns ErrNotFound if no queued or acknowledged message with publicID exists
+// addressed to toAgent.
+func (s *Store) MarkAcknowledged(ctx context.Context, toAgent, publicID string) error {
+	// Update only if the row is still queued (idempotent for already-acknowledged).
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET state = ?
+		 WHERE public_id = ? AND to_agent = ? AND state = ?`,
+		StateAcknowledged, publicID, toAgent, StateQueued)
+	if err != nil {
+		return fmt.Errorf("store: mark acknowledged: %w", err)
+	}
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		return nil // transitioned successfully
+	}
+	// Either already acknowledged (idempotent) or genuinely not found/wrong agent.
+	// Distinguish by checking existence.
+	var count int
+	err = s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages
+		 WHERE public_id = ? AND to_agent = ? AND state = ?`,
+		publicID, toAgent, StateAcknowledged).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("store: mark acknowledged: check: %w", err)
+	}
+	if count > 0 {
+		return nil // already acknowledged — idempotent success
+	}
+	return fmt.Errorf("store: message %q for agent %q: %w", publicID, toAgent, ErrNotFound)
+}
+
+// MarkAcknowledgedBatch transitions all queued messages with id ≤ epochID
+// addressed to toAgent to acknowledged (#221). Scope matches the backlog_epoch_id
+// claim-floor so operators drain exactly the announce-skipped residue without
+// touching newly-arrived messages (id > epoch). Returns the number of rows updated.
+// When epochID is 0 (no epoch in effect) the call is a no-op that returns 0.
+func (s *Store) MarkAcknowledgedBatch(ctx context.Context, toAgent string, epochID int64) (int64, error) {
+	if epochID <= 0 {
+		return 0, nil
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET state = ?
+		 WHERE to_agent = ? AND state = ? AND id <= ?`,
+		StateAcknowledged, toAgent, StateQueued, epochID)
+	if err != nil {
+		return 0, fmt.Errorf("store: mark acknowledged batch: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // GetMessage returns one message by its public_id, or ErrNotFound.
 func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, error) {
 	var m Message

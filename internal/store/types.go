@@ -6,10 +6,11 @@ import "database/sql"
 type State string
 
 const (
-	StateQueued     State = "queued"
-	StateDelivering State = "delivering"
-	StateDelivered  State = "delivered"
-	StateFailed     State = "failed"
+	StateQueued       State = "queued"
+	StateDelivering   State = "delivering"
+	StateDelivered    State = "delivered"
+	StateFailed       State = "failed"
+	StateAcknowledged State = "acknowledged" // #221: operator-acked announce-skipped backlog residue
 )
 
 // Kind distinguishes a paste-rendered chat message from a control command

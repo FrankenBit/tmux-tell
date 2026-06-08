@@ -35,6 +35,21 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **`inbox --ack` / `--ack-all` — announce-skipped backlog drain (#221).** The
+  don't-flood-on-restart policy (#204) leaves pre-existing backlog in state `queued`
+  indefinitely after a session restart (the mailman skips rows ≤ `backlog_epoch_id`).
+  Two new ack paths let operators clear that residue once acknowledged:
+  - `tmux-msg-claude inbox --ack <id>` — mark one message acknowledged (idempotent).
+  - `tmux-msg-claude inbox --ack-all` — mark all messages ≤ `backlog_epoch_id`
+    acknowledged (clears exactly the announce-skipped residue without touching newer
+    arrivals). Scope is the per-agent epoch stamped at last register.
+  - MCP surface: `tmux-msg.inbox` gains `ack_ids: string[]` and `ack_all: bool`
+    parameters with the same semantics.
+  - Terminal state: `acknowledged` — substrate-honest (these messages were never pasted,
+    so they do not carry `delivered`). Excluded from the default `--state queued` view
+    but retrievable via `get` / `tmux-msg.get` (audit-preserving).
+  - Store: `MarkAcknowledged` + `MarkAcknowledgedBatch`; auth-scope guard (only
+    messages addressed to the calling agent are affected). Cross-ref: #204 (backlog residue origin).
 - **Prometheus metrics surface on the mailman daemon (#146, PR1 of the
   observability stack).** `tmux-msg-claude serve --metrics-addr :PORT` (or the
   `metrics-addr` config knob, per-agent) exposes a Prometheus `/metrics`

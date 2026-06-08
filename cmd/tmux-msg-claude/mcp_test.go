@@ -348,3 +348,82 @@ func TestMCP_ToolsListContract(t *testing.T) {
 		t.Errorf("missing tool: %s", missing)
 	}
 }
+
+// --- #221 MCP ack tests ---
+
+func TestMCP_Inbox_AckAll(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "bob")
+	s := newCmdTestStore(t, "alice", "bob")
+	ctx := context.Background()
+
+	// Insert 2 backlog messages and stamp the epoch.
+	var lastID int64
+	for i := 0; i < 2; i++ {
+		res, err := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "old"})
+		if err != nil {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+		m, err := s.GetMessage(ctx, res.PublicID)
+		if err != nil {
+			t.Fatalf("get %d: %v", i, err)
+		}
+		lastID = m.ID
+	}
+	if err := s.SetBacklogEpoch(ctx, "bob", lastID); err != nil {
+		t.Fatalf("SetBacklogEpoch: %v", err)
+	}
+
+	// New arrival after the epoch — must survive ack_all.
+	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "new"})
+
+	got := callMCPTool(t, s, "tmux-msg.inbox", map[string]any{"ack_all": true})
+	if got["_isError"] == true {
+		t.Fatalf("unexpected error: %v", got)
+	}
+	if got["ok"] != true {
+		t.Errorf("ok = %v, want true; got=%v", got["ok"], got)
+	}
+	if acked, _ := got["acked"].(float64); int(acked) != 2 {
+		t.Errorf("acked = %v, want 2", got["acked"])
+	}
+
+	// Default inbox (queued) must show only the new arrival.
+	inbox := callMCPTool(t, s, "tmux-msg.inbox", map[string]any{})
+	arr, _ := inbox["_array"].([]any)
+	if len(arr) != 1 {
+		t.Errorf("queued after ack_all = %d, want 1", len(arr))
+	}
+}
+
+func TestMCP_Inbox_AckIds(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "bob")
+	s := newCmdTestStore(t, "alice", "bob")
+	ctx := context.Background()
+
+	res1, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "m1"})
+	res2, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "m2"})
+
+	got := callMCPTool(t, s, "tmux-msg.inbox", map[string]any{
+		"ack_ids": []string{res1.PublicID},
+	})
+	if got["_isError"] == true {
+		t.Fatalf("unexpected error: %v", got)
+	}
+	if got["ok"] != true {
+		t.Errorf("ok = %v, want true; got=%v", got["ok"], got)
+	}
+	if acked, _ := got["acked"].(float64); int(acked) != 1 {
+		t.Errorf("acked = %v, want 1", got["acked"])
+	}
+
+	// res2 must remain queued.
+	inbox := callMCPTool(t, s, "tmux-msg.inbox", map[string]any{})
+	arr, _ := inbox["_array"].([]any)
+	if len(arr) != 1 {
+		t.Fatalf("queued after ack_ids = %d, want 1", len(arr))
+	}
+	row, _ := arr[0].(map[string]any)
+	if row["id"] != res2.PublicID {
+		t.Errorf("remaining queued id = %v, want %s", row["id"], res2.PublicID)
+	}
+}

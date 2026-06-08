@@ -108,12 +108,14 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpWhoamiHandler(s))
 
 	srv.RegisterTool("tmux-msg.inbox",
-		"List the caller's own queued messages.",
+		"List the caller's own queued messages, or acknowledge announce-skipped backlog residue (#221). Pass ack_ids to mark specific messages acknowledged; pass ack_all=true to acknowledge all messages ≤ the backlog_epoch (drains the announce-skipped residue left by the don't-flood policy). Acknowledged messages are excluded from the default queued view but remain retrievable via tmux-msg.get.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"state": {"type": "string", "enum": ["queued","delivering","delivered","failed"]},
-				"limit": {"type": "integer", "minimum": 1, "maximum": 1000}
+				"state": {"type": "string", "enum": ["queued","delivering","delivered","failed","acknowledged"]},
+				"limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+				"ack_ids": {"type": "array", "items": {"type": "string"}, "description": "Public IDs of queued messages to mark acknowledged. Idempotent."},
+				"ack_all": {"type": "boolean", "description": "Mark all queued messages ≤ backlog_epoch_id as acknowledged. Drains announce-skipped backlog residue."}
 			}
 		}`),
 		mcpInboxHandler(s))
@@ -783,8 +785,10 @@ func mcpWhoamiHandler(s *store.Store) mcp.ToolHandler {
 
 func mcpInboxHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
-		State string `json:"state"`
-		Limit int    `json:"limit"`
+		State  string   `json:"state"`
+		Limit  int      `json:"limit"`
+		AckIDs []string `json:"ack_ids"`
+		AckAll bool     `json:"ack_all"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -796,6 +800,35 @@ func mcpInboxHandler(s *store.Store) mcp.ToolHandler {
 		if name == "" {
 			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
+
+		// Ack-all path: drain announce-skipped backlog residue (#221).
+		if in.AckAll {
+			a, err := s.GetAgent(ctx, name)
+			if err != nil {
+				return nil, fmt.Errorf("agent %q not registered: %w", name, err)
+			}
+			var epoch int64
+			if a.BacklogEpoch.Valid {
+				epoch = a.BacklogEpoch.Int64
+			}
+			n, err := s.MarkAcknowledgedBatch(ctx, name, epoch)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"ok": true, "acked": n}, nil
+		}
+
+		// Ack-ids path: mark specific messages acknowledged (#221).
+		if len(in.AckIDs) > 0 {
+			for _, id := range in.AckIDs {
+				if err := s.MarkAcknowledged(ctx, name, id); err != nil {
+					return nil, err
+				}
+			}
+			return map[string]any{"ok": true, "acked": len(in.AckIDs)}, nil
+		}
+
+		// Default: list inbox.
 		state := store.State(in.State)
 		if state == "" {
 			state = store.StateQueued

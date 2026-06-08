@@ -11,9 +11,19 @@ import (
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 )
 
+// ackResult is the JSON response shape for --ack and --ack-all.
+type ackResult struct {
+	OK    bool   `json:"ok"`
+	Acked int    `json:"acked"`
+	ID    string `json:"id,omitempty"` // set only by --ack <id>
+}
+
 // runInboxCLI parses inbox-subcommand flags and dispatches.
 //
 // Usage: tmux-msg-claude inbox [AGENT] [--state STATE] [--limit N] [--format text|json]
+//
+//	tmux-msg-claude inbox [AGENT] --ack <id>
+//	tmux-msg-claude inbox [AGENT] --ack-all
 //
 // AGENT defaults to the calling pane's identity (via the same
 // resolution rules as tmux-msg.whoami).
@@ -22,9 +32,11 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
 	stateFlag := fs.String("state", "queued",
-		"queued|delivering|delivered|failed (empty = all)")
+		"queued|delivering|delivered|failed|acknowledged (empty = all)")
 	limit := fs.Int("limit", 50, "maximum rows to return")
 	format := fs.String("format", "text", "text|json")
+	ackID := fs.String("ack", "", "mark a single queued message as acknowledged (#221)")
+	ackAll := fs.Bool("ack-all", false, "mark all queued messages ≤ backlog_epoch as acknowledged (#221)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -56,8 +68,42 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
+	if *ackID != "" {
+		return runInboxAck(ctx, s, agent, *ackID, stdout, stderr)
+	}
+	if *ackAll {
+		return runInboxAckAll(ctx, s, agent, stdout, stderr)
+	}
 	return runInboxWithStore(ctx, s,
 		agent, store.State(*stateFlag), *limit, *format, stdout, stderr)
+}
+
+// runInboxAck marks a single queued message as acknowledged.
+func runInboxAck(ctx context.Context, s *store.Store, agent, id string, stdout, stderr io.Writer) int {
+	if err := s.MarkAcknowledged(ctx, agent, id); err != nil {
+		return writeJSONError(stdout, stderr, err.Error(), exitUnavailable)
+	}
+	_ = writeJSONResult(stdout, ackResult{OK: true, Acked: 1, ID: id})
+	return exitOK
+}
+
+// runInboxAckAll marks all queued messages ≤ the agent's backlog_epoch_id as acknowledged.
+func runInboxAckAll(ctx context.Context, s *store.Store, agent string, stdout, stderr io.Writer) int {
+	a, err := s.GetAgent(ctx, agent)
+	if err != nil {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("agent %q not registered: %v", agent, err), exitUnavailable)
+	}
+	var epoch int64
+	if a.BacklogEpoch.Valid {
+		epoch = a.BacklogEpoch.Int64
+	}
+	n, err := s.MarkAcknowledgedBatch(ctx, agent, epoch)
+	if err != nil {
+		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+	}
+	_ = writeJSONResult(stdout, ackResult{OK: true, Acked: int(n)})
+	return exitOK
 }
 
 func runInboxWithStore(ctx context.Context, s *store.Store,
