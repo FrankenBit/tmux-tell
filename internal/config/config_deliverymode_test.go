@@ -84,3 +84,53 @@ func TestResolveString_UnknownField(t *testing.T) {
 }
 
 func stringPtr(s string) *string { return &s }
+
+// TestResolveString_VerifyRetryBudget pins the per-agent verify-retry-
+// budget knob (#153) through the standard precedence chain. Sister
+// shape to the delivery-mode test above; confirms the new field is
+// wired into blockStringField alongside delivery-mode + render-byte-
+// marker-threshold + on-register-backlog.
+func TestResolveString_VerifyRetryBudget(t *testing.T) {
+	budget := stringPtr
+	cases := []struct {
+		name string
+		file *File
+		want string
+	}{
+		{"nil file falls to hardcoded", nil, DefaultVerifyRetryBudget},
+		{"empty file falls to hardcoded", &File{}, DefaultVerifyRetryBudget},
+		{
+			"defaults block wins over hardcoded",
+			&File{Defaults: Block{VerifyRetryBudget: budget("15s")}},
+			"15s",
+		},
+		{
+			"per-agent block wins over defaults",
+			&File{
+				Defaults: Block{VerifyRetryBudget: budget("15s")},
+				Agent: map[string]Block{
+					"bosun": {VerifyRetryBudget: budget("30s")},
+				},
+			},
+			"30s",
+		},
+		{
+			"empty string at per-agent falls through to defaults",
+			&File{
+				Defaults: Block{VerifyRetryBudget: budget("15s")},
+				Agent: map[string]Block{
+					"bosun": {VerifyRetryBudget: budget("")},
+				},
+			},
+			"15s",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ResolveString(tc.file, "bosun", "verify-retry-budget", DefaultVerifyRetryBudget)
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

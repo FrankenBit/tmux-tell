@@ -271,6 +271,125 @@ func TestDeliver_RequiresPaneAndBody(t *testing.T) {
 	}
 }
 
+// TestDeriveRetrySchedule_DefaultPreservesBaseline pins the load-bearing
+// invariant: the default budget (5s) reproduces the historical
+// 100ms/250ms/500ms/1s/1.5s/1.65s schedule exactly. Operators upgrading
+// without setting the verify-retry-budget knob (#153) see zero behavior
+// change.
+func TestDeriveRetrySchedule_DefaultPreservesBaseline(t *testing.T) {
+	got := DeriveRetrySchedule(DefaultRetryBudget)
+	want := []time.Duration{
+		100 * time.Millisecond,
+		250 * time.Millisecond,
+		500 * time.Millisecond,
+		1 * time.Second,
+		1500 * time.Millisecond,
+		1650 * time.Millisecond,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("len: got %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("step %d: got %v, want %v", i, got[i], want[i])
+		}
+	}
+	var sum time.Duration
+	for _, d := range got {
+		sum += d
+	}
+	if sum != DefaultRetryBudget {
+		t.Errorf("default schedule sum: got %v, want %v", sum, DefaultRetryBudget)
+	}
+}
+
+// TestDeriveRetrySchedule_ScalesProportionally pins the scaling rule:
+// a doubled budget doubles every step, a halved budget halves every
+// step, and the schedule sum equals the budget across both directions.
+func TestDeriveRetrySchedule_ScalesProportionally(t *testing.T) {
+	cases := []struct {
+		name   string
+		budget time.Duration
+	}{
+		{"half (2.5s)", 2500 * time.Millisecond},
+		{"double (10s)", 10 * time.Second},
+		{"triple (15s)", 15 * time.Second},
+		{"large hub (30s)", 30 * time.Second},
+	}
+	baseline := DeriveRetrySchedule(DefaultRetryBudget)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := DeriveRetrySchedule(tc.budget)
+			if len(got) != len(baseline) {
+				t.Fatalf("len: got %d, want %d", len(got), len(baseline))
+			}
+			scale := float64(tc.budget) / float64(DefaultRetryBudget)
+			for i, d := range baseline {
+				want := time.Duration(float64(d) * scale)
+				if got[i] != want {
+					t.Errorf("step %d: got %v, want %v (scale %.2f)",
+						i, got[i], want, scale)
+				}
+			}
+			var sum time.Duration
+			for _, d := range got {
+				sum += d
+			}
+			// Allow 1ns of rounding drift from the float64 conversion.
+			diff := sum - tc.budget
+			if diff < -time.Nanosecond || diff > time.Nanosecond {
+				t.Errorf("schedule sum: got %v, want %v (diff %v)",
+					sum, tc.budget, diff)
+			}
+		})
+	}
+}
+
+// TestDeriveRetrySchedule_NonPositiveBudgetFallsBack pins the defensive
+// guard: a zero or negative budget produces the default schedule (not
+// an empty schedule that would skip verify entirely).
+func TestDeriveRetrySchedule_NonPositiveBudgetFallsBack(t *testing.T) {
+	for _, budget := range []time.Duration{0, -1 * time.Second} {
+		got := DeriveRetrySchedule(budget)
+		want := DeriveRetrySchedule(DefaultRetryBudget)
+		if len(got) != len(want) {
+			t.Errorf("budget %v: len got %d, want %d", budget, len(got), len(want))
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("budget %v step %d: got %v, want %v",
+					budget, i, got[i], want[i])
+			}
+		}
+	}
+}
+
+// TestSetRetrySchedule_RoundTripsPrevious pins the cleanup contract:
+// SetRetrySchedule returns the prior schedule so callers (mailman
+// startup, tests) can restore it. The legacy SetRetryDelaysForTest
+// alias still works.
+func TestSetRetrySchedule_RoundTripsPrevious(t *testing.T) {
+	original := append([]time.Duration(nil), retryDelays...)
+	t.Cleanup(func() { retryDelays = original })
+
+	fresh := []time.Duration{1 * time.Second, 2 * time.Second}
+	prev := SetRetrySchedule(fresh)
+	if len(prev) != len(original) {
+		t.Fatalf("prev len: got %d, want %d", len(prev), len(original))
+	}
+	if len(retryDelays) != len(fresh) {
+		t.Errorf("retryDelays not replaced; len got %d, want %d",
+			len(retryDelays), len(fresh))
+	}
+
+	// Legacy alias still works
+	prev2 := SetRetryDelaysForTest(original)
+	if len(prev2) != len(fresh) {
+		t.Errorf("legacy alias: prev len got %d, want %d", len(prev2), len(fresh))
+	}
+}
+
 func contains(haystack []string, needle string) bool {
 	for _, h := range haystack {
 		if h == needle {

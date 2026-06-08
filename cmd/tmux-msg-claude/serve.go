@@ -153,6 +153,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"interval to re-check the paused flag")
 	deliverTimeout := fs.Duration("deliver-timeout", 30*time.Second,
 		"per-message deadline for the tmux delivery sequence")
+	verifyRetryBudget := fs.Duration("verify-retry-budget", tmuxio.DefaultRetryBudget,
+		"total verify-token retry window for post-paste verification (#153). The default ~5s schedule (100ms/250ms/500ms/1s/1.5s/1.65s across 7 capture attempts) scales proportionally to this budget — e.g. 10s doubles each delay, 15s triples. Per-agent TOML knob: `verify-retry-budget = \"15s\"` for large-payload hubs. Inspect with #146's tmux_msg_delivery_verify_attempt_seconds histogram before tuning.")
 	postCompactPause := fs.Duration("post-compact-pause", 120*time.Second,
 		"quiescent window after delivering /compact before claiming the next message (0 to disable)")
 	// Observe-gate knobs (#92). The observe-only-with-one-named-
@@ -243,6 +245,25 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		*metricsAddr = config.ResolveString(cfg, *agent, "metrics-addr", "")
 	}
 	configDeliveryMode := config.ResolveString(cfg, *agent, "delivery-mode", "")
+	// Resolve the verify-retry budget (#153). Stored as a duration string
+	// in TOML; CLI flag overrides per the standard precedence chain. A
+	// malformed value WARNs and falls back to the flag value (default 5s
+	// preserves today's schedule) — fail-loud-not-fail-stop.
+	if !flagWasSet(fs, "verify-retry-budget") {
+		if raw := config.ResolveString(cfg, *agent, "verify-retry-budget", ""); raw != "" {
+			if d, perr := time.ParseDuration(raw); perr != nil {
+				fmt.Fprintf(stderr, "WARN config: verify-retry-budget %q: %v — using %v\n",
+					raw, perr, *verifyRetryBudget)
+			} else {
+				*verifyRetryBudget = d
+			}
+		}
+	}
+	// Apply the resolved budget by overwriting tmuxio's package-level
+	// retry schedule. Each mailman is its own process per agent, so this
+	// effectively applies the per-agent verify-retry-budget to the right
+	// scope without per-call plumbing through DeliverParams.
+	tmuxio.SetRetrySchedule(tmuxio.DeriveRetrySchedule(*verifyRetryBudget))
 	// Resolve the render length-marker threshold (#160) once at startup.
 	// Stored as a human byte-size string; parse it here so the hot
 	// delivery path holds a plain int. A malformed value WARNs and falls

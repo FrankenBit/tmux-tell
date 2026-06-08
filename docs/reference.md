@@ -155,6 +155,17 @@ split, and `resend <id>` still needs `--force` to replay a delivered-but-unverif
 message (it doesn't yet read the bit, so it can't tell a confirmed-unverified delivery
 from a verified one) — those are the natural next consumers of this marker.
 
+**Verify-retry budget — per-agent tunable.** The retry window for the verify-token
+check is `~5s` by default (a 7-attempt 100ms / 250ms / 500ms / 1s / 1.5s / 1.65s
+backoff schedule). The total budget is configurable per agent via the
+`verify-retry-budget` knob — `15s` triples each delay, `2s` halves them, etc.
+Precedence (highest wins): **`--verify-retry-budget` CLI flag > per-agent block >
+`[defaults]` > compiled default `5s`**. Inspect production verify-attempt latency
+via the `tmux_msg_delivery_verify_attempt_seconds` histogram (Prometheus, served on
+each mailman's `/metrics` endpoint) before tuning. Tune for large-payload hubs (e.g.
+Bosun's heavy review pane) if the p99 attempt-latency approaches the budget under
+load.
+
 ## Commands
 
 ```

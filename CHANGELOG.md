@@ -78,6 +78,23 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   - `--older-than` and `--hard` are mutually exclusive (error on combined use).
   - Store: `DeleteMessagesBefore(toAgent, cutoff, states)` — time-bounded delete with optional
     agent scope and state filter; cutoff compared lexicographically against ISO8601 `created_at`.
+- **Configurable verify-token retry budget (#153).** New `verify-retry-budget`
+  per-agent TOML knob + matching `--verify-retry-budget` `serve` CLI flag.
+  Default `"5s"` preserves today's behavior — the original 100ms / 250ms /
+  500ms / 1s / 1.5s / 1.65s schedule across 7 capture attempts sums to the
+  default budget. Any duration scales the schedule proportionally (10s
+  doubles each delay, 15s triples, etc.); the helper
+  `tmuxio.DeriveRetrySchedule(budget)` produces the scaled schedule and
+  `tmuxio.SetRetrySchedule` applies it at mailman startup. Each mailman
+  is its own process per agent, so the per-agent setting reaches the
+  right scope without per-call plumbing through `DeliverParams`. Operators
+  monitor verify-attempt latency via #146's
+  `tmux_msg_delivery_verify_attempt_seconds` histogram (Prometheus,
+  per-mailman `/metrics` endpoint) before tuning. Forensic SPIKE on the
+  live alcatraz DB (2026-06-08) found zero `verified=0` events in the
+  post-#169 window — the default budget appears adequate for current
+  production load; the knob ships as a safety valve for future
+  large-payload hubs.
 
 ### Fixed
 

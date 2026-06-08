@@ -173,6 +173,20 @@ type Block struct {
 	// template assigns a distinct port per agent via an [agent.<name>] block.
 	// Resolves through ResolveString (empty = not set → next layer).
 	MetricsAddr *string `toml:"metrics-addr"`
+	// VerifyRetryBudget is the total verify-token retry window for the
+	// post-paste verification backoff (#153). Stored as a human duration
+	// string (e.g. "5s", "10s", "15s"); parsed via time.ParseDuration at
+	// mailman startup. Default "5s" preserves today's behavior. Per-agent
+	// override for hubs that see large-payload verify-timeout pressure
+	// in production (e.g. Bosun's heavy review hub).
+	//
+	// Resolved through ResolveString; the mailman scales the default
+	// 100ms / 250ms / 500ms / 1s / 1.5s / 1.65s schedule proportionally
+	// to the budget via tmuxio.DeriveRetrySchedule. Operators monitor
+	// verify-attempt latency via #146's
+	// tmux_msg_delivery_verify_attempt_seconds histogram to inform
+	// per-agent tuning.
+	VerifyRetryBudget *string `toml:"verify-retry-budget"`
 }
 
 // Load reads the config from the path resolved by:
@@ -405,6 +419,8 @@ func blockStringField(b *Block, field string) *string {
 		return b.OnRegisterBacklog
 	case "metrics-addr":
 		return b.MetricsAddr
+	case "verify-retry-budget":
+		return b.VerifyRetryBudget
 	}
 	return nil
 }
@@ -499,6 +515,7 @@ type ResolvedView struct {
 	OnRegisterBacklog           string        `json:"on_register_backlog"`
 	OnRegisterBacklogCap        int           `json:"on_register_backlog_cap"`
 	MetricsAddr                 string        `json:"metrics_addr,omitempty"`
+	VerifyRetryBudget           string        `json:"verify_retry_budget"`
 	PrivilegedAgents            []string      `json:"privileged_agents"`
 }
 
@@ -529,6 +546,7 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		OnRegisterBacklog:         ResolveString(file, agent, "on-register-backlog", DefaultOnRegisterBacklog),
 		OnRegisterBacklogCap:      ResolveInt(file, agent, "on-register-backlog-cap", DefaultOnRegisterBacklogCap),
 		MetricsAddr:               ResolveString(file, agent, "metrics-addr", ""),
+		VerifyRetryBudget:         ResolveString(file, agent, "verify-retry-budget", DefaultVerifyRetryBudget),
 		PrivilegedAgents:          resolvePrivilegedAgents(file),
 	}
 }
@@ -550,6 +568,13 @@ const (
 	// the auto-deliver policy.
 	DefaultOnRegisterBacklogCap = 3
 )
+
+// DefaultVerifyRetryBudget is the hardcoded fallback verify-token retry
+// window when neither the per-agent block nor [defaults] sets a value
+// (#153). Mirrors tmuxio.DefaultRetryBudget (5s) as a duration string so
+// config doesn't import tmuxio. Kept in sync via the doc-comment
+// cross-reference on both consts.
+const DefaultVerifyRetryBudget = "5s"
 
 // resolvePrivilegedAgents returns a copy of the file's privileged-agents
 // list (or nil if the file is nil/empty). The defensive copy prevents

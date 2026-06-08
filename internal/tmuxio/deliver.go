@@ -55,14 +55,23 @@ type DeliverParams struct {
 	OnVerify func(elapsed time.Duration, verified bool)
 }
 
-// SetRetryDelaysForTest swaps the package-level retryDelays and returns
-// the previous value so test cleanups can restore it. Tests that drive
-// the verify-retry path want near-instant retries instead of the
-// production ~5s budget.
-func SetRetryDelaysForTest(delays []time.Duration) []time.Duration {
+// SetRetrySchedule replaces the package-level verify-retry schedule and
+// returns the previous value (for cleanup restoration). Two callers:
+//   - Mailman startup: applies the per-agent verify-retry-budget config
+//     knob (#153) by deriving a scaled schedule via DeriveRetrySchedule.
+//   - Tests: want near-instant retries instead of the production budget.
+func SetRetrySchedule(schedule []time.Duration) []time.Duration {
 	prev := retryDelays
-	retryDelays = delays
+	retryDelays = schedule
 	return prev
+}
+
+// SetRetryDelaysForTest is the legacy name for SetRetrySchedule, kept
+// as a backward-compatible alias for existing tests.
+//
+// Deprecated: use SetRetrySchedule.
+func SetRetryDelaysForTest(delays []time.Duration) []time.Duration {
+	return SetRetrySchedule(delays)
 }
 
 // settleDelay is the pause Deliver inserts between paste-buffer and
@@ -87,18 +96,52 @@ func SetSettleDelayForTest(d time.Duration) time.Duration {
 	return prev
 }
 
-// retryDelays are the post-paste verification backoff window. Total
-// budget ~5s (100ms + 250ms + 500ms + 1s + 1.5s + 1.65s = 5s) so we
-// give Claude Code time to redraw and submit when it was mid-turn at
-// paste time. Each delay is the wait BEFORE re-attempting capture, so
-// the first capture happens immediately after Enter.
-var retryDelays = []time.Duration{
+// DefaultRetryBudget is the total verify-token retry window at the
+// default configuration. The full schedule sums to this duration; the
+// per-agent verify-retry-budget config knob (#153) scales the schedule
+// proportionally from this baseline.
+const DefaultRetryBudget = 5 * time.Second
+
+// defaultRetryDelays is the original (5s budget) backoff window — the
+// baseline that DeriveRetrySchedule scales from. Frozen so the scaling
+// math always references a stable reference shape regardless of any
+// SetRetrySchedule override.
+//
+// Each delay is the wait BEFORE re-attempting capture (the first capture
+// happens immediately after Enter). The shape is early-aggressive /
+// later-patient so a fast response lands quickly while still giving
+// Claude Code time to redraw and submit when it was mid-turn at paste
+// time.
+var defaultRetryDelays = []time.Duration{
 	100 * time.Millisecond,
 	250 * time.Millisecond,
 	500 * time.Millisecond,
 	1 * time.Second,
 	1500 * time.Millisecond,
 	1650 * time.Millisecond,
+}
+
+// retryDelays is the active post-paste verification backoff window.
+// Starts equal to defaultRetryDelays; overwritten at mailman startup
+// (per the verify-retry-budget config, via DeriveRetrySchedule +
+// SetRetrySchedule) or in tests (via SetRetryDelaysForTest).
+var retryDelays = append([]time.Duration(nil), defaultRetryDelays...)
+
+// DeriveRetrySchedule scales the default retry schedule to fit the given
+// budget. Preserves the early-aggressive / later-patient shape — the
+// same relative attempt spacing, scaled proportionally so the schedule
+// sum equals the budget. A budget <= 0 falls back to DefaultRetryBudget
+// (defensive; the resolver should never produce a non-positive value).
+func DeriveRetrySchedule(budget time.Duration) []time.Duration {
+	if budget <= 0 {
+		budget = DefaultRetryBudget
+	}
+	scale := float64(budget) / float64(DefaultRetryBudget)
+	out := make([]time.Duration, len(defaultRetryDelays))
+	for i, d := range defaultRetryDelays {
+		out[i] = time.Duration(float64(d) * scale)
+	}
+	return out
 }
 
 // ErrUnverifiedDelivery is returned by Deliver when the paste + Enter
