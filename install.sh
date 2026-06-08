@@ -8,7 +8,7 @@
 #     ~/.config/systemd/user/
 #   - for the claude adapter, also drops the deprecation-cycle aliases
 #     claude-msg → tmux-msg-claude and claude-mailman@ → the new template
-#     (#177 / ADR-0008; removed v0.11.0)
+#     (#177 / ADR-0008; removed at v1.0 boundary per ADR-0008 §Discretion clause extension)
 #
 # The actual mailman enablement (`systemctl --user enable --now
 # tmux-msg-claude-mailman@AGENT.service`) is the operator's job — the install
@@ -112,9 +112,9 @@ echo "==> installing $PREFIX/bin/$BIN_NAME"
 install -m 0755 -o root -g root "bin/$BIN_NAME" "$PREFIX/bin/$BIN_NAME"
 
 # 2b. Deprecation-cycle binary alias: claude-msg → tmux-msg-claude. A relative
-# symlink target keeps it valid regardless of $PREFIX. Removed v0.11.0 (#177).
+# symlink target keeps it valid regardless of $PREFIX. Removed at v1.0 boundary per ADR-0008 §Discretion clause extension (#177).
 if [[ -n "$LEGACY_BIN" ]]; then
-    echo "==> deprecation alias $PREFIX/bin/$LEGACY_BIN → $BIN_NAME (removed v0.11.0)"
+    echo "==> deprecation alias $PREFIX/bin/$LEGACY_BIN → $BIN_NAME (removed at v1.0 boundary)"
     ln -sfn "$BIN_NAME" "$PREFIX/bin/$LEGACY_BIN"
 fi
 
@@ -135,9 +135,9 @@ install -m 0644 -o "$OPERATOR_USER" -g "$OPERATOR_USER" \
 # 4b. Deprecation-cycle systemd template alias: claude-mailman@ → the new
 # template. systemd resolves a template-unit symlink, so a pre-rename
 # `systemctl --user … claude-mailman@AGENT` still instantiates the renamed
-# template with the same instance name. Owned by the operator. Removed v0.11.0.
+# template with the same instance name. Owned by the operator. Removed at v1.0 boundary per ADR-0008 §Discretion clause extension.
 if [[ -n "$LEGACY_UNIT" ]]; then
-    echo "==> deprecation alias $USER_SYSTEMD/$LEGACY_UNIT → $UNIT_NAME (removed v0.11.0)"
+    echo "==> deprecation alias $USER_SYSTEMD/$LEGACY_UNIT → $UNIT_NAME (removed at v1.0 boundary)"
     sudo -u "$OPERATOR_USER" ln -sfn "$UNIT_NAME" "$USER_SYSTEMD/$LEGACY_UNIT"
 fi
 

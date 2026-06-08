@@ -33,6 +33,14 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`install.sh` alias-horizon strings (#237).** Five `(removed v0.11.0)` strings
+  in `install.sh` contradicted the binary's `removal=v1.0` WARN log and all
+  documentation following the v0.11.0 cut. Inline comments updated to
+  `removed at v1.0 boundary per ADR-0008 §Discretion clause extension`;
+  operator-visible `echo` strings updated to `removed at v1.0 boundary`.
+
 ## [0.11.0] — 2026-06-08
 
 ### Added
