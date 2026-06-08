@@ -33,6 +33,17 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Changed
+
+- **`docs/why.md`: add a §See also referencing `agents-connector` (#251).** A
+  substrate-honest acknowledgment of [`Aldenysq/agents-connector`](https://github.com/Aldenysq/agents-connector)
+  (Rust, MIT) — a sibling project solving the same local-inter-agent-messaging-in-tmux
+  problem from the cross-vendor angle (Claude/Codex/Gemini in one session, delivery via
+  each CLI's native hooks). Names the convergence (both independently landed on
+  local-only, SQLite-durable, peer-to-peer, tmux-substrate, MIT) and the divergence
+  (their cross-vendor-via-hooks vs tmux-msg's persistent-Claude-chambers-via-observe-gate),
+  and concedes the use cases each fits better. No feature-matrix; just the honest pointer.
+
 ## [0.12.0] — 2026-06-08
 
 ### Added

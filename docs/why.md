@@ -128,3 +128,25 @@ tmux-msg-claude send --to bob "first message across the bus"
 ```
 
 That's the whole pitch: stop hand-carrying status between your agents. Let them talk.
+
+## See also
+
+tmux-msg isn't the only honest take on this. [`Aldenysq/agents-connector`](https://github.com/Aldenysq/agents-connector)
+(Rust, MIT) solves the same local-inter-agent-messaging-in-tmux problem from the
+**cross-vendor** angle: it connects Claude Code, Codex, and Gemini CLI in one tmux
+session and delivers messages through each CLI's **native hooks**, injecting them into
+an agent's context at its turn boundaries (with a tmux nudge to wake an idle one).
+
+The convergence is worth saying out loud: two projects, built independently, landed on
+the same substrate — local-only (no network, no accounts), SQLite-durable, peer-to-peer
+with no central planner, tmux underneath, MIT. That's a sign the design space has a real
+shape, not just one author's taste.
+
+Where they diverge is the bet. agents-connector goes wide — many model families in one
+session, delivery riding each vendor's hooks (which sidestep the paste-over-your-input
+problem by injecting at turn boundaries instead of typing into a live pane). tmux-msg
+goes deep on one — persistent, role-calibrated Claude chambers across many panes and
+sessions, delivery by paste-and-Enter through the [observe-gate](observe-gate.md), the
+safe-moment machinery that approach needs. Want three model families reviewing each
+other's code in one window? agents-connector ships that today. Want one model in many
+persistent specialist panes with deep substrate observability? This is closer.
