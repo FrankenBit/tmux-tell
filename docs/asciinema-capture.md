@@ -28,15 +28,16 @@ knows *why*, and can re-decide if the framing shifts.
 
 ### A — the message body
 
-**Decided: `the API changed — look at what I just pushed`**
+**Decided: `the API changed, look at what I just pushed`**
 
-This is a deliberate, verbatim echo of the `docs/why.md` hook — the line the
-operator *hand-pastes* in the pain scene ("You copy a line out of one pane and
-hand-paste *'the API changed, look at what I just pushed'* into another"). The
-demo then shows that *exact* message delivered **safely by the bus** instead of
-by hand. That through-line — the problem in prose, the solution in motion, same
-message — is the point. It parses in under 3 seconds and needs no project
-context or SHA-decoding to land.
+This is a verbatim substring of the `docs/why.md` hook — the line the operator
+*hand-pastes* in the pain scene ("You copy a line out of one pane and hand-paste
+*"heads up — the API changed, look at what I just pushed"* into another"). The
+demo body drops the "heads up — " lead and keeps the rest byte-for-byte, so it
+shows that *exact* message delivered **safely by the bus** instead of by hand.
+That through-line — the problem in prose, the solution in motion, same message —
+is the point. It parses in under 3 seconds, no project context or SHA-decoding
+needed.
 
 ### B — what the operator types (in the recipient pane)
 
@@ -131,7 +132,7 @@ the whole tmux frame (both panes + divider + status bar); starting it INSIDE a
 pane would capture only that one pane's PTY.
 
 ```bash
-CAST=/srv/tmux-msg/docs/asciinema/observe-gate.cast
+CAST="$(git rev-parse --show-toplevel)/docs/asciinema/observe-gate.cast"
 mkdir -p "$(dirname "$CAST")"
 
 # -t = title shown in players; --idle-time-limit caps frozen-frame gaps so the
@@ -157,7 +158,7 @@ the left, bob (recipient) on the right.
    ```bash
    # from alice's pane (visible), or a third shell outside the recording:
    CLAUDE_MSG_DB=/tmp/observe-gate-demo.db \
-     tmux-msg-claude send --from alice --to bob "the API changed — look at what I just pushed"
+     tmux-msg-claude send --from alice --to bob "the API changed, look at what I just pushed"
    ```
 3. **In bob's pane:** the 📫 indicator appears — the gate sees bob's pane is
    actively being typed in, so it **holds** the paste. The message is queued, not
@@ -165,7 +166,7 @@ the left, bob (recipient) on the right.
    while bob was idle — retake with the send landing mid-typing.)*
 4. **Operator pauses typing in bob's pane.**
 5. **Within one poll interval** (default ~3–15s, per-agent configurable — see
-   [`docs/reference.md`](reference.md) §Delivery modes), the mailman observes the
+   [`docs/observe-gate.md`](observe-gate.md) §Latency), the mailman observes the
    quiesce and pastes the message into bob's pane + Enter. The 📫 clears; the
    message body appears as if typed.
 6. **Stop the recording** — `Ctrl-B d` to detach, then `exit` in the recording
@@ -181,7 +182,7 @@ the left, bob (recipient) on the right.
 ### Step 6 — verify the take
 
 ```bash
-asciinema play /srv/tmux-msg/docs/asciinema/observe-gate.cast
+asciinema play "$(git rev-parse --show-toplevel)/docs/asciinema/observe-gate.cast"
 ```
 
 Verification checklist:
