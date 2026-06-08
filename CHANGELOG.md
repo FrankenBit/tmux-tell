@@ -68,6 +68,16 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   metrics-agnostic via a `tmuxio.Deliver` `OnVerify` callback. README gains an
   **§Observability** section. The Alloy scrape job + Grafana dashboard JSON
   (PR2/PR3) land in the alcatraz-infra repo — see the sibling issue.
+- **`reset --older-than` — time-bounded audit-history prune (#150 PR1).** New `--older-than
+  <duration>` flag on `reset` deletes `delivered` and `failed` messages older than the given
+  window, leaving in-flight (`queued`/`delivering`) messages untouched:
+  - `tmux-msg-claude reset --confirm --older-than 30d` — prune all delivered+failed older than
+    30 days (all agents).
+  - Composes with `--agent <name>` (scope to one recipient) and `--state delivered|failed` (AND
+    semantics — restrict to one terminal state). Example: `--older-than 7d --state failed`.
+  - `--older-than` and `--hard` are mutually exclusive (error on combined use).
+  - Store: `DeleteMessagesBefore(toAgent, cutoff, states)` — time-bounded delete with optional
+    agent scope and state filter; cutoff compared lexicographically against ISO8601 `created_at`.
 
 ### Fixed
 
