@@ -145,6 +145,38 @@ A delivered paste the mailman couldn't confirm surfaced is marked *unverified*
 recovery): [`docs/observe-gate.md`](docs/observe-gate.md). **The `verified` column and
 the verified-vs-unverified split:** [operator reference](docs/reference.md#verified-vs-unverified-deliveries).
 
+## Observability (Prometheus metrics)
+
+Each mailman can expose a Prometheus `/metrics` endpoint for continuous monitoring
+(throughput, the `delivered_unverified` rate, latency, queue depth, the talk-pair
+heatmap). It's **off by default** — pass `--metrics-addr` (or set `metrics-addr` in
+config) to turn it on, with no behavior change for deploys that don't scrape:
+
+```bash
+tmux-msg-claude serve --agent bob --metrics-addr :9099   # exposes http://…:9099/metrics
+```
+
+Each per-agent mailman is its own process, so give each agent a distinct port — the
+clean way is a per-agent config block (`[agent.bob] metrics-addr = ":9099"`). A scraper
+(Prometheus, Grafana Alloy, VictoriaMetrics' vmagent, …) then pulls each endpoint;
+pull-only, no push-gateway needed.
+
+Metrics exposed (all prefixed `tmux_msg_`):
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `tmux_msg_messages_total` | counter | `from`, `to`, `state` | terminal delivery outcomes; `state` ∈ `delivered` / `delivered_in_input_box` / `failed` — the talk-pair heatmap source |
+| `tmux_msg_delivery_latency_seconds` | histogram | `recipient` | queued→delivered wall-clock |
+| `tmux_msg_delivery_verify_attempt_seconds` | histogram | `recipient` | time in the post-Enter verify-token retry loop |
+| `tmux_msg_queue_depth` | gauge | `agent` | current queued (undelivered) depth, sampled each loop |
+| `tmux_msg_mailman_loop_iterations_total` | counter | `agent` | serve-loop iterations (liveness + cadence) |
+| `tmux_msg_paste_unsafe_aborts_total` | counter | `agent`, `reason` | deliveries aborted because the pane was paste-unsafe; `reason` ∈ `awaiting_operator` / `compaction` / `unknown` / `probe_failed` |
+
+The endpoint is standard Prometheus text exposition, so any compatible scraper works —
+point its scrape config at the per-agent `host:port/metrics`. The alcatraz Alloy scrape
+job + the Grafana dashboard JSON (talk-pair heatmap, latency heatmap, unverified-rate
+trend) live in the infra repo, not here.
+
 ## Use from Claude Code (MCP)
 
 The same binary speaks MCP over stdio under `tmux-msg-claude mcp`, exposing

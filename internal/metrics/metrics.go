@@ -1,0 +1,195 @@
+// Package metrics is the tmux-msg Prometheus instrumentation surface (#146).
+// It wraps a private *prometheus.Registry and the substrate's collector set
+// behind a small typed API the mailman daemon calls at the delivery-state-
+// write, queue-depth, loop, and paste-unsafe boundaries.
+//
+// Layering: this is a leaf package — it imports only client_golang, never
+// internal/store or internal/tmuxio. The mailman (cmd/tmux-msg-claude) owns
+// the wiring (which boundary increments which collector); tmuxio reports
+// verify timing back through a callback rather than importing this package,
+// so the low-level paste layer stays metrics-agnostic.
+//
+// Nil-safety is the load-bearing ergonomic: every Record/Observe/Set/Inc
+// method is a no-op on a nil *Metrics. The mailman holds a possibly-nil
+// handle (nil when --metrics-addr is absent, the no-behavior-change default
+// for existing deploys) and calls the methods unconditionally — no per-call
+// `if metricsEnabled` branch at the hot path. A disabled mailman pays one
+// nil-pointer compare per call and nothing else.
+//
+// Cardinality note: every metric labels by agent name (from/to/recipient/
+// agent). The fleet is a fixed small set of named chambers (Bosun, Pilot,
+// Surveyor, Engineer, …), not user-generated identifiers, so the label
+// space is bounded — the talk-pair heatmap (from × to) is the whole point
+// of #146 and the chamber roster keeps it from exploding.
+package metrics
+
+import (
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"net/http"
+)
+
+// State label values for tmux_msg_messages_total. They mirror the durable
+// delivery outcomes the mailman writes (#169): a verified delivery, the
+// delivered_in_input_box soft-fail (paste+Enter landed but the verify token
+// never surfaced), and a hard failure. These are the metric's stable wire
+// surface — they intentionally use the codebase's current vocabulary
+// (delivered_in_input_box, renamed from the pre-#140 delivered_unverified),
+// not the older name in #146's original exposition sketch.
+const (
+	StateDelivered           = "delivered"
+	StateDeliveredInInputBox = "delivered_in_input_box"
+	StateFailed              = "failed"
+)
+
+// latencyBuckets covers the queued→delivered span. Deliveries are usually
+// sub-second, but the observe-gate can hold a message up to its 5-minute
+// MaxWait and the post-compact pause adds ~120s, so the buckets reach 600s
+// to keep the tail (and the latency heatmap) resolvable rather than piling
+// into +Inf.
+var latencyBuckets = []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600}
+
+// verifyBuckets covers the post-Enter verify-retry loop, whose production
+// budget is ~5s (six backoff steps in tmuxio.Deliver). The finer sub-5s
+// resolution + a few buckets past 5s let #153 see where the observed
+// verify-attempt mass lands relative to the current budget when it decides
+// whether the default needs recalibrating (the metric is defined HERE and
+// shared with #153 to avoid double-instrumentation).
+var verifyBuckets = []float64{0.1, 0.25, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 8, 10}
+
+// Metrics is the tmux-msg collector set bound to a private registry. Build
+// one with New; pass it the lifetime of a mailman run. A nil *Metrics is a
+// valid, fully no-op instance — see the package doc.
+type Metrics struct {
+	reg *prometheus.Registry
+
+	messagesTotal     *prometheus.CounterVec
+	deliveryLatency   *prometheus.HistogramVec
+	verifyAttempt     *prometheus.HistogramVec
+	queueDepth        *prometheus.GaugeVec
+	loopIterations    *prometheus.CounterVec
+	pasteUnsafeAborts *prometheus.CounterVec
+}
+
+// New builds the collector set, registers it against a fresh private
+// registry (not the global default — so multiple mailmen in one process,
+// as in tests, never collide on duplicate registration), and returns the
+// handle. The registry is reachable via Handler for the /metrics endpoint.
+func New() *Metrics {
+	reg := prometheus.NewRegistry()
+	m := &Metrics{
+		reg: reg,
+		messagesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tmux_msg_messages_total",
+			Help: "Total messages the mailman drove to a terminal delivery outcome, by sender, recipient, and outcome state.",
+		}, []string{"from", "to", "state"}),
+		deliveryLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "tmux_msg_delivery_latency_seconds",
+			Help:    "Wall-clock from a message being queued to it reaching the delivered state, per recipient.",
+			Buckets: latencyBuckets,
+		}, []string{"recipient"}),
+		verifyAttempt: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "tmux_msg_delivery_verify_attempt_seconds",
+			Help:    "Wall-clock spent in the post-Enter verify-token retry loop, per recipient (shared with #153 budget calibration).",
+			Buckets: verifyBuckets,
+		}, []string{"recipient"}),
+		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tmux_msg_queue_depth",
+			Help: "Current count of queued (undelivered) messages addressed to the agent, sampled each mailman loop iteration.",
+		}, []string{"agent"}),
+		loopIterations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tmux_msg_mailman_loop_iterations_total",
+			Help: "Total mailman serve-loop iterations for the agent — a liveness + cadence signal.",
+		}, []string{"agent"}),
+		pasteUnsafeAborts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tmux_msg_paste_unsafe_aborts_total",
+			Help: "Total deliveries aborted by the pre-paste safety / drift guards because the pane was paste-unsafe, by agent and reason.",
+		}, []string{"agent", "reason"}),
+	}
+	reg.MustRegister(
+		m.messagesTotal,
+		m.deliveryLatency,
+		m.verifyAttempt,
+		m.queueDepth,
+		m.loopIterations,
+		m.pasteUnsafeAborts,
+	)
+	return m
+}
+
+// Handler returns an HTTP handler serving the registry's exposition in the
+// Prometheus text format. Returns a 503 handler on a nil *Metrics so a
+// caller that wires the endpoint without a registry fails visibly rather
+// than panicking.
+func (m *Metrics) Handler() http.Handler {
+	if m == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "metrics disabled", http.StatusServiceUnavailable)
+		})
+	}
+	return promhttp.HandlerFor(m.reg, promhttp.HandlerOpts{})
+}
+
+// Registry exposes the private registry for tests that want to Gather and
+// assert on raw collector state. Returns nil on a nil *Metrics.
+func (m *Metrics) Registry() *prometheus.Registry {
+	if m == nil {
+		return nil
+	}
+	return m.reg
+}
+
+// RecordDelivery increments tmux_msg_messages_total for one terminal
+// delivery outcome. state should be one of the State* constants.
+func (m *Metrics) RecordDelivery(from, to, state string) {
+	if m == nil {
+		return
+	}
+	m.messagesTotal.WithLabelValues(from, to, state).Inc()
+}
+
+// ObserveDeliveryLatency records a queued→delivered duration (seconds) for
+// the recipient. Callers should skip non-delivered outcomes (a failed
+// message has no meaningful delivery latency).
+func (m *Metrics) ObserveDeliveryLatency(recipient string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.deliveryLatency.WithLabelValues(recipient).Observe(seconds)
+}
+
+// ObserveVerifyAttempt records the wall-clock spent in the post-Enter
+// verify-token retry loop for the recipient (#146/#153). Fed by the
+// tmuxio.Deliver OnVerify callback.
+func (m *Metrics) ObserveVerifyAttempt(recipient string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.verifyAttempt.WithLabelValues(recipient).Observe(seconds)
+}
+
+// SetQueueDepth sets the current queued-message gauge for the agent.
+func (m *Metrics) SetQueueDepth(agent string, depth float64) {
+	if m == nil {
+		return
+	}
+	m.queueDepth.WithLabelValues(agent).Set(depth)
+}
+
+// IncLoopIteration bumps the serve-loop iteration counter for the agent.
+func (m *Metrics) IncLoopIteration(agent string) {
+	if m == nil {
+		return
+	}
+	m.loopIterations.WithLabelValues(agent).Inc()
+}
+
+// IncPasteUnsafeAbort bumps the paste-unsafe-abort counter for the agent
+// with a stable reason label (awaiting_operator | compaction | unknown |
+// probe_failed | drift_*).
+func (m *Metrics) IncPasteUnsafeAbort(agent, reason string) {
+	if m == nil {
+		return
+	}
+	m.pasteUnsafeAborts.WithLabelValues(agent, reason).Inc()
+}

@@ -165,6 +165,14 @@ type Block struct {
 	// auto-deliver behave like announce — so absence rides the pointer, not
 	// a zero sentinel). Hardcoded default 3.
 	OnRegisterBacklogCap *int `toml:"on-register-backlog-cap"`
+	// MetricsAddr is the bind address for the mailman's Prometheus /metrics
+	// endpoint (#146), e.g. ":9099" or "127.0.0.1:9099". Empty/absent
+	// disables the endpoint entirely — the no-behavior-change default for
+	// deploys that don't scrape. Per-agent override is the load-bearing case:
+	// each per-agent mailman is its own process, so the fleet's systemd
+	// template assigns a distinct port per agent via an [agent.<name>] block.
+	// Resolves through ResolveString (empty = not set → next layer).
+	MetricsAddr *string `toml:"metrics-addr"`
 }
 
 // Load reads the config from the path resolved by:
@@ -395,6 +403,8 @@ func blockStringField(b *Block, field string) *string {
 		return b.RenderByteMarkerThreshold
 	case "on-register-backlog":
 		return b.OnRegisterBacklog
+	case "metrics-addr":
+		return b.MetricsAddr
 	}
 	return nil
 }
@@ -488,6 +498,7 @@ type ResolvedView struct {
 	MaxRecipientsPerSend        int           `json:"max_recipients_per_send"`
 	OnRegisterBacklog           string        `json:"on_register_backlog"`
 	OnRegisterBacklogCap        int           `json:"on_register_backlog_cap"`
+	MetricsAddr                 string        `json:"metrics_addr,omitempty"`
 	PrivilegedAgents            []string      `json:"privileged_agents"`
 }
 
@@ -517,6 +528,7 @@ func Resolve(file *File, path, agent string) ResolvedView {
 		MaxRecipientsPerSend:      ResolveInt(file, agent, "max-recipients-per-send", 10),
 		OnRegisterBacklog:         ResolveString(file, agent, "on-register-backlog", DefaultOnRegisterBacklog),
 		OnRegisterBacklogCap:      ResolveInt(file, agent, "on-register-backlog-cap", DefaultOnRegisterBacklogCap),
+		MetricsAddr:               ResolveString(file, agent, "metrics-addr", ""),
 		PrivilegedAgents:          resolvePrivilegedAgents(file),
 	}
 }

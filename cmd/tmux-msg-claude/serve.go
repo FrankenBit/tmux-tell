@@ -14,6 +14,7 @@ import (
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/discover"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/metrics"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/render"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/sdnotify"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
@@ -122,6 +123,17 @@ type serveOpts struct {
 	// defaults to render.DefaultByteMarkerThreshold. A value < 0 disables
 	// the marker.
 	ByteMarkerThreshold int
+	// MetricsAddr is the bind address for the Prometheus /metrics endpoint
+	// (#146). Empty disables the endpoint entirely — the no-behavior-change
+	// default for existing deploys. When non-empty and Metrics is nil,
+	// runServeWithStore builds a registry and starts an HTTP server on this
+	// address for the run's lifetime.
+	MetricsAddr string
+	// Metrics is a test seam: when non-nil it is used directly (no HTTP
+	// server started, MetricsAddr ignored) so a test can inject a registry,
+	// drive a delivery, and assert the increments. Production leaves it nil
+	// and lets MetricsAddr drive creation.
+	Metrics *metrics.Metrics
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -169,6 +181,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"on a recipient's outbound message transitioning to `delivered_in_input_box` (paste+Enter ran but verify token didn't surface), auto-insert a notice back to the original sender (#53)")
 	notifyOnDeliveredUnverifiedLegacy := fs.Bool("notify-on-delivered-unverified", true,
 		"deprecated: use --notify-on-delivered-in-input-box (removal v0.12.0, #140)")
+	metricsAddr := fs.String("metrics-addr", "",
+		"expose a Prometheus /metrics endpoint on this address (e.g. ':9099' or '127.0.0.1:9099'). Empty (the default) disables the endpoint entirely — no behavior change for deploys that don't scrape. Per-agent TOML knob: `metrics-addr = \":PORT\"` (each per-agent mailman is its own process, so assign a distinct port per agent). (#146)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -224,6 +238,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if !flagWasSet(fs, "pre-paste-safety-disabled") {
 		*prePasteSafetyDisabled = config.ResolveBool(cfg, *agent, "pre-paste-safety-disabled", *prePasteSafetyDisabled)
+	}
+	if !flagWasSet(fs, "metrics-addr") {
+		*metricsAddr = config.ResolveString(cfg, *agent, "metrics-addr", "")
 	}
 	configDeliveryMode := config.ResolveString(cfg, *agent, "delivery-mode", "")
 	// Resolve the render length-marker threshold (#160) once at startup.
@@ -281,6 +298,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		PrePasteSafetyDisabled:      *prePasteSafetyDisabled,
 		ConfigDeliveryMode:          configDeliveryMode,
 		ByteMarkerThreshold:         byteMarkerThreshold,
+		MetricsAddr:                 *metricsAddr,
 		DriftSoftFail:               *driftSoftFail,
 		NotifyOnFailed:              *notifyOnFailed,
 		NotifyOnDeliveredInInputBox: *notifyOnDeliveredInInputBox,
@@ -384,12 +402,42 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		opts.ObserveGateOpts.Ping = func() { _ = sdnotify.Watchdog() }
 	}
 
+	// Prometheus metrics (#146). Built only when enabled — the handle stays
+	// nil otherwise and every m.* call below is a no-op (the nil-safe metrics
+	// API), so the disabled path is the existing behavior plus one nil-compare
+	// per call. A test injects opts.Metrics to assert increments without
+	// standing up an HTTP server; production leaves it nil and lets
+	// MetricsAddr drive creation. Started here (post mailbox-only
+	// short-circuit) so a mailbox-only mailman that exits never binds a port.
+	m := opts.Metrics
+	if m == nil && opts.MetricsAddr != "" {
+		m = metrics.New()
+		startMetricsServer(stopCtx, m, opts.MetricsAddr, logger)
+	}
+	// onVerify feeds the verify-attempt histogram (#146/#153). The verified
+	// bool is intentionally unused: the metric records the verify-loop
+	// wall-clock regardless of outcome, which is what #153 needs to judge the
+	// retry budget. Nil-safe through m.
+	onVerify := func(elapsed time.Duration, _ bool) {
+		m.ObserveVerifyAttempt(opts.Agent, elapsed.Seconds())
+	}
+
 	for {
 		if stopCtx.Err() != nil {
 			return exitOK
 		}
 		if watchdogPing > 0 {
 			_ = sdnotify.Watchdog()
+		}
+
+		// Metrics sampling (#146): count this loop iteration (a liveness +
+		// cadence signal) and refresh the queue-depth gauge. Gated on m != nil
+		// so the disabled path adds no per-iteration COUNT query.
+		if m != nil {
+			m.IncLoopIteration(opts.Agent)
+			if depth, derr := s.RecipientQueueDepth(opCtx, opts.Agent); derr == nil {
+				m.SetQueueDepth(opts.Agent, float64(depth))
+			}
 		}
 
 		// Re-read every iteration so pause/resume and discover updates
@@ -517,6 +565,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				}
 				maybeInsertFailureNotice(opCtx, s, logger,
 					opts.NotifyOnFailed, opts.Agent, msg, "failed", reason)
+				// Drift abort is a terminal `failed` outcome (distinct from a
+				// paste-unsafe pane-state abort, which reverts to queued); it
+				// counts in messages_total, not paste_unsafe_aborts (#146).
+				m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateFailed)
 				if stopOrSleep(stopCtx, opts.InterMessageDelay) {
 					return exitOK
 				}
@@ -648,6 +700,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				}
 				logger.Printf("WARN pre_paste_safety_abort id=%s pane=%s state=%s — popup-suspected-or-probe-failed; reverting to queued for retry (#105)",
 					msg.PublicID, paneForDelivery, reason)
+				// #146: the message reverts to queued (not a terminal
+				// outcome), so this counts in paste_unsafe_aborts only — never
+				// messages_total.
+				m.IncPasteUnsafeAbort(opts.Agent, pasteUnsafeReason(probeState, perr))
 				// Single-flight assumption: the mailman loop processes
 				// at most one message in 'delivering' state at a time
 				// (ClaimNext is atomic + state-change-on-claim). So
@@ -663,7 +719,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		}
 
 		deliverCtx, cancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
-		derr := deliverOne(deliverCtx, paneForDelivery, msg, opts.ByteMarkerThreshold)
+		derr := deliverOne(deliverCtx, paneForDelivery, msg, opts.ByteMarkerThreshold, onVerify)
 		cancel()
 
 		// Auto-heal on pane-id drift: if tmux says the pane is gone, ask
@@ -682,7 +738,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					logger.Printf("auto_heal_update_failed err=%v", uerr)
 				} else {
 					retryCtx, rcancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
-					derr = deliverOne(retryCtx, newPane, msg, opts.ByteMarkerThreshold)
+					derr = deliverOne(retryCtx, newPane, msg, opts.ByteMarkerThreshold, onVerify)
 					rcancel()
 				}
 			} else if lerr != nil {
@@ -709,6 +765,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if err := s.MarkDelivered(opCtx, msg.PublicID); err != nil {
 				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
 			}
+			m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateDelivered)
+			if sec, ok := deliveryLatencySeconds(msg.CreatedAt); ok {
+				m.ObserveDeliveryLatency(opts.Agent, sec)
+			}
 			if isCompactControl(msg) && opts.PostCompactPause > 0 {
 				logger.Printf("post_compact_pause id=%s duration=%s",
 					msg.PublicID, opts.PostCompactPause)
@@ -726,6 +786,12 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if err := s.MarkDeliveredInInputBox(opCtx, msg.PublicID); err != nil {
 				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
 			}
+			// delivered_in_input_box is still a `delivered` row, so it carries
+			// a meaningful queued→delivered latency (#146).
+			m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateDeliveredInInputBox)
+			if sec, ok := deliveryLatencySeconds(msg.CreatedAt); ok {
+				m.ObserveDeliveryLatency(opts.Agent, sec)
+			}
 			maybeInsertFailureNotice(opCtx, s, logger,
 				opts.NotifyOnDeliveredInInputBox, opts.Agent, msg,
 				"delivered_in_input_box",
@@ -735,6 +801,8 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if err := s.MarkFailed(opCtx, msg.PublicID, derr.Error()); err != nil {
 				logger.Printf("mark_failed_err id=%s err=%v", msg.PublicID, err)
 			}
+			// Hard failure: a terminal `failed` row, no delivery latency.
+			m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateFailed)
 			maybeInsertFailureNotice(opCtx, s, logger,
 				opts.NotifyOnFailed, opts.Agent, msg, "failed", derr.Error())
 		}
@@ -932,7 +1000,10 @@ func pingHealthy(ctx context.Context, pane string) (reason string, ok bool) {
 // regular messages go through the paste-buffer renderer with verification;
 // control commands type their body directly via send-keys -l so they hit
 // Claude Code's slash-command parser without the chat header.
-func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarkerThreshold int) error {
+//
+// onVerify (may be nil) is forwarded to tmuxio.Deliver's verify-attempt
+// callback (#146); it never fires for control messages (no verification).
+func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarkerThreshold int, onVerify func(time.Duration, bool)) error {
 	if msg.Kind == store.KindControl {
 		return tmuxio.SendKeys(ctx, pane, msg.Body)
 	}
@@ -940,7 +1011,28 @@ func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarker
 		Pane:        pane,
 		Body:        render.Message(*msg, byteMarkerThreshold),
 		VerifyToken: "id " + msg.PublicID,
+		OnVerify:    onVerify,
 	})
+}
+
+// deliveryLatencySeconds returns the queued→now duration in seconds for a
+// message by parsing its created_at (ISO 8601 UTC — the schema's strftime
+// format, with or without millis). ok is false when created_at can't be
+// parsed (an unexpected format), so the caller skips the observation rather
+// than recording a garbage latency. It uses time.Now() rather than
+// re-reading the just-stamped delivered_at: the in-process clock is within a
+// millisecond of the DB stamp and avoids a round-trip on the hot path.
+func deliveryLatencySeconds(createdAt string) (float64, bool) {
+	for _, layout := range []string{"2006-01-02T15:04:05.000Z", "2006-01-02T15:04:05Z"} {
+		if t, err := time.Parse(layout, createdAt); err == nil {
+			d := time.Since(t).Seconds()
+			if d < 0 {
+				d = 0
+			}
+			return d, true
+		}
+	}
+	return 0, false
 }
 
 // buildCanonicals snapshots the agents registry into the

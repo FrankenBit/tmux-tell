@@ -42,6 +42,17 @@ type DeliverParams struct {
 	// pane's visible content after Enter is pressed (typically the
 	// message public_id). Empty disables verification.
 	VerifyToken string
+	// OnVerify, when set, is invoked exactly once after the post-Enter
+	// verification loop with the wall-clock spent in that loop and whether
+	// the token was observed within the retry budget. It lets the caller
+	// record verify-attempt metrics (#146
+	// tmux_msg_delivery_verify_attempt_seconds, shared with #153's budget
+	// calibration) WITHOUT tmuxio importing a metrics package — tmuxio just
+	// reports the timing; the caller decides what to do with it. Not called
+	// when VerifyToken is empty (no verification is performed), nor on a
+	// hard capture-pane/context error mid-loop (those are not a
+	// verify-budget outcome — they abort the delivery).
+	OnVerify func(elapsed time.Duration, verified bool)
 }
 
 // SetRetryDelaysForTest swaps the package-level retryDelays and returns
@@ -157,7 +168,11 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		return nil
 	}
 
-	// 4. Verification + retry backoff.
+	// 4. Verification + retry backoff. verifyStart bounds the whole
+	// retry loop; OnVerify (when set) reports its wall-clock on either
+	// terminal outcome (token found / budget exhausted) so the caller can
+	// histogram verify-attempt latency (#146/#153).
+	verifyStart := time.Now()
 	var lastCapture string
 	for attempt := 0; attempt <= len(retryDelays); attempt++ {
 		if attempt > 0 {
@@ -173,8 +188,14 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		}
 		lastCapture = string(out)
 		if strings.Contains(lastCapture, p.VerifyToken) {
+			if p.OnVerify != nil {
+				p.OnVerify(time.Since(verifyStart), true)
+			}
 			return nil
 		}
+	}
+	if p.OnVerify != nil {
+		p.OnVerify(time.Since(verifyStart), false)
 	}
 	return fmt.Errorf("%w: token %q not visible after %d attempts; last capture (trunc):\n%s",
 		ErrUnverifiedDelivery, p.VerifyToken, len(retryDelays)+1, trim(lastCapture, 400))

@@ -33,6 +33,27 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Added
+
+- **Prometheus metrics surface on the mailman daemon (#146, PR1 of the
+  observability stack).** `tmux-msg-claude serve --metrics-addr :PORT` (or the
+  `metrics-addr` config knob, per-agent) exposes a Prometheus `/metrics`
+  endpoint. Off by default — absent flag → no endpoint, no behavior change for
+  existing deploys. Six metrics, all `tmux_msg_`-prefixed:
+  `messages_total{from,to,state}` (the talk-pair heatmap source; `state` ∈
+  `delivered` / `delivered_in_input_box` / `failed`),
+  `delivery_latency_seconds{recipient}` (histogram, queued→delivered),
+  `delivery_verify_attempt_seconds{recipient}` (histogram, verify-token loop —
+  **defined here and shared with #153's budget calibration** so it consumes
+  rather than re-instruments), `queue_depth{agent}` (gauge),
+  `mailman_loop_iterations_total{agent}`, and
+  `paste_unsafe_aborts_total{agent,reason}`. New leaf package
+  `internal/metrics` (nil-safe API — a disabled mailman holds a nil handle and
+  pays one nil-compare per call); the low-level paste path stays
+  metrics-agnostic via a `tmuxio.Deliver` `OnVerify` callback. README gains an
+  **§Observability** section. The Alloy scrape job + Grafana dashboard JSON
+  (PR2/PR3) land in the alcatraz-infra repo — see the sibling issue.
+
 ### Fixed
 
 - **`install.sh` alias-horizon strings (#237).** Five `(removed v0.11.0)` strings
