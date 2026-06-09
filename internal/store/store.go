@@ -160,11 +160,10 @@ var migrations = []string{
 	// message. Additive; deferred rows are invisible to ClaimNext/inbox/
 	// mailman until promoted, so existing flows are unaffected.
 	`ALTER TABLE messages ADD COLUMN deliver_after TEXT`,
-	// #250: request-reply marker. 1 = this message was sent via `ask` and the
-	// sender intends to wait for a reply (the Q1 "distinct tool + marker"
-	// decision, 2026-06-09). Written by ask; reserved for future
-	// "unanswered asks" introspection (no v1 reader through the Message
-	// struct). Additive; default 0 means every existing send is unaffected.
+	// #250: request-reply marker. 1 = sender intends a reply (set by `ask` or
+	// `send --expects-reply`, #270). 0 = normal send. Read through
+	// Message.ExpectsReply and the Unanswered / AwaitingReply ListFilter
+	// booleans (#270). Default 0 — every existing send is unaffected.
 	`ALTER TABLE messages ADD COLUMN expects_reply INTEGER NOT NULL DEFAULT 0`,
 }
 

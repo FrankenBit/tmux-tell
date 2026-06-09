@@ -76,6 +76,8 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		"with --reply-to: fail (ok:false) if the thread moved since you last spoke (#155)")
 	deliverAfter := fs.String("deliver-after", "",
 		"defer delivery until a trigger fires (#227): the message is staged (not queued) and delivers only after a matching `flush --trigger=<t>` call. v1 trigger: `resume` (post-compaction self-handoff). Single-recipient only.")
+	expectsReply := fs.Bool("expects-reply", false,
+		"signal that you'd like a reply — sets the expects_reply marker WITHOUT invoking ask/wait_for_reply machinery (#270). Use for lightweight intent-signaling when you're not blocking on the answer. Sender's unanswered sends appear under `sent --awaiting-reply`; recipient's owed replies appear under `inbox --unanswered`.")
 	format := fs.String("format", "json", "json|text")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
@@ -105,6 +107,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		NoReplyExpected:      *noReplyExpected,
 		Quick:                *quick,
 		DeliverAfter:         *deliverAfter,
+		ExpectsReply:         *expectsReply,
 		MaxRecipient:         *maxRecipient,
 		MaxSender:            *maxSender,
 		MaxBody:              *maxBody,

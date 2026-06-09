@@ -229,6 +229,17 @@ times out; `check-replies` is the non-blocking poll for the work-while-waiting p
 Same three as MCP tools. Full semantics: [operator reference →
 Request-reply](docs/reference.md#reading-a-reply-thread).
 
+**Lightweight reply intent** — when you want to signal "I expect a reply" without the
+blocking wait machinery, pass `--expects-reply` to `send`:
+
+```bash
+tmux-msg-claude send --to bob --expects-reply "please confirm deploy"
+```
+
+The message carries the marker; bob's queue and delivery are unchanged. Recipients can
+find unanswered asks with `inbox --unanswered`; senders can track open asks with
+`sent --awaiting-reply`. Both surfaces are also available as MCP tool parameters.
+
 ## Use from Claude Code (MCP)
 
 The same binary speaks MCP over stdio under `tmux-msg-claude mcp`, exposing

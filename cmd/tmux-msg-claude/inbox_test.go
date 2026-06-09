@@ -18,7 +18,7 @@ func TestInbox_TextFormat(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	exit := runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, "text", &stdout, &stderr)
+	exit := runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, false, "text", &stdout, &stderr)
 	if exit != exitOK {
 		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
 	}
@@ -39,7 +39,7 @@ func TestInbox_JSONFormat(t *testing.T) {
 	})
 
 	var stdout, stderr bytes.Buffer
-	exit := runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, "json", &stdout, &stderr)
+	exit := runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, false, "json", &stdout, &stderr)
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -66,7 +66,7 @@ func TestInbox_FilterByState(t *testing.T) {
 	_, _ = s.ClaimNext(ctx, "bob")
 
 	var stdout bytes.Buffer
-	exit := runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, "json", &stdout, &bytes.Buffer{})
+	exit := runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, false, "json", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -77,7 +77,7 @@ func TestInbox_FilterByState(t *testing.T) {
 	}
 
 	stdout.Reset()
-	exit = runInboxWithStore(ctx, s, "bob", store.StateDelivering, 100, "json", &stdout, &bytes.Buffer{})
+	exit = runInboxWithStore(ctx, s, "bob", store.StateDelivering, 100, false, "json", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -90,7 +90,7 @@ func TestInbox_FilterByState(t *testing.T) {
 func TestInbox_EmptyTable(t *testing.T) {
 	s := newCmdTestStore(t, "bob")
 	var stdout, stderr bytes.Buffer
-	exit := runInboxWithStore(context.Background(), s, "bob", store.StateQueued, 100, "text", &stdout, &stderr)
+	exit := runInboxWithStore(context.Background(), s, "bob", store.StateQueued, 100, false, "text", &stdout, &stderr)
 	if exit != exitOK {
 		t.Errorf("exit = %d, want 0", exit)
 	}
@@ -102,7 +102,7 @@ func TestInbox_EmptyTable(t *testing.T) {
 func TestInbox_UnknownFormat(t *testing.T) {
 	s := newCmdTestStore(t, "bob")
 	var stdout, stderr bytes.Buffer
-	exit := runInboxWithStore(context.Background(), s, "bob", store.StateQueued, 100, "xml", &stdout, &stderr)
+	exit := runInboxWithStore(context.Background(), s, "bob", store.StateQueued, 100, false, "xml", &stdout, &stderr)
 	if exit != exitUsage {
 		t.Errorf("exit = %d, want %d", exit, exitUsage)
 	}
@@ -150,7 +150,7 @@ func TestInbox_AckSingle(t *testing.T) {
 
 	// Message must no longer appear in the default queued view.
 	var out bytes.Buffer
-	runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, "json", &out, &bytes.Buffer{})
+	runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, false, "json", &out, &bytes.Buffer{})
 	var rows []map[string]any
 	_ = json.Unmarshal(bytes.TrimSpace(out.Bytes()), &rows)
 	if len(rows) != 0 {
@@ -189,7 +189,7 @@ func TestInbox_AckAll_RoundTrip(t *testing.T) {
 
 	// Default inbox (queued) must show only the new arrival.
 	var out bytes.Buffer
-	runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, "json", &out, &bytes.Buffer{})
+	runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, false, "json", &out, &bytes.Buffer{})
 	var rows []map[string]any
 	_ = json.Unmarshal(bytes.TrimSpace(out.Bytes()), &rows)
 	if len(rows) != 1 || rows[0]["id"] != newRes.PublicID {
@@ -248,7 +248,7 @@ func TestInbox_DefaultExcludesAcknowledged(t *testing.T) {
 
 	// Default inbox (queued) must be empty.
 	var stdout bytes.Buffer
-	exit := runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, "json", &stdout, &bytes.Buffer{})
+	exit := runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, false, "json", &stdout, &bytes.Buffer{})
 	if exit != exitOK {
 		t.Fatalf("exit = %d", exit)
 	}
@@ -256,5 +256,39 @@ func TestInbox_DefaultExcludesAcknowledged(t *testing.T) {
 	_ = json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &rows)
 	if len(rows) != 0 {
 		t.Errorf("queued inbox includes acknowledged message, want 0 rows; got %v", rows)
+	}
+}
+
+// TestInbox_Unanswered: --unanswered returns only expects_reply=1 messages
+// that bob has not replied to, and the expects_reply field is set in JSON output.
+func TestInbox_Unanswered(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bob")
+	ctx := context.Background()
+
+	// Alice sends two asks to bob.
+	ask1, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "q1?", ExpectsReply: true})
+	ask2, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "q2?", ExpectsReply: true})
+	// Plain send — must not appear in --unanswered output.
+	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "fyi"})
+
+	// Bob replies to ask1.
+	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "bob", ToAgent: "alice", ReplyTo: ask1.PublicID, Body: "a1"})
+
+	var stdout bytes.Buffer
+	exit := runInboxWithStore(ctx, s, "bob", store.StateQueued, 100, true, "json", &stdout, &bytes.Buffer{})
+	if exit != exitOK {
+		t.Fatalf("exit = %d", exit)
+	}
+	var rows []map[string]any
+	_ = json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &rows)
+	if len(rows) != 1 {
+		t.Fatalf("unanswered = %d rows, want 1", len(rows))
+	}
+	if rows[0]["id"] != ask2.PublicID {
+		t.Errorf("id = %v, want %s", rows[0]["id"], ask2.PublicID)
+	}
+	// JSON output must carry expects_reply=true.
+	if rows[0]["expects_reply"] != true {
+		t.Errorf("expects_reply = %v, want true", rows[0]["expects_reply"])
 	}
 }

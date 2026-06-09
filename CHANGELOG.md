@@ -48,6 +48,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   sender-facing; a `rejected`/`dismissed` state is a forever-commitment with no current
   consumer — deferred to a forcing-function, full decision-record in #268). Closes #268.
 
+- **Lightweight reply-intent flag: `send --expects-reply`, `inbox --unanswered`, `sent --awaiting-reply` (#270).** Adds a first-class way to signal "I expect a reply" without the blocking `ask`/`wait_for_reply` machinery. `send --expects-reply` stamps the `expects_reply` marker on the outgoing message. Recipients can filter their inbox with `inbox --unanswered` (messages with `expects_reply=1` the recipient hasn't replied to yet). Senders can audit open asks with `sent --awaiting-reply` (messages they marked `expects_reply` where the recipient hasn't replied). Both filters are also wired as MCP parameters on `tmux-msg.inbox` (`unanswered`) and `tmux-msg.send` (`expects_reply`). `Message.ExpectsReply` is now populated on all read paths (`GetMessage`, `ListMessages`, `ClaimNext`, `FindDedupeMatch`, `FindMessagesByPrefix`, `TailRows`, `MessagesByIDs`) and exposed in JSON output.
+
 ### Changed
 
 - **CONTRIBUTING.md: claim-on-pickup discipline made explicit for both issues and PRs.** The convention was already documented in `docs/chamber-dispatch.md` and added to each chamber's CLAUDE.md during alcatraz-infra#27. This makes the rule discoverable for non-chamber contributors too: when picking up a substantive issue, set the Forgejo `assignees` field before opening the worktree branch; mirror on the PR when filing. Dispatchers read `assignees` before dispatching. Forward-only — historical issues without an assignee aren't backfilled.

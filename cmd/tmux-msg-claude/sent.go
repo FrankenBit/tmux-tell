@@ -32,6 +32,8 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 	limit := fs.Int("limit", 50, "maximum rows to return")
 	deferred := fs.Bool("deferred", false,
 		"list your deferred (staged-but-not-yet-delivered) messages instead — the pre-staged context awaiting a flush_deferred trigger (#227). Overrides --state.")
+	awaitingReply := fs.Bool("awaiting-reply", false,
+		"list only messages you sent with --expects-reply where the recipient hasn't replied yet (#270). Complements `inbox --unanswered` on the recipient side.")
 	format := fs.String("format", "text", "text|json")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
@@ -80,7 +82,7 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 			exitUsage)
 	}
 
-	return runSentWithStore(ctx, s, agent, *stateFlag, *to, *limit, *since, sinceFloor, *deferred, *format, stdout, stderr)
+	return runSentWithStore(ctx, s, agent, *stateFlag, *to, *limit, *since, sinceFloor, *deferred, *awaitingReply, *format, stdout, stderr)
 }
 
 // validateSentState returns an error if state is not a known value for --state.
@@ -98,6 +100,7 @@ func runSentWithStore(ctx context.Context, s *store.Store,
 	agent, stateFilter, toAgent string,
 	limit int, sinceSpec, sinceFloor string,
 	deferred bool,
+	awaitingReply bool,
 	format string,
 	stdout, stderr io.Writer,
 ) int {
@@ -114,6 +117,10 @@ func runSentWithStore(ctx context.Context, s *store.Store,
 		// --deferred opts into the otherwise-hidden staged rows (#227) and
 		// overrides any --state filter (the two are contradictory).
 		f.Deferred = true
+	case awaitingReply:
+		// --awaiting-reply: expects_reply=1 AND recipient hasn't replied yet
+		// (#270). Overrides --state (the filter makes sense across all states).
+		f.AwaitingReply = true
 	case stateFilter == "delivered_in_input_box":
 		f.Unverified = true
 	case stateFilter == "":

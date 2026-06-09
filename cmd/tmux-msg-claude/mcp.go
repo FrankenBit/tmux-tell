@@ -75,7 +75,8 @@ func newMCPServer(s *store.Store) *mcp.Server {
 				"wait_for_delivered": {"type": "boolean", "description": "Block until the message reaches a terminal delivery state (delivered/failed) or timeout, returning a \"delivery\" block with state + verify_ms. Default false (#152)."},
 				"timeout":           {"type": "string", "description": "Bound for wait_for_delivered as a Go duration (e.g. \"10s\"). Default 10s."},
 				"block_on_stale":    {"type": "boolean", "description": "With reply_to: fail (ok:false) instead of queueing when the thread_freshness check finds the thread moved since you last spoke (newer messages addressed to you arrived after your last message in the chain). Default false — staleness is reported but the send still succeeds (#155)."},
-				"deliver_after":     {"type": "string", "description": "Defer delivery until a trigger fires (#227): the message is STAGED (not queued) and delivers only after a matching flush_deferred call. Primary use: post-compaction self-handoff — send yourself orientation text with deliver_after=\"resume\", then call tmux-msg.flush_deferred{trigger:\"resume\"} as part of your post-/compact resume routine so it lands in the freshly-resumed context rather than being absorbed by the summarizer. v1 accepts only \"resume\". Single-recipient only. The response carries deliver_after to confirm staging."}
+				"deliver_after":     {"type": "string", "description": "Defer delivery until a trigger fires (#227): the message is STAGED (not queued) and delivers only after a matching flush_deferred call. Primary use: post-compaction self-handoff — send yourself orientation text with deliver_after=\"resume\", then call tmux-msg.flush_deferred{trigger:\"resume\"} as part of your post-/compact resume routine so it lands in the freshly-resumed context rather than being absorbed by the summarizer. v1 accepts only \"resume\". Single-recipient only. The response carries deliver_after to confirm staging."},
+				"expects_reply":     {"type": "boolean", "description": "Signal that you'd like a reply — lightweight intent-marker WITHOUT the blocking wait of ask/wait_for_reply (#270). Use when you want an answer eventually but aren't blocking on it. Your unanswered sends appear under sent --awaiting-reply; the recipient's owed replies appear under inbox --unanswered. Default false."}
 			},
 			"required": ["to", "body"]
 		}`),
@@ -156,14 +157,15 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpWhoamiHandler(s))
 
 	srv.RegisterTool("tmux-msg.inbox",
-		"List the caller's own queued messages, or acknowledge announce-skipped backlog residue (#221). Pass ack_ids to mark specific messages acknowledged; pass ack_all=true to acknowledge all messages ≤ the backlog_epoch (drains the announce-skipped residue left by the don't-flood policy). Acknowledged messages are excluded from the default queued view but remain retrievable via tmux-msg.get.",
+		"List the caller's own queued messages, or acknowledge announce-skipped backlog residue (#221). Pass ack_ids to mark specific messages acknowledged; pass ack_all=true to acknowledge all messages ≤ the backlog_epoch (drains the announce-skipped residue left by the don't-flood policy). Acknowledged messages are excluded from the default queued view but remain retrievable via tmux-msg.get. Pass unanswered=true to see only messages where the sender signaled expects_reply AND you haven't replied yet (#270).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"state": {"type": "string", "enum": ["queued","delivering","delivered","failed","acknowledged"]},
 				"limit": {"type": "integer", "minimum": 1, "maximum": 1000},
 				"ack_ids": {"type": "array", "items": {"type": "string"}, "description": "Public IDs of queued messages to mark acknowledged. Idempotent."},
-				"ack_all": {"type": "boolean", "description": "Mark all queued messages ≤ backlog_epoch_id as acknowledged. Drains announce-skipped backlog residue."}
+				"ack_all": {"type": "boolean", "description": "Mark all queued messages ≤ backlog_epoch_id as acknowledged. Drains announce-skipped backlog residue."},
+				"unanswered": {"type": "boolean", "description": "List only messages where the sender set expects_reply AND you haven't replied yet (#270). Use to find what owes a response. Default false."}
 			}
 		}`),
 		mcpInboxHandler(s))
@@ -369,6 +371,7 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 		Timeout          string          `json:"timeout"`
 		BlockOnStale     bool            `json:"block_on_stale"`
 		DeliverAfter     string          `json:"deliver_after"`
+		ExpectsReply     bool            `json:"expects_reply"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -411,6 +414,7 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 			Timeout:              timeout,
 			BlockOnStale:         in.BlockOnStale,
 			DeliverAfter:         in.DeliverAfter,
+			ExpectsReply:         in.ExpectsReply,
 		}
 		if len(toList) > 1 {
 			p.ToRecipients = toList
@@ -998,10 +1002,11 @@ func mcpWhoamiHandler(s *store.Store) mcp.ToolHandler {
 
 func mcpInboxHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
-		State  string   `json:"state"`
-		Limit  int      `json:"limit"`
-		AckIDs []string `json:"ack_ids"`
-		AckAll bool     `json:"ack_all"`
+		State      string   `json:"state"`
+		Limit      int      `json:"limit"`
+		AckIDs     []string `json:"ack_ids"`
+		AckAll     bool     `json:"ack_all"`
+		Unanswered bool     `json:"unanswered"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -1051,7 +1056,10 @@ func mcpInboxHandler(s *store.Store) mcp.ToolHandler {
 			limit = 50
 		}
 		msgs, err := s.ListMessages(ctx, store.ListFilter{
-			ToAgent: name, State: state, Limit: limit,
+			ToAgent:    name,
+			State:      state,
+			Limit:      limit,
+			Unanswered: in.Unanswered,
 		})
 		if err != nil {
 			return nil, err

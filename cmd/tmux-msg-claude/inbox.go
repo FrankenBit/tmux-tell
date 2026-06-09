@@ -39,6 +39,8 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 	ackAll := fs.Bool("ack-all", false, "mark all queued messages ≤ backlog_epoch as acknowledged (#221)")
 	watch := fs.Bool("watch", false, "interactive TUI: live-updating inbox with cursor-nav + inline ack/expand (#149)")
 	watchInterval := fs.Duration("watch-interval", inboxWatchDefaultInterval, "poll cadence when --watch is set")
+	unanswered := fs.Bool("unanswered", false,
+		"list only messages where the sender flagged expects_reply AND you haven't replied yet (#270). Complements `sent --awaiting-reply` on the sender side.")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -75,6 +77,10 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 			return writeJSONError(stdout, stderr,
 				"--watch cannot be combined with --ack/--ack-all", exitUsage)
 		}
+		if *unanswered {
+			return writeJSONError(stdout, stderr,
+				"--watch cannot be combined with --unanswered", exitUsage)
+		}
 		if *format == "json" {
 			return writeJSONError(stdout, stderr,
 				"--watch is an interactive TUI; --format json is not supported", exitUsage)
@@ -89,7 +95,7 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 		return runInboxAckAll(ctx, s, agent, stdout, stderr)
 	}
 	return runInboxWithStore(ctx, s,
-		agent, store.State(*stateFlag), *limit, *format, stdout, stderr)
+		agent, store.State(*stateFlag), *limit, *unanswered, *format, stdout, stderr)
 }
 
 // runInboxAck marks a single queued message as acknowledged.
@@ -121,14 +127,18 @@ func runInboxAckAll(ctx context.Context, s *store.Store, agent string, stdout, s
 }
 
 func runInboxWithStore(ctx context.Context, s *store.Store,
-	agent string, state store.State, limit int, format string,
+	agent string, state store.State, limit int, unanswered bool, format string,
 	stdout, stderr io.Writer,
 ) int {
-	msgs, err := s.ListMessages(ctx, store.ListFilter{
+	f := store.ListFilter{
 		ToAgent: agent,
 		State:   state,
 		Limit:   limit,
-	})
+	}
+	if unanswered {
+		f.Unanswered = true
+	}
+	msgs, err := s.ListMessages(ctx, f)
 	if err != nil {
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
@@ -168,13 +178,14 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 // the MCP tools will use (#16), so they share one definition.
 func messageToMap(m store.Message) map[string]any {
 	out := map[string]any{
-		"id":         m.PublicID,
-		"from":       m.FromAgent,
-		"to":         m.ToAgent,
-		"body":       m.Body,
-		"state":      displayState(m),
-		"created_at": m.CreatedAt,
-		"quick":      m.Quick,
+		"id":            m.PublicID,
+		"from":          m.FromAgent,
+		"to":            m.ToAgent,
+		"body":          m.Body,
+		"state":         displayState(m),
+		"created_at":    m.CreatedAt,
+		"quick":         m.Quick,
+		"expects_reply": m.ExpectsReply,
 	}
 	if m.ReplyTo.Valid {
 		out["reply_to"] = m.ReplyTo.String

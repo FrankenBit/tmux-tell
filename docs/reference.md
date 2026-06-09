@@ -256,14 +256,15 @@ load.
 ## Commands
 
 ```
-tmux-msg-claude send   --to Y[,Z,...] [--reply-to ID] [--strict] [--wait-for-delivered] [--block-on-stale] "body"  # one-shot; --to a,b,c fans to multiple recipients
+tmux-msg-claude send   --to Y[,Z,...] [--reply-to ID] [--expects-reply] [--strict] [--wait-for-delivered] [--block-on-stale] "body"  # one-shot; --to a,b,c fans to multiple recipients; --expects-reply stamps reply intent without blocking (#270)
 tmux-msg-claude resend ID [--force]                     # replay a failed/unverified message
 tmux-msg-claude ping   AGENT [--timeout D] [--format json]   # reachability probe (no pane paste)
 tmux-msg-claude inbox  AGENT [--state STATE]            # list messages for AGENT
+tmux-msg-claude inbox  AGENT --unanswered               # only expects_reply=1 messages the recipient hasn't replied to yet (#270)
 tmux-msg-claude inbox  AGENT --ack <id>                 # mark one queued message acknowledged (#221)
 tmux-msg-claude inbox  AGENT --ack-all                  # acknowledge all announce-skipped backlog residue (#221)
 tmux-msg-claude inbox  AGENT --watch [--watch-interval D]  # interactive TUI: live list + cursor-nav + space-ack (mailbox-only drain; #149)
-tmux-msg-claude sent   [--since DUR] [--state STATE] [--to AGENT]  # sender's outbox
+tmux-msg-claude sent   [--since DUR] [--state STATE] [--to AGENT] [--awaiting-reply]  # sender's outbox; --awaiting-reply filters to unanswered expects_reply messages (#270)
 tmux-msg-claude track  ID [--watch]                     # delivery state of one message
 tmux-msg-claude get    ID                               # fetch a processed message by id
 tmux-msg-claude status [--today]                        # paused state + queue depths per agent
@@ -537,6 +538,27 @@ intra-connection); the blocking-call shape is the contract, the poll is an
 implementation detail behind it. Out of scope for v1: multi-recipient `ask`
 (broadcast a question to N agents).
 
+**Lightweight reply intent** (#270) — when you want to flag "I expect a reply" without
+the blocking wait machinery, pass `--expects-reply` to `send`:
+
+```bash
+tmux-msg-claude send --to bob --expects-reply "please confirm deploy"
+```
+
+This stamps `expects_reply=1` on the row. Delivery is unchanged — it is a pure
+metadata marker. The two complementary filter surfaces close the loop:
+
+- **`inbox --unanswered`** — shows the recipient only the expects_reply=1 messages
+  they haven't replied to yet. Scoped by `--state` as usual (default `queued`).
+- **`sent --awaiting-reply`** — shows the sender the expects_reply=1 messages where
+  the recipient hasn't replied. Overrides `--state` (the filter is meaningful
+  regardless of delivery state). Also available as `tmux-msg.inbox` `unanswered`
+  and `tmux-msg.send` `expects_reply` MCP parameters.
+
+Note: `ask` also sets `expects_reply=1` — the column is shared. `send --expects-reply`
+is the non-blocking form; `ask` is the blocking form that additionally waits for the
+reply via `wait_for_reply`.
+
 **Bus-traffic stats.** `tmux-msg-claude stats` is the in-terminal "show me the bus
 right now" surface — on-demand aggregates computed straight from the local
 `messages.db`, complementing the continuous observability stack that owns
@@ -781,7 +803,7 @@ CREATE TABLE messages (
   error         TEXT,
   verified      INTEGER,                        -- 1=verified, 0=unverified (delivered_in_input_box), NULL=unmarked (pre-migration, or not yet delivered)
   deliver_after TEXT,                           -- #227 deferred-delivery trigger; non-NULL only on state='deferred' (and the row it's promoted into), e.g. 'resume'
-  expects_reply INTEGER NOT NULL DEFAULT 0       -- #250 1 = sent via `ask` (sender intends to wait for a reply); 0 = plain send
+  expects_reply INTEGER NOT NULL DEFAULT 0       -- 1 = sender flagged reply intent: set by `ask` (#250) OR `send --expects-reply` (#270); 0 = plain send with no explicit reply expectation
 );
 CREATE INDEX ix_msg_queue ON messages(to_agent, state, id);
 

@@ -112,6 +112,11 @@ type Message struct {
 	// delivered. Orthogonal to State: both verified and unverified rows carry
 	// State == StateDelivered.
 	Verified sql.NullInt64
+	// ExpectsReply mirrors the #250 `expects_reply` column. true = sender
+	// flagged intent to receive a reply (set by `ask` or `send --expects-reply`).
+	// false (default) = normal send. Read by inbox --unanswered / sent
+	// --awaiting-reply filters (#270).
+	ExpectsReply bool
 }
 
 // Agent mirrors a row in the agents table.
