@@ -98,8 +98,11 @@ type inboxWatchModel struct {
 }
 
 func (m inboxWatchModel) Init() tea.Cmd {
-	// Poll immediately so the first frame shows real state, not an empty list.
-	return m.pollCmd()
+	// Poll immediately (first frame shows real state) AND start the single tick
+	// chain. The tick is the sole rescheduler (see Update): poll results never
+	// re-arm a tick, so an action-triggered one-shot refresh can't spawn a
+	// second timer chain.
+	return tea.Batch(m.pollCmd(), inboxTickCmd(m.interval))
 }
 
 // pollCmd reads the queued list once. It does not sleep — the tick owns
@@ -134,7 +137,12 @@ func (m inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case inboxTickMsg:
-		return m, m.pollCmd()
+		// The tick is the sole scheduler: poll once and arm the next tick. Poll
+		// results (inboxPollMsg) never reschedule, so an action-triggered refresh
+		// stays a one-shot and can't spawn a second tick chain (the original #149
+		// loop rescheduled on every poll, so each ack — which re-polls — leaked an
+		// extra timer; #268 fix).
+		return m, tea.Batch(m.pollCmd(), inboxTickCmd(m.interval))
 
 	case inboxPollMsg:
 		if msg.err != nil {
@@ -144,9 +152,7 @@ func (m inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.msgs = msg.msgs
 			m.reconcileCursor()
 		}
-		// Schedule the next poll regardless — a transient error shouldn't
-		// stall the watch loop.
-		return m, inboxTickCmd(m.interval)
+		return m, nil // never reschedules — the tick owns cadence
 
 	case inboxActionMsg:
 		if msg.err != nil {
@@ -158,7 +164,23 @@ func (m inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Re-poll now so the drained row drops immediately; the store stays the
 		// single source of truth (no optimistic local removal to drift from it).
+		// Safe post-fix: this poll is a one-shot, it does not re-arm the tick.
 		return m, m.pollCmd()
+
+	case inboxReplyMsg:
+		switch {
+		case msg.err != nil:
+			m.loadErr = msg.err
+			m.status = "reply failed: " + msg.err.Error()
+		case msg.abandoned:
+			m.status = "reply abandoned (empty body)"
+		default:
+			m.loadErr = nil
+			m.status = fmt.Sprintf("replied to %s → %s", msg.replyToID, msg.sentID)
+		}
+		// A reply doesn't drain my queue (the original stays queued; replying ≠
+		// acking), so no refresh is needed — the tick keeps the list current.
+		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -166,8 +188,8 @@ func (m inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleKey is the keymap. New per-message actions (the deferred `D` mark-failed
-// and `r` reply, #149 follow-up) slot in as additional cases here.
+// handleKey is the keymap. (The `D` mark-failed action from #149's proposal was
+// deliberately not built — no queued→failed substrate path; see #268.)
 func (m inboxWatchModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "q", "ctrl+c", "esc":
@@ -199,6 +221,12 @@ func (m inboxWatchModel) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case " ": // space — ack/drain the selected message
 		if cur, ok := m.current(); ok {
 			return m, m.ackCmd(cur.PublicID)
+		}
+		return m, nil
+
+	case "r": // reply to the selected message via $EDITOR (#268)
+		if cur, ok := m.current(); ok {
+			return m, m.startReply(cur)
 		}
 		return m, nil
 	}
@@ -272,7 +300,7 @@ func (m inboxWatchModel) View() string {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "inbox %q · %d pending\n", m.agent, len(m.msgs))
-	b.WriteString(inboxHelpStyle.Render("↑/↓ navigate · space ack · enter expand · q quit"))
+	b.WriteString(inboxHelpStyle.Render("↑/↓ navigate · space ack · enter expand · r reply · q quit"))
 	b.WriteByte('\n')
 	b.WriteString(m.rule())
 	b.WriteByte('\n')

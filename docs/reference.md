@@ -194,6 +194,7 @@ tmux-msg-claude inbox you --watch --watch-interval 5s
 | `↑`/`↓` (or `k`/`j`) | move the cursor between rows |
 | `space` | **ack** the selected message — transitions it `queued → acknowledged` (the same #221 transition `--ack` drives) and drops it from the queue |
 | `enter` | expand the selected row to show the full body inline (toggles) |
+| `r` | **reply** to the selected message — opens `$EDITOR` (`$VISUAL` → `$EDITOR` → `vi`); the saved body is sent threaded under the original (`reply_to`), addressed to its sender. Save an empty reply to abandon. Write above the scissors line; everything below (the quoted original + instructions) is ignored, so a reply line that starts with `#` survives. The original stays queued — replying isn't acking. |
 | `q` / `Ctrl-C` / `Esc` | exit cleanly |
 
 The list **refreshes by polling** (default every 2s, `--watch-interval` to tune), not by
@@ -205,9 +206,19 @@ exit a one-line summary (`N drained this session, M still queued`) is left on th
 screen, so the session's work is preserved in scrollback.
 
 `--watch` is interactive: it requires a real terminal (errors if stdout isn't a TTY) and
-can't be combined with `--format json` or `--ack`/`--ack-all`. `ack` is the only
-queue-draining action in v1; richer per-message triage (reply-via-`$EDITOR`,
-operator-reject) is tracked as a follow-up.
+can't be combined with `--format json` or `--ack`/`--ack-all`. The reply send reuses the
+`send` substrate (caps enforced in-transaction, like `send --reply-to`); it does not
+replicate the send-CLI's thread-freshness / `--strict` guards, which are sender-side
+ergonomics rather than reply-from-your-own-inbox needs.
+
+An operator-reject / mark-failed action was considered (#149's original `D` key) and
+deliberately **not** built: a `queued` message has no `queued → failed` transition, and
+`failed` is the sender-facing delivery-failure state — reusing it for operator-side
+rejection would muddy the state vocabulary. For a `mailbox-only` operator, `space →
+acknowledged` already IS the drain. A distinct `rejected`/`dismissed` state would be a
+new forever-commitment to the state vocabulary with no current consumer, so it's left to
+a future forcing-function rather than baked speculatively (see #268 for the full
+decision-record).
 
 ## Verified vs unverified deliveries
 

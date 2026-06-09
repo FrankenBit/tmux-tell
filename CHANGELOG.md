@@ -33,9 +33,30 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Added
+
+- **`inbox --watch` reply (`r` key) — #268.** The interactive inbox TUI gains a reply
+  action: `r` opens `$EDITOR` (`$VISUAL` → `$EDITOR` → `vi`) on a templated buffer; the
+  saved body is sent threaded under the selected message (`reply_to`), addressed to its
+  sender, caps enforced in-transaction (reuses the `send` substrate). Empty save =
+  abandon. The buffer uses a git-style **scissors** marker — the reply is everything
+  above the line, preserved verbatim — so a reply that starts a line with `#NNN` (issue
+  ref) isn't eaten by comment-stripping. The `D` mark-failed action from #149's proposal
+  was deliberately **not** built (no `queued → failed` substrate path; `failed` is
+  sender-facing; a `rejected`/`dismissed` state is a forever-commitment with no current
+  consumer — deferred to a forcing-function, full decision-record in #268). Closes #268.
+
 ### Changed
 
 - **CONTRIBUTING.md: claim-on-pickup discipline made explicit for both issues and PRs.** The convention was already documented in `docs/chamber-dispatch.md` and added to each chamber's CLAUDE.md during alcatraz-infra#27. This makes the rule discoverable for non-chamber contributors too: when picking up a substantive issue, set the Forgejo `assignees` field before opening the worktree branch; mirror on the PR when filing. Dispatchers read `assignees` before dispatching. Forward-only — historical issues without an assignee aren't backfilled.
+
+### Fixed
+
+- **`inbox --watch` no longer multiplies its poll timer (#268).** The #149 watch loop
+  re-armed the tick on every poll result, so each `space`-ack (which triggers a refresh
+  poll) leaked an extra tick chain — compounding the poll rate over a session. The tick
+  is now the sole rescheduler; poll results never re-arm, so action-triggered refreshes
+  stay one-shot.
 
 ## [0.14.0] — 2026-06-09
 

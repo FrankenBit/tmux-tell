@@ -58,12 +58,49 @@ func TestInboxWatch_PollLoadsQueued(t *testing.T) {
 	}
 }
 
-func TestInboxWatch_PollSchedulesNextTick(t *testing.T) {
+// The tick is the SOLE rescheduler (the #268 anti-multiplication fix). A poll
+// result must NOT re-arm a tick — otherwise an action-triggered re-poll spawns a
+// second tick chain and the poll rate compounds on every ack.
+func TestInboxWatch_PollDoesNotReschedule(t *testing.T) {
 	m, _ := newWatchModel(t, 1)
-	// Feeding a poll result must return a (non-nil) tick cmd so the loop continues.
 	_, cmd := step(t, m, inboxPollMsg{msgs: m.msgs})
+	if cmd != nil {
+		t.Fatal("poll handler returned a cmd; only the tick may reschedule (tick-multiplication regression)")
+	}
+}
+
+func TestInboxWatch_TickReschedules(t *testing.T) {
+	m, _ := newWatchModel(t, 1)
+	// The tick polls AND arms the next tick — so the loop continues from here,
+	// not from the poll result.
+	_, cmd := step(t, m, inboxTickMsg{})
 	if cmd == nil {
-		t.Fatal("poll handler returned nil cmd; watch loop would stall")
+		t.Fatal("tick handler returned nil cmd; watch loop would stall")
+	}
+}
+
+// An ack triggers a one-shot refresh poll; that poll must not reschedule, so the
+// single tick chain is preserved (no compounding).
+func TestInboxWatch_AckRefreshPollDoesNotReschedule(t *testing.T) {
+	m, _ := newWatchModel(t, 2)
+	_, ackCmd := step(t, m, tea.KeyMsg{Type: tea.KeySpace})
+	res, ok := ackCmd().(inboxActionMsg)
+	if !ok {
+		t.Fatalf("ack cmd returned %T", ackCmd())
+	}
+	// Feed the action result: it re-polls (one-shot). That poll result must not
+	// re-arm a tick.
+	_, afterAction := step(t, m, res)
+	if afterAction == nil {
+		t.Fatal("action handler should return a one-shot refresh poll")
+	}
+	if pollMsg, isPoll := afterAction().(inboxPollMsg); isPoll {
+		_, afterPoll := step(t, m, pollMsg)
+		if afterPoll != nil {
+			t.Fatal("refresh poll rescheduled a tick — multiplication regression")
+		}
+	} else {
+		t.Fatalf("action refresh returned %T, want inboxPollMsg", afterAction())
 	}
 }
 
