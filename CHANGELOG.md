@@ -33,6 +33,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-09
+
 ### Fixed
 
 - **`TestPin_HealthScanLatencyCeiling_Under100ms` no longer flakes under `go test -race` (#254).** Path (c) triage: the production commitment (scan < 100ms) is intact — alcatraz hardware measures ~10ms without the race detector, ~160ms under it (16× overhead). The pin's assertion now skips the wall-clock check when running under `-race` (scan still executes for correctness); the 100ms ceiling remains enforced on every non-race CI run. ADR-0001 amended with the (c) diagnosis, (c.1) counter-test (`TestPin_HealthScanLatencyCeiling_SlowScanCaught` — slow fake reader verifies the ceiling still fires for genuinely slow scans), and (c.2) amendment section.

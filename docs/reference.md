@@ -828,14 +828,18 @@ subcommand args/flags/exit codes, `--format json` shapes, the DB schema, and the
 exported Go API (`discover` / `store` / `tmuxio`). Each clean cut increments K;
 any break on a tracked surface resets it to 0.
 
-**Current K: 7** (Sea-trials K=3 gate cleared at v0.9.0; the counter keeps
+**Current K: 8** (Sea-trials K=3 gate cleared at v0.9.0; the counter keeps
 raising past the gate and retires at v1.0). The `cli-semaphore → tmux-msg`
 substrate rename (v0.5.0) and the MCP wire-protocol rename (v0.6.0) were the
 last deliberate breaks; v0.7.0, v0.8.0, v0.9.0, v0.10.0, v0.11.0, v0.12.0,
-and v0.13.0 have each been non-breaking. v0.13.0 introduced a new alias-
-preserving deprecation (`resend --force` against `delivered_in_input_box`,
-#230; earliest removal v0.15.0) — additive deprecation that does not reset K
-per Reading B. v0.10.0's second K-preserving deprecation arc —
+v0.13.0, and v0.14.0 have each been non-breaking. v0.13.0 introduced a new
+alias-preserving deprecation (`resend --force` against
+`delivered_in_input_box`, #230; earliest removal v0.15.0) — additive
+deprecation that does not reset K per Reading B. v0.14.0 reframed the #169
+delivery invariant from "delivered = pasted" to "delivered = presented"
+(`delivery_mode` carries paste-vs-inject); the state name doesn't change,
+only the invariant widens — substrate-honestly K-preserving under
+ADR-0009's substrate-vs-adapter boundary. v0.10.0's second K-preserving deprecation arc —
 `delivered_unverified → delivered_in_input_box` with CLI flag / TOML
 key / `--state` value / JSON shadow-field aliases per ADR-0008's two-minor
 floor (originally earliest removal v0.12.0) — was extended at the v0.12.0

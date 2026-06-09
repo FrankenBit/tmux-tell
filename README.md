@@ -258,7 +258,7 @@ backward-compatible within a minor. See `CHANGELOG.md` for what shipped per rele
 
 ```bash
 $ tmux-msg-claude --version
-tmux-msg-claude v0.13.0
+tmux-msg-claude v0.14.0
 ```
 
 A binary built via `make build` stamps the version from `git describe`; a bare
@@ -269,7 +269,7 @@ A binary built via `make build` stamps the version from `git describe`; a bare
 The road to `1.0` is gated on **K=3** — three consecutive releases with no breaking
 change across the five public surfaces (MCP tool schemas, CLI args/flags/exit codes,
 `--format json` shapes, the DB schema, the exported Go API). Each clean cut increments
-K; any break resets it to 0. **Current K: 7** (the gate cleared at v0.9.0; the counter
+K; any break resets it to 0. **Current K: 8** (the gate cleared at v0.9.0; the counter
 keeps raising and retires at v1.0).
 
 → The per-surface rules, the deprecation-preserves-K nuance, and the live per-release
