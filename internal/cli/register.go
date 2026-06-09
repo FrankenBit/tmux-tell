@@ -1,0 +1,181 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"os"
+
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+)
+
+// runRegisterCLI parses register-subcommand flags and dispatches to the
+// shared register pipeline. Mirrors the `tmux-msg.register` MCP tool so
+// operators-at-a-bare-shell can register their own pane without needing
+// an MCP client (load-bearing for the operator-as-bus-participant use
+// case per #116).
+//
+// Usage: tmux-msg-claude register --name <name> [--pane <pane>]
+//
+//	[--delivery-mode paste-and-enter|mailbox-only]
+//	[--start-mailman=true|false] [--force]
+//	[--alias <alias>]
+//
+// Mailman lifecycle default: start_mailman defaults true UNLESS
+// delivery_mode is `mailbox-only` (then default false — no daemon
+// needed since mailbox-only agents never receive a paste). Explicit
+// --start-mailman=true overrides.
+func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("register", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	name := fs.String("name", "", "agent name (the new identity); required")
+	pane := fs.String("pane", "", "pane id like %5 (default: $TMUX_PANE)")
+	deliveryMode := fs.String("delivery-mode", store.DeliveryModePasteAndEnter,
+		"how the mailman delivers to this agent: 'paste-and-enter' (default), 'mailbox-only' (operator-as-bus-participant per #116; messages stay queued, operator polls via inbox), or 'hook-context' (#249; the recipient's Claude session pulls pending messages as additionalContext via a SessionStart/UserPromptSubmit hook — no pane paste)")
+	startMailmanFlag := fs.String("start-mailman", "",
+		"true|false — start the mailman daemon for this agent. Default: true (mailbox-only defaults to false; explicit true overrides). Note: --start-mailman=true combined with --delivery-mode=mailbox-only is allowed but vestigial — the daemon will start, observe the mailbox-only mode at startup, log the no-work condition, and exit cleanly with Result=success. The 'mailman: active' field in the response is momentary in this case.")
+	force := fs.Bool("force", false,
+		"overwrite an existing registration with the same name")
+	alias := fs.String("alias", "",
+		"optional alternative name the discover walker should accept for this canonical agent")
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
+		return exitUsage
+	}
+
+	if *name == "" {
+		return writeJSONError(stdout, stderr, "--name required", exitUsage)
+	}
+	resolvedPane := *pane
+	if resolvedPane == "" {
+		resolvedPane = os.Getenv("TMUX_PANE")
+	}
+	if resolvedPane == "" {
+		return writeJSONError(stdout, stderr,
+			"pane required: pass --pane or run inside tmux with $TMUX_PANE set",
+			exitUsage)
+	}
+	if !store.ValidDeliveryMode(*deliveryMode) {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("invalid --delivery-mode %q (want %q or %q)",
+				*deliveryMode, store.DeliveryModePasteAndEnter, store.DeliveryModeMailboxOnly),
+			exitUsage)
+	}
+
+	// Mailman-start default depends on delivery_mode. Explicit flag
+	// override beats the implicit default. Both mailbox-only (#116) and
+	// hook-context (#249) have a no-paste mailman that short-circuits at
+	// startup, so neither auto-starts one.
+	start := true
+	if *deliveryMode == store.DeliveryModeMailboxOnly || *deliveryMode == store.DeliveryModeHookContext {
+		start = false
+	}
+	if *startMailmanFlag != "" {
+		switch *startMailmanFlag {
+		case "true":
+			start = true
+		case "false":
+			start = false
+		default:
+			return writeJSONError(stdout, stderr,
+				fmt.Sprintf("invalid --start-mailman %q (want true|false)", *startMailmanFlag),
+				exitUsage)
+		}
+	}
+
+	s, err := store.Open(resolveDBPath(*dbPath))
+	if err != nil {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("open store: %v", err), exitInternal)
+	}
+	defer s.Close()
+
+	ctx := context.Background()
+	existing, err := s.GetAgent(ctx, *name)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("lookup: %v", err), exitInternal)
+	}
+	if existing != nil && !*force {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("agent %q already registered with pane %s; pass --force to overwrite",
+				*name, existing.PaneID), exitDataErr)
+	}
+
+	if err := s.UpsertAgent(ctx, *name, resolvedPane); err != nil {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("upsert: %v", err), exitInternal)
+	}
+	if err := s.SetDeliveryMode(ctx, *name, *deliveryMode); err != nil {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("set delivery_mode: %v", err), exitInternal)
+	}
+	// #224: auto-clear any prior attention_state on (re)register. The chamber
+	// is back and ready; whatever it was awaiting is presumed resolved (or
+	// has been answered out-of-band). Substrate-honest reset so the operator's
+	// attention queue doesn't carry stale "awaiting_operator" signals across
+	// chamber restarts / /compact / spawn-die cycles.
+	if err := s.SetAttentionState(ctx, *name, store.AttentionStateIdle); err != nil {
+		// Non-fatal: registration already succeeded above. A failed
+		// attention-state clear is operationally awkward but doesn't break
+		// the bus. Surface as a soft signal rather than aborting.
+		fmt.Fprintf(stderr, "WARN register: clear attention_state: %v\n", err)
+	}
+	if *alias != "" {
+		if err := s.AddAlias(ctx, *name, *alias); err != nil {
+			if errors.Is(err, store.ErrAliasCollision) {
+				return writeJSONError(stdout, stderr,
+					fmt.Sprintf("alias %q rejected: %v", *alias, err),
+					exitDataErr)
+			}
+			return writeJSONError(stdout, stderr,
+				fmt.Sprintf("add alias: %v", err), exitInternal)
+		}
+	}
+
+	// Surface the recipient's queued-message backlog at register time
+	// (#151) so a fresh or re-registering session learns it has mail
+	// waiting without needing a separate inbox poll — closes the
+	// inbox-poll-not-push gap for the spawn-per-task / post-restart
+	// chamber pattern. Non-fatal: registration already succeeded above,
+	// so a count hiccup degrades to a soft `queued_error` field rather
+	// than failing the register (mirrors the mailman-start soft-fail
+	// precedent below; an honest 0 must not be confused with "unknown").
+	queued, qErr := s.RecipientQueueDepth(ctx, *name)
+
+	out := map[string]any{
+		"ok":            true,
+		"name":          *name,
+		"pane":          resolvedPane,
+		"delivery_mode": *deliveryMode,
+		"registered":    true,
+	}
+	if qErr != nil {
+		out["queued_error"] = qErr.Error()
+	} else {
+		out["queued"] = queued
+		// #204 don't-flood policy: when this (re)register found a queued
+		// backlog, stamp the claim-floor + insert the 📬 nudge per the
+		// resolved on-register-backlog policy. Config load degrades to
+		// defaults on error (Resolve* treat a nil/empty file as "use
+		// hardcoded"). Gated on qErr == nil so a count hiccup doesn't get
+		// mistaken for an empty backlog.
+		cfg, _ := config.Load()
+		addBacklogPolicyFields(out, applyBacklogPolicy(ctx, s, cfg, *name, *deliveryMode, queued))
+	}
+	if start {
+		if err := startMailman(ctx, *name); err != nil {
+			out["mailman"] = "failed"
+			out["mailman_error"] = err.Error()
+		} else {
+			out["mailman"] = "active"
+		}
+	} else {
+		out["mailman"] = "skipped"
+	}
+	_ = writeJSONResult(stdout, out)
+	return exitOK
+}
