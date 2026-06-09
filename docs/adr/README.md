@@ -30,6 +30,7 @@ change for the decision to be revisited.
 | 0006 | [ADR length cap (350 lines) + background docs](0006-adr-length-cap-and-background-docs.md) | Accepted | 2026-06-05 |
 | 0007 | [Binnacle coexists with tmux-msg as an external Go module](0007-binnacle-coexist-external-contract.md) | Accepted | 2026-06-07 |
 | 0008 | [Deprecation policy — two-minor-cycle floor (post-1.0)](0008-deprecation-policy.md) | Accepted | 2026-06-07 |
+| 0009 | [Hook-context delivery — substrate stays delivery-method-agnostic](0009-hook-context-delivery-substrate-vs-adapter-boundary.md) | Accepted | 2026-06-09 |
 
 > **Note on ADR length.** ADRs 0001-0005 predate the length-cap
 > convention codified in ADR-0006 and run 276-440 lines each. ADR-0006+

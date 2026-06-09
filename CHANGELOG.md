@@ -39,6 +39,23 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **Hook-context delivery mode (#249, ADR-0009).** A third `delivery-mode`
+  alongside `paste-and-enter` and `mailbox-only`: a `hook-context` agent's
+  Claude session pulls pending messages and injects them as `additionalContext`
+  via a SessionStart / UserPromptSubmit hook, instead of the mailman pasting
+  into the pane. The mailman short-circuits for `hook-context` (no paste, like
+  mailbox-only); an **adapter-side** hook-helper — the `tmux-msg-claude
+  hook-context` subcommand — claims pending messages (honoring the #204 floor +
+  #227 deferred staging), renders them, marks them delivered, and emits the
+  Claude hook JSON. It's a no-op when nothing is pending, so it's safe to wire
+  unconditionally. **ADR-0009** records the load-bearing call: the substrate
+  stays delivery-method-agnostic (CLI-specific hook delivery lives in the
+  adapter, setting up the second-adapter work #248), and the #169 invariant is
+  reframed from "delivered = pasted" to "delivered = presented" (paste OR
+  inject), with `delivery_mode` carrying the how. Operator-ruled 2026-06-09;
+  Claude-only in v1 (Codex/Gemini hooks ride #248). README + `docs/reference.md`
+  §Hook-context delivery document the `settings.json` wiring.
+
 - **Godog / gherkin E2E scenario layer (#264).** Six substrate-boundary scenarios in `features/*.feature` document the contracts the project makes with operators: observe-gate delivery, paste-safety gating, dedupe recovery, operator routing, deferred delivery, and the attention-signal cycle. Step definitions in `features/steps/suite_test.go` exercise the store state machine directly (no real tmux server needed), so `go test ./features/steps/` passes in CI. Run them alongside the full suite with `go test -count=1 ./...`. `godog v0.15.1` promoted from indirect to direct dev dependency. CONTRIBUTING.md updated with the "adding a scenario" recipe.
 
 - **Request-reply — `ask` / `wait_for_reply` / `check_replies` (#250).** A

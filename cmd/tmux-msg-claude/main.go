@@ -63,6 +63,7 @@ Subcommands:
   state   Probe a agent's current activity via read-only capture-pane (#71)
   refresh-all-mcps  Bulk-fire mcp-restart-tmux-msg to every registered agent (#62)
   mcp     Speak MCP over stdio (Claude Code tools)
+  hook-context  Present pending messages as additionalContext for a hook-context agent — invoked by a Claude Code SessionStart/UserPromptSubmit hook (#249)
 
 See https://git.frankenbit.de/frankenbit/tmux-msg for the design notes.
 `
@@ -167,6 +168,8 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runClearOperatorFlagCLI(args[1:], stdout, stderr)
 	case "mcp":
 		return runMCPCLI(args[1:], os.Stdin, stdout, stderr)
+	case "hook-context":
+		return runHookContextCLI(args[1:], os.Stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "tmux-msg-claude: unknown subcommand %q\n\n%s", args[0], usage)
 		return exitUsage

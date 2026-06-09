@@ -158,6 +158,16 @@ type Agent struct {
 const (
 	DeliveryModePasteAndEnter = "paste-and-enter"
 	DeliveryModeMailboxOnly   = "mailbox-only"
+	// DeliveryModeHookContext (#249, ADR-0009): the recipient's Claude session
+	// reads pending messages via a lifecycle hook (SessionStart /
+	// UserPromptSubmit) that injects them as `additionalContext`, instead of the
+	// mailman pasting into the pane. Like mailbox-only, the mailman does NOT
+	// paste (it short-circuits at startup); UNLIKE mailbox-only, an adapter-side
+	// hook-helper (`tmux-msg-claude hook-context`) actively presents the queued
+	// messages on the recipient's next turn and marks them delivered. The
+	// substrate stays delivery-method-agnostic — "deliver via Claude hooks"
+	// lives entirely in the adapter (cmd/tmux-msg-claude), per ADR-0009's (b).
+	DeliveryModeHookContext = "hook-context"
 )
 
 // ValidDeliveryMode reports whether s is a known delivery-mode value.
@@ -165,7 +175,9 @@ const (
 // DeliveryModePasteAndEnter explicitly rather than relying on zero-
 // value behavior to leak into the schema).
 func ValidDeliveryMode(s string) bool {
-	return s == DeliveryModePasteAndEnter || s == DeliveryModeMailboxOnly
+	return s == DeliveryModePasteAndEnter ||
+		s == DeliveryModeMailboxOnly ||
+		s == DeliveryModeHookContext
 }
 
 // Attention-state constants (#224). Constrained string set; the store

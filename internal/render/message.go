@@ -20,6 +20,11 @@ func titleCase(s string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
+// TitleCase is the exported form of titleCase, so other delivery surfaces
+// (e.g. the #249 hook-context additionalContext) render sender names with the
+// same chrome-casing convention as the pane header — single-sourced here.
+func TitleCase(s string) string { return titleCase(s) }
+
 // formatClock returns "HH:MM:SS" in the host's local timezone from an
 // ISO 8601 UTC timestamp string. Returns "??:??:??" if the input doesn't
 // parse — we'd rather render with a placeholder than block delivery on a

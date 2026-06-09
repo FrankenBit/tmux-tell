@@ -129,6 +129,7 @@ Each registered agent has a `delivery_mode`:
 |---|---|---|
 | **`paste-and-enter`** *(default)* | pastes into the agent's pane through the observe-gate | messages **appear in the pane** — no inbox polling needed; the substrate pushes |
 | **`mailbox-only`** | does not paste (no pane to push into); messages stay queued | the recipient **polls** `tmux-msg-claude inbox` / `tmux-msg.inbox` to read them |
+| **`hook-context`** | does not paste; messages stay queued for the recipient's own hook to pull | the recipient's Claude session **injects** pending messages as `additionalContext` on its next turn, via a SessionStart/UserPromptSubmit hook (#249) |
 
 `mailbox-only` makes a plain shell a bus *destination* without an always-on agent
 session — e.g. your own shell: agents `send to=you` and you read when you choose. Set
@@ -136,6 +137,44 @@ it via MCP (`register … delivery_mode=mailbox-only`), CLI (`register --name yo
 --delivery-mode mailbox-only`), or a per-agent TOML block. Precedence (highest wins):
 **per-agent block > `[defaults]` > the DB column > compiled default (`paste-and-enter`)**.
 `tmux-msg-claude config show` prints the resolved value per agent.
+
+### Hook-context delivery (Claude Code)
+
+`hook-context` (#249, [ADR-0009](adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md))
+delivers via Claude Code's **lifecycle hooks** instead of pasting into the pane: the
+recipient's own Claude session pulls pending messages and injects them as
+`additionalContext` on its next turn. Like `mailbox-only`, the mailman doesn't paste (it
+short-circuits at startup) — but unlike it, the recipient doesn't have to poll: a hook
+does the pull automatically.
+
+**Substrate-vs-adapter boundary** (ADR-0009 decision (b)): the substrate stays
+delivery-method-agnostic — messages just sit `queued`. The CLI-specific hook delivery
+lives entirely in the adapter (the `tmux-msg-claude hook-context` subcommand). "Delivered"
+is reframed from "pasted into the pane" to **"presented to the recipient"** (paste OR
+hook-inject); the `delivery_mode` column carries *how*, and a hook-presented message is
+`verified` by construction (additionalContext definitely reaches the context).
+
+Wire it up: register the agent `hook-context`, then add a hook to the operator's
+`~/.claude/settings.json` that runs the helper:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "tmux-msg-claude hook-context" } ] }
+    ]
+  }
+}
+```
+
+On each `UserPromptSubmit` (and/or `SessionStart`), the helper resolves the session's
+agent identity, claims its pending messages (honoring the #204 backlog floor + #227
+deferred staging, same as the pane path), marks them delivered, and emits
+`{"hookSpecificOutput": {"hookEventName": …, "additionalContext": …}}`. It is a clean
+no-op (empty JSON) when nothing is pending, so it is safe to wire unconditionally. A
+`hook-context` message is **invisible until the recipient's next turn** (it's context, not
+pane chrome) — the accepted trade-off for clean hook delivery (ADR-0009 Q1). v1 is
+Claude-only; Codex/Gemini hooks ride the second-adapter work (#248).
 
 ### Draining a mailbox-only queue: `inbox --watch` (#149)
 

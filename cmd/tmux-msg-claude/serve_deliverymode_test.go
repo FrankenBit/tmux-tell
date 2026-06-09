@@ -42,7 +42,7 @@ func TestServe_ConfigDeliveryMode_OverridesDB(t *testing.T) {
 	if !strings.Contains(logbuf.String(), "delivery_mode overridden by config") {
 		t.Errorf("expected override log line; got %s", logbuf.String())
 	}
-	if !strings.Contains(logbuf.String(), "delivery_mode=mailbox-only — no daemon work") {
+	if !strings.Contains(logbuf.String(), "delivery_mode=mailbox-only — mailman does not paste") {
 		t.Errorf("expected mailbox-only short-circuit log; got %s", logbuf.String())
 	}
 
@@ -82,7 +82,7 @@ func TestServe_ConfigDeliveryMode_InvalidLogsAndFallsBack(t *testing.T) {
 		t.Errorf("expected invalid-mode WARN; got %s", logbuf.String())
 	}
 	// DB value (mailbox-only) wins, so the mailman still short-circuits.
-	if !strings.Contains(logbuf.String(), "delivery_mode=mailbox-only — no daemon work") {
+	if !strings.Contains(logbuf.String(), "delivery_mode=mailbox-only — mailman does not paste") {
 		t.Errorf("expected mailbox-only short-circuit (DB wins); got %s",
 			logbuf.String())
 	}

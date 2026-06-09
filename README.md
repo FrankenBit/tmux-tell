@@ -56,8 +56,10 @@ races, idle-check TOCTOU, turn concatenation) collapse to a single-writer invari
 Not every recipient has a pane to push into. An agent registered `mailbox-only` (e.g.
 your own shell) is a bus *destination* without an always-on session — the mailman never
 pastes; its queue is drained on demand with `tmux-msg-claude inbox`, `inbox --ack`, or
-the interactive `inbox --watch` TUI (live list + cursor-nav + one-key ack). See
-[delivery modes](docs/reference.md#delivery-modes) in the operator reference.
+the interactive `inbox --watch` TUI (live list + cursor-nav + one-key ack). A third mode,
+`hook-context`, delivers via Claude Code's lifecycle hooks — the recipient's session pulls
+pending messages as `additionalContext` on its next turn instead of being pasted into
+(#249). See [delivery modes](docs/reference.md#delivery-modes) in the operator reference.
 
 ## Install
 

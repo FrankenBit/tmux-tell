@@ -403,17 +403,22 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		}
 	}
 
-	// Mailbox-only short-circuit (#116). When the agent's delivery_mode
-	// is mailbox-only, the mailman daemon has no work to do — messages
-	// stay in state=queued and the operator polls via `tmux-msg-claude inbox`.
-	// Exit cleanly so systemd records a Result=success rather than
-	// burning CPU on a poll loop that would never deliver anything. If
-	// the operator later flips delivery_mode back to paste-and-enter,
-	// they need to manually restart the unit.
-	if a.DeliveryMode == store.DeliveryModeMailboxOnly {
-		logger.Printf("delivery_mode=mailbox-only — no daemon work; exiting cleanly. "+
+	// No-paste short-circuit (#116 mailbox-only, #249 hook-context). When the
+	// agent's delivery_mode is one where the mailman does NOT paste into the
+	// pane, the daemon has no work to do — exit cleanly so systemd records
+	// Result=success rather than burning CPU on a poll loop that would never
+	// deliver anything.
+	//   - mailbox-only (#116): messages stay queued; the operator polls `inbox`.
+	//   - hook-context (#249, ADR-0009): messages stay queued; the recipient's
+	//     own Claude session presents them via the `hook-context` hook-helper on
+	//     its next turn (the adapter delivers, not the mailman).
+	// Flip-back is asymmetric in both cases: setting delivery_mode back to
+	// paste-and-enter requires a manual unit restart.
+	if a.DeliveryMode == store.DeliveryModeMailboxOnly || a.DeliveryMode == store.DeliveryModeHookContext {
+		logger.Printf("delivery_mode=%s — mailman does not paste; exiting cleanly. "+
 			"NOTE: flip-back is asymmetric — if you later set delivery_mode=paste-and-enter, "+
-			"restart this unit manually (systemctl --user restart tmux-msg-claude-mailman@%s)", opts.Agent)
+			"restart this unit manually (systemctl --user restart tmux-msg-claude-mailman@%s)",
+			a.DeliveryMode, opts.Agent)
 		if err := sdnotify.Ready(); err != nil {
 			logger.Printf("sdnotify_ready_err err=%v", err)
 		}
