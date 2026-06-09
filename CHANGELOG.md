@@ -56,6 +56,15 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **`scripts/record-asciinema-demo.sh` — 6 defects fixed (#273 fast-follow).**
+  1. **Claude trust prompt** — `wait_for_claude_ready` polls the pane and dismisses the "trust this folder?" dialog before the take starts; fresh-directory runs no longer hang on the trust modal.
+  2. **Headless pty size** — `asciinema rec` now passes `--cols 120 --rows 30` directly; the cast dimensions are forced regardless of calling terminal size (COLUMNS/LINES env vars are ignored by asciinema when not connected to a real pty).
+  3. **Existing cast silent-abort** — `--overwrite` added to `asciinema rec` (and `rm -f "$CAST"` at Phase 1 as belt-and-suspenders) so re-runs don't silently replay the stale file.
+  4. **Keystrokes before attach** — `sleep 2` after `asciinema rec &` replaced with a `tmux list-clients` poll; the take phase doesn't start until asciinema's attach has actually connected.
+  5. **Visible-from-alice send** — `tmux-msg-claude send` was fired from the script's own shell (invisible); now typed into alice's pane via `send-keys -l` so the viewer sees the send originating from alice's side (Herald's editorial intent from the recipe Step 5).
+  6. **Delivery race** — fixed `sleep $((STALE_THRESHOLD + POST_LAND_WAIT))` replaced with `sleep $STALE_THRESHOLD` then a `wait_for_delivery` poll (greps mailman log for `delivered id=`); the recording no longer stops before the paste completes, and no longer leaks keystrokes into the operator's terminal post-recording.
+  Dead code: `trap cleanup EXIT` re-arm after Phase 1's manual `cleanup()` call removed. Float-safety: `$POST_LAND_WAIT` now passed directly to `sleep` rather than through `$((...))` arithmetic expansion.
+
 - **`inbox --watch` no longer multiplies its poll timer (#268).** The #149 watch loop
   re-armed the tick on every poll result, so each `space`-ack (which triggers a refresh
   poll) leaked an extra tick chain — compounding the poll rate over a session. The tick

@@ -24,6 +24,13 @@
 #     requires the ❯ sentinel; a generic shell pane classifies as StateUnknown
 #     and never shows the gate hold dynamics)
 #
+# Environment notes:
+#   - Trust prompt: Claude's "trust this folder?" dialog is detected and dismissed
+#     automatically — no pre-trust of the working directory is required.
+#   - Terminal size: asciinema is invoked with --cols 120 --rows 30 so the cast
+#     dimensions are fixed regardless of the calling terminal's size; COLUMNS/LINES
+#     env vars are not sufficient when asciinema is not connected to a real pty.
+#
 # Substrate-honest disclosure: bob's pane runs a real claude session. A ~30s
 # take costs a trivial ~few-k tokens but shows the actual chamber experience
 # the README sells — the gate dynamics only fire with a real Claude prompt.
@@ -78,13 +85,73 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+# type_prompt sends text to a pane one character at a time with a human-pace delay.
+# -l (literal) is critical: without it, spaces and punctuation are interpreted as
+# tmux key chord prefixes (e.g. a space becomes a raw chord, apostrophes may trip
+# the shell). -l forces byte-for-byte passthrough.
+type_prompt() {
+    local text="$1" pane="$2" delay="$3"
+    local i char
+    for (( i=0; i<${#text}; i++ )); do
+        char="${text:i:1}"
+        tmux send-keys -t "$pane" -l "$char"
+        sleep "$delay"
+    done
+}
+
+# wait_for_claude_ready polls bob's pane for Claude's idle ❯ prompt, dismissing
+# the "trust this folder?" dialog if it appears. Replaces the hardcoded sleep 8
+# to handle both already-trusted (fast) and fresh-directory (trust dialog) cases.
+wait_for_claude_ready() {
+    local pane="$1"
+    local timeout=60
+    local elapsed=0
+    echo "  polling for Claude idle prompt (up to ${timeout}s)..."
+    while [ $elapsed -lt $timeout ]; do
+        local content
+        content=$(tmux capture-pane -p -t "$pane" 2>/dev/null || true)
+        # Dismiss trust/allow prompt if present (fires on first launch in untrusted dir).
+        if echo "$content" | grep -qi "trust\|Do you trust\|allow.*folder"; then
+            echo "  trust prompt detected — dismissing"
+            tmux send-keys -t "$pane" Enter
+            sleep 1
+        fi
+        if echo "$content" | grep -q '❯'; then
+            echo "  Claude idle prompt ready (${elapsed}s elapsed)"
+            return 0
+        fi
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    echo "ERROR: Claude did not reach idle prompt within ${timeout}s" >&2
+    return 1
+}
+
+# wait_for_delivery polls the mailman log for a "delivered id=" line written after
+# the pane-paste succeeds. Falls back with a warning after timeout so the recording
+# still stops rather than hanging.
+wait_for_delivery() {
+    local timeout=20
+    local i=0
+    echo "  polling for delivery confirmation (up to ${timeout}s)..."
+    while [ $i -lt $((timeout * 2)) ]; do
+        if grep -q "delivered id=" "$MAILMAN_LOG" 2>/dev/null; then
+            echo "  delivery confirmed"
+            return 0
+        fi
+        sleep 0.5
+        i=$((i + 1))
+    done
+    echo "WARNING: delivery not confirmed within ${timeout}s — stopping anyway" >&2
+}
+
 # ── Phase 1: pre-clean any prior state ───────────────────────────────────────
 
 echo "[1/6] pre-clean prior sandbox state"
+rm -f "$CAST"
 cleanup
-# Re-arm trap after the manual cleanup call (trap resets on EXIT, but we want it
-# active for the rest of the script too).
-trap cleanup EXIT
 
 # ── Phase 2: sandbox env + tmux session ──────────────────────────────────────
 
@@ -104,8 +171,7 @@ echo "  alice=$ALICE_PANE  bob=$BOB_PANE"
 # ❯ sentinel (internal/tmuxio/state.go AgentState branch); a non-Claude shell pane
 # classifies as StateUnknown and the gate never shows the hold dynamics.
 tmux send-keys -t "$BOB_PANE" 'claude' Enter
-echo "  waiting 8s for Claude to reach its first idle prompt..."
-sleep 8
+wait_for_claude_ready "$BOB_PANE"
 
 # ── Phase 3: register agents + start bob's mailman ───────────────────────────
 
@@ -137,33 +203,31 @@ mkdir -p "$(dirname "$CAST")"
 # the tmux session later, the attach client exits, asciinema's child exits, and
 # the .cast is written. Recording starts OUTSIDE tmux so both panes + the divider
 # + status bar are captured; recording inside a pane would capture only that PTY.
+# --cols/--rows force the cast dimensions regardless of the calling terminal size;
+# without them, asciinema uses the pty size (defaults to 80×24 when not a real tty).
+# --overwrite prevents silent abort when a prior .cast exists at the output path.
 asciinema rec \
     --title "tmux-msg observe-gate" \
     --idle-time-limit=2 \
+    --cols 120 \
+    --rows 30 \
+    --overwrite \
     --command "tmux attach -t $SESSION" \
     "$CAST" &
 ASCIINEMA_PID=$!
 
-# Give asciinema and the attach a moment to settle before we start the take.
-sleep 2
+# Wait for asciinema's tmux attach to connect before starting the take. A fixed
+# sleep is not reliable: if the attach hasn't connected yet, keystrokes land in
+# the calling shell rather than in the recording.
+echo "  waiting for asciinema attach to connect..."
+until tmux list-clients -t "$SESSION" 2>/dev/null | grep -q .; do
+    sleep 0.2
+done
+echo "  attach ready"
 
 # ── Phase 5: time-driven take ─────────────────────────────────────────────────
 
 echo "[5/6] take begin — typing prompt in bob @ $(date +%H:%M:%S)"
-
-# type_prompt sends text to a pane one character at a time with a human-pace delay.
-# -l (literal) is critical: without it, spaces and punctuation are interpreted as
-# tmux key chord prefixes (e.g. a space becomes a raw chord, apostrophes may trip
-# the shell). -l forces byte-for-byte passthrough.
-type_prompt() {
-    local text="$1" pane="$2" delay="$3"
-    local i char
-    for (( i=0; i<${#text}; i++ )); do
-        char="${text:i:1}"
-        tmux send-keys -t "$pane" -l "$char"
-        sleep "$delay"
-    done
-}
 
 # Start the typing in the background so we can fire the bus send mid-keystroke.
 type_prompt "$PROMPT_TEXT" "$BOB_PANE" "$TYPING_DELAY" &
@@ -174,8 +238,14 @@ TYPING_PID=$!
 # (cursor past the ❯ sentinel) when the message arrives, triggering the 📫 hold.
 sleep "$PRE_SEND_DELAY"
 
-echo "  firing bus send @ $(date +%H:%M:%S)"
-tmux-msg-claude send --from alice --to bob "$MSG_BODY" >/dev/null
+# Send from alice's pane — type the command visibly so the viewer sees the send
+# originating from alice's side (editorial intent: Herald's recipe Step 5 wants
+# the send visible from alice). Uses send-keys -l for the full command so quoting
+# and spaces pass through literally without tmux key-chord interpretation.
+echo "  alice sends @ $(date +%H:%M:%S)"
+tmux send-keys -t "$ALICE_PANE" -l "tmux-msg-claude send --from alice --to bob \"${MSG_BODY}\""
+sleep 0.3
+tmux send-keys -t "$ALICE_PANE" Enter
 
 # Keep typing for a beat after the send so the viewer sees the 📫 hold during
 # active keystroke activity — the visual proof that the gate is waiting for a
@@ -186,10 +256,14 @@ sleep "$POST_SEND_TYPING"
 kill "$TYPING_PID" 2>/dev/null || true
 wait "$TYPING_PID" 2>/dev/null || true
 
-echo "  typing paused — waiting for stale-threshold (${STALE_THRESHOLD}s) + paste + settle"
-# Gate fires within STALE_THRESHOLD seconds of the last keystroke; add POST_LAND_WAIT
-# so the message text is fully visible in the pane before the recording stops.
-sleep $(( STALE_THRESHOLD + POST_LAND_WAIT ))
+echo "  typing paused — waiting for gate (${STALE_THRESHOLD}s) then delivery confirmation"
+sleep "$STALE_THRESHOLD"
+
+# Poll for actual delivery rather than sleeping a guessed total. The old fixed
+# STALE_THRESHOLD+POST_LAND_WAIT arithmetic could race the mailman paste and leak
+# keystrokes into the operator's terminal after the recording stopped.
+wait_for_delivery
+sleep "$POST_LAND_WAIT"
 
 # ── Phase 6: stop the recording ──────────────────────────────────────────────
 
