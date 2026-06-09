@@ -173,8 +173,9 @@ deferred staging, same as the pane path), marks them delivered, and emits
 `{"hookSpecificOutput": {"hookEventName": …, "additionalContext": …}}`. It is a clean
 no-op (empty JSON) when nothing is pending, so it is safe to wire unconditionally. A
 `hook-context` message is **invisible until the recipient's next turn** (it's context, not
-pane chrome) — the accepted trade-off for clean hook delivery (ADR-0009 Q1). v1 is
-Claude-only; Codex/Gemini hooks ride the second-adapter work (#248).
+pane chrome) — the accepted trade-off for clean hook delivery (ADR-0009 Q1). The **Codex**
+adapter delivers the same way (#248) — see [Adapter integration](#adapter-integration) for
+its `~/.codex/config.toml` wiring; Gemini's differing hook schema is future work.
 
 ### Draining a mailbox-only queue: `inbox --watch` (#149)
 
@@ -219,6 +220,70 @@ acknowledged` already IS the drain. A distinct `rejected`/`dismissed` state woul
 new forever-commitment to the state vocabulary with no current consumer, so it's left to
 a future forcing-function rather than baked speculatively (see #268 for the full
 decision-record).
+
+## Adapter integration
+
+tmux-msg is a substrate with **per-CLI adapter binaries**. The binary name encodes
+`tmux-msg` (substrate) + the CLI tool it adapts: `tmux-msg-claude`, `tmux-msg-codex`.
+Every adapter is a thin wrapper over the same adapter-agnostic core (`internal/cli`):
+message storage, queueing, identity, delivery-state, and the whole subcommand surface are
+shared and identical. What differs per adapter is narrow — the binary/unit name and the
+CLI's native **hook** wiring for `hook-context` delivery. [ADR-0009](adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md)
+draws this substrate-vs-adapter line; #248 proves it by adding the second binary with zero
+substrate changes.
+
+Pick the adapter at install time (both can coexist):
+
+```bash
+sudo -A ./install.sh --adapter=claude   # default
+sudo -A ./install.sh --adapter=codex
+```
+
+Each adapter gets its own mailman unit template (`tmux-msg-<adapter>-mailman@.service`)
+and shares the one message DB, so a `claude` agent and a `codex` agent register/send/
+receive on the same bus.
+
+### Claude Code — `tmux-msg-claude`
+
+The canonical adapter. Hook-context wiring lives in `~/.claude/settings.json` (see
+[Hook-context delivery](#hook-context-delivery-claude-code) above). Claude Code sends the
+firing event name on stdin as `hook_event_name`, which the helper echoes back into
+`hookSpecificOutput.hookEventName`.
+
+### Codex — `tmux-msg-codex`
+
+Codex (the OpenAI CLI) delivers via `hook-context` the same way: its hook output schema
+(`hookSpecificOutput.hookEventName` + `additionalContext`) matches Claude's, so the same
+`hook-context` helper presents messages unchanged. Register the agent `hook-context`, then
+wire a Codex hook in `~/.codex/config.toml`:
+
+```toml
+[features]
+hooks = true        # or run codex with `--enable hooks`
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "tmux-msg-codex hook-context --from <agent> --event-name UserPromptSubmit"
+```
+
+**Why `--event-name`:** Codex *requires* the output's `hookEventName` to match the firing
+event — it rejects a mismatch (`hook returned invalid user prompt submit JSON output`).
+Codex's hook **stdin** schema (whether, and under what key, it passes the event name) is
+not documented, so rather than trust the stdin echo, pin the event name in the hook
+command with `--event-name`; the helper then emits it deterministically regardless of the
+CLI's stdin shape. Wire one hook block per event you enable (`SessionStart`,
+`UserPromptSubmit`, `PostToolUse`), each pinning its own `--event-name`.
+
+The mailman short-circuits for a `hook-context` agent (it never pastes), so the Codex
+adapter does **not** exercise the paste-and-enter observe-gate — that path stays
+Claude-only until a paste-needing adapter lands (#248). Subset verified working:
+`register` / `send` / `inbox` / `serve` (short-circuit) + the hook-context round-trip
+(`cmd/tmux-msg-codex` end-to-end test).
+
+*Verified against codex-cli 0.130.0 (2026-05-10), per the [`Aldenysq/agents-connector`](https://github.com/Aldenysq/agents-connector)
+integration notes — Codex hook events with `additionalContext` support: `SessionStart`,
+`UserPromptSubmit`, `PostToolUse`.*
 
 ## Verified vs unverified deliveries
 

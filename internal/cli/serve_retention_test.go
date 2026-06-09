@@ -116,7 +116,14 @@ func TestRetentionSweep_DeletesOldDelivered(t *testing.T) {
 	logger := log.New(logbuf, "[test] ", 0)
 
 	// Use a very short interval so the sweep fires quickly in the test.
-	go runRetentionSweep(stopCtx, s, logger, "bob", "1d", 5*time.Millisecond)
+	// Capture the goroutine's exit so we can wait for it after cancel() before
+	// reading logbuf below — otherwise the sweep's final logger.Printf races the
+	// bytes.Buffer read (pre-existing -race-only flake, surfaced under #248).
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		runRetentionSweep(stopCtx, s, logger, "bob", "1d", 5*time.Millisecond)
+	}()
 
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
@@ -127,6 +134,7 @@ func TestRetentionSweep_DeletesOldDelivered(t *testing.T) {
 		time.Sleep(2 * time.Millisecond)
 	}
 	cancel()
+	<-sweepDone // wait for the sweep goroutine to exit before reading logbuf (race-free)
 
 	rest, _ := s.ListMessages(ctx, store.ListFilter{ToAgent: "bob"})
 	if len(rest) != 1 {

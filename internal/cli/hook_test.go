@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -134,5 +136,50 @@ func TestServe_HookContextShortCircuits(t *testing.T) {
 	}
 	if !strings.Contains(logbuf.String(), "delivery_mode=hook-context — mailman does not paste") {
 		t.Errorf("expected hook-context short-circuit log; got %s", logbuf.String())
+	}
+}
+
+// TestRunHookContextCLI_EventNameOverride pins that --event-name overrides the
+// stdin-derived hook_event_name in the emitted hookSpecificOutput.hookEventName.
+// This is the deterministic-event-name seam (#248): some CLIs (Codex) require
+// the output's hookEventName to match the firing event but don't document their
+// stdin schema, so the operator pins it in the hook command. The override wins
+// even when stdin carries a different event name.
+func TestRunHookContextCLI_EventNameOverride(t *testing.T) {
+	ctx := context.Background()
+	db := filepath.Join(t.TempDir(), "messages.db")
+	s, err := store.Open(db)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+	if _, err := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "ping"}); err != nil {
+		t.Fatalf("seed message: %v", err)
+	}
+	s.Close()
+
+	var stdout, stderr bytes.Buffer
+	// stdin says UserPromptSubmit; --event-name pins SessionStart — the override wins.
+	exit := runHookContextCLI(
+		[]string{"--db", db, "--from", "bob", "--event-name", "SessionStart"},
+		strings.NewReader(`{"hook_event_name":"UserPromptSubmit"}`),
+		&stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d, want %d; stderr=%s", exit, exitOK, stderr.String())
+	}
+	var out struct {
+		HookSpecificOutput struct {
+			HookEventName     string `json:"hookEventName"`
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output not valid JSON: %v\n%s", err, stdout.String())
+	}
+	if got := out.HookSpecificOutput.HookEventName; got != "SessionStart" {
+		t.Errorf("hookEventName = %q, want SessionStart (--event-name overrides stdin)", got)
+	}
+	if !strings.Contains(out.HookSpecificOutput.AdditionalContext, "ping") {
+		t.Errorf("additionalContext missing the message body: %q", out.HookSpecificOutput.AdditionalContext)
 	}
 }

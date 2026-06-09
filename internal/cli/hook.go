@@ -135,11 +135,21 @@ func runHookContextCLI(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
 	from := fs.String("from", "", "agent whose pending messages to present (env: TMUX_AGENT_NAME; default: this pane)")
+	// --event-name pins the hookEventName echoed in the output, overriding the
+	// stdin-derived value. The output's hookEventName must match the firing
+	// event (some CLIs — e.g. Codex — reject a mismatch), but not every CLI
+	// documents whether (or under what key) it sends the event name on stdin.
+	// Pinning it in the hook command itself makes the output deterministic
+	// regardless of the CLI's stdin schema:
+	//   command = "tmux-msg-codex hook-context --from bob --event-name UserPromptSubmit"
+	eventNameOverride := fs.String("event-name", "",
+		"override the echoed hookEventName (default: read from stdin hook_event_name, else "+defaultHookEventName+")")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
 
-	// Read the hook payload (best-effort) for the event name to echo back.
+	// Resolve the event name to echo back: explicit --event-name wins; else the
+	// stdin payload's hook_event_name; else the default.
 	eventName := defaultHookEventName
 	if stdin != nil {
 		if raw, rerr := io.ReadAll(io.LimitReader(stdin, 1<<20)); rerr == nil && len(raw) > 0 {
@@ -148,6 +158,9 @@ func runHookContextCLI(args []string, stdin io.Reader, stdout, stderr io.Writer)
 				eventName = in.HookEventName
 			}
 		}
+	}
+	if *eventNameOverride != "" {
+		eventName = *eventNameOverride
 	}
 
 	s, err := store.Open(resolveDBPath(*dbPath))

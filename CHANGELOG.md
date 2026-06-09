@@ -33,6 +33,23 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Added
+
+- **Second CLI adapter: `tmux-msg-codex` (OpenAI Codex) — #248.** The substrate now ships a
+  second adapter binary alongside `tmux-msg-claude`, proving the [ADR-0009](docs/adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md)
+  substrate-vs-adapter boundary: all subcommand dispatch + handlers moved into an
+  adapter-agnostic `internal/cli`, and each binary is a thin wrapper supplying its adapter
+  `Profile` (binary name → usage/version/mailman-unit chrome + deprecation alias). Codex
+  delivers via `hook-context` — its hook output schema (`hookSpecificOutput.hookEventName` +
+  `additionalContext`) matches Claude's, so the #249 helper presents messages **with zero
+  substrate changes**. Install with `./install.sh --adapter=codex` (coexists with claude;
+  each adapter gets its own `tmux-msg-<adapter>-mailman@` unit, both share the bus DB). New
+  `hook-context --event-name <Event>` flag pins the echoed `hookEventName` deterministically
+  (Codex requires the output event name to match the firing event but doesn't document its
+  hook stdin schema). See `docs/reference.md` §Adapter integration (verified codex-cli
+  0.130.0, 2026-05-10). The paste-and-enter observe-gate stays Claude-only — deferred until
+  a concrete paste-needing adapter surfaces.
+
 ## [0.15.1] — 2026-06-11
 
 Bugfix release: feature-frozen on top of v0.15.0 to land the five substrate-
