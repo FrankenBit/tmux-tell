@@ -26,6 +26,33 @@ CI runs `go vet`, `go build`, and `go test` **without** `-race` (the runner imag
 lacks a C compiler / cgo, which the race detector needs) — so run `-race` locally and
 push it clean.
 
+## Scenario layer (godog / gherkin)
+
+`features/*.feature` holds the six substrate-boundary scenarios. Each scenario
+documents one contract the project makes with operators (observe-gate delivery,
+dedupe recovery, operator routing, deferred delivery, attention signal). The
+step definitions live in `features/steps/suite_test.go`.
+
+Run the scenarios:
+
+```bash
+go test -count=1 ./features/steps/
+# or as part of the full suite
+go test -count=1 ./...
+```
+
+**Adding a new scenario:**
+
+1. Write a `.feature` file (or extend an existing one) under `features/`.
+2. Add matching step definitions in `features/steps/suite_test.go` — wire them to
+   store / tmuxio primitives so they pass without a real tmux server.
+3. Include the scenario in the `CHANGELOG.md` entry for the PR.
+
+The scenario tier documents the *substrate contract*, not the mailman IO. Delivery
+timing, tmux paste mechanics, and mailman loop behaviour are tested in
+`cmd/tmux-msg-claude/serve*_test.go`; the gherkin layer sits above and focuses on
+the store state-machine transitions each documented loop produces.
+
 **`tail` watch mechanism — rowid-polling, not `update_hook`.** The mailmen that write
 rows are *separate processes* from the `tail` CLI, and SQLite's `update_hook` only fires
 for the connection that registered it (per-connection, same-process), so it would never

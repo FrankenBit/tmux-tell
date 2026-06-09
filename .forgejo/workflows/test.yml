@@ -40,5 +40,11 @@ jobs:
         # — see README "Development" for the full pre-commit recipe.
         run: go test -count=1 ./...
 
+      - name: scenarios (#264 — godog substrate-boundary E2E)
+        # Run as a separate step so scenario failures are distinguishable
+        # from unit-test failures in the CI summary. Features are also
+        # included in the go test step above via ./...; this step names them.
+        run: go test -count=1 ./features/steps/
+
       - name: check-pin-slugs (#51 — enforce ADR-0001 slug register)
         run: go run ./tools/check-pin-slugs/

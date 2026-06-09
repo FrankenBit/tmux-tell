@@ -39,6 +39,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **Godog / gherkin E2E scenario layer (#264).** Six substrate-boundary scenarios in `features/*.feature` document the contracts the project makes with operators: observe-gate delivery, paste-safety gating, dedupe recovery, operator routing, deferred delivery, and the attention-signal cycle. Step definitions in `features/steps/suite_test.go` exercise the store state machine directly (no real tmux server needed), so `go test ./features/steps/` passes in CI. Run them alongside the full suite with `go test -count=1 ./...`. `godog v0.15.1` promoted from indirect to direct dev dependency. CONTRIBUTING.md updated with the "adding a scenario" recipe.
+
 - **`docs/asciinema-capture.md` — the observe-gate demo recipe (#216, recipe pass).**
   A reproducible recipe for capturing the motion-dependent differentiator (a message
   holds while you type, lands when you pause) as an asciinema cast: sandbox tmux socket
