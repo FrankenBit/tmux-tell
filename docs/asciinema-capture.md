@@ -1,5 +1,12 @@
 # Recording the observe-gate asciinema demo
 
+> **For the canonical scripted form of this recipe, see
+> [`scripts/record-asciinema-demo.sh`](../scripts/record-asciinema-demo.sh).**
+> That script implements the mechanical recipe below unattended — one command,
+> produces `docs/asciinema/observe-gate.cast`, cleans up. The recipe here is
+> the spec: it documents *why* each step exists so a re-recorder can re-decide
+> if the framing shifts.
+
 This is the reproducible recipe for the `docs/asciinema/observe-gate.cast`
 file the README hooks at. The recording shows the substrate's
 **motion-dependent** differentiator — a message arriving in a pane **holds**

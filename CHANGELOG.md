@@ -35,6 +35,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **Scripted asciinema take driver: `scripts/record-asciinema-demo.sh` (#273).** Turns the `docs/asciinema-capture.md` recipe into an unattended record-and-cleanup script. One command produces `docs/asciinema/observe-gate.cast`; output path overridable via `$CAST`. Sandbox isolation (separate DB at `/tmp/observe-gate-demo.db`, dedicated tmux session `observe-gate-demo`) matches the recipe. Bob's pane runs real `claude` (the observe-gate classifier requires the `❯` sentinel per the F6 finding in the recipe). `tmux send-keys -l` drives bob's prompt character-by-character at human pace (`$TYPING_DELAY`); bus send fires mid-typing on a deterministic clock. Stop-frame: recording ends just after message text lands (before Claude's reply renders). Idempotent: re-runnable from any state via `trap` cleanup. The recipe doc gains a top-of-file pointer at the script.
+
 - **`inbox --watch` reply (`r` key) — #268.** The interactive inbox TUI gains a reply
   action: `r` opens `$EDITOR` (`$VISUAL` → `$EDITOR` → `vi`) on a templated buffer; the
   saved body is sent threaded under the selected message (`reply_to`), addressed to its
