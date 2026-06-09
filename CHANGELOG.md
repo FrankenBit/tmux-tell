@@ -33,6 +33,10 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Changed
+
+- **CONTRIBUTING.md: claim-on-pickup discipline made explicit for both issues and PRs.** The convention was already documented in `docs/chamber-dispatch.md` and added to each chamber's CLAUDE.md during alcatraz-infra#27. This makes the rule discoverable for non-chamber contributors too: when picking up a substantive issue, set the Forgejo `assignees` field before opening the worktree branch; mirror on the PR when filing. Dispatchers read `assignees` before dispatching. Forward-only — historical issues without an assignee aren't backfilled.
+
 ## [0.14.0] — 2026-06-09
 
 ### Fixed

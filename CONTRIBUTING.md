@@ -82,7 +82,15 @@ reads safe concurrent with mailman writes.
 - **Claiming an issue (multi-agent deployments).** If more than one party hands out
   work from this tracker, assign the issue to yourself before starting, so the claim
   is discoverable on the issue itself and not just in side-channel chatter — see
-  [`docs/chamber-dispatch.md`](docs/chamber-dispatch.md).
+  [`docs/chamber-dispatch.md`](docs/chamber-dispatch.md). Concretely: before opening
+  the worktree branch, set the Forgejo `assignees` field on the issue
+  (`mcp__forgejo__edit_issue index=N assignees=["<your-name>"]`, or the equivalent
+  API call). Mirror the same convention on the PR: when you open a PR that closes an
+  issue, set the PR's `assignees` field to yourself too. Dispatchers (Bosun /
+  Quartermaster) read the `assignees` field on the target issue *before* dispatching
+  — if non-empty, route through the current assignee on the bus first rather than
+  re-dispatching. The convention is **forward-only**: historical issues without an
+  assignee aren't backfilled; new work claims as it picks up.
 
 ## Release cuts
 
