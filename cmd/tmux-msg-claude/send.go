@@ -27,6 +27,10 @@ type sendParams struct {
 	// StateDeferred carrying this trigger and delivers only after a matching
 	// flush_deferred call. v1 accepts "resume" (post-compaction self-handoff).
 	DeliverAfter string
+	// ExpectsReply marks the send as an `ask` (#250): sets the expects_reply
+	// column so the request-reply seams / future introspection can recognize
+	// it. Set by the ask surface; a normal send leaves it false.
+	ExpectsReply bool
 	MaxRecipient int
 	MaxSender    int
 	MaxBody      int
@@ -250,6 +254,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		NoReplyExpected:   p.NoReplyExpected,
 		Quick:             p.Quick,
 		DeliverAfter:      p.DeliverAfter,
+		ExpectsReply:      p.ExpectsReply,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})

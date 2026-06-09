@@ -422,6 +422,37 @@ walk to warn you if the thread moved since you last spoke — the `thread_freshn
 block, described under [the send loop](#send-and-reply). `thread`/`log` *read*
 the chain; `thread_freshness` *guards a write* against replying to a superseded state.
 
+**Request-reply — `ask` / `wait_for_reply` / `check_replies`.** The reply-to chain
+above is *asynchronous*: you send, the other side answers whenever. Request-reply
+(#250) bundles the **wait** so you can pause your own turn until the answer comes:
+
+```bash
+ask_id=$(tmux-msg-claude ask --to bob "is CI green on main?" | jq -r .id)
+tmux-msg-claude wait-for-reply "$ask_id" --timeout 60s   # blocks until bob replies (or times out)
+```
+
+- **`ask --to <agent> "question"`** is a single-recipient `send` that marks the row
+  `expects_reply` and returns the message id as the **`ask_id`**. Bob answers by
+  replying to it (`send --reply-to <ask_id> --to <asker>`).
+- **`wait-for-reply <ask_id> [--timeout <dur>]`** blocks until a reply addressed to
+  you with `reply_to = ask_id` arrives, then returns `{ok, ask_id, reply, timed_out}`.
+  `reply` is `{id, from, body, state, unverified, created_at}`. `unverified: true`
+  (#169) means the reply landed but its delivery to you wasn't verify-confirmed — it's
+  returned anyway, you decide how much to trust it. It does **not** auto-acknowledge
+  the reply (`ack` stays a separate, explicit action).
+- **`check-replies <ask_id> [--since <id>]`** is the non-blocking poll: returns all
+  replies so far. Pass `--since <highest-id-seen>` for the accumulation pattern (do
+  other work, periodically check). Complements `wait-for-reply` when you'd rather not
+  block.
+
+The same three are MCP tools (`tmux-msg.ask` / `wait_for_reply` / `check_replies`).
+Implementation note: in tmux-msg's multi-process bus the reply is written by a
+*different* process than the one waiting, so `wait_for_reply` is a substrate-side
+**poll-backed** blocking seam (a literal sqlite `update_hook` only fires
+intra-connection); the blocking-call shape is the contract, the poll is an
+implementation detail behind it. Out of scope for v1: multi-recipient `ask`
+(broadcast a question to N agents).
+
 **Bus-traffic stats.** `tmux-msg-claude stats` is the in-terminal "show me the bus
 right now" surface — on-demand aggregates computed straight from the local
 `messages.db`, complementing the continuous observability stack that owns
@@ -665,7 +696,8 @@ CREATE TABLE messages (
   delivered_at  TEXT,
   error         TEXT,
   verified      INTEGER,                        -- 1=verified, 0=unverified (delivered_in_input_box), NULL=unmarked (pre-migration, or not yet delivered)
-  deliver_after TEXT                            -- #227 deferred-delivery trigger; non-NULL only on state='deferred' (and the row it's promoted into), e.g. 'resume'
+  deliver_after TEXT,                           -- #227 deferred-delivery trigger; non-NULL only on state='deferred' (and the row it's promoted into), e.g. 'resume'
+  expects_reply INTEGER NOT NULL DEFAULT 0       -- #250 1 = sent via `ask` (sender intends to wait for a reply); 0 = plain send
 );
 CREATE INDEX ix_msg_queue ON messages(to_agent, state, id);
 

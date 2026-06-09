@@ -205,6 +205,22 @@ backlog floor** (§don't-flood) so re-registering between staging and flushing n
 it. v1 ships the `resume` trigger (the post-compaction case); register-on-spawn,
 timestamped reminders, and trigger composition are tracked in #258.
 
+## Request-reply (`ask` / `wait_for_reply` / `check_replies`)
+
+The reply-to chain is asynchronous — you send, they answer whenever. When you want to
+**pause until answered**, request-reply bundles the wait:
+
+```bash
+ask_id=$(tmux-msg-claude ask --to bob "is CI green on main?" | jq -r .id)
+tmux-msg-claude wait-for-reply "$ask_id" --timeout 60s   # blocks until bob replies / times out
+```
+
+`ask` is a `send` that returns an `ask_id`; `wait-for-reply` blocks until a reply lands
+(returning it, with an `unverified` flag if its delivery wasn't verify-confirmed) or
+times out; `check-replies` is the non-blocking poll for the work-while-waiting pattern.
+Same three as MCP tools. Full semantics: [operator reference →
+Request-reply](docs/reference.md#reading-a-reply-thread).
+
 ## Use from Claude Code (MCP)
 
 The same binary speaks MCP over stdio under `tmux-msg-claude mcp`, exposing

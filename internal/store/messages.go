@@ -43,6 +43,17 @@ type InsertParams struct {
 	// pre-queue row.
 	DeliverAfter string
 
+	// ExpectsReply marks the row as an `ask` (#250): the sender intends to
+	// wait for a reply (sets the expects_reply column to 1). Pure marker — it
+	// does not change delivery; the request-reply wait happens via the
+	// reply-query seams (FindReply / ListReplies / WaitForReply). Default
+	// false = a normal send.
+	//
+	// Deliberately NOT threaded through `resend`: a replayed ask is not
+	// re-marked, which is correct — wait_for_reply filters on reply_to = the
+	// original ask's id, so a marker on the replay would be redundant.
+	ExpectsReply bool
+
 	MaxRecipientQueue int // 0 = no cap check
 	MaxSenderBacklog  int // 0 = no cap check
 }
@@ -340,10 +351,15 @@ func insertOneInTx(ctx context.Context, tx *sql.Tx, p InsertParams) (InsertResul
 			state = StateDeferred
 			deliverAfterArg = p.DeliverAfter
 		}
+		// #250: ask-marker.
+		er := 0
+		if p.ExpectsReply {
+			er = 1
+		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, quick, replay_of, replay_of_at, state, deliver_after)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, q, replayOfArg, replayOfAtArg, state, deliverAfterArg)
+			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, quick, replay_of, replay_of_at, state, deliver_after, expects_reply)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, q, replayOfArg, replayOfAtArg, state, deliverAfterArg, er)
 		if err == nil {
 			publicID = candidate
 			break
@@ -785,6 +801,7 @@ func escapeLikePrefix(s string) string {
 type ListFilter struct {
 	ToAgent        string
 	FromAgent      string
+	ReplyTo        string // #250: filter to rows whose reply_to == this public_id
 	State          State
 	Kind           Kind
 	Limit          int    // 0 → 100; capped at 1000.
@@ -816,6 +833,10 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	if f.FromAgent != "" {
 		wheres = append(wheres, "from_agent = ?")
 		args = append(args, f.FromAgent)
+	}
+	if f.ReplyTo != "" {
+		wheres = append(wheres, "reply_to = ?")
+		args = append(args, f.ReplyTo)
 	}
 	if f.State != "" {
 		wheres = append(wheres, "state = ?")

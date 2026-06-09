@@ -103,6 +103,43 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpFlushDeferredHandler(s))
 
+	srv.RegisterTool("tmux-msg.ask",
+		"Send a question and signal you intend to wait for a reply (#250). Like send, but returns an ask_id (the message id) you pass to wait_for_reply / check_replies, and marks the message so the substrate knows a reply is expected. Single-recipient. The recipient answers by replying to the ask_id (send/ask with reply_to=<ask_id>). Use ask + wait_for_reply for synchronous Q&A (pause until answered); ask + check_replies to poll while doing other work.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"to":       {"type": "string", "description": "Recipient agent name (single recipient)"},
+				"body":     {"type": "string", "description": "The question"},
+				"reply_to": {"type": "string", "description": "Optional public_id this ask threads under"}
+			},
+			"required": ["to", "body"]
+		}`),
+		mcpAskHandler(s))
+
+	srv.RegisterTool("tmux-msg.wait_for_reply",
+		"Block until a reply to your ask_id arrives, or timeout_ms elapses (#250). Returns {ok, ask_id, reply, timed_out}. `reply` (when present) is {id, from, body, state, unverified, created_at}: `unverified:true` means the reply landed but its delivery wasn't verify-confirmed (#169) — it's returned anyway, you decide whether to trust it. Does NOT auto-acknowledge the reply (ack stays explicit). Use after ask to pause your turn until the recipient answers.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"ask_id":     {"type": "string", "description": "The id returned by ask (the message you're awaiting a reply to)"},
+				"timeout_ms": {"type": "integer", "description": "How long to block before returning timed_out:true. Default 30000 (30s)."}
+			},
+			"required": ["ask_id"]
+		}`),
+		mcpWaitForReplyHandler(s))
+
+	srv.RegisterTool("tmux-msg.check_replies",
+		"Non-blocking: list the replies to your ask_id that have arrived (#250). Returns {ok, ask_id, replies:[{id, from, body, state, unverified, created_at}]}. Pass `since` (a numeric id) to get only replies newer than one you've already seen — the accumulation pattern: do other work, periodically check_replies(ask_id, since=<highest id seen>). Complements wait_for_reply (block) when you'd rather poll.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"ask_id": {"type": "string", "description": "The id returned by ask"},
+				"since":  {"type": "integer", "description": "Only return replies with numeric id > this (0 = all). Track the highest id you've seen for incremental polling."}
+			},
+			"required": ["ask_id"]
+		}`),
+		mcpCheckRepliesHandler(s))
+
 	srv.RegisterTool("tmux-msg.agents",
 		"List registered agents with pane liveness.",
 		json.RawMessage(`{
@@ -558,6 +595,7 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		NoReplyExpected:   p.NoReplyExpected,
 		Quick:             p.Quick,
 		DeliverAfter:      p.DeliverAfter,
+		ExpectsReply:      p.ExpectsReply,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})
@@ -613,6 +651,100 @@ func mcpFlushDeferredHandler(s *store.Store) mcp.ToolHandler {
 			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		return doFlushDeferred(ctx, s, name, in.Trigger)
+	}
+}
+
+// mcpAskHandler returns the handler for the tmux-msg.ask MCP tool (#250): a
+// single-recipient send that marks expects_reply and returns the message id as
+// the ask_id to pass to wait_for_reply / check_replies. Routes through the
+// shared send path (doSendMCP) so caps / recipient-status / thread-freshness
+// behave identically to send.
+func mcpAskHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		To      string `json:"to"`
+		Body    string `json:"body"`
+		ReplyTo string `json:"reply_to"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		from, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		if from == "" {
+			return nil, fmt.Errorf("cannot resolve sender identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+		}
+		return doSendMCP(ctx, s, sendParams{
+			From:         from,
+			To:           in.To,
+			ReplyTo:      in.ReplyTo,
+			Body:         in.Body,
+			ExpectsReply: true,
+			MaxRecipient: capRecipientQueue,
+			MaxSender:    capSenderBacklog,
+			MaxBody:      capBodyBytes,
+		})
+	}
+}
+
+// mcpWaitForReplyHandler returns the handler for tmux-msg.wait_for_reply (#250):
+// block until a reply to ask_id addressed to the caller arrives or timeout_ms
+// elapses. No auto-ack (Q3); an unverified reply is returned with the flag (Q4).
+func mcpWaitForReplyHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		AskID     string `json:"ask_id"`
+		TimeoutMs int    `json:"timeout_ms"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if in.AskID == "" {
+			return nil, fmt.Errorf("ask_id required")
+		}
+		caller, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		if caller == "" {
+			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+		}
+		timeout := 30 * time.Second
+		if in.TimeoutMs > 0 {
+			timeout = time.Duration(in.TimeoutMs) * time.Millisecond
+		}
+		return doWaitForReply(ctx, s, caller, in.AskID, timeout), nil
+	}
+}
+
+// mcpCheckRepliesHandler returns the handler for tmux-msg.check_replies (#250):
+// non-blocking — list replies to ask_id addressed to the caller, optionally
+// only those with id > since.
+func mcpCheckRepliesHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		AskID string `json:"ask_id"`
+		Since int64  `json:"since"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if in.AskID == "" {
+			return nil, fmt.Errorf("ask_id required")
+		}
+		caller, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		if caller == "" {
+			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
+		}
+		return doCheckReplies(ctx, s, caller, in.AskID, in.Since)
 	}
 }
 

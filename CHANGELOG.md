@@ -41,6 +41,23 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 - **Godog / gherkin E2E scenario layer (#264).** Six substrate-boundary scenarios in `features/*.feature` document the contracts the project makes with operators: observe-gate delivery, paste-safety gating, dedupe recovery, operator routing, deferred delivery, and the attention-signal cycle. Step definitions in `features/steps/suite_test.go` exercise the store state machine directly (no real tmux server needed), so `go test ./features/steps/` passes in CI. Run them alongside the full suite with `go test -count=1 ./...`. `godog v0.15.1` promoted from indirect to direct dev dependency. CONTRIBUTING.md updated with the "adding a scenario" recipe.
 
+- **Request-reply — `ask` / `wait_for_reply` / `check_replies` (#250).** A
+  synchronous-Q&A surface on top of the existing reply-to chain. `ask --to
+  <agent> "question"` is a single-recipient `send` that marks the row
+  `expects_reply` and returns the message id as an `ask_id`;
+  `wait-for-reply <ask_id> [--timeout]` blocks until a reply addressed to the
+  caller with `reply_to = ask_id` arrives (returning `{reply, timed_out}`);
+  `check-replies <ask_id> [--since]` is the non-blocking poll. Same three as MCP
+  tools (`tmux-msg.ask` / `wait_for_reply` / `check_replies`). New
+  `expects_reply` column + reply-query store seams (`ListReplies` / `FindReply`
+  / `WaitForReply`). Operator design calls (2026-06-09): `ask` is a **distinct
+  tool + marker** (Q1); `wait_for_reply` is a **push-shaped blocking seam**,
+  poll-backed at the substrate side since tmux-msg is multi-process and a
+  literal sqlite `update_hook` can't bridge processes (Q2); **no auto-ack** on
+  consume (Q3); an unverified (`delivered_in_input_box`, #169) reply is
+  **returned with an `unverified` flag**, not discarded (Q4). Single-recipient
+  in v1 (multi-recipient `ask` is out of scope).
+
 - **`docs/asciinema-capture.md` — the observe-gate demo recipe (#216, recipe pass).**
   A reproducible recipe for capturing the motion-dependent differentiator (a message
   holds while you type, lands when you pause) as an asciinema cast: sandbox tmux socket

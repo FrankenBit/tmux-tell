@@ -34,6 +34,9 @@ Subcommands:
   send    Queue a message for an agent (validates caps, returns JSON)
   resend  Replay an existing message to its recipient (recovery; #157)
   flush   Promote your deferred messages for a trigger (e.g. post-/compact: flush --trigger=resume; mirrors tmux-msg.flush_deferred; #227)
+  ask     Send a question and get an ask_id to wait on (mirrors tmux-msg.ask; #250)
+  wait-for-reply  Block until a reply to <ask_id> arrives or --timeout (mirrors tmux-msg.wait_for_reply; #250)
+  check-replies   Non-blocking: list replies to <ask_id> (mirrors tmux-msg.check_replies; #250)
   ping    Substrate-only reachability probe — daemon up + agent reachable, no pane paste (mirrors tmux-msg.ping)
   control Send a whitelisted slash-command to a pane (mirrors tmux-msg.control)
   track   Show the delivery state of a single message by its public_id
@@ -102,6 +105,12 @@ func run(args []string, stdout, stderr *os.File) int {
 		return runResendCLI(args[1:], stdout, stderr)
 	case "flush":
 		return runFlushCLI(args[1:], stdout, stderr)
+	case "ask":
+		return runAskCLI(args[1:], stdout, stderr)
+	case "wait-for-reply":
+		return runWaitForReplyCLI(args[1:], stdout, stderr)
+	case "check-replies":
+		return runCheckRepliesCLI(args[1:], stdout, stderr)
 	case "ping":
 		return runPingCLI(args[1:], stdout, stderr)
 	case "control":
