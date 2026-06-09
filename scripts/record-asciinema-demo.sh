@@ -167,6 +167,13 @@ ALICE_PANE=$(tmux list-panes -t "$SESSION" -F '#{pane_id} #{pane_index}' | awk '
 BOB_PANE=$(  tmux list-panes -t "$SESSION" -F '#{pane_id} #{pane_index}' | awk '$2==2 {print $1}')
 echo "  alice=$ALICE_PANE  bob=$BOB_PANE"
 
+# Propagate demo DB path to alice's shell. CLAUDE_MSG_DB is not in tmux's
+# update-environment, so the calling-process export doesn't reach pane shells
+# when the tmux server is already running (which it is on alcatraz). The export
+# runs before asciinema starts, so it's invisible in the cast.
+tmux send-keys -t "$ALICE_PANE" "export CLAUDE_MSG_DB=${DB}" Enter
+sleep 0.2
+
 # Launch real Claude Code in bob's pane. The observe-gate classifier requires the
 # ❯ sentinel (internal/tmuxio/state.go AgentState branch); a non-Claude shell pane
 # classifies as StateUnknown and the gate never shows the hold dynamics.
@@ -243,7 +250,7 @@ sleep "$PRE_SEND_DELAY"
 # the send visible from alice). Uses send-keys -l for the full command so quoting
 # and spaces pass through literally without tmux key-chord interpretation.
 echo "  alice sends @ $(date +%H:%M:%S)"
-tmux send-keys -t "$ALICE_PANE" -l "tmux-msg-claude send --from alice --to bob \"${MSG_BODY}\""
+tmux send-keys -t "$ALICE_PANE" -l "tmux-msg-claude send --to bob \"${MSG_BODY}\""
 sleep 0.3
 tmux send-keys -t "$ALICE_PANE" Enter
 
