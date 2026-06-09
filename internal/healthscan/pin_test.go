@@ -45,6 +45,13 @@ import (
 //
 // 100ms is the published architectural commitment from the #42
 // closing comment + CHANGELOG.
+//
+// Amendment (#254, 2026-06-09): timing assertion is skipped under
+// -race. Race-detector overhead (~16× on alcatraz hardware) renders
+// wall-clock assertions unreliable — the scan measures ~10ms without
+// race and ~160ms under race on the same machine. The production
+// commitment applies to non-race conditions; the scan is still run
+// under -race to verify correctness. See ADR-0001 §Amendment-2026-06-09.
 func TestPin_HealthScanLatencyCeiling_Under100ms(t *testing.T) {
 	testpin.Triage(t, "HealthScanLatencyCeiling",
 		"external-source scan completes in <100ms for the current mailman+delivery-rate baseline")
@@ -85,11 +92,77 @@ func TestPin_HealthScanLatencyCeiling_Under100ms(t *testing.T) {
 		t.Fatalf("scan: %v", err)
 	}
 
+	if raceDetector {
+		// Race-detector overhead (~16× on alcatraz hardware) makes wall-clock
+		// assertions unreliable. Scan correctness is verified above; the timing
+		// commitment is enforced on non-race runs. See ADR-0001 §Amendment-2026-06-09.
+		t.Logf("race mode: scan took %v (timing assertion skipped; production ceiling is %v)", elapsed, ceiling)
+		return
+	}
+
 	if elapsed >= ceiling {
 		t.Errorf("scan over %d agents × %d lines/agent took %v; commitment is < %v",
 			mailmenCount, linesPerAgent, elapsed, ceiling)
 		t.Logf("triage per ADR-0001 §Triage; options: (a) optimise the scan, (b) migrate to persistent counters per CHANGELOG deferred-architecture flag, (c) retract the architectural commitment via superseding ADR")
 	}
+}
+
+// slowFakeJournal is a JournalReader that sleeps per ReadLines call —
+// used by SlowScanCaught to simulate slow journal IO.
+type slowFakeJournal struct {
+	delay time.Duration
+}
+
+func (f *slowFakeJournal) ReadLines(_ context.Context, _ string, _ time.Time) ([]string, error) {
+	time.Sleep(f.delay)
+	return nil, nil
+}
+
+// TestPin_HealthScanLatencyCeiling_SlowScanCaught is the (c.1) regression
+// test for the #254 amendment: demonstrates the 100ms ceiling still fires
+// for a genuinely slow scan when running without -race. Uses a fake journal
+// that sleeps 30ms per ReadLines call (4 agents × 30ms = 120ms) to
+// simulate slow journal IO, reliably exceeding the ceiling. This validates
+// that skipping the assertion under -race does not reduce coverage on
+// non-race runs where the commitment is actually enforced.
+func TestPin_HealthScanLatencyCeiling_SlowScanCaught(t *testing.T) {
+	if raceDetector {
+		t.Skip("SlowScanCaught counter-test only needs to run in non-race mode; the baseline assertion is already skipped under -race.")
+	}
+
+	const (
+		delayPer = 30 * time.Millisecond // 4 agents × 30ms = 120ms minimum > 100ms ceiling
+		ceiling  = 100 * time.Millisecond
+	)
+	agents := []string{"admin", "bosun", "pilot", "surveyor"}
+
+	sc := &Scanner{
+		Systemctl: &fakeSystemctl{byUnit: map[string]map[string]string{
+			"tmux-msg-claude-mailman@admin.service":    {"NRestarts": "0"},
+			"tmux-msg-claude-mailman@bosun.service":    {"NRestarts": "0"},
+			"tmux-msg-claude-mailman@pilot.service":    {"NRestarts": "0"},
+			"tmux-msg-claude-mailman@surveyor.service": {"NRestarts": "0"},
+		}},
+		Journal: &slowFakeJournal{delay: delayPer},
+	}
+
+	start := time.Now()
+	_, err := sc.Scan(context.Background(), agents, ScanWindow{})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+
+	if elapsed < ceiling {
+		t.Errorf("SlowScanCaught: slow scan completed in %v which is UNDER the 100ms ceiling — "+
+			"counter-test premise violated; the ceiling would NOT fire for this scan. "+
+			"Check delayPer (%v × %d agents = %v expected minimum).",
+			elapsed, delayPer, len(agents), delayPer*time.Duration(len(agents)))
+	}
+	// elapsed >= ceiling: the ceiling assertion would fire for this scan in
+	// production (non-race) conditions, confirming the loosened pin still
+	// catches real commitment violations.
+	t.Logf("SlowScanCaught: slow scan took %v (> %v ceiling; pin would fire)", elapsed, ceiling)
 }
 
 // syntheticJournalLines builds a plausible journal-line sequence for

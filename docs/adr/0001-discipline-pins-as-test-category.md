@@ -1,7 +1,7 @@
 # ADR-0001: Discipline pins as a test category
 
 > **Status**: Accepted
-> **Date**: 2026-05-31 (proposed); 2026-05-31 (accepted on rename-pass landing); 2026-05-31 amended (OperatorInputRowGate + CapExemption slugs per #55); 2026-06-01 amended (HealthScanLatencyCeiling slug per Surveyor #42 retrospective)
+> **Date**: 2026-05-31 (proposed); 2026-05-31 (accepted on rename-pass landing); 2026-05-31 amended (OperatorInputRowGate + CapExemption slugs per #55); 2026-06-01 amended (HealthScanLatencyCeiling slug per Surveyor #42 retrospective); 2026-06-09 amended (HealthScanLatencyCeiling race-mode scope per #254)
 > **Authors**: Admin (author), Surveyor (by-commitment scope per
 > issue #34 comment 58662; structural-pass amendments per #43
 > comment 58874; #55 amendment carries the gate/cap-exemption
@@ -115,7 +115,10 @@ self-evident under review.
   (c) retract the commitment entirely via superseding ADR. All
   three are legitimate (c)-class diagnoses; raising the ceiling
   without naming which one applies is not. Surfaced from Surveyor's
-  #42 retrospective (comment 59249).
+  #42 retrospective (comment 59249). **Scope clarification (#254,
+  2026-06-09):** the commitment applies to production (non-race)
+  conditions; the pin's timing assertion is gated on non-race
+  runs. See §Amendment-2026-06-09 below.
 
 <!-- pin-slug-register-end -->
 
@@ -287,6 +290,36 @@ Reasons to retract or supersede ADR-0001:
   with built-in triage gates, the manual conventions can retire
   in favor of the framework's. Open watch — no plausible candidate
   in the Go ecosystem today.
+
+## Amendment 2026-06-09 — HealthScanLatencyCeiling race-mode scope (#254)
+
+**Triage path**: (c) — commitment is intact; pin assertion was wrong.
+
+**Diagnosis**: The `HealthScanLatencyCeiling` pin flaked intermittently
+under `go test -race -count=1 ./...` across three consecutive PRs (#236,
+#247, #253). Measured timing on alcatraz hardware: ~10ms without race
+detector, ~160ms under race (16× overhead). The production commitment
+(< 100ms) is clearly intact — 10ms leaves 90ms of headroom. The pin's
+assertion was wrong because it conflated "production scan latency" with
+"test-time scan latency under race instrumentation." These are different
+things; the race detector instruments every memory access and is not a
+proxy for production conditions.
+
+**Resolution**: The timing assertion is gated on `raceDetector == false`
+(a build-tag-defined constant). Under `-race`, the scan still runs (to
+catch correctness regressions), but the ceiling is not asserted. The
+commitment itself is unchanged: the 100ms ceiling applies to production.
+
+**(c.1) Regression test** (`TestPin_HealthScanLatencyCeiling_SlowScanCaught`):
+demonstrates the ceiling still fires for a genuinely slow scan (4 agents
+× 30ms sleep per `ReadLines` = 120ms minimum) in non-race mode, confirming
+the loosened assertion still catches real commitment violations.
+
+**(c.2) ADR amendment**: this section.
+
+**What changes**: the `raceDetector` constant gates the ceiling assertion
+in `pin_test.go`. The commitment's scope is clarified: it applies to
+non-race production conditions. Nothing else in the commitment changes.
 
 ## References
 
