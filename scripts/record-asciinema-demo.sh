@@ -169,8 +169,10 @@ echo "  alice=$ALICE_PANE  bob=$BOB_PANE"
 
 # Propagate demo DB path to alice's shell. CLAUDE_MSG_DB is not in tmux's
 # update-environment, so the calling-process export doesn't reach pane shells
-# when the tmux server is already running (which it is on alcatraz). The export
-# runs before asciinema starts, so it's invisible in the cast.
+# when the tmux server is already running (which it is on alcatraz). tmux setenv
+# also doesn't help — it sets server-state at spawn-time; shells already running
+# don't see it retroactively. Pre-exporting in the pane's own shell is the only
+# reliable path. Runs before asciinema starts so it's invisible in the cast.
 tmux send-keys -t "$ALICE_PANE" "export CLAUDE_MSG_DB=${DB}" Enter
 sleep 0.2
 
