@@ -137,6 +137,39 @@ it via MCP (`register … delivery_mode=mailbox-only`), CLI (`register --name yo
 **per-agent block > `[defaults]` > the DB column > compiled default (`paste-and-enter`)**.
 `tmux-msg-claude config show` prints the resolved value per agent.
 
+### Draining a mailbox-only queue: `inbox --watch` (#149)
+
+A `mailbox-only` queue only drains when something marks messages consumed — the mailman
+deliberately doesn't paste, so nothing auto-advances the lifecycle. `inbox --ack <id>` /
+`--ack-all` drain by id from a one-shot list; `inbox --watch` is the **interactive**
+counterpart — a full-screen TUI that lists the queue, refreshes as mail lands, and acks
+under the cursor with one keystroke:
+
+```bash
+tmux-msg-claude inbox you --watch                 # live drain surface for agent "you"
+tmux-msg-claude inbox you --watch --watch-interval 5s
+```
+
+| key | action |
+|---|---|
+| `↑`/`↓` (or `k`/`j`) | move the cursor between rows |
+| `space` | **ack** the selected message — transitions it `queued → acknowledged` (the same #221 transition `--ack` drives) and drops it from the queue |
+| `enter` | expand the selected row to show the full body inline (toggles) |
+| `q` / `Ctrl-C` / `Esc` | exit cleanly |
+
+The list **refreshes by polling** (default every 2s, `--watch-interval` to tune), not by
+a push hook: the writing mailman is a separate process, and SQLite's `update_hook` only
+fires for the connection that registered it — so polling `state=queued` is the only
+cross-process-visible mechanism (the same call `tail` makes, #148). New arrivals appear
+on the next tick; the cursor stays anchored to its message as rows above it drain. On
+exit a one-line summary (`N drained this session, M still queued`) is left on the normal
+screen, so the session's work is preserved in scrollback.
+
+`--watch` is interactive: it requires a real terminal (errors if stdout isn't a TTY) and
+can't be combined with `--format json` or `--ack`/`--ack-all`. `ack` is the only
+queue-draining action in v1; richer per-message triage (reply-via-`$EDITOR`,
+operator-reject) is tracked as a follow-up.
+
 ## Verified vs unverified deliveries
 
 **Verified vs unverified deliveries.** After a paste+Enter, the mailman looks
@@ -179,6 +212,7 @@ tmux-msg-claude ping   AGENT [--timeout D] [--format json]   # reachability prob
 tmux-msg-claude inbox  AGENT [--state STATE]            # list messages for AGENT
 tmux-msg-claude inbox  AGENT --ack <id>                 # mark one queued message acknowledged (#221)
 tmux-msg-claude inbox  AGENT --ack-all                  # acknowledge all announce-skipped backlog residue (#221)
+tmux-msg-claude inbox  AGENT --watch [--watch-interval D]  # interactive TUI: live list + cursor-nav + space-ack (mailbox-only drain; #149)
 tmux-msg-claude sent   [--since DUR] [--state STATE] [--to AGENT]  # sender's outbox
 tmux-msg-claude track  ID [--watch]                     # delivery state of one message
 tmux-msg-claude get    ID                               # fetch a processed message by id

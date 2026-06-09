@@ -58,6 +58,17 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   **returned with an `unverified` flag**, not discarded (Q4). Single-recipient
   in v1 (multi-recipient `ask` is out of scope).
 
+- **`inbox --watch` — interactive TUI consumer for mailbox-only agents (#149).**
+  A full-screen, live-updating drain surface for `mailbox-only` queues (the agents the
+  mailman never pastes into, so nothing auto-advances their lifecycle). Lists the queued
+  mail, refreshes as messages land (rowid-polling, default 2s, `--watch-interval` to
+  tune — `update_hook` can't see the mailman's cross-process writes, the #148 lesson),
+  and acks under the cursor: `↑`/`↓` navigate, `space` acks the selected message
+  (`queued → acknowledged`, composing with #221's `--ack`), `enter` expands the full
+  body inline, `q`/`Ctrl-C`/`Esc` exit with a scrollback-preserving summary. Built on
+  bubbletea; the `Model`/`Update` logic is unit-tested without a TTY. Interactive-only:
+  requires a real terminal and rejects `--format json` / `--ack`. Richer per-message
+  triage (reply-via-`$EDITOR`, operator-reject) is deferred to a follow-up.
 - **`docs/asciinema-capture.md` — the observe-gate demo recipe (#216, recipe pass).**
   A reproducible recipe for capturing the motion-dependent differentiator (a message
   holds while you type, lands when you pause) as an asciinema cast: sandbox tmux socket

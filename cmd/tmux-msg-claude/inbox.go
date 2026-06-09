@@ -37,6 +37,8 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 	format := fs.String("format", "text", "text|json")
 	ackID := fs.String("ack", "", "mark a single queued message as acknowledged (#221)")
 	ackAll := fs.Bool("ack-all", false, "mark all queued messages ≤ backlog_epoch as acknowledged (#221)")
+	watch := fs.Bool("watch", false, "interactive TUI: live-updating inbox with cursor-nav + inline ack/expand (#149)")
+	watchInterval := fs.Duration("watch-interval", inboxWatchDefaultInterval, "poll cadence when --watch is set")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -66,6 +68,18 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 				"cannot resolve identity: pass AGENT, set $TMUX_AGENT_NAME, or register this pane",
 				exitUsage)
 		}
+	}
+
+	if *watch {
+		if *ackID != "" || *ackAll {
+			return writeJSONError(stdout, stderr,
+				"--watch cannot be combined with --ack/--ack-all", exitUsage)
+		}
+		if *format == "json" {
+			return writeJSONError(stdout, stderr,
+				"--watch is an interactive TUI; --format json is not supported", exitUsage)
+		}
+		return runInboxWatch(ctx, s, agent, *watchInterval, stdout, stderr)
 	}
 
 	if *ackID != "" {

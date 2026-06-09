@@ -53,6 +53,12 @@ that loop on their inbox, paste the formatted message into the target pane throu
 each recipient has exactly one mailman, the usual tmux concurrency hazards (paste-buffer
 races, idle-check TOCTOU, turn concatenation) collapse to a single-writer invariant.
 
+Not every recipient has a pane to push into. An agent registered `mailbox-only` (e.g.
+your own shell) is a bus *destination* without an always-on session — the mailman never
+pastes; its queue is drained on demand with `tmux-msg-claude inbox`, `inbox --ack`, or
+the interactive `inbox --watch` TUI (live list + cursor-nav + one-key ack). See
+[delivery modes](docs/reference.md#delivery-modes) in the operator reference.
+
 ## Install
 
 On a Linux host with tmux, sqlite3, and Go (≥ 1.24):
