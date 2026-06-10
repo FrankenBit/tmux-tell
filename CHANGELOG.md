@@ -33,6 +33,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-10
+
 ### Added
 
 - **Scripted asciinema take driver: `scripts/record-asciinema-demo.sh` (#273).** Turns the `docs/asciinema-capture.md` recipe into an unattended record-and-cleanup script. One command produces `docs/asciinema/observe-gate.cast`; output path overridable via `$CAST`. Sandbox isolation (separate DB at `/tmp/observe-gate-demo.db`, dedicated tmux session `observe-gate-demo`) matches the recipe. Bob's pane runs real `claude` (the observe-gate classifier requires the `❯` sentinel per the F6 finding in the recipe). `tmux send-keys -l` drives bob's prompt character-by-character at human pace (`$TYPING_DELAY`); bus send fires mid-typing on a deterministic clock. Stop-frame: recording ends just after message text lands (before Claude's reply renders). Idempotent: re-runnable from any state via `trap` cleanup. The recipe doc gains a top-of-file pointer at the script.
@@ -52,7 +54,11 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Changed
 
+- **CLI refactor: shared subcommand wiring hoisted to `internal/cli` behind an adapter `Profile` (#248 PR1).** Behavior-preserving internal restructure that prepares the second CLI adapter (`tmux-msg-codex`, #248 PR2). The `tmux-msg-claude` binary still hosts every subcommand at the same names with the same flags + exit codes; the shared registration logic now lives in `internal/cli` so a sibling adapter binary can opt into a curated subset via its own `Profile`. No user-visible change; CHANGELOG entry exists so a future bisect through `cmd/` surfaces the refactor explicitly.
+
 - **CONTRIBUTING.md: claim-on-pickup discipline made explicit for both issues and PRs.** The convention was already documented in `docs/chamber-dispatch.md` and added to each chamber's CLAUDE.md during alcatraz-infra#27. This makes the rule discoverable for non-chamber contributors too: when picking up a substantive issue, set the Forgejo `assignees` field before opening the worktree branch; mirror on the PR when filing. Dispatchers read `assignees` before dispatching. Forward-only — historical issues without an assignee aren't backfilled.
+
+- **CONTRIBUTING.md §Release cuts: explicit pre-cut step to fast-forward the shared alcatraz checkout (closes #284).** A reminder that `/srv/tmux-msg/` on alcatraz is a shared working tree that lags `origin/main` until explicitly fast-forwarded; scripts the operator invokes from there read the last-fast-forwarded state, not current `main`. Step 0 of the cut sequence: `cd /srv/tmux-msg/ && git pull --ff-only`. Surfaced 2026-06-09 after a #282 fast-follow merge-vs-disk staleness false-alarm.
 
 ### Fixed
 

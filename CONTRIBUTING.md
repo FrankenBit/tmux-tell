@@ -94,6 +94,21 @@ reads safe concurrent with mailman writes.
 
 ## Release cuts
 
+**Pre-flight.** If the cut driver works from a shared host checkout (on
+alcatraz, `/srv/tmux-msg/` is shared across chambers and read directly by
+host scripts), fast-forward it first so on-disk state matches `origin/main`
+before the cut branch is created:
+
+```bash
+cd /srv/tmux-msg/ && git pull --ff-only
+```
+
+Operator scripts that invoke files from this tree (recording rig drivers,
+ad-hoc smoke tests) read the *last-fast-forwarded* state, not the current
+`origin/main` — so a stale shared checkout produces hard-to-diagnose
+"merged on origin but missing on disk" surprises (closes #284). Per-chamber
+worktrees handle their own state and don't need this step.
+
 The cut sequence (run from a clean main on the cut branch):
 
 1. **Sync state.** `git fetch origin && git checkout -b i/v<X.Y.Z>-release-cut
