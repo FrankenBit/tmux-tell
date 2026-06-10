@@ -31,7 +31,7 @@ change for the decision to be revisited.
 | 0007 | [Binnacle coexists with tmux-msg as an external Go module](0007-binnacle-coexist-external-contract.md) | Accepted | 2026-06-07 |
 | 0008 | [Deprecation policy — two-minor-cycle floor (post-1.0)](0008-deprecation-policy.md) | Accepted | 2026-06-07 |
 | 0009 | [Hook-context delivery — substrate stays delivery-method-agnostic](0009-hook-context-delivery-substrate-vs-adapter-boundary.md) | Accepted | 2026-06-09 |
-| 0010 | [Tool name — `tmux-msg`, or rename?](0010-tool-name.md) | Re-Proposed | — |
+| 0010 | [Tool name — `tmux-msg`, or rename?](0010-tool-name.md) | Accepted | 2026-06-10 |
 
 > **Note on ADR length.** ADRs 0001-0005 predate the length-cap
 > convention codified in ADR-0006 and run 276-440 lines each. ADR-0006+

@@ -1,8 +1,8 @@
 # ADR-0010: Tool name — `tmux-msg`, or rename?
 
-> **Status**: Re-Proposed (blind-vote re-eval following closed PR #218)
+> **Status**: Accepted
 > **Date**: 2026-06-10
-> **Authors**: Surveyor (re-proposer at operator request); decision pending operator disposition after crew blind-vote
+> **Authors**: Surveyor (re-proposer at operator request); disposition by operator 2026-06-10
 
 ## Context
 
@@ -210,6 +210,65 @@ substantively edges the current pool on multiple bars, the operator may
 extend Phase 1 to admit consideration before locking Phase 2's pool.
 Otherwise the process runs to disposition on the Phase 2 aggregate.
 
+## Rationale
+
+**Chosen name: `tmux-tell`** — operator disposition 2026-06-10.
+
+### Vote aggregate (Phase 2)
+
+| Pick | Voters |
+|------|--------|
+| `tmux-post` | Bosun, Engineer, Herald, Quartermaster |
+| `tmux-note` | Pilot, Shipwright, Surveyor |
+| `tmux-tell` | Operator |
+
+Full deliberation record: [PR #294 comments](https://git.frankenbit.de/frankenbit/tmux-msg/pulls/294).
+
+### Soundness chain
+
+`tmux-tell` won against the plurality (`tmux-post`, 4 votes) and near-plurality
+(`tmux-note`, 3 votes) on two axes that prove decisive at the product-name layer:
+
+**Adapter grammar (axis 2).** `tmux-tell-claude` reads as a clean imperative —
+"tmux, tell Claude…" The verb-in-compound reads agentically and the grammar holds
+across the adapter family (`tmux-tell-codex` equally clean). The plurality
+candidate `tmux-post-claude` is genuinely ambiguous: *after* Claude? *to*
+Claude? The ambiguity is real at every call site where the adapter name appears.
+
+**Product-name framing over technical-description.** The operator's reframe is
+load-bearing: the task is to pick a matching, well-sounding, memorable product
+name — not the best fitting technical description in one word. Under that
+framing `tell` is warmer and more precise than `post` (tonal-match, axis 4) and
+avoids the note-tool market saturation that weights against `tmux-note`
+(`tmux-note-claude` reads as a teacher taking notes on pupils).
+
+**The `/tell` heritage is async, not synchronous.** The only nit raised —
+synchronous-lean — dissolves under examination: `/tell` in MUD/IRC was
+specifically the store-and-forward directed-message primitive (queued for
+offline players), not the live split-screen `talk`. The connotation is not
+dishonest; paste-and-enter to a live pane is semi-synchronous from the
+recipient's view in any case.
+
+**Ship framing.** `tmux-tell` fits the project's naval-operations register
+naturally; the verb arc ("tell Bosun", "tell future-me", "tell everyone")
+is immediately readable and memorable.
+
+### Forward notes (non-blocking, for the rename arc)
+
+- **MCP wire surface**: `tmux-tell_send` / `tmux-tell_inbox` carries mild
+  verb-on-verb redundancy (noted independently by Quartermaster and Surveyor).
+  Lever is noun-shaped method names at the rename arc — design exercise, not
+  a blocker.
+- **Description line accuracy**: since `tell` leans synchronous in connotation
+  while the substrate grows explicitly-async modes (deferred delivery, mailbox-
+  only, hook-context), keep description prose accurate that delivery is
+  store-and-forward. Same spirit as retiring "bus" from the tagline.
+
+### Crew buy-in
+
+All 6 crew members responded with genuine buy-in after disposition broadcast.
+No concerns raised that the operator's reasoning did not address.
+
 ## References
 
 - ADR-0003 (substrate-vs-flavor naming) · ADR-0005 (substrate-honest
@@ -217,6 +276,8 @@ Otherwise the process runs to disposition on the Phase 2 aggregate.
   delivery — unrelated; collided number)
 - [Closed PR #218](https://git.frankenbit.de/frankenbit/tmux-msg/pulls/218)
   — deliberation history of the first attempt
+- [PR #294](https://git.frankenbit.de/frankenbit/tmux-msg/pulls/294)
+  — ADR-0010 blind-vote deliberation (Phase 1 + Phase 2 aggregates)
 - #163 — K-counter tracker
 - #216 — asciinema take (timing-coupled to disposition)
 - 2026-06-07 / 2026-06-08 / 2026-06-10 crew + operator exchanges (PR #218
