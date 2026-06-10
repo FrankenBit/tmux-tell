@@ -35,6 +35,48 @@ func flagWasSet(fs *flag.FlagSet, name string) bool {
 	return wasSet
 }
 
+const (
+	// defaultStuckThreshold is the consecutive `can't find pane` count at
+	// which the mailman parks itself (#291). 10 with the backoff schedule
+	// below means a truly-broken registration parks after ~4 minutes of
+	// exponentially-spaced retries — long enough that a transient pane
+	// outage (operator restarting tmux, a pane respawn) self-heals first,
+	// short enough that a stale registration stops hammering tmux promptly.
+	defaultStuckThreshold = 10
+	// defaultStuckPollInterval is how often a parked mailman re-reads its
+	// agent row to notice a `register --force` clear. No tmux probe — a
+	// plain DB read — so a tight-ish cadence costs nothing.
+	defaultStuckPollInterval = 5 * time.Second
+	// stuckBackoffCap bounds the exponential pane-not-found retry delay
+	// (#291). Even before the stuck threshold, no retry fires faster than
+	// once per this interval — the 100/s storm that wedged tmux is capped
+	// at 1/60s well before parking.
+	stuckBackoffCap = 60 * time.Second
+)
+
+// paneNotFoundBackoff returns the delay before the next delivery attempt
+// after `consecutive` back-to-back `can't find pane` probe failures (#291):
+// 1s, 2s, 4s, 8s, 16s, 32s, then capped at stuckBackoffCap (60s). The first
+// failure already waits 1s, which alone converts the pre-fix ~100/s retry
+// storm into at most 1/s — the cap then drops it to 1/60s. The shift is
+// guarded so a large counter can't overflow the duration.
+func paneNotFoundBackoff(consecutive int) time.Duration {
+	if consecutive < 1 {
+		consecutive = 1
+	}
+	// time.Second << 6 = 64s already exceeds the cap, so anything from the
+	// 7th consecutive failure onward is the cap — return early to avoid
+	// shifting by a large amount.
+	if consecutive >= 7 {
+		return stuckBackoffCap
+	}
+	d := time.Second << uint(consecutive-1)
+	if d > stuckBackoffCap {
+		return stuckBackoffCap
+	}
+	return d
+}
+
 // serveOpts is the resolved configuration for runServeWithStore.
 type serveOpts struct {
 	Agent              string
@@ -150,6 +192,18 @@ type serveOpts struct {
 	// 0 disables the check entirely — zero behavior change for existing deploys.
 	// Default config.DefaultDedupeWindow (60s).
 	DedupeWindow time.Duration
+	// StuckThreshold is the number of consecutive `can't find pane` probe
+	// failures after which the mailman parks itself in the #291 stuck state
+	// (writes agents.stuck_reason and stops probing tmux entirely). Default
+	// defaultStuckThreshold (10). A value <= 0 disables the stuck transition
+	// (backoff still applies), kept as an escape hatch for tests / operators
+	// who want unbounded backoff-only behavior.
+	StuckThreshold int
+	// StuckPollInterval is how often a parked (stuck) mailman re-reads its
+	// own agent row to notice a `register --force` clear. While stuck the
+	// mailman issues NO tmux probes — this is a pure DB read on a slow
+	// cadence. Default defaultStuckPollInterval (5s).
+	StuckPollInterval time.Duration
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -201,6 +255,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"deprecated: use --notify-on-delivered-in-input-box (removal v1.0 — extended from v0.12.0 per ADR-0008 §Discretion clause, #140)")
 	metricsAddr := fs.String("metrics-addr", "",
 		"expose a Prometheus /metrics endpoint on this address (e.g. ':9099' or '127.0.0.1:9099'). Empty (the default) disables the endpoint entirely — no behavior change for deploys that don't scrape. Per-agent TOML knob: `metrics-addr = \":PORT\"` (each per-agent mailman is its own process, so assign a distinct port per agent). (#146)")
+	stuckThreshold := fs.Int("stuck-threshold", defaultStuckThreshold,
+		"number of consecutive `can't find pane` probe failures before the mailman parks itself in the #291 stuck state (stops probing tmux entirely; visible in `agents`, cleared via `register --force`). Exponential backoff applies on every failure regardless; this is the cutover to zero-probe parking. 0 disables parking (backoff-only). Per-agent TOML knob: `stuck-threshold = N`.")
+	stuckPollInterval := fs.Duration("stuck-poll-interval", defaultStuckPollInterval,
+		"how often a parked (stuck) mailman re-reads its agent row to notice a `register --force` clear. While stuck the mailman issues NO tmux probes — this is a pure DB read. Per-agent TOML knob: `stuck-poll-interval = \"5s\"`.")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -259,6 +317,12 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if !flagWasSet(fs, "metrics-addr") {
 		*metricsAddr = config.ResolveString(cfg, *agent, "metrics-addr", "")
+	}
+	if !flagWasSet(fs, "stuck-threshold") {
+		*stuckThreshold = config.ResolveInt(cfg, *agent, "stuck-threshold", *stuckThreshold)
+	}
+	if !flagWasSet(fs, "stuck-poll-interval") {
+		*stuckPollInterval = config.ResolveDuration(cfg, *agent, "stuck-poll-interval", *stuckPollInterval)
 	}
 	configDeliveryMode := config.ResolveString(cfg, *agent, "delivery-mode", "")
 	// Resolve the verify-retry budget (#153). Stored as a duration string
@@ -351,6 +415,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		Retention:                   retention,
 		RetentionSweepInterval:      retentionSweepInterval,
 		DedupeWindow:                dedupeWindow,
+		StuckThreshold:              *stuckThreshold,
+		StuckPollInterval:           *stuckPollInterval,
 	}, logger, stdout, stderr)
 }
 
@@ -484,6 +550,17 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		go runRetentionSweep(stopCtx, s, logger, opts.Agent, opts.Retention, opts.RetentionSweepInterval)
 	}
 
+	// #291 pane-not-found backoff state. consecutivePaneFails counts
+	// back-to-back `can't find pane` aborts; paneFailMsgID is the message the
+	// streak is accumulating against. The counter is per-agent in effect (a
+	// missing pane fails every message identically), but we key it on the
+	// claimed message id so an unrelated message reaching delivery resets the
+	// streak — which also satisfies the AC's "per-message + per-agent" wording
+	// with one mechanism. In-memory (not persisted): a restart re-registers
+	// and re-probes from a clean slate, which is the right reset semantics.
+	consecutivePaneFails := 0
+	paneFailMsgID := ""
+
 	for {
 		if stopCtx.Err() != nil {
 			return exitOK
@@ -514,6 +591,21 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		}
 		if a.Paused {
 			if stopOrSleep(stopCtx, opts.PauseCheckInterval) {
+				return exitOK
+			}
+			continue
+		}
+
+		// #291 stuck-state: a parked mailman stops probing tmux entirely.
+		// This is the load-bearing property — once a persistent pane-not-found
+		// failure has tripped the threshold, NO ClaimNext / observe-gate /
+		// pre-paste probe runs (each of those shells out to tmux), so the
+		// retry storm that wedged the tmux server cannot occur. Messages stay
+		// queued (no loss). We re-read the agent row every iteration (above),
+		// so a `register --force` that clears stuck_reason resumes delivery on
+		// the next loop with a clean counter.
+		if a.StuckReason != "" {
+			if stopOrSleep(stopCtx, opts.StuckPollInterval) {
 				return exitOK
 			}
 			continue
@@ -817,8 +909,50 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
 					logger.Printf("WARN pre_paste_safety_recover_failed id=%s err=%v", msg.PublicID, rerr)
 				}
+
+				// #291: a `can't find pane` probe failure is the storm driver.
+				// Distinguish it from a legitimate transient paste-unsafe abort
+				// (operator drafting an AskUserQuestion popup, which the gate
+				// already waits out on a 3–15s cadence): only the pane-not-found
+				// shape accrues toward exponential backoff + parking. Everything
+				// else keeps the bare #105 revert-and-retry and resets the streak.
+				if perr != nil && isCantFindPaneError(perr) {
+					if msg.PublicID != paneFailMsgID {
+						paneFailMsgID = msg.PublicID
+						consecutivePaneFails = 0
+					}
+					consecutivePaneFails++
+					if opts.StuckThreshold > 0 && consecutivePaneFails >= opts.StuckThreshold {
+						if serr := s.SetStuck(opCtx, opts.Agent, store.StuckReasonPaneNotFound); serr != nil {
+							logger.Printf("WARN stuck_set_failed agent=%s err=%v", opts.Agent, serr)
+						} else {
+							logger.Printf("WARN stuck agent=%s reason=%s consecutive=%d — mailman parked; stops probing tmux until `register --force` clears it (#291)",
+								opts.Agent, store.StuckReasonPaneNotFound, consecutivePaneFails)
+						}
+						// The DB stuck_reason now gates the loop; reset the
+						// in-memory streak so a clear resumes from a clean slate.
+						consecutivePaneFails = 0
+						paneFailMsgID = ""
+						continue
+					}
+					backoff := paneNotFoundBackoff(consecutivePaneFails)
+					logger.Printf("WARN pane_not_found_backoff id=%s pane=%s consecutive=%d delay=%s — bounding retry rate (#291)",
+						msg.PublicID, paneForDelivery, consecutivePaneFails, backoff)
+					if stopOrSleep(stopCtx, backoff) {
+						return exitOK
+					}
+					continue
+				}
+				// Non-pane-not-found abort: not a persistent pane failure, so
+				// the consecutive-streak resets.
+				consecutivePaneFails = 0
+				paneFailMsgID = ""
 				continue
 			}
+			// Probe passed: the pane is reachable, so any prior pane-not-found
+			// streak is broken (#291 consecutive-count semantics).
+			consecutivePaneFails = 0
+			paneFailMsgID = ""
 		}
 
 		deliverCtx, cancel := context.WithTimeout(opCtx, opts.DeliverTimeout)

@@ -51,6 +51,11 @@ type agentView struct {
 	// ("idle" / "busy" / "awaiting_operator"). Empty omitted from JSON so
 	// pre-#224 callers see no schema-shape change.
 	AttentionState string `json:"attention_state,omitempty"`
+	// Stuck surfaces the #291 mailman park reason ("pane-not-found" when the
+	// mailman has stopped probing tmux for this agent after N consecutive
+	// pane-probe failures). Empty (healthy) omitted from JSON so existing
+	// callers see no schema-shape change.
+	Stuck string `json:"stuck,omitempty"`
 }
 
 func runAgentsWithStore(ctx context.Context, s *store.Store,
@@ -69,6 +74,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 			Pane:           a.PaneID,
 			Paused:         a.Paused,
 			AttentionState: a.AttentionState,
+			Stuck:          a.StuckReason,
 		}
 		switch {
 		case a.PaneID == "":
@@ -95,7 +101,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 		_ = writeJSONResult(stdout, rows)
 		return exitOK
 	case "text", "":
-		header := []string{"NAME", "PANE", "STATUS", "PAUSED", "QUEUED", "ATTENTION"}
+		header := []string{"NAME", "PANE", "STATUS", "PAUSED", "QUEUED", "ATTENTION", "STUCK"}
 		out := make([][]string, 0, len(rows))
 		for _, r := range rows {
 			pane := r.Pane
@@ -106,8 +112,12 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 			if attention == "" {
 				attention = "idle"
 			}
+			stuck := r.Stuck
+			if stuck == "" {
+				stuck = "-"
+			}
 			out = append(out, []string{
-				r.Name, pane, r.PaneStatus, yesNo(r.Paused), itoa(r.Queued), attention,
+				r.Name, pane, r.PaneStatus, yesNo(r.Paused), itoa(r.Queued), attention, stuck,
 			})
 		}
 		renderTextTable(stdout, header, out)

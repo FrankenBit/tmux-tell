@@ -933,7 +933,7 @@ func mcpAgentsHandler(s *store.Store) mcp.ToolHandler {
 		}
 		out := []agentView{}
 		for _, a := range agents {
-			v := agentView{Name: a.Name, Pane: a.PaneID, Paused: a.Paused, AttentionState: a.AttentionState}
+			v := agentView{Name: a.Name, Pane: a.PaneID, Paused: a.Paused, AttentionState: a.AttentionState, Stuck: a.StuckReason}
 			switch {
 			case a.PaneID == "":
 				v.PaneStatus = "no-pane"
@@ -1123,6 +1123,14 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		if err := s.SetDeliveryMode(ctx, in.Name, deliveryMode); err != nil {
 			return nil, fmt.Errorf("set delivery_mode: %w", err)
 		}
+		// #291: clear any mailman stuck-state on (re)register. Unlike the
+		// #224 attention auto-clear (CLI-register-only today), stuck MUST be
+		// cleared on the MCP path too: a parked mailman re-registered with a
+		// corrected pane would otherwise update pane_id yet stay parked,
+		// silently never resuming delivery. Best-effort — registration already
+		// succeeded above, so a failed clear is operationally awkward but not
+		// bus-fatal (and the MCP closure has no stderr for a soft WARN).
+		_ = s.ClearStuck(ctx, in.Name)
 
 		// Optional alias append. AddAlias is idempotent on same-agent
 		// duplicates, but rejects cross-canonical collisions with

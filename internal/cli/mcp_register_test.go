@@ -111,6 +111,32 @@ func TestMCP_Register_CollisionWithForceOverwrites(t *testing.T) {
 	}
 }
 
+// TestMCP_Register_ClearsStuckState pins #291: a chamber re-registering via
+// the MCP register tool (force=true) with a corrected pane un-parks a stuck
+// mailman. Without the clear, pane_id would update but stuck_reason would
+// persist and the mailman would never resume — the load-bearing recovery path
+// for the MCP (chamber-driven) register surface.
+func TestMCP_Register_ClearsStuckState(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%42")
+	s := newCmdTestStore(t, "existing")
+	(&fakeSystemctl{}).install(t)
+	if err := s.SetStuck(context.Background(), "existing", store.StuckReasonPaneNotFound); err != nil {
+		t.Fatalf("seed stuck: %v", err)
+	}
+
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+		"name":  "existing",
+		"force": true,
+	})
+	if got["ok"] != true {
+		t.Fatalf("got %v", got)
+	}
+	a, _ := s.GetAgent(context.Background(), "existing")
+	if a.StuckReason != "" {
+		t.Errorf("MCP register force=true did not clear stuck_reason: %q", a.StuckReason)
+	}
+}
+
 func TestMCP_Register_NoPaneAvailable(t *testing.T) {
 	t.Setenv("TMUX_PANE", "")
 	s := newCmdTestStore(t)

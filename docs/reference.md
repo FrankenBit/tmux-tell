@@ -339,6 +339,46 @@ The reserved-recipient convention is enforced: `flag_operator` fails-loud if
 `operator-attention` is not registered — substrate-honest about the setup
 prerequisite rather than silently swallowing the attention request.
 
+## Recovering a stuck mailman (#291)
+
+A mailman delivers by probing the recipient's tmux pane before each paste. When
+that probe fails with `can't find pane` — a stale registration, a respawned
+pane, or the wrong tmux server — the mailman reverts the message to `queued` and
+retries. If the failure is *persistent*, an un-bounded retry would hammer the
+tmux server (the 2026-06-10 incident: ~100 probes/sec wedged the server). Two
+mechanisms bound it:
+
+- **Exponential backoff.** Consecutive `can't find pane` failures back off
+  `1s → 2s → 4s → … → 60s` (capped). Even the first failure waits 1s, so a
+  persistent failure can never exceed ~1 probe/sec, dropping to 1/60s. A
+  transient outage (you restarted tmux, a pane is respawning) self-heals: the
+  next successful probe resets the streak.
+- **Stuck-state parking.** After `stuck-threshold` consecutive failures
+  (default 10), the mailman parks itself: it writes `stuck_reason = 'pane-not-found'`
+  and **stops probing tmux entirely** for that agent. Queued messages stay
+  queued — no loss — but nothing is delivered until you intervene.
+
+A parked agent shows a non-`-` value in the **STUCK** column:
+
+```bash
+tmux-msg-claude agents
+# NAME   PANE  STATUS  PAUSED  QUEUED  ATTENTION  STUCK
+# bob    %3    stale   no      2       idle       pane-not-found
+```
+
+**To recover, re-register the agent with a correct pane** — this clears the
+stuck state and the mailman resumes on its next loop:
+
+```bash
+tmux-msg-claude register --name bob --pane %7 --force
+```
+
+The clear also fires on the MCP `tmux-msg.register` tool (`force: true`), so a
+chamber that re-registers itself after a respawn un-parks automatically.
+
+Both knobs are per-agent TOML-configurable (`stuck-threshold`,
+`stuck-poll-interval`); `stuck-threshold = 0` disables parking (backoff-only).
+
 ## Operator-presence routing — `send --to operator`
 
 Sister substrate to the attention signal above (#228). When a chamber wants to
@@ -815,7 +855,8 @@ CREATE TABLE agents (
   aliases          TEXT NOT NULL DEFAULT '[]',    -- JSON list of alternative names (#38)
   delivery_mode    TEXT NOT NULL DEFAULT 'paste-and-enter',  -- 'paste-and-enter' or 'mailbox-only' (#116/#132)
   backlog_epoch_id INTEGER,                       -- #204 claim-floor (NULL = no epoch)
-  attention_state  TEXT NOT NULL DEFAULT 'idle'   -- 'idle' | 'busy' | 'awaiting_operator' (#224)
+  attention_state  TEXT NOT NULL DEFAULT 'idle',  -- 'idle' | 'busy' | 'awaiting_operator' (#224)
+  stuck_reason     TEXT NOT NULL DEFAULT ''       -- '' = healthy; 'pane-not-found' = mailman parked (#291)
 );
 
 CREATE TABLE presence (

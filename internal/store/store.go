@@ -143,6 +143,15 @@ var migrations = []string{
 	// tools. Auto-cleared to "idle" on the chamber's next register call (the
 	// chamber resumed; whatever it was waiting on is presumed resolved).
 	`ALTER TABLE agents ADD COLUMN attention_state TEXT NOT NULL DEFAULT 'idle'`,
+	// #291: mailman stuck-state. Empty (default) = healthy. A non-empty
+	// reason (currently only "pane-not-found") means the mailman hit N
+	// consecutive pane-probe failures on a persistent failure (a stale /
+	// wrong-server pane registration) and has parked itself: it stops
+	// probing tmux for this agent entirely so the retry storm can't wedge
+	// the tmux server (the 2026-06-10 17:54 tmux death). Messages stay
+	// queued (no loss). Cleared by `register --force` (the operator fixes
+	// the registration), which resumes normal delivery on the next loop.
+	`ALTER TABLE agents ADD COLUMN stuck_reason TEXT NOT NULL DEFAULT ''`,
 	// #228: presence slot for operator-presence routing. Single-key K/V table
 	// recording substrate observations of where the operator currently is or
 	// was last attached. The send_to_operator path resolves the special

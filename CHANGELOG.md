@@ -33,6 +33,20 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Mailman no longer storms tmux on a persistent `can't find pane` failure
+  (#291).** A stale or wrong-server pane registration used to drive the
+  pre-paste safety-abort into a tight retry loop (~100 probes/sec), which
+  wedged the tmux server (2026-06-10 incident). Consecutive `can't find pane`
+  failures now back off exponentially (1s → 2s → … → 60s cap), and after
+  `stuck-threshold` consecutive failures (default 10) the mailman parks itself
+  (`stuck_reason = 'pane-not-found'`, new `agents.stuck_reason` column) and
+  stops probing tmux entirely. Queued messages are retained (no loss). The
+  parked state shows in `tmux-msg-claude agents` (new STUCK column) and clears
+  on `register --force` (CLI and MCP). New per-agent knobs: `stuck-threshold`,
+  `stuck-poll-interval`.
+
 ## [0.15.0] — 2026-06-10
 
 ### Added

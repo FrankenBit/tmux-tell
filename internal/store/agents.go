@@ -88,8 +88,8 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 		deliveryMode string
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -155,7 +155,7 @@ func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) e
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -170,7 +170,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 			aliases      string
 			deliveryMode string
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason); err != nil {
 			return nil, err
 		}
 		if pane.Valid {
@@ -201,6 +201,45 @@ func (s *Store) SetAttentionState(ctx context.Context, name, state string) error
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET attention_state = ? WHERE name = ?`,
 		state, name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
+}
+
+// SetStuck parks an agent's mailman with the given non-empty reason (#291).
+// The mailman's loop reads stuck_reason every iteration and, once it is
+// non-empty, stops probing tmux for this agent entirely — the load-bearing
+// property that prevents a persistent pane-probe failure from driving the
+// retry storm that wedged the tmux server (2026-06-10 17:54). Reason must be
+// non-empty (use ClearStuck to un-park). Returns ErrNotFound if no agent with
+// that name is registered.
+//
+// Does not bump updated_at: like the attention-state setter, this is an
+// operational delivery signal, not a discovery-relevant change.
+func (s *Store) SetStuck(ctx context.Context, name, reason string) error {
+	if reason == "" {
+		return fmt.Errorf("store: SetStuck requires a non-empty reason (use ClearStuck to un-park)")
+	}
+	return s.setStuckReason(ctx, name, reason)
+}
+
+// ClearStuck un-parks an agent's mailman by resetting stuck_reason to the
+// empty (healthy) default (#291). Called by `register --force` when the
+// operator fixes the registration; the mailman resumes normal delivery on
+// its next loop iteration. Idempotent — clearing an already-healthy agent is
+// a no-op write. Returns ErrNotFound if no agent with that name is registered.
+func (s *Store) ClearStuck(ctx context.Context, name string) error {
+	return s.setStuckReason(ctx, name, "")
+}
+
+func (s *Store) setStuckReason(ctx context.Context, name, reason string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET stuck_reason = ? WHERE name = ?`,
+		reason, name)
 	if err != nil {
 		return err
 	}

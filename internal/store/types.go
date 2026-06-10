@@ -155,6 +155,15 @@ type Agent struct {
 	// Set explicitly by chambers via flag_operator / clear_operator_flag.
 	// Auto-cleared to "idle" on the chamber's next register call.
 	AttentionState string
+	// StuckReason is the #291 mailman park signal. Empty (default) = the
+	// mailman is delivering normally. A non-empty value (currently only
+	// StuckReasonPaneNotFound) means the mailman hit N consecutive
+	// pane-probe failures against a persistent failure and parked itself:
+	// it stops probing tmux for this agent entirely so a stale / wrong-server
+	// pane registration cannot drive the retry storm that wedged the tmux
+	// server (2026-06-10 17:54). Messages stay queued; cleared by
+	// `register --force`, which resumes delivery on the next mailman loop.
+	StuckReason string
 }
 
 // Delivery-mode constants. Constrained string set; see Agent.DeliveryMode
@@ -213,6 +222,18 @@ func ValidAttentionState(s string) bool {
 		s == AttentionStateBusy ||
 		s == AttentionStateAwaitingOperator
 }
+
+// Stuck-reason constants (#291). The empty string is the healthy default
+// (mailman delivering normally) and is not enumerated here. A non-empty
+// reason parks the mailman: it stops probing tmux for the agent until the
+// state is cleared via `register --force`.
+const (
+	// StuckReasonPaneNotFound is set after N consecutive pane-probe
+	// failures of the `can't find pane` shape — a persistent failure
+	// (stale registration, wrong tmux server) that, left un-parked,
+	// drives the pre-paste-safety-abort retry storm (#291).
+	StuckReasonPaneNotFound = "pane-not-found"
+)
 
 // ReservedRoutingName reports whether name is reserved as a routing
 // primitive (a virtual recipient resolved at delivery-prep time) and

@@ -124,6 +124,18 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		// the bus. Surface as a soft signal rather than aborting.
 		fmt.Fprintf(stderr, "WARN register: clear attention_state: %v\n", err)
 	}
+	// #291: clear any mailman stuck-state on (re)register. A stuck mailman
+	// parked itself because the pane registration was stale / wrong-server;
+	// re-registering IS the operator fixing that registration, so the park
+	// signal is presumed resolved. The serving mailman re-reads the agent row
+	// each loop, so clearing stuck_reason here resumes delivery on its next
+	// iteration (with a fresh consecutive-failure counter). This is the AC4
+	// `register --force clears the stuck state` path — `--force` is required
+	// to overwrite an existing (stuck) agent, so the clear naturally rides it.
+	if err := s.ClearStuck(ctx, *name); err != nil {
+		// Non-fatal, same rationale as the attention-state clear above.
+		fmt.Fprintf(stderr, "WARN register: clear stuck_reason: %v\n", err)
+	}
 	if *alias != "" {
 		if err := s.AddAlias(ctx, *name, *alias); err != nil {
 			if errors.Is(err, store.ErrAliasCollision) {
