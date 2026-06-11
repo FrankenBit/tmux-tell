@@ -67,9 +67,14 @@ func TestMCPCLI_LogsDBPathOnStartup(t *testing.T) {
 
 	t.Run("default", func(t *testing.T) {
 		t.Setenv("CLAUDE_MSG_DB", "")
+		// Isolate the user-home default (#308) to a temp HOME so the resolved
+		// default DB lands in a throwaway dir rather than polluting the test
+		// runner's real ~/.local/share. XDG_DATA_HOME cleared so the $HOME
+		// fallback branch is exercised. The assertion only cares about the
+		// source label, which the startup log fires before store.Open.
+		t.Setenv("XDG_DATA_HOME", "")
+		t.Setenv("HOME", t.TempDir())
 		var stderr strings.Builder
-		// Default DB path (/var/lib/tmux-msg/messages.db) doesn't exist in CI;
-		// store.Open will fail, but the log fires before Open.
 		runMCPCLI(nil, strings.NewReader(""), io.Discard, &stderr)
 		if !strings.Contains(stderr.String(), "source=default(env unset)") {
 			t.Errorf("missing default source label; stderr=%s", stderr.String())

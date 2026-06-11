@@ -230,6 +230,18 @@ in one place.
   binding. The identity helper's API is small enough that a
   pluggable backend would fit cleanly, but the semantics of
   "who's the sender" change qualitatively.
+- **Storage trust-boundary congruence (#308)**: the DB now lives
+  under the operator's user-home (`$XDG_DATA_HOME/tmux-msg` or
+  `~/.local/share/tmux-msg/messages.db`), not the former system-global
+  `/var/lib/tmux-msg/`. This makes the substrate's *storage* trust
+  boundary exactly congruent with the *identity* model above: both are
+  scoped to the operator's UID. tmux is per-user by design, and the bus
+  now matches — the DB is readable/writable only by the operator's UID
+  by virtue of its location, with no install-time chown to align
+  ownership and no shared-space path for a second UID to reach. A
+  sandbox-by-default adapter (codex) can write it without per-write
+  escalation precisely because it's under the user's own home. The
+  per-user assumption is now structural, not maintained by a deploy step.
 
 ### 3.3 `_txlock=immediate` + `busy_timeout(5000)` for cap enforcement (#29)
 

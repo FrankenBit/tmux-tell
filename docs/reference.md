@@ -584,14 +584,15 @@ naming the resolved DB path and how it was resolved:
 
 ```
 mcp: claude_msg_db=/tmp/crew-demo.db source=env(CLAUDE_MSG_DB)
-serve: claude_msg_db=/var/lib/tmux-msg/messages.db source=default(env unset)
+serve: claude_msg_db=/home/alex/.local/share/tmux-msg/messages.db source=default(env unset)
 ```
 
 The `source` label is one of:
 - `env(CLAUDE_MSG_DB)` — the `CLAUDE_MSG_DB` environment variable was set.
 - `flag(--db)` — the `--db <path>` CLI flag was passed.
-- `default(env unset)` — neither was set; the compile-time default
-  (`/var/lib/tmux-msg/messages.db`) is in use.
+- `default(env unset)` — neither was set; the user-home default (#308) is in use
+  (`$XDG_DATA_HOME/tmux-msg/messages.db`, or `~/.local/share/tmux-msg/messages.db`
+  when `$XDG_DATA_HOME` is unset).
 
 This line is the **canonical way to confirm which DB a process is actually
 bound to**, journalctl-visible on alcatraz:
@@ -1102,7 +1103,13 @@ than guess — add an explicit alias on the one you meant.
 
 ## Storage schema
 
-SQLite (WAL mode), three tables; the DB lives at `/var/lib/tmux-msg/messages.db`:
+SQLite (WAL mode), three tables. The DB lives under the operator's user-home
+(#308): `$XDG_DATA_HOME/tmux-msg/messages.db` when `$XDG_DATA_HOME` is set, else
+`~/.local/share/tmux-msg/messages.db`. Override with `--db` or `$CLAUDE_MSG_DB`.
+The binary creates the directory lazily on first open. This keeps the bus's
+trust boundary congruent with tmux's per-user model (no shared-space path, no
+install-time chown) and lets sandbox-by-default adapters (codex) write the DB
+without per-write escalation.
 
 ```sql
 CREATE TABLE messages (
@@ -1150,13 +1157,14 @@ pane (see §Operator-presence routing).
 ## Install internals: what runs as root
 
 `sudo ./install.sh` asks for root, but root's reach is deliberately narrow.
-**As root** the script does exactly two privileged things: installs the
-binary to `/usr/local/bin/tmux-msg-claude` (mode `0755`, owned `root:root`) and
-creates `/var/lib/tmux-msg/` owned by *you*, the operator. **As you** —
-never as root — it runs `go build`, chowns the data dir + the systemd
-template to your account, and (after install) the mailman daemons run in
-your linger-enabled `systemctl --user` session. No daemon ever runs as
-root; root touches nothing but the binary path and the data-dir creation.
+**As root** the script does exactly one privileged thing: installs the
+binary to `/usr/local/bin/tmux-msg-claude` (mode `0755`, owned `root:root`).
+**As you** — never as root — it runs `go build`, installs the systemd
+template to your `~/.config/systemd/user/`, and (after install) the mailman
+daemons run in your linger-enabled `systemctl --user` session. The DB needs no
+install-time step at all: it lives under your user-home (#308) and the binary
+creates it lazily on first open. No daemon ever runs as root; root touches
+nothing but the binary path.
 
 The operator account is resolved from `$SUDO_USER` (set by `sudo`), falling
 back to `$USER`. There is **no hardcoded fallback** — if neither resolves

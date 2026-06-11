@@ -116,7 +116,7 @@ pattern doesn't work cleanly).
 # size the terminal explicitly (asciinema captures the dimensions at start)
 export COLUMNS=120 LINES=30
 
-# sandbox DB so the demo doesn't write into /var/lib/tmux-msg/messages.db
+# sandbox DB so the demo doesn't write into the real ~/.local/share/tmux-msg/messages.db
 export CLAUDE_MSG_DB=/tmp/observe-gate-demo.db
 rm -f "$CLAUDE_MSG_DB"  # fresh state per recording
 ```

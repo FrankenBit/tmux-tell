@@ -120,7 +120,8 @@ func itoa(n int) string {
 //
 // Surveyor's #29 review (b) named this as the load-bearing real-
 // world case (mailman + CLI + MCP children all separate processes
-// against /var/lib/tmux-msg/messages.db). Tracked as #33.
+// against the shared DB, ~/.local/share/tmux-msg/messages.db #308).
+// Tracked as #33.
 func TestPin_AtomicCapEnforcement_CrossProcessCeilingForSingleInsert(t *testing.T) {
 	testpin.Triage(t, "AtomicCapEnforcement",
 		"caps are ceilings under cross-process concurrency — SQLite file-level RESERVED lock + _txlock=immediate atomicity holds across distinct OS-level processes")

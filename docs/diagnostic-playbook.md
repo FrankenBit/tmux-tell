@@ -54,7 +54,8 @@ window. Bounds are UTC (tmux-msg stores ISO UTC timestamps);
 convert from local if needed.
 
 ```bash
-sudo sqlite3 /var/lib/tmux-msg/messages.db -header -column "
+# DB is under the operator's user-home (#308) — no sudo needed.
+sqlite3 ~/.local/share/tmux-msg/messages.db -header -column "
   SELECT public_id, from_agent, to_agent, state, kind,
          length(body) AS body_len,
          created_at, delivered_at,

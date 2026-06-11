@@ -73,10 +73,11 @@ sudo ./install.sh        # installs the binary + the systemd user template
 ```
 
 `install.sh` builds `bin/tmux-msg-claude`, installs it to `/usr/local/bin/tmux-msg-claude`,
-creates `/var/lib/tmux-msg/` (holds `messages.db`), and drops the systemd user
-template (`tmux-msg-claude-mailman@.service`) into `~/.config/systemd/user/`. Pick a
-specific adapter with `--adapter=claude` (the default). Then, **as your user (not
-root)**:
+and drops the systemd user template (`tmux-msg-claude-mailman@.service`) into
+`~/.config/systemd/user/`. The DB (`messages.db`) lives under your user-home
+(`$XDG_DATA_HOME/tmux-msg` or `~/.local/share/tmux-msg/`) and is created lazily on
+first use — no install-time data dir to create or chown. Pick a specific adapter with
+`--adapter=claude` (the default). Then, **as your user (not root)**:
 
 ```bash
 sudo loginctl enable-linger "$USER"   # keep the user manager running across reboots
@@ -86,11 +87,12 @@ systemctl --user daemon-reload        # so the mailman unit is visible
 ### What runs as root, and what runs as you
 
 `sudo ./install.sh` asks for root, but root's reach is deliberately narrow: **as root**
-it does exactly two privileged things — installs the binary to
-`/usr/local/bin/tmux-msg-claude` and creates `/var/lib/tmux-msg/` owned by *you*.
-Everything else (`go build`, the chowns, the mailman daemons) runs as your user, never
-as root. That's the whole point of shipping the installer as a readable shell script:
-you can confirm exactly which two operations need root before you grant it.
+it does exactly one privileged thing — installs the binary to
+`/usr/local/bin/tmux-msg-claude`. Everything else (`go build`, the systemd template, the
+mailman daemons) runs as your user, never as root — and the DB lives under your user-home,
+created lazily by the binary with no privileged step at all. That's the whole point of
+shipping the installer as a readable shell script: you can confirm exactly which operation
+needs root before you grant it.
 
 → Full breakdown — the `$SUDO_USER` resolution, the `OPERATOR_USER` override, the
 no-hardcoded-fallback rule: [operator reference → Install internals](docs/reference.md#install-internals-what-runs-as-root).
@@ -302,13 +304,13 @@ Operator guides live in [`docs/`](docs/), architecture decisions in [`docs/adr/`
 
 ```bash
 sudo ./uninstall.sh            # stops mailmen, removes the binary, leaves the DB
-sudo ./uninstall.sh --purge    # also wipes /var/lib/tmux-msg/ (interactive confirm)
+sudo ./uninstall.sh --purge    # also wipes ~/.local/share/tmux-msg/ (interactive confirm)
 ```
 
 `uninstall.sh` is idempotent. It leaves alone (remove by hand if you want them gone):
 `/etc/tmux-msg/` (host config), the MCP entry in `~/.claude.json` (`claude mcp remove
-tmux-msg -s user`), `loginctl enable-linger`, and `/var/lib/tmux-msg/` (history,
-default-preserved; `--purge` wipes it).
+tmux-msg -s user`), `loginctl enable-linger`, and the user-home DB dir
+(`~/.local/share/tmux-msg/`, history, default-preserved; `--purge` wipes it).
 
 ## Where to go next
 

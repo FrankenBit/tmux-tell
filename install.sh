@@ -3,9 +3,13 @@
 #
 # Run as root (sudo -A ./install.sh [--adapter=claude]). The script:
 #   - installs the tmux-msg-<adapter> binary to ${PREFIX}/bin/
-#   - creates ${DATADIR} owned by the operator user
 #   - drops the systemd user template into the operator's
 #     ~/.config/systemd/user/
+#
+# The DB lives under the operator's user-home (#308:
+# $XDG_DATA_HOME/tmux-msg or ~/.local/share/tmux-msg/messages.db) and is
+# created lazily by the binary on first open — no shared-space dir to
+# create or chown at install time.
 #   - for the claude adapter, also drops the deprecation-cycle aliases
 #     claude-msg → tmux-msg-claude and claude-mailman@ → the new template
 #     (#177 / ADR-0008; removed at v1.0 boundary per ADR-0008 §Discretion clause extension)
@@ -19,7 +23,6 @@
 set -euo pipefail
 
 PREFIX=${PREFIX:-/usr/local}
-DATADIR=${DATADIR:-/var/lib/tmux-msg}
 
 # Which adapter to install. The binary name encodes substrate+adapter
 # (tmux-msg-<adapter>); `claude` is the only adapter today, but a future
@@ -49,14 +52,15 @@ if [[ "$ADAPTER" == "claude" ]]; then
     LEGACY_UNIT="claude-mailman@.service"
 fi
 
-# Resolve the operator user — the non-root account that owns $DATADIR and
-# runs the mailman daemons. Precedence: an explicit OPERATOR_USER from the
-# environment wins (lets you install for a target user without sudo, e.g.
-# OPERATOR_USER=alice ./install.sh), then sudo's $SUDO_USER, then the
-# invoking $USER. There is deliberately NO hardcoded fallback: guessing a
-# username silently chowns $DATADIR + the systemd template to the wrong
-# (or nonexistent) account, contradicting the project's fail-loud ethos —
-# and a personal username has no business shipping in a public installer.
+# Resolve the operator user — the non-root account that owns the built bin/ +
+# the installed systemd template, and runs the mailman daemons (the DB now lives
+# under this user's home, created lazily by the binary). Precedence: an explicit
+# OPERATOR_USER from the environment wins (lets you install for a target user
+# without sudo, e.g. OPERATOR_USER=alice ./install.sh), then sudo's $SUDO_USER,
+# then the invoking $USER. There is deliberately NO hardcoded fallback: guessing
+# a username silently chowns the systemd template to the wrong (or nonexistent)
+# account, contradicting the project's fail-loud ethos — and a personal username
+# has no business shipping in a public installer.
 OPERATOR_USER=${OPERATOR_USER:-${SUDO_USER:-${USER:-}}}
 if [[ -z "$OPERATOR_USER" || "$OPERATOR_USER" == "root" ]]; then
     echo "install.sh: cannot determine the operator user (got: '${OPERATOR_USER}')." >&2
@@ -118,13 +122,11 @@ if [[ -n "$LEGACY_BIN" ]]; then
     ln -sfn "$BIN_NAME" "$PREFIX/bin/$LEGACY_BIN"
 fi
 
-# 3. Create the data directory.
-if [[ ! -d "$DATADIR" ]]; then
-    echo "==> creating $DATADIR (owner: $OPERATOR_USER)"
-    install -d -m 0755 -o "$OPERATOR_USER" -g "$OPERATOR_USER" "$DATADIR"
-else
-    echo "==> $DATADIR already exists (left alone)"
-fi
+# 3. (No data-directory step.) The DB lives under the operator's user-home
+# ($XDG_DATA_HOME/tmux-msg or ~/.local/share/tmux-msg/messages.db, #308) and is
+# created lazily by the binary on first open (store.Open MkdirAll's the parent).
+# Nothing to create or chown at install time — the path is already owned by the
+# operator by virtue of being under their home.
 
 # 4. Install the systemd user template.
 echo "==> installing systemd user template $UNIT_NAME"

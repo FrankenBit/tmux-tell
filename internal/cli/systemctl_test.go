@@ -45,16 +45,16 @@ func TestStartMailman_PropagatesError(t *testing.T) {
 }
 
 // TestStartMailmanWouldMismatchSystemd_DefaultDBClean confirms the #293
-// detection helper treats the production default path as "no mismatch" —
+// detection helper treats the user-home default path as "no mismatch" —
 // the common-case caller (CLAUDE_MSG_DB unset, --db unset, resolved to
-// defaultDBLocation) must not be refused.
+// defaultDBLocation()) must not be refused.
 func TestStartMailmanWouldMismatchSystemd_DefaultDBClean(t *testing.T) {
-	mismatched, callerDB := startMailmanWouldMismatchSystemd(defaultDBLocation)
+	mismatched, callerDB := startMailmanWouldMismatchSystemd(defaultDBLocation())
 	if mismatched {
 		t.Errorf("mismatched=true for the default DB path; should be false")
 	}
-	if callerDB != defaultDBLocation {
-		t.Errorf("callerDB=%q, want defaultDBLocation %q", callerDB, defaultDBLocation)
+	if callerDB != defaultDBLocation() {
+		t.Errorf("callerDB=%q, want defaultDBLocation() %q", callerDB, defaultDBLocation())
 	}
 }
 
@@ -89,8 +89,8 @@ func TestStartMailmanWouldMismatchSystemd_SandboxDBFires(t *testing.T) {
 func TestStartMailmanMismatchError_Actionable(t *testing.T) {
 	msg := startMailmanMismatchError("alice", "/tmp/sandbox.db")
 	for _, frag := range []string{
-		"/tmp/sandbox.db", // caller's DB
-		defaultDBLocation, // unit file's DB
+		"/tmp/sandbox.db",   // caller's DB
+		defaultDBLocation(), // user-home default DB
 		"--start-mailman=false",
 		"serve --agent alice",
 	} {

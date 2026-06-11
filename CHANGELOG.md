@@ -109,6 +109,24 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   preserved regardless. Addresses the stale-row class surfaced 2026-06-10 on alcatraz
   where a retired chamber slot leaked permanently into every `agents` listing.
 
+### Changed
+
+- **Default DB location moved to user-home; install no longer requires shared-space chown (#308).**
+  The default DB resolves under the operator's user-home — `$XDG_DATA_HOME/tmux-msg/messages.db`,
+  or `~/.local/share/tmux-msg/messages.db` when `$XDG_DATA_HOME` is unset — instead of the former
+  system-global `/var/lib/tmux-msg/messages.db`. `install.sh` no longer creates or chowns a
+  shared-space data dir (the binary creates the user-home dir lazily on first open), and the
+  systemd mailman units drop the `Environment=CLAUDE_MSG_DB=...` directive (the binary's own XDG
+  resolution is correct under the operator's UID). This makes the substrate's trust boundary
+  exactly congruent with tmux's per-user model and resolves a substrate-vs-adapter mismatch
+  surfaced by codex sandbox integration: a sandbox-by-default adapter (codex) can now write the DB
+  without per-write operator escalation, since it lives under the user's own home (substrate-witness
+  Lookout, 2026-06-11). **Hard cut** — operators with an existing `/var/lib/tmux-msg/messages.db`
+  must `mv` it to `~/.local/share/tmux-msg/messages.db` once at deploy time (no auto-migration shim;
+  there is exactly one installed deployment). The `--db` / `$CLAUDE_MSG_DB` overrides are unchanged,
+  and the #293 start-mailman mismatch guard now compares against the user-home default. `uninstall.sh
+  --purge` targets the user-home DB dir.
+
 ### Fixed
 
 - **Paste-incapable adapters force-defer instead of clobbering operator input (#323).**

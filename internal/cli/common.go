@@ -8,9 +8,38 @@ import (
 	"path/filepath"
 )
 
-// Default DB path for production installs. Override with --db or
-// $CLAUDE_MSG_DB. Tests use a temp file or :memory:.
-const defaultDBLocation = "/var/lib/tmux-msg/messages.db"
+// defaultDBLocation resolves the default DB path under user-home, honoring the
+// XDG Base Directory spec (#308): `$XDG_DATA_HOME/tmux-msg/messages.db` when
+// $XDG_DATA_HOME is set, else `$HOME/.local/share/tmux-msg/messages.db`.
+// Override with --db or $CLAUDE_MSG_DB. Tests use a temp file or :memory:.
+//
+// Moved from the system-global `/var/lib/tmux-msg/messages.db` (#308): tmux is
+// per-user by design (sockets, panes, identity all run under the operator's
+// UID), so the bus's trust boundary belongs under user-home — congruent with
+// tmux's per-user model, no install-time shared-space chown, and writable by
+// sandbox-by-default adapters (codex) without per-write escalation.
+//
+// Resolution is a pure function of the environment so a process and its
+// systemd-managed mailman — both running under the same UID — resolve the same
+// path. Caveat (#308): if the operator's interactive shell exports
+// $XDG_DATA_HOME but the `systemctl --user` manager does not inherit it, the
+// CLI and the mailman could diverge; in the common case (XDG_DATA_HOME unset,
+// $HOME set everywhere) both land on `~/.local/share/tmux-msg/messages.db`.
+//
+// Degenerate fallback: if neither $XDG_DATA_HOME nor $HOME is set, returns a
+// relative `.local/share/tmux-msg/messages.db` rather than erroring — store.Open
+// surfaces a real failure if that path is unwritable, which is the honest signal.
+func defaultDBLocation() string {
+	dataHome := os.Getenv("XDG_DATA_HOME")
+	if dataHome == "" {
+		if home := os.Getenv("HOME"); home != "" {
+			dataHome = filepath.Join(home, ".local", "share")
+		} else {
+			dataHome = filepath.Join(".local", "share")
+		}
+	}
+	return filepath.Join(dataHome, "tmux-msg", "messages.db")
+}
 
 // Caps — operator-chosen 2026-05-29 (see roadmap epic #1).
 //
@@ -58,7 +87,7 @@ func resolveDBPath(flagValue string) string {
 	if env := os.Getenv("CLAUDE_MSG_DB"); env != "" {
 		return env
 	}
-	return defaultDBLocation
+	return defaultDBLocation()
 }
 
 // dbPathSource returns a label describing how resolveDBPath resolved the

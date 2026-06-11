@@ -26,7 +26,9 @@
 set -euo pipefail
 
 PREFIX=${PREFIX:-/usr/local}
-DATADIR=${DATADIR:-/var/lib/tmux-msg}
+# Default computed from the operator's user-home below (#308) when not set
+# explicitly via --datadir / $DATADIR.
+DATADIR=${DATADIR:-}
 OPERATOR_USER=${SUDO_USER:-${USER:-alex}}
 PURGE_DATA=false
 
@@ -37,7 +39,8 @@ Usage: sudo -A ./uninstall.sh [--purge] [--prefix DIR] [--datadir DIR]
   --purge           Also delete the SQLite data directory (default-off;
                     needs an interactive confirmation when stdin is a TTY).
   --prefix DIR      Where the binary lives (default: /usr/local).
-  --datadir DIR     Where the SQLite DB lives (default: /var/lib/tmux-msg).
+  --datadir DIR     Where the SQLite DB lives (default:
+                    ~/.local/share/tmux-msg under the operator's home, #308).
   -h, --help        Show this message.
 
 The script leaves /etc/tmux-msg/ alone (operator may have hand-
@@ -68,6 +71,27 @@ if [[ $EUID -ne 0 ]]; then
     exit 1
 fi
 
+# Resolve operator's home + uid so systemctl --user can target the right
+# session, and so the default data dir resolves under user-home (#308). Same
+# shape as install.sh. Resolved BEFORE the foot-gun guard because the guard
+# needs the final DATADIR value.
+OPERATOR_HOME=$(getent passwd "$OPERATOR_USER" | cut -d: -f6)
+OPERATOR_UID=$(id -u "$OPERATOR_USER" 2>/dev/null || echo "")
+if [[ -z "$OPERATOR_HOME" || -z "$OPERATOR_UID" ]]; then
+    echo "uninstall.sh: cannot resolve home dir or uid for $OPERATOR_USER" >&2
+    exit 1
+fi
+USER_SYSTEMD="$OPERATOR_HOME/.config/systemd/user"
+
+# Default data dir is the operator's user-home location (#308) unless an
+# explicit --datadir / $DATADIR override was given. Honors the standard XDG
+# fallback (~/.local/share); a custom $XDG_DATA_HOME install should pass
+# --datadir explicitly (the operator's shell env isn't visible to this
+# root-run script).
+if [[ -z "$DATADIR" ]]; then
+    DATADIR="$OPERATOR_HOME/.local/share/tmux-msg"
+fi
+
 # Foot-gun guard: refuse to run from inside the data directory itself.
 # The `realpath` resolves symlinks so a chrooted run still trips.
 CWD_REAL=$(realpath .)
@@ -77,16 +101,6 @@ if [[ "$CWD_REAL" == "$DATADIR_REAL"* ]]; then
     echo "  cd out of the data directory before running the script." >&2
     exit 1
 fi
-
-# Resolve operator's home + uid so systemctl --user can target the
-# right session. Same shape as install.sh.
-OPERATOR_HOME=$(getent passwd "$OPERATOR_USER" | cut -d: -f6)
-OPERATOR_UID=$(id -u "$OPERATOR_USER" 2>/dev/null || echo "")
-if [[ -z "$OPERATOR_HOME" || -z "$OPERATOR_UID" ]]; then
-    echo "uninstall.sh: cannot resolve home dir or uid for $OPERATOR_USER" >&2
-    exit 1
-fi
-USER_SYSTEMD="$OPERATOR_HOME/.config/systemd/user"
 
 # 1. Stop + disable every claude-mailman@*.service user unit.
 #
