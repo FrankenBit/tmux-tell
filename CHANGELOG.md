@@ -33,6 +33,33 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-06-11
+
+Bugfix release: feature-frozen on top of v0.15.0 to land the five substrate-
+hardening fixes surfaced during the 2026-06-10 alcatraz tmux outage forensics
+(#287 + #291 + #293 + #296 + #298), plus the durable record for the tool-name
+naming decision (ADR-0010 accepting `tmux-tell`). The v0.16.0 substrate-
+hardening cluster (#285 / #286 / #288 / #289 / #290 / #299 / #300 plus PR #283
+codex adapter) continues against this baseline. Deprecation eligibility: all
+four cleared-for-removal surfaces extend through v0.16.0 per ADR-0008
+§Discretion clause — the v0.15.1 cut surface is intentionally narrow.
+
+### Docs
+
+- **ADR-0010 (Accepted): tool name is `tmux-tell` (#294).** Durable record of
+  the 2026-06-10 blind-vote disposition. Pilot drove a two-phase private
+  candidate-collection process under blindness guarantees (Phase 1
+  three-favorites, Phase 2 single pick); the 8-participant aggregate produced
+  `tmux-post` (4 votes), `tmux-note` (3 votes), `tmux-tell` (1 vote). Operator
+  disposed `tmux-tell` on adapter-grammar (the `tmux-tell-claude` imperative
+  reads "tmux, tell Claude…"), product-name framing over technical-description,
+  `/tell` MUD/IRC async heritage, and ship-framing fit. Rename arc files as a
+  v0.17.0 candidate; this release ships only the durable disposition, not the
+  binary rename. The ADR also retires the original "spontaneous fall in love"
+  bar from the closed PR #218 round, replacing it with a corrected
+  five-axis bar (substrate-honesty under architectural-corner commitment,
+  adapter grammar, speakability, tonal match, churn cost).
+
 ### Fixed
 
 - **`tmux-msg.register` MCP tool now auto-clears the `#224` attention signal,
