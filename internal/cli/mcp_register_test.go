@@ -177,6 +177,35 @@ func TestMCP_Register_ClearsStuckState(t *testing.T) {
 	}
 }
 
+// TestMCP_Register_ClearsAttentionState pins #298: the MCP register tool
+// path mirrors the CLI's #224 attention auto-clear. A chamber re-registering
+// via MCP (the spawn-die / self-recovery / ad-hoc reset path) must have its
+// stale attention_state cleared so the operator's attention queue doesn't
+// carry stale "awaiting_operator" signals across chamber restarts — same
+// substrate-honest semantics as the CLI register surface.
+func TestMCP_Register_ClearsAttentionState(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%42")
+	s := newCmdTestStore(t, "existing")
+	(&fakeSystemctl{}).install(t)
+	if err := s.SetAttentionState(context.Background(), "existing",
+		store.AttentionStateAwaitingOperator); err != nil {
+		t.Fatalf("seed attention_state: %v", err)
+	}
+
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+		"name":  "existing",
+		"force": true,
+	})
+	if got["ok"] != true {
+		t.Fatalf("got %v", got)
+	}
+	a, _ := s.GetAgent(context.Background(), "existing")
+	if a.AttentionState != store.AttentionStateIdle {
+		t.Errorf("MCP register did not clear attention_state: %q, want %q",
+			a.AttentionState, store.AttentionStateIdle)
+	}
+}
+
 func TestMCP_Register_NoPaneAvailable(t *testing.T) {
 	t.Setenv("TMUX_PANE", "")
 	s := newCmdTestStore(t)

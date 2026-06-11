@@ -1123,14 +1123,22 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		if err := s.SetDeliveryMode(ctx, in.Name, deliveryMode); err != nil {
 			return nil, fmt.Errorf("set delivery_mode: %w", err)
 		}
-		// #291: clear any mailman stuck-state on (re)register. Unlike the
-		// #224 attention auto-clear (CLI-register-only today), stuck MUST be
-		// cleared on the MCP path too: a parked mailman re-registered with a
-		// corrected pane would otherwise update pane_id yet stay parked,
-		// silently never resuming delivery. Best-effort — registration already
-		// succeeded above, so a failed clear is operationally awkward but not
-		// bus-fatal (and the MCP closure has no stderr for a soft WARN).
+		// #291: clear any mailman stuck-state on (re)register. A parked mailman
+		// re-registered with a corrected pane would otherwise update pane_id
+		// yet stay parked, silently never resuming delivery. Best-effort —
+		// registration already succeeded above, so a failed clear is
+		// operationally awkward but not bus-fatal (and the MCP closure has no
+		// stderr for a soft WARN).
 		_ = s.ClearStuck(ctx, in.Name)
+		// #298: clear any prior attention_state on (re)register, mirroring the
+		// CLI auto-clear (#224). A chamber re-registering via MCP — the spawn-
+		// die / self-recovery / ad-hoc reset path — is back and ready;
+		// whatever it was awaiting is presumed resolved (or answered
+		// out-of-band). Closes the CLI/MCP asymmetry surfaced during #297
+		// review (the path chambers actually use must clear the same state
+		// as the operator-typed CLI does). Best-effort, same rationale as
+		// the ClearStuck above.
+		_ = s.SetAttentionState(ctx, in.Name, store.AttentionStateIdle)
 
 		// Optional alias append. AddAlias is idempotent on same-agent
 		// duplicates, but rejects cross-canonical collisions with

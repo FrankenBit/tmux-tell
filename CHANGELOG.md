@@ -35,6 +35,15 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **`tmux-msg.register` MCP tool now auto-clears the `#224` attention signal,
+  matching the CLI register surface (#298).** A chamber re-registering via MCP
+  (spawn-die, self-recovery, ad-hoc reset) had its stale `awaiting_operator`
+  signal persist on the operator's attention queue — the CLI register path
+  cleared it but the MCP path didn't, surfaced as a pre-existing asymmetry
+  during `#297` review. The MCP handler now calls `SetAttentionState(idle)`
+  best-effort right alongside the existing `#297` stuck-state clear. Test
+  pins both paths; mutation-verified.
+
 - **Mailman no longer storms tmux on a persistent `can't find pane` failure
   (#291).** A stale or wrong-server pane registration used to drive the
   pre-paste safety-abort into a tight retry loop (~100 probes/sec), which
