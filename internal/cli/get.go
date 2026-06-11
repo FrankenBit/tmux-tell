@@ -127,7 +127,7 @@ func runGetCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: tmux-msg-claude get <id> [flags]")
+		fmt.Fprintf(stderr, "usage: %s get <id> [flags]\n", active.BinaryName)
 		return exitUsage
 	}
 	id := fs.Arg(0)

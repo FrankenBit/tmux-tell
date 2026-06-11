@@ -39,7 +39,7 @@ func runSentCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintln(stderr, "usage: tmux-msg-claude sent [flags]")
+		fmt.Fprintf(stderr, "usage: %s sent [flags]\n", active.BinaryName)
 		return exitUsage
 	}
 
@@ -184,13 +184,13 @@ func runSentWithStore(ctx context.Context, s *store.Store,
 		}
 		if nUnverified > 0 {
 			fmt.Fprintf(stdout,
-				"%d message(s) in delivered_in_input_box — run `tmux-msg-claude resend <id>` to recover.\n",
-				nUnverified)
+				"%d message(s) in delivered_in_input_box — run `%s resend <id>` to recover.\n",
+				nUnverified, active.BinaryName)
 		}
 		if nFailed > 0 {
 			fmt.Fprintf(stdout,
-				"%d message(s) failed — run `tmux-msg-claude resend <id>` to retry.\n",
-				nFailed)
+				"%d message(s) failed — run `%s resend <id>` to retry.\n",
+				nFailed, active.BinaryName)
 		}
 		return exitOK
 

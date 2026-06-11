@@ -25,7 +25,8 @@ import (
 
 func main() {
 	p := cli.Profile{
-		BinaryName: "tmux-msg-codex",
+		BinaryName:   "tmux-msg-codex",
+		DisplayLabel: "Codex",
 		// No DeprecatedAlias: Codex is a new adapter with no legacy name.
 	}
 	os.Exit(cli.Run(p, os.Args[0], os.Args[1:], os.Stdin, os.Stdout, os.Stderr))

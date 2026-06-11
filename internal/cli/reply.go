@@ -162,7 +162,7 @@ func runWaitForReplyCLI(args []string, stdout, stderr io.Writer) int {
 	askID := fs.Arg(0)
 	if askID == "" {
 		return writeJSONError(stdout, stderr,
-			"wait-for-reply requires an ask_id: tmux-msg-claude wait-for-reply <ask_id>", exitUsage)
+			fmt.Sprintf("wait-for-reply requires an ask_id: %s wait-for-reply <ask_id>", active.BinaryName), exitUsage)
 	}
 
 	s, err := store.Open(resolveDBPath(*dbPath))
@@ -204,7 +204,7 @@ func runCheckRepliesCLI(args []string, stdout, stderr io.Writer) int {
 	askID := fs.Arg(0)
 	if askID == "" {
 		return writeJSONError(stdout, stderr,
-			"check-replies requires an ask_id: tmux-msg-claude check-replies <ask_id>", exitUsage)
+			fmt.Sprintf("check-replies requires an ask_id: %s check-replies <ask_id>", active.BinaryName), exitUsage)
 	}
 
 	s, err := store.Open(resolveDBPath(*dbPath))

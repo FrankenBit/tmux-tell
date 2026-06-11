@@ -172,7 +172,7 @@ func runPingCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: tmux-msg-claude ping <agent> [--timeout D] [--format text|json]")
+		fmt.Fprintf(stderr, "usage: %s ping <agent> [--timeout D] [--format text|json]\n", active.BinaryName)
 		return exitUsage
 	}
 	to := fs.Arg(0)

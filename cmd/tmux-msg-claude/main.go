@@ -23,6 +23,7 @@ import (
 func main() {
 	p := cli.Profile{
 		BinaryName:        "tmux-msg-claude",
+		DisplayLabel:      "Claude Code",
 		DeprecatedAlias:   "claude-msg",
 		DeprecatedRemoval: "v1.0",
 	}

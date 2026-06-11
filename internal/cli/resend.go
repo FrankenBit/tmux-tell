@@ -61,7 +61,7 @@ func runResendCLI(args []string, stdout, stderr io.Writer) int {
 func runResendWithStore(ctx context.Context, s *store.Store, p resendParams, stdout, stderr io.Writer) int {
 	if p.OriginalID == "" {
 		return writeJSONError(stdout, stderr,
-			"resend requires a message id: tmux-msg-claude resend <id>", exitUsage)
+			fmt.Sprintf("resend requires a message id: %s resend <id>", active.BinaryName), exitUsage)
 	}
 
 	orig, err := s.GetMessage(ctx, p.OriginalID)

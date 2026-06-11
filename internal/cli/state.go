@@ -48,7 +48,7 @@ func resolveAgentState(ctx context.Context, s *store.Store, agent string) (agent
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			res.State = tmuxio.StateUnknown.String()
-			res.Evidence = tmuxio.Evidence{Reason: fmt.Sprintf("agent %q not registered — run 'tmux-msg-claude discover'", agent)}
+			res.Evidence = tmuxio.Evidence{Reason: fmt.Sprintf("agent %q not registered — run '%s discover'", agent, active.BinaryName)}
 			res.CapturedAt = nowRFC3339()
 			return res, fmt.Errorf("agent %q not registered", agent)
 		}
@@ -59,7 +59,7 @@ func resolveAgentState(ctx context.Context, s *store.Store, agent string) (agent
 	}
 	if a.PaneID == "" {
 		res.State = tmuxio.StateUnknown.String()
-		res.Evidence = tmuxio.Evidence{Reason: fmt.Sprintf("agent %q has no pane registered — run 'tmux-msg-claude discover'", agent)}
+		res.Evidence = tmuxio.Evidence{Reason: fmt.Sprintf("agent %q has no pane registered — run '%s discover'", agent, active.BinaryName)}
 		res.CapturedAt = nowRFC3339()
 		return res, fmt.Errorf("agent %q has no pane", agent)
 	}

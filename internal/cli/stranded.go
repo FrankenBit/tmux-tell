@@ -130,7 +130,7 @@ func listStrandedBookmarks(ctx context.Context, s *store.Store, agent string) ([
 // Usage: tmux-msg-claude stranded <list|show|prune> [args]
 func runStrandedCLI(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: tmux-msg-claude stranded <list|show|prune> [args]")
+		fmt.Fprintf(stderr, "usage: %s stranded <list|show|prune> [args]\n", active.BinaryName)
 		return exitUsage
 	}
 	switch args[0] {
@@ -222,7 +222,7 @@ func runStrandedShowCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: tmux-msg-claude stranded show <bookmark-id> [-o file]")
+		fmt.Fprintf(stderr, "usage: %s stranded show <bookmark-id> [-o file]\n", active.BinaryName)
 		return exitUsage
 	}
 	id := fs.Arg(0)

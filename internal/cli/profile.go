@@ -11,6 +11,11 @@ package cli
 //   - BinaryName: the installed binary name. Also the systemd mailman unit
 //     prefix (<BinaryName>-mailman@<agent>.service) and the name printed in
 //     usage / version / unknown-subcommand chrome.
+//   - DisplayLabel: the human-readable adapter name used in usage prose where
+//     the underlying CLI tool is named in a sentence (e.g. "Claude Code" /
+//     "Codex"). Distinct from BinaryName: BinaryName is the literal command a
+//     reader would type; DisplayLabel is the product it adapts. Used by the
+//     run.go usageText "mcp" / "hook-context" descriptions (#280).
 //   - DeprecatedAlias / DeprecatedRemoval: the legacy binary name an adapter
 //     carries through a deprecation cycle (Claude: claude-msg → removed v1.0,
 //     ADR-0008). DeprecatedAlias is empty when the adapter never had a prior
@@ -22,6 +27,7 @@ package cli
 // paste-needing adapter lands and shapes that seam with its specifics in hand.
 type Profile struct {
 	BinaryName        string
+	DisplayLabel      string
 	DeprecatedAlias   string
 	DeprecatedRemoval string
 }
@@ -34,6 +40,7 @@ type Profile struct {
 // behavior unchanged.
 var active = Profile{
 	BinaryName:        "tmux-msg-claude",
+	DisplayLabel:      "Claude Code",
 	DeprecatedAlias:   "claude-msg",
 	DeprecatedRemoval: "v1.0",
 }

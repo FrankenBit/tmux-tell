@@ -92,7 +92,7 @@ func runTrackCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: tmux-msg-claude track <id> [flags]")
+		fmt.Fprintf(stderr, "usage: %s track <id> [flags]\n", active.BinaryName)
 		return exitUsage
 	}
 	id := fs.Arg(0)

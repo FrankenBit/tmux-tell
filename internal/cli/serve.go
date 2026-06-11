@@ -452,14 +452,14 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	a, err := s.GetAgent(opCtx, opts.Agent)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(stderr, "agent %q not registered — run 'tmux-msg-claude discover'\n", opts.Agent)
+			fmt.Fprintf(stderr, "agent %q not registered — run '%s discover'\n", opts.Agent, active.BinaryName)
 			return exitUnavailable
 		}
 		fmt.Fprintf(stderr, "get_agent: %v\n", err)
 		return exitInternal
 	}
 	if a.PaneID == "" {
-		fmt.Fprintf(stderr, "agent %q has no pane_id — run 'tmux-msg-claude discover'\n", opts.Agent)
+		fmt.Fprintf(stderr, "agent %q has no pane_id — run '%s discover'\n", opts.Agent, active.BinaryName)
 		return exitUnavailable
 	}
 
@@ -1176,7 +1176,7 @@ func renderStrandedDraftBody(pane, triggerMsgID, content string) string {
 		strandedHeaderLine,
 		strandedPanePrefix + pane,
 		strandedTriggerPrefix + triggerMsgID,
-		"  Recover: tmux-msg-claude stranded list  →  tmux-msg-claude stranded show <id>",
+		fmt.Sprintf("  Recover: %s stranded list  →  %s stranded show <id>", active.BinaryName, active.BinaryName),
 		strandedContentMarker,
 		indentForBody(content),
 	}, "\n")
@@ -1253,7 +1253,7 @@ func handlePing(ctx context.Context, s *store.Store, logger *log.Logger, agent, 
 // pre-paste-safety "couldn't substantiate → unsafe" stance).
 func pingHealthy(ctx context.Context, pane string) (reason string, ok bool) {
 	if pane == "" {
-		return "agent registered but has no pane_id (run 'tmux-msg-claude discover')", false
+		return fmt.Sprintf("agent registered but has no pane_id (run '%s discover')", active.BinaryName), false
 	}
 	live, err := tmuxio.LivePanes(ctx)
 	if err != nil {

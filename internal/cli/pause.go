@@ -36,7 +36,7 @@ func runPauseCLI(args []string, paused bool, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr, "--all and a positional agent are mutually exclusive", exitUsage)
 	case !*all && fs.NArg() != 1:
 		return writeJSONError(stdout, stderr,
-			fmt.Sprintf("usage: tmux-msg-claude %s AGENT | --all", verb), exitUsage)
+			fmt.Sprintf("usage: %s %s AGENT | --all", active.BinaryName, verb), exitUsage)
 	}
 
 	s, err := store.Open(resolveDBPath(*dbPath))

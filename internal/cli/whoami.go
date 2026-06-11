@@ -64,7 +64,7 @@ func runWhoamiWithStore(ctx context.Context, s *store.Store,
 				"name":       name,
 				"registered": false,
 			})
-			fmt.Fprintf(stderr, "agent %q not in registry — run 'tmux-msg-claude discover' or check the install\n", name)
+			fmt.Fprintf(stderr, "agent %q not in registry — run '%s discover' or check the install\n", name, active.BinaryName)
 			return exitUnavailable
 		}
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)

@@ -9,10 +9,9 @@ import (
 )
 
 // usageText renders the top-level usage string for the active adapter. The
-// binary name is interpolated from the profile so each adapter binary prints
-// its own name; the subcommand list is shared. (Per-subcommand usage hints and
-// the "Claude Code"-specific help prose remain adapter-literal for now — they
-// become adapter-correctness work when the Codex surface lands, #248 PR2.)
+// binary name and the adapter display-label ("Claude Code" / "Codex") are
+// interpolated from the profile so each adapter binary prints its own name and
+// names its own host tool; the subcommand list is shared (#248 PR2, #280).
 func usageText() string {
 	return fmt.Sprintf(`usage: %s <subcommand> [args]
 
@@ -49,11 +48,11 @@ Subcommands:
   discover Re-derive agents.pane_id from current tmux state
   state   Probe a agent's current activity via read-only capture-pane (#71)
   refresh-all-mcps  Bulk-fire mcp-restart-tmux-msg to every registered agent (#62)
-  mcp     Speak MCP over stdio (Claude Code tools)
-  hook-context  Present pending messages as additionalContext for a hook-context agent — invoked by a Claude Code SessionStart/UserPromptSubmit hook (#249)
+  mcp     Speak MCP over stdio (%s tools)
+  hook-context  Present pending messages as additionalContext for a hook-context agent — invoked by a %s SessionStart/UserPromptSubmit hook (#249)
 
 See https://git.frankenbit.de/frankenbit/tmux-msg for the design notes.
-`, active.BinaryName)
+`, active.BinaryName, active.DisplayLabel, active.DisplayLabel)
 }
 
 // warnIfDeprecatedName emits the ADR-0008 deprecation WARN when the binary is

@@ -189,7 +189,7 @@ func runThreadCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: tmux-msg-claude thread <id> [--format tree|json]")
+		fmt.Fprintf(stderr, "usage: %s thread <id> [--format tree|json]\n", active.BinaryName)
 		return exitUsage
 	}
 	id := fs.Arg(0)

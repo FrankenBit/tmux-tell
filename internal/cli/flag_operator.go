@@ -45,7 +45,7 @@ func runFlagOperatorCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	rest := fs.Args()
 	if len(rest) == 0 {
-		fmt.Fprintln(stderr, "usage: tmux-msg-claude flag-operator [--from NAME] \"<body>\"")
+		fmt.Fprintf(stderr, "usage: %s flag-operator [--from NAME] \"<body>\"\n", active.BinaryName)
 		return exitUsage
 	}
 	body := strings.Join(rest, " ")
@@ -126,7 +126,7 @@ func doFlagOperator(ctx context.Context, s *store.Store, sender, body string) (m
 		if errors.Is(err, store.ErrNotFound) {
 			return map[string]any{
 				"ok":    false,
-				"error": fmt.Sprintf("recipient %q not registered — operator needs to set it up via `tmux-msg-claude register --name %s --delivery-mode mailbox-only` before chambers can flag for attention", operatorAttentionRecipient, operatorAttentionRecipient),
+				"error": fmt.Sprintf("recipient %q not registered — operator needs to set it up via `%s register --name %s --delivery-mode mailbox-only` before chambers can flag for attention", operatorAttentionRecipient, active.BinaryName, operatorAttentionRecipient),
 			}, exitDataErr
 		}
 		return map[string]any{

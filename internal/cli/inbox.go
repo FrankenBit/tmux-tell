@@ -45,7 +45,7 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 	if fs.NArg() > 1 {
-		fmt.Fprintln(stderr, "usage: tmux-msg-claude inbox [AGENT] [flags]")
+		fmt.Fprintf(stderr, "usage: %s inbox [AGENT] [flags]\n", active.BinaryName)
 		return exitUsage
 	}
 
