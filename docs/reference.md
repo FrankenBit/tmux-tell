@@ -303,6 +303,87 @@ real option for Codex) is the per-adapter `PaneProfile` refactor tracked at #322
 integration notes — Codex hook events with `additionalContext` support: `SessionStart`,
 `UserPromptSubmit`, `PostToolUse`.*
 
+## Bus host-locality
+
+The bus is **host-local**: one SQLite DB per host, per user (#308). There is no
+substrate-default cross-host bus. The MCP server and the DB share a machine;
+the mailmen and the panes they paste into share a machine. Substrate scope is
+exactly the operator's tmux server on that host — see
+[`security.md` §3.2](./security.md) for the load-bearing identity invariant
+this rests on, and [`security.md` §4](./security.md) for what cross-host would
+require if the substrate ever expanded to it.
+
+This is a **deliberate scope-boundary**, not a gap. Federating SQLite mailboxes
+across hosts would dissolve the auditability simplicity the project commits to
+(read every message with `sqlite3`, uninstall is one script, no replication
+state machine to reason about). Cross-host messaging is a substantively
+different problem with substantively different tradeoffs; if a future
+deployment ships under a "cross-host tmux-msg" label, it'll be an explicit
+deviation from this scope, not the default behavior.
+
+### SSH'd panes are one-way carriers
+
+When a tmux pane runs an SSH session to a remote host, the bus sees it as a
+regular pane: the mailman pastes bytes into the pane, SSH transports those
+bytes to the remote-end, the remote process receives them as terminal input.
+**This is bus-on-host → SSH-transport → remote-input — not bus-to-bus
+communication.** The return path (remote process trying to participate in the
+bus on the alcatraz side) is **not** substrate-default behavior.
+
+The framing matters: an operator encountering an SSH'd pane in their tmux
+might assume the substrate offers cross-host messaging, expect a reply path,
+and wonder if the substrate is broken when none appears. It's not broken;
+it's substrate-scope. The substrate did one-way carriage (local → SSH →
+remote) cleanly; bidirectional participation needs the Remote MCP mode opt-in
+([#310](https://git.frankenbit.de/frankenbit/tmux-msg/issues/310) for the
+design discussion).
+
+### Three patterns for SSH'd panes
+
+When a chamber's pane runs an SSH session, the operator has three
+substrate-honest choices:
+
+**Pattern A — Leave unregistered.** The bus doesn't try to deliver to the
+pane; operator watches the pane manually and relays SSH'd content back to
+local bus chambers as needed. Cleanest separation; lowest substrate-coupling.
+Best for short-lived remote experiments.
+
+**Pattern B — Register `mailbox-only`.** Local bus chambers can `send` to the
+remote pane; messages queue but the substrate doesn't paste them. Operator
+reads them via `inbox --watch` or similar and relays replies manually. Good
+for operator-mediated bidirectional exchange where the operator is the
+human-in-the-loop translator between local-bus and remote-terminal.
+
+**Pattern C — Register `paste-and-enter`.** Local mailman pastes bytes
+through the SSH session; one-way carriage to the remote chamber's input
+stream. The remote-end can't participate in the local bus by default — for
+that, see [#310](https://git.frankenbit.de/frankenbit/tmux-msg/issues/310)
+(Remote MCP mode, opt-in).
+
+The 2026-06-11 Caymans-Admin substrate-witness experiment used pattern C — a
+one-way carriage that worked exactly as advertised. The post-hoc observation
+that locked in this section's framing:
+
+> *"From this side of the wire it doesn't feel like 'tmux-msg from Alcatraz.'
+> It feels like an operator on a remote host pasting into my terminal via a
+> transport I can't see. That's exactly what's happening, of course, and it's
+> a fine demo, but the framing matters: this isn't bus-to-bus communication,
+> it's bus-on-Alcatraz → SSH → my-input-stream."*
+
+### The Remote MCP mode exception
+
+A separate opt-in mode where the remote-end's MCP routes its tool calls back
+to the bus via reverse-SSH tunnel is tracked at
+[#310](https://git.frankenbit.de/frankenbit/tmux-msg/issues/310).
+**Explicitly not "cross-host bus"** — the bus stays host-local; the MCP
+becomes a remote-router via operator-configured tunnel. Remote MCP mode is
+*not* default substrate behavior — it requires explicit operator configuration
+(SSH tunnel setup, reverse-port allocation, MCP-route override).
+
+Operators who want bidirectional participation from a remote chamber should
+treat Remote MCP mode as the canonical path, *not* expect the default bus to
+extend across hosts.
+
 ## Verified vs unverified deliveries
 
 **Verified vs unverified deliveries.** After a paste+Enter, the mailman looks

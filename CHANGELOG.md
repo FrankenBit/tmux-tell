@@ -175,6 +175,21 @@ four cleared-for-removal surfaces extend through v0.16.0 per ADR-0008
 
 ### Docs
 
+- **Reference: bus host-locality + SSH'd-pane patterns (#312).** New
+  `docs/reference.md` §"Bus host-locality" names the substrate's deliberate
+  scope-boundary: the bus is host-local (one SQLite DB per host, per user
+  per #308), and SSH'd panes are one-way carriers — bus-on-host → SSH-transport
+  → remote-input, *not* bus-to-bus communication. Documents three substrate-honest
+  patterns for SSH'd panes (unregistered / mailbox-only / paste-and-enter) and
+  forward-references the Remote MCP mode opt-in (#310) as the bidirectional path
+  that's not default substrate behavior. Closes the framing gap surfaced by the
+  2026-06-11 Caymans-Admin observation ("from this side of the wire it doesn't
+  feel like 'tmux-msg from Alcatraz' — it feels like an operator pasting through
+  a transport I can't see") so future operators don't expect a reply path the
+  substrate doesn't promise. Composes with #308 (user-scope DB alignment) and
+  security.md §3.2 (the load-bearing identity invariant the host-locality
+  rests on).
+
 - **Diagnostic-playbook entry: drift-detection rejection (#311).** New
   `docs/diagnostic-playbook.md` section "Drift-detection refused my send" walks
   the operator through the substrate's `drift_detected_unrecoverable` safety
@@ -182,14 +197,14 @@ four cleared-for-removal surfaces extend through v0.16.0 per ADR-0008
   the bus refuses to paste rather than risk delivering to the wrong pane.
   Documents the symptom shape (the exact `WARN drift_detected_unrecoverable`
   log line, the `state: failed` send-response), the root cause (substrate's
-  `discover` walker matching `pane_title` against the registered name), and
-  two resolution paths — substrate-honest match-the-name path first, then
-  `--drift-soft-fail` override for deliberate experiments. Closes the
-  diagnostic gap surfaced by the 2026-06-11 Caymans-Admin observation
-  (registered as `caymans-admin`, pane self-declared as `Admin`; re-registering
-  as `admin` made delivery succeed). Composes with ADR-0009 framing: drift
-  detection is a substrate-general invariant on pane-identity, not
-  adapter-specific.
+  `discover` walker matching `pane_title` / `cmdline` / `window_name` against
+  the registered name), and two resolution paths — substrate-honest
+  match-the-name path first, then `--drift-soft-fail` override for deliberate
+  experiments. Closes the diagnostic gap surfaced by the 2026-06-11
+  Caymans-Admin observation (registered as `caymans-admin`, pane self-declared
+  as `Admin`; re-registering as `admin` made delivery succeed). Composes with
+  ADR-0009 framing: drift detection is a substrate-general invariant on
+  pane-identity, not adapter-specific.
 
 - **ADR-0010 (Accepted): tool name is `tmux-tell` (#294).** Durable record of
   the 2026-06-10 blind-vote disposition. Pilot drove a two-phase private
