@@ -35,6 +35,7 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **Static check: `TestNoClaudeLiteralInCLISource` forbids hardcoded `tmux-msg-claude` in `internal/cli` (#324).** Converts #280/#315's "route through `active.BinaryName`" convention into a CI-enforced invariant. Walks all non-test `.go` files in the package via `go/ast`, inspects only `*ast.BasicLit` STRING nodes (comments are skipped), and fails with the offending file+line if the literal appears outside `profile.go` (the one allowed source-of-truth for the BinaryName default).
 - **Codex MCP path: document `TMUX_AGENT_NAME` env-block requirement (#320).** Codex's
   MCP host does not propagate `$TMUX_PANE` to spawned MCP server processes, so the
   substrate's implicit `$TMUX_PANE → registry` sender-resolution fallback never fires.
