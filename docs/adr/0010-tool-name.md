@@ -266,8 +266,10 @@ is immediately readable and memorable.
 
 ### Crew buy-in
 
-All 6 crew members responded with genuine buy-in after disposition broadcast.
-No concerns raised that the operator's reasoning did not address.
+6 of 7 crew members responded with genuine buy-in after disposition broadcast
+(Pilot drove the Phase 1 + Phase 2 aggregates and the disposition broadcast
+itself, so their buy-in is implicit-by-driving rather than explicit-by-response;
+no chamber raised a concern that the operator's reasoning did not address).
 
 ## References
 
