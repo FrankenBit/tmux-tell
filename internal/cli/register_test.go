@@ -119,6 +119,89 @@ func TestRegister_CLI_SurfacesQueuedBacklog(t *testing.T) {
 	}
 }
 
+// TestRegister_CLI_RefusesStartMailmanWithNonDefaultDB pins the #293
+// refusal at the CLI surface. A caller with a non-default $CLAUDE_MSG_DB
+// requesting --start-mailman=true would silently misroute (agent row in
+// sandbox DB, systemd-managed mailman polling production DB), so the CLI
+// refuses up-front with an actionable error before any DB writes happen.
+func TestRegister_CLI_RefusesStartMailmanWithNonDefaultDB(t *testing.T) {
+	// Trap any actual systemctl call — the refusal must fire BEFORE the
+	// startMailman call site is ever reached, so the runner stays untouched.
+	var systemctlCalls int
+	prev := setSystemctlRunner(func(_ context.Context, args ...string) ([]byte, error) {
+		systemctlCalls++
+		return nil, nil
+	})
+	t.Cleanup(func() { setSystemctlRunner(prev) })
+
+	dbPath := filepath.Join(t.TempDir(), "messages.db")
+	t.Setenv("CLAUDE_MSG_DB", dbPath)
+	t.Setenv("TMUX_PANE", "%5")
+	var stdout, stderr bytes.Buffer
+	exit := runRegisterCLI([]string{
+		"--name", "alice", "--start-mailman=true",
+	}, &stdout, &stderr)
+
+	if exit != exitDataErr {
+		t.Fatalf("exit = %d, want exitDataErr (%d); stderr=%s",
+			exit, exitDataErr, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "non-default CLAUDE_MSG_DB") {
+		t.Errorf("expected refusal error mentioning non-default CLAUDE_MSG_DB; got %q", out)
+	}
+	if !strings.Contains(out, dbPath) {
+		t.Errorf("expected refusal error naming the caller's DB path %q; got %q", dbPath, out)
+	}
+	if !strings.Contains(out, "serve --agent") {
+		t.Errorf("expected refusal error suggesting `serve --agent` recovery; got %q", out)
+	}
+	if systemctlCalls != 0 {
+		t.Errorf("startMailman was reached %d times; refusal should fire BEFORE the systemctl call", systemctlCalls)
+	}
+
+	// And the agent row must NOT exist — refusal fires before any DB writes.
+	s, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store post-refusal: %v", err)
+	}
+	defer s.Close()
+	_, err = s.GetAgent(context.Background(), "alice")
+	if err == nil {
+		t.Errorf("agent row exists after refusal; should have been blocked before upsert")
+	}
+}
+
+// TestRegister_CLI_AllowsNonDefaultDBWithStartMailmanFalse confirms the
+// #293 refusal is scoped to start_mailman=true. A sandbox-DB caller using
+// --start-mailman=false (and presumably running `serve --agent` themselves
+// as a foreground subprocess) is the intended escape hatch — no refusal.
+func TestRegister_CLI_AllowsNonDefaultDBWithStartMailmanFalse(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "messages.db")
+	t.Setenv("CLAUDE_MSG_DB", dbPath)
+	t.Setenv("TMUX_PANE", "%5")
+	var stdout, stderr bytes.Buffer
+	exit := runRegisterCLI([]string{
+		"--name", "alice", "--start-mailman=false",
+	}, &stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d, want exitOK; stderr=%s", exit, stderr.String())
+	}
+	out := parseJSONResult(t, stdout.Bytes())
+	if out["mailman"] != "skipped" {
+		t.Errorf("mailman = %v, want \"skipped\"", out["mailman"])
+	}
+	// And the agent row should exist — the register itself succeeded.
+	s, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer s.Close()
+	if _, err := s.GetAgent(context.Background(), "alice"); err != nil {
+		t.Errorf("agent row missing after register: %v", err)
+	}
+}
+
 func TestStore_ValidDeliveryMode(t *testing.T) {
 	cases := map[string]bool{
 		store.DeliveryModePasteAndEnter: true,

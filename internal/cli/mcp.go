@@ -1186,6 +1186,20 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 			start = *in.StartMailman
 		}
 		if start {
+			// #293: refuse start_mailman when the MCP process is running
+			// against a non-default DB path. The systemd-managed mailman
+			// launches from the unit-file Environment= (default DB), so a
+			// sandbox-DB MCP that starts a systemd mailman silently misroutes
+			// — agent row in sandbox DB, mailman polling production DB. Skip
+			// the mailman start + surface the reason in mailman_error rather
+			// than the registration error path, since the upsert above already
+			// succeeded; the operator's actionable next step is foreground
+			// `serve --agent NAME`, named in the error.
+			if mismatched, callerDB := startMailmanWouldMismatchSystemd(resolveDBPath("")); mismatched {
+				resp["mailman"] = "skipped"
+				resp["mailman_error"] = startMailmanMismatchError(in.Name, callerDB)
+				return resp, nil
+			}
 			if err := startMailman(ctx, in.Name); err != nil {
 				resp["mailman"] = "failed"
 				resp["mailman_error"] = err.Error()

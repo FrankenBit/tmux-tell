@@ -33,6 +33,51 @@ func startMailman(ctx context.Context, agent string) error {
 	return nil
 }
 
+// startMailmanWouldMismatchSystemd reports whether starting the systemd-managed
+// mailman would silently misroute against the caller's intent (#293).
+//
+// The systemd-managed mailman launches from the unit-file's `Environment=`
+// directive — it does NOT inherit the env of whoever ran register. So a caller
+// who set `$CLAUDE_MSG_DB=/sandbox.db` and ran `register --start-mailman=true`
+// would write the agent row to the sandbox DB while the mailman polls the
+// production DB; the two never meet. Detection is structural: if the resolved
+// DB path the caller is using differs from the unit-file's default, the next
+// systemd-managed mailman start will silently mismatch.
+//
+// Returns the mismatch flag plus the caller's resolved DB path so the error
+// message can name both sides of the divergence.
+//
+// Calibration note (Surveyor PR #302 review): detection compares the caller's
+// resolved path against `defaultDBLocation` (the hard-coded default baked into
+// the shipped unit file). A custom install whose unit file overrides
+// `Environment=CLAUDE_MSG_DB=...` to a non-default path can over-fire (refuse
+// a caller using the matching custom DB) or under-fire (allow a caller on the
+// hard-coded default while the custom unit uses something else). The
+// substrate-honest fix compares against the runtime-observed unit-file value;
+// composes naturally with #290 once it lands. Default-install operators see
+// correct behavior today.
+func startMailmanWouldMismatchSystemd(resolvedDBPath string) (mismatched bool, callerDB string) {
+	return resolvedDBPath != defaultDBLocation, resolvedDBPath
+}
+
+// startMailmanMismatchError formats a caller-actionable error for the #293
+// silent-mismatch case. Names both DB paths + recommends the
+// foreground-`serve` recovery so the caller's env propagates to the mailman.
+func startMailmanMismatchError(agentName, callerDB string) string {
+	return fmt.Sprintf(
+		"refusing to start a systemd-managed mailman with non-default "+
+			"CLAUDE_MSG_DB (%s): systemd-managed mailmen launch from the "+
+			"unit-file Environment= (default DB at %s), so the mailman "+
+			"would silently poll the default DB instead of the sandbox DB "+
+			"this agent was registered against. "+
+			"To run the agent against a non-default DB, use "+
+			"`--start-mailman=false` here and start the mailman as a "+
+			"foreground subprocess that inherits your environment: "+
+			"`%s serve --agent %s` (or `nohup %s serve --agent %s &`).",
+		callerDB, defaultDBLocation, active.BinaryName, agentName,
+		active.BinaryName, agentName)
+}
+
 // stopMailman runs `systemctl --user disable --now tmux-msg-claude-mailman@NAME.service`.
 // Treats "not-loaded" output as success so the call is idempotent.
 func stopMailman(ctx context.Context, agent string) error {

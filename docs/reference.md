@@ -687,6 +687,24 @@ has backlog without a separate `tmux-msg.inbox` poll: if `queued > 0`, run
 on the rare event the count can't be read, the response carries `queued_error` instead
 and registration still succeeds.
 
+**Caveat — systemd-managed mailman uses the unit-file environment, not the caller's**
+(#293). When `register` is called with `start_mailman=true` (the default for
+`paste-and-enter` agents), the daemon is started via `systemctl --user enable --now
+<binary>-mailman@<name>.service`. The systemd-managed mailman that launches inherits
+its `Environment=` from the unit file — it does **not** inherit the env of whoever ran
+`register`. That means a caller who set `CLAUDE_MSG_DB=/sandbox.db` and ran
+`register --start-mailman=true` would write the agent row to the sandbox DB while the
+mailman polls the production DB (the unit file's default); the two never meet,
+and delivery silently mismatches the caller's intent.
+
+To prevent that silent footgun, `register` **refuses** the combination of
+`--start-mailman=true` with a non-default `CLAUDE_MSG_DB` / `--db` path. On the CLI
+the refusal is an `ok:false` error (exit 65); on the MCP path the registration still
+succeeds but `mailman` is `skipped` with `mailman_error` naming the resolved-vs-default
+DB divergence. To run an agent against a non-default DB, use `--start-mailman=false`
+and run the mailman as a foreground subprocess that inherits your environment:
+`<binary> serve --agent <name>` (or `nohup <binary> serve --agent <name> &`).
+
 **Don't-flood the backlog.** A pane that comes back after a restart with a deep
 backlog shouldn't have the whole queue pasted into it at once. So when a `paste-and-enter`
 agent (re)registers with `queued > 0`, the register handler stamps a per-agent

@@ -25,6 +25,46 @@ func (f *fakeSystemctl) install(t *testing.T) {
 	t.Cleanup(func() { setSystemctlRunner(prev) })
 }
 
+// TestMCP_Register_SkipsMailmanWithNonDefaultDB pins #293 on the MCP path.
+// When the MCP process is running against a non-default $CLAUDE_MSG_DB,
+// `tmux-msg.register` with start_mailman defaulted (true) returns ok:true
+// with the agent row written, but `mailman` is `skipped` and `mailman_error`
+// names the divergence — the operator sees that they need to start `serve`
+// as a foreground subprocess to deliver against the sandbox DB. The actual
+// systemctl runner must never be reached.
+func TestMCP_Register_SkipsMailmanWithNonDefaultDB(t *testing.T) {
+	t.Setenv("CLAUDE_MSG_DB", "/tmp/some-sandbox.db")
+	t.Setenv("TMUX_PANE", "%9")
+	s := newCmdTestStore(t)
+	fs := &fakeSystemctl{}
+	fs.install(t)
+
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+		"name": "sandboxed",
+	})
+	if got["ok"] != true {
+		t.Errorf("ok = %v, want true (registration itself succeeds); got=%v",
+			got["ok"], got)
+	}
+	if got["mailman"] != "skipped" {
+		t.Errorf("mailman = %v, want \"skipped\"", got["mailman"])
+	}
+	mmErr, _ := got["mailman_error"].(string)
+	if !strings.Contains(mmErr, "non-default CLAUDE_MSG_DB") {
+		t.Errorf("mailman_error missing 'non-default CLAUDE_MSG_DB' guidance: %q", mmErr)
+	}
+	if !strings.Contains(mmErr, "serve --agent sandboxed") {
+		t.Errorf("mailman_error missing foreground-serve recovery hint: %q", mmErr)
+	}
+	if len(fs.calls) != 0 {
+		t.Errorf("systemctl called %d times; should be 0 (mismatch detected before)", len(fs.calls))
+	}
+	// Registration itself succeeded — agent row exists.
+	if _, err := s.GetAgent(context.Background(), "sandboxed"); err != nil {
+		t.Errorf("agent row missing after MCP register: %v", err)
+	}
+}
+
 func TestMCP_Register_HappyPath(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%9")
 	s := newCmdTestStore(t) // empty registry

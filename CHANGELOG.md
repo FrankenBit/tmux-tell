@@ -58,6 +58,19 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   to plain `tmux` without `-L` (see #288); TMUX_TMPDIR is honored
   transparently via env-inheritance.
 
+- **`register --start-mailman=true` now refuses non-default `CLAUDE_MSG_DB`
+  (#293).** A systemd-managed mailman launches from the unit-file
+  `Environment=` directive, not the caller's env, so a sandbox-DB caller
+  requesting `start_mailman=true` would silently misroute (agent row in
+  sandbox DB, mailman polling production DB). The CLI now refuses the
+  combination with an actionable error pointing at `--start-mailman=false`
+  + `<binary> serve --agent <name>` as the foreground-subprocess recovery
+  path. The MCP `tmux-msg.register` tool applies the same check:
+  registration succeeds, but `mailman` is `skipped` with `mailman_error`
+  naming the divergence. Default-DB callers see no change.
+  `docs/reference.md` §Caveat documents the unit-file-Environment behavior
+  alongside the register surface.
+
 ## [0.15.0] — 2026-06-10
 
 ### Added
