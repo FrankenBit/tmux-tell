@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -68,4 +69,24 @@ func TestRegisterToolSchema_AdapterNamedAndNeutral(t *testing.T) {
 			t.Error("register schema still carries the old 'recipient's Claude session' framing")
 		}
 	})
+}
+
+// TestRegisterCLIHelp_DeliveryModeNeutral proves the `register --delivery-mode`
+// CLI flag-help — the parallel consumer surface to the MCP schema, shown by
+// `<binary> register --help` — carries the same adapter-neutral framing (#314,
+// folded in per Surveyor review of #326). Same under-claim failure mode as the
+// schema: a substrate-general surface must not name Claude. Profile-independent
+// (the neutralization is static prose, not binary-name threading).
+func TestRegisterCLIHelp_DeliveryModeNeutral(t *testing.T) {
+	var stderr bytes.Buffer
+	// -h makes the FlagSet print its defaults (incl. the delivery-mode help)
+	// to stderr, then runRegisterCLI returns without opening a store.
+	runRegisterCLI([]string{"-h"}, &bytes.Buffer{}, &stderr)
+	got := stderr.String()
+	if !strings.Contains(got, "the recipient agent's session") {
+		t.Errorf("register --delivery-mode help missing neutral framing; got:\n%s", got)
+	}
+	if strings.Contains(got, "Claude session") {
+		t.Errorf("register --delivery-mode help still names a Claude session; got:\n%s", got)
+	}
 }
