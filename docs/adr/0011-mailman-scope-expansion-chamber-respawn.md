@@ -1,8 +1,8 @@
 # ADR-0011: Mailman scope-expansion — the three-fence test, applied to chamber respawn
 
-> **Status**: Proposed
-> **Date**: 2026-06-11
-> **Authors**: Engineer (ADR draft), operator + Quartermaster (design framing — #285 provenance, 2026-06-09 design conversation)
+> **Status**: Accepted
+> **Date**: 2026-06-11 (proposed); 2026-06-11 (accepted — operator ratification via Quartermaster, #306)
+> **Authors**: Engineer (ADR draft), operator (ratified the three-fence framing 2026-06-11), Quartermaster (design framing + ratification routing), operator + Quartermaster (design framing — #285 provenance, 2026-06-09 design conversation), Surveyor (framework-quality review on PR #306)
 
 ## Context
 
