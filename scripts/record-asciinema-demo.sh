@@ -39,6 +39,7 @@
 # all sandbox state on exit (normal or error).
 
 set -euo pipefail
+unset TMUX TMUX_PANE
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -46,6 +47,7 @@ readonly SESSION="observe-gate-demo"
 readonly DB="/tmp/observe-gate-demo.db"
 readonly MAILMAN_PID_FILE="/tmp/observe-gate-demo-mailman.pid"
 readonly MAILMAN_LOG="/tmp/observe-gate-demo-mailman.log"
+readonly TMUXDIR="/tmp/observe-gate-demo-tmux"
 
 # CAST: respect env override; default to the canonical path under the repo root.
 CAST="${CAST:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)/docs/asciinema/observe-gate.cast}"
@@ -68,6 +70,21 @@ POST_SEND_TYPING="${POST_SEND_TYPING:-2.0}" # keep typing this long after send f
 POST_LAND_WAIT="${POST_LAND_WAIT:-2}"      # seconds for message to visually settle
 readonly TYPING_DELAY PRE_SEND_DELAY POST_SEND_TYPING POST_LAND_WAIT
 
+# Isolate the recording on a private tmux server BEFORE any cleanup runs, so the
+# pre-clean kill-session and the in-script `tmux` calls all land on the sandbox
+# server rather than the operator's main one — defense against the alcatraz-infra#31
+# outage class (tmux crash takes the operator's chamber session with it).
+#
+# Why TMUX_TMPDIR not `-L <socket>`: tmux-msg-claude's mailman + discover shell
+# out to plain `tmux` (no `-L` flag), but honor TMUX_TMPDIR via env-inheritance.
+# Under `-L` the mailman can't find the actor pane on the isolated server
+# (spawn-fail crash-loop) and discover walks the operator's default socket.
+# Under TMUX_TMPDIR all three (driver / mailman / discover) coherently land on
+# the private server. The `-L` form becomes viable once #288 plumbs the socket
+# through; until then TMUX_TMPDIR is the working isolation lever.
+export TMUX_TMPDIR="$TMUXDIR"
+mkdir -p "$TMUX_TMPDIR"
+
 # ── Cleanup (idempotent — safe to call multiple times) ────────────────────────
 
 cleanup() {
@@ -78,10 +95,12 @@ cleanup() {
         kill "$(cat "$MAILMAN_PID_FILE")" 2>/dev/null || true
         rm -f "$MAILMAN_PID_FILE"
     fi
-    # Kill ONLY the demo session — the operator's crew session lives on the same
-    # default socket and must survive.
+    # Kill ONLY the demo session first (idempotent during normal flow), then
+    # nuke the private tmux server entirely — both touch only $TMUX_TMPDIR,
+    # the operator's main tmux is unaffected.
     tmux kill-session -t "$SESSION" 2>/dev/null || true
-    rm -f "$DB" "$MAILMAN_LOG"
+    tmux kill-server 2>/dev/null || true
+    rm -rf "$DB" "$MAILMAN_LOG" "$TMUXDIR"
 }
 trap cleanup EXIT
 

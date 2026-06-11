@@ -47,6 +47,17 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   on `register --force` (CLI and MCP). New per-agent knobs: `stuck-threshold`,
   `stuck-poll-interval`.
 
+- **`scripts/record-asciinema-demo.sh` no longer shares the operator's tmux
+  server (#287).** The recording driver now runs the demo session on a
+  private tmux server rooted at `$TMUX_TMPDIR=/tmp/observe-gate-demo-tmux`, so
+  a recording-side tmux crash can't take the operator's chamber session with
+  it (the alcatraz-infra#31 outage class). Defense-in-depth: even if the
+  recording wedges or `tmux` itself segfaults, only the sandbox dies; the
+  operator's main tmux is unaffected. TMUX_TMPDIR isolation chosen over `-L
+  <socket>` because tmux-msg-claude's mailman + discover currently shell out
+  to plain `tmux` without `-L` (see #288); TMUX_TMPDIR is honored
+  transparently via env-inheritance.
+
 ## [0.15.0] — 2026-06-10
 
 ### Added
