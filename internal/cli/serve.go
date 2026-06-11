@@ -484,6 +484,46 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		}
 	}
 
+	// Paste-capability force-defer (#323). A paste-INcapable adapter (Codex)
+	// must never paste-and-enter into its pane: the internal/tmuxio observe-gate
+	// is calibrated for Claude's ❯ prompt sentinel + cursor disambiguation, so a
+	// Codex `›` input area is mis-classified and the gate can't reliably defer
+	// during operator-typing — the paste clobbers in-progress operator input
+	// (operator-witnessed, #323). Until the per-adapter PaneProfile refactor
+	// (#322) teaches the observe-gate to read Codex panes, force-defer: refuse
+	// the paste loop, leave the messages queued, and tell the operator to migrate
+	// this agent to a non-paste delivery mode (hook-context — Codex's designed
+	// path per #248 decision (B) / ADR-0009 — or mailbox-only).
+	//
+	// Keyed on the process-global adapter Profile (active.PasteCapable), not on a
+	// DB column: the mailman for a Codex agent runs from the tmux-msg-codex binary
+	// (the systemd unit is `<BinaryName>-mailman@<agent>`, systemctl.go), so the
+	// serving process already knows its adapter — no schema change, and it fires
+	// regardless of HOW the agent reached paste-and-enter mode (explicit flag,
+	// config override, or the register-time default). That last point is why this
+	// lives at the delivery layer rather than only at register time: the #323
+	// provenance was a live Codex chamber already registered in paste mode, which
+	// a register-time guard alone would not have protected. Exit cleanly (exitOK,
+	// like the mailbox-only/hook-context short-circuit below) so systemd records
+	// success rather than crash-looping; the loud WARN carries the corrective
+	// command. Known interim limitation: a Codex agent mis-served by the
+	// tmux-msg-claude binary (wrong unit) would read active.PasteCapable=true and
+	// bypass this gate — a per-agent adapter column in #322's PaneProfile work
+	// closes that residual seam.
+	if !active.PasteCapable && a.DeliveryMode == store.DeliveryModePasteAndEnter {
+		logger.Printf("WARN paste_incapable_adapter adapter=%s agent=%s delivery_mode=%s — "+
+			"refusing paste-and-enter; the observe-gate can't safely read this adapter's pane "+
+			"and would clobber operator input (#323). Messages stay queued. Migrate to a "+
+			"non-paste delivery mode, e.g.: %s register --name %s --delivery-mode hook-context "+
+			"(or mailbox-only), then restart this unit (systemctl --user restart %s-mailman@%s).",
+			active.BinaryName, opts.Agent, a.DeliveryMode,
+			active.BinaryName, opts.Agent, active.BinaryName, opts.Agent)
+		if err := sdnotify.Ready(); err != nil {
+			logger.Printf("sdnotify_ready_err err=%v", err)
+		}
+		return exitOK
+	}
+
 	// No-paste short-circuit (#116 mailbox-only, #249 hook-context). When the
 	// agent's delivery_mode is one where the mailman does NOT paste into the
 	// pane, the daemon has no work to do — exit cleanly so systemd records

@@ -26,6 +26,10 @@ func main() {
 		DisplayLabel:      "Claude Code",
 		DeprecatedAlias:   "claude-msg",
 		DeprecatedRemoval: "v1.0",
+		// Claude's TUI paints the ❯ prompt sentinel the observe-gate reads to
+		// defer paste-and-enter during operator-typing (internal/tmuxio), so
+		// this adapter is paste-capable.
+		PasteCapable: true,
 	}
 	os.Exit(cli.Run(p, os.Args[0], os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }

@@ -20,16 +20,33 @@ package cli
 //     carries through a deprecation cycle (Claude: claude-msg → removed v1.0,
 //     ADR-0008). DeprecatedAlias is empty when the adapter never had a prior
 //     name (e.g. a brand-new Codex adapter) — warnIfDeprecatedName then no-ops.
+//   - PasteCapable: whether the mailman may deliver to this adapter's pane via
+//     the internal/tmuxio paste-and-enter path. True for Claude (the observe-gate
+//     reads its ❯ prompt sentinel + cursor position to defer during operator-
+//     typing); FALSE for Codex, whose `›` input area the observe-gate cannot yet
+//     classify — a paste into it clobbers in-progress operator input (#323). A
+//     paste-incapable adapter delivers via hook-context (#248 decision (B),
+//     ADR-0009) and the mailman force-defers any paste-and-enter delivery to it.
 //
-// The deeper Claude-coupling (the internal/tmuxio observe-gate paste sentinels)
-// is deliberately NOT in this struct: per #248's (B) decision the Codex adapter
-// delivers via hook-context, so the paste layer stays Claude-only until a
-// paste-needing adapter lands and shapes that seam with its specifics in hand.
+// The full Claude-coupling (the internal/tmuxio observe-gate sentinels themselves)
+// stays OUT of this struct — that per-adapter PromptSentinel + Markers structure
+// is #322's PaneProfile refactor. PasteCapable is the narrow seam #323 needs in
+// the interim: a single capability boolean is enough to keep the paste layer from
+// ever reaching a pane it can't observe safely, without yet teaching it HOW to
+// observe codex panes. It is the inverse of the seam the original #248 note
+// anticipated ("until a paste-needing adapter lands"): the first non-Claude
+// adapter to land is paste-INcapable, so the seam it shapes is a refusal flag,
+// not the sentinel set.
 type Profile struct {
 	BinaryName        string
 	DisplayLabel      string
 	DeprecatedAlias   string
 	DeprecatedRemoval string
+	// PasteCapable gates the internal/tmuxio paste-and-enter delivery path.
+	// Zero value (false) is the safe default: an adapter that doesn't
+	// explicitly assert paste-capability is force-deferred rather than risking
+	// a clobber on a pane the observe-gate can't read (#323).
+	PasteCapable bool
 }
 
 // active is the process-global adapter profile. A CLI binary serves exactly one
@@ -43,4 +60,5 @@ var active = Profile{
 	DisplayLabel:      "Claude Code",
 	DeprecatedAlias:   "claude-msg",
 	DeprecatedRemoval: "v1.0",
+	PasteCapable:      true,
 }

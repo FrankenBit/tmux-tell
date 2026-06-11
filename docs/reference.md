@@ -281,6 +281,24 @@ Claude-only until a paste-needing adapter lands (#248). Subset verified working:
 `register` / `send` / `inbox` / `serve` (short-circuit) + the hook-context round-trip
 (`cmd/tmux-msg-codex` end-to-end test).
 
+**Paste-capability force-defer (#323).** Should a Codex agent end up in
+`paste-and-enter` mode anyway — e.g. registered without `--delivery-mode`, which
+defaults to `paste-and-enter` — the mailman refuses to paste rather than risk a clobber.
+The observe-gate reads Claude's `❯` prompt sentinel + cursor position to detect
+operator-typing and defer; it can't yet classify Codex's `›` input area, so a paste would
+land on top of in-progress operator input. The `tmux-msg-codex` binary is marked
+paste-incapable (`Profile.PasteCapable = false`), and its mailman force-defers at startup:
+it leaves messages queued, exits cleanly, and logs the migration command. Recover by moving
+the agent to a non-paste mode:
+
+```sh
+tmux-msg-codex register --name <agent> --delivery-mode hook-context   # or mailbox-only
+systemctl --user restart tmux-msg-codex-mailman@<agent>
+```
+
+Teaching the observe-gate to read Codex panes directly (so `paste-and-enter` becomes a
+real option for Codex) is the per-adapter `PaneProfile` refactor tracked at #322.
+
 *Verified against codex-cli 0.130.0 (2026-05-10), per the [`Aldenysq/agents-connector`](https://github.com/Aldenysq/agents-connector)
 integration notes — Codex hook events with `additionalContext` support: `SessionStart`,
 `UserPromptSubmit`, `PostToolUse`.*

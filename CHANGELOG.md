@@ -110,6 +110,24 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **Paste-incapable adapters force-defer instead of clobbering operator input (#323).**
+  The `internal/tmuxio` observe-gate is calibrated for Claude Code's `❯` prompt sentinel
+  + cursor position to detect "operator is mid-typing" and defer the paste. A Codex pane's
+  `›` input area is mis-classified, so the gate could not reliably defer — a paste-and-enter
+  delivery to a Codex chamber clobbered the operator's in-progress input (operator-witnessed
+  during Lookout's onboarding). The substrate now carries a per-adapter paste-capability flag
+  (`Profile.PasteCapable`: `true` for `tmux-msg-claude`, `false` for `tmux-msg-codex`), and the
+  mailman **force-defers** at startup when a paste-incapable adapter's `delivery_mode` is
+  `paste-and-enter`: it refuses the paste loop, leaves messages queued, and logs the corrective
+  migration command (`register --delivery-mode hook-context`, Codex's designed delivery path per
+  ADR-0009 / #248 decision (B), or `mailbox-only`). The gate keys on the process-global adapter
+  Profile (the Codex mailman runs from the `tmux-msg-codex` binary), so no schema change is needed
+  and it fires regardless of how the agent reached paste-and-enter mode — including a Codex chamber
+  already registered in paste mode, the exact #323 provenance. This is the **narrow interim fix**;
+  teaching the observe-gate to read Codex panes directly (so paste-and-enter could be supported)
+  is the per-adapter `PaneProfile` refactor tracked at #322. Mutation-verified: inverting the gate
+  predicate lets the message reach `delivered` (the clobbering paste) instead of staying queued.
+
 - **`paneNotFoundBackoff` overflow guard is now base-agnostic (#299).** The
   old guard (`if consecutive >= 7 { return stuckBackoffCap }`) was hard-wired to
   the production `time.Second` base: the 7th shift (64s) happened to exceed the

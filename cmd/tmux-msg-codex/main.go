@@ -28,6 +28,13 @@ func main() {
 		BinaryName:   "tmux-msg-codex",
 		DisplayLabel: "Codex",
 		// No DeprecatedAlias: Codex is a new adapter with no legacy name.
+		// PasteCapable stays false (explicit for the reader): the observe-gate
+		// can't yet classify Codex's `›` input area, so paste-and-enter would
+		// clobber operator input (#323). Codex delivers via hook-context
+		// (#248 decision (B), ADR-0009); the mailman force-defers any
+		// paste-and-enter delivery to a Codex agent until #322's PaneProfile
+		// refactor teaches the observe-gate to read Codex panes.
+		PasteCapable: false,
 	}
 	os.Exit(cli.Run(p, os.Args[0], os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
