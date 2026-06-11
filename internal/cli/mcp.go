@@ -33,7 +33,9 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	s, err := store.Open(resolveDBPath(*dbPath))
+	resolvedDB := resolveDBPath(*dbPath)
+	fmt.Fprintf(stderr, "mcp: claude_msg_db=%s source=%s\n", resolvedDB, dbPathSource(*dbPath))
+	s, err := store.Open(resolvedDB)
 	if err != nil {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
 		return exitInternal

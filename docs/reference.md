@@ -444,6 +444,34 @@ chamber that re-registers itself after a respawn un-parks automatically.
 Both knobs are per-agent TOML-configurable (`stuck-threshold`,
 `stuck-poll-interval`); `stuck-threshold = 0` disables parking (backoff-only).
 
+## Verifying which DB a process is bound to (#290)
+
+Both `tmux-msg-claude serve` and `tmux-msg-claude mcp` emit a startup log line
+naming the resolved DB path and how it was resolved:
+
+```
+mcp: claude_msg_db=/tmp/crew-demo.db source=env(CLAUDE_MSG_DB)
+serve: claude_msg_db=/var/lib/tmux-msg/messages.db source=default(env unset)
+```
+
+The `source` label is one of:
+- `env(CLAUDE_MSG_DB)` — the `CLAUDE_MSG_DB` environment variable was set.
+- `flag(--db)` — the `--db <path>` CLI flag was passed.
+- `default(env unset)` — neither was set; the compile-time default
+  (`/var/lib/tmux-msg/messages.db`) is in use.
+
+This line is the **canonical way to confirm which DB a process is actually
+bound to**, journalctl-visible on alcatraz:
+
+```bash
+journalctl -u tmux-msg-claude-mailman@bosun --no-pager | grep claude_msg_db
+```
+
+Motivation: a sandbox rig that sets `CLAUDE_MSG_DB` in the launching shell
+but fails to propagate it to MCP children silently falls back to the
+production DB — the 2026-06-10 crew-demo misdelivery. The log line makes this
+propagation failure immediately visible.
+
 ## Operator-presence routing — `send --to operator`
 
 Sister substrate to the attention signal above (#228). When a chamber wants to

@@ -61,6 +61,19 @@ func resolveDBPath(flagValue string) string {
 	return defaultDBLocation
 }
 
+// dbPathSource returns a label describing how resolveDBPath resolved the
+// active DB path — used in the startup observability log (#290) so operators
+// can confirm at a glance which DB a process is bound to.
+func dbPathSource(flagValue string) string {
+	if flagValue != "" {
+		return "flag(--db)"
+	}
+	if os.Getenv("CLAUDE_MSG_DB") != "" {
+		return "env(CLAUDE_MSG_DB)"
+	}
+	return "default(env unset)"
+}
+
 // writeJSONResult writes the given value to w as a single line of JSON.
 // Returns the error from the encoder, if any (caller usually ignores it
 // since we're at the end of a CLI run).

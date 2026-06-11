@@ -49,6 +49,19 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   hook stdin schema). See `docs/reference.md` §Adapter integration (verified codex-cli
   0.130.0, 2026-05-10). The paste-and-enter observe-gate stays Claude-only — deferred until
   a concrete paste-needing adapter surfaces.
+- **`mcp`/`serve` startup DB-path log (#290).** Both `tmux-msg-claude mcp` and
+  `tmux-msg-claude serve` now emit an INFO line at startup naming the resolved
+  DB and its resolution source:
+  ```
+  mcp: claude_msg_db=/tmp/crew-demo.db source=env(CLAUDE_MSG_DB)
+  serve: claude_msg_db=/var/lib/tmux-msg/messages.db source=default(env unset)
+  ```
+  The line is visible in `journalctl` on alcatraz and in any stderr-capturing test
+  harness. Source is one of `env(CLAUDE_MSG_DB)`, `flag(--db)`, or
+  `default(env unset)` — the canonical way to confirm which DB a process is bound
+  to without needing a raw SQL probe. Addresses the 2026-06-10 crew-demo rig
+  misdelivery where an MCP silently fell back to the production DB with no log
+  trail (upstream of #288's pane-id collision).
 
 ## [0.15.1] — 2026-06-11
 
