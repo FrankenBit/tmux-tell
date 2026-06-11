@@ -217,7 +217,8 @@ name-vs-title mismatch as "the pane was repurposed since registration" and
 fails-loud rather than fail-silent.
 
 **Root cause.** The `discover` walker enumerates tmux panes and matches each
-pane's `pane_title` against the registered agent name. When no match is found
+pane's self-declared identity (typically `pane_title`, also `cmdline` /
+`window_name`) against the registered agent name. When no match is found
 within the configured retry budget, the mailman logs
 `drift_detected_unrecoverable` and refuses delivery. Typical triggers:
 
@@ -262,8 +263,8 @@ within the configured retry budget, the mailman logs
    risk.
 
 **Cross-ref.** The discover walker mechanics live in
-[`reference.md`](./reference.md) §Discovery for operators who want the deeper
-substrate model. [ADR-0009](adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md)
+[`reference.md`](./reference.md) §"Identity, names & aliases" for operators
+who want the deeper substrate model. [ADR-0009](adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md)
 frames why drift detection fires consistently across adapters: it's a
 substrate-general invariant on pane-identity, not an adapter-specific behavior.
 
