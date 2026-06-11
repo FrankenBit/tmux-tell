@@ -32,6 +32,8 @@ change for the decision to be revisited.
 | 0008 | [Deprecation policy — two-minor-cycle floor (post-1.0)](0008-deprecation-policy.md) | Accepted | 2026-06-07 |
 | 0009 | [Hook-context delivery — substrate stays delivery-method-agnostic](0009-hook-context-delivery-substrate-vs-adapter-boundary.md) | Accepted | 2026-06-09 |
 | 0010 | [Tool name — `tmux-msg`, or rename?](0010-tool-name.md) | Accepted | 2026-06-10 |
+| 0011 | [Mailman scope-expansion — three-fence test, applied to chamber respawn](0011-mailman-scope-expansion-chamber-respawn.md) | Proposed | — |
+| 0012 | [Session rename on bus-mediated clear (application of ADR-0011)](0012-session-rename-on-bus-mediated-clear.md) | Proposed | — |
 
 > **Note on ADR length.** ADRs 0001-0005 predate the length-cap
 > convention codified in ADR-0006 and run 276-440 lines each. ADR-0006+
