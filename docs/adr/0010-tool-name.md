@@ -224,6 +224,20 @@ Otherwise the process runs to disposition on the Phase 2 aggregate.
 
 Full deliberation record: [PR #294 comments](https://git.frankenbit.de/frankenbit/tmux-msg/pulls/294).
 
+### Operator participation
+
+The operator participated as a regular blind voter in both phases (Phase 1
+three-favorites + Phase 2 single pick) under the same blindness guarantees as
+the other 7 chambers — neither saw any other's submissions before committing
+their own. The operator's Phase 2 pick (`tmux-tell`) was made before Pilot
+posted the aggregate; the dual role (voter → disposer) then carried over to the
+disposition, which weighed the aggregate against substantive soundness and
+landed congruently with the operator's blind Phase 2 vote. Naming the
+blind-vote-then-dispose sequence explicitly closes the circular-reasoning
+misread: the operator's pick was committed under the same information conditions
+as every other chamber's, and the soundness chain below is what carries the
+disposition — not the operator's prior preference.
+
 ### Soundness chain
 
 `tmux-tell` won against the plurality (`tmux-post`, 4 votes) and near-plurality
@@ -266,10 +280,12 @@ is immediately readable and memorable.
 
 ### Crew buy-in
 
-6 of 7 crew members responded with genuine buy-in after disposition broadcast
-(Pilot drove the Phase 1 + Phase 2 aggregates and the disposition broadcast
-itself, so their buy-in is implicit-by-driving rather than explicit-by-response;
-no chamber raised a concern that the operator's reasoning did not address).
+All 6 of 7 non-operator chambers responded with genuine buy-in after
+disposition broadcast. Pilot drove the Phase 1 + Phase 2 aggregates and the
+disposition broadcast itself, so their buy-in is implicit-by-driving rather
+than explicit-by-response; the operator participated as a blind voter (above)
+and as disposer rather than as a buy-in respondent. No chamber raised a concern
+that the operator's reasoning did not address.
 
 ## References
 
