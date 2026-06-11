@@ -222,6 +222,112 @@ func TestPaneNotFoundBackoff_Schedule(t *testing.T) {
 	}
 }
 
+// TestServe_CounterResetOnProbeRecovery pins #299: the in-memory
+// consecutive-fail counter resets after a non-can't-find-pane probe
+// abort (lines 957-961 in serve.go), so the mailman requires a FULL
+// StuckThreshold consecutive can't-find-pane failures post-recovery
+// before parking. Without that reset, one extra can't-find-pane failure
+// after a mixed-error interlude would immediately tip the counter over
+// the threshold — the message ID check alone wouldn't save it because
+// the same message keeps being re-claimed across the phase boundary.
+//
+// The three-phase runner:
+//
+//	Phase 1 — failsBeforeRecover "can't find pane" probes: counter builds
+//	           up to StuckThreshold-1 (no park yet).
+//	Phase 2 — one non-can't-find-pane error: lines 957-961 reset counter
+//	           to 0 and clear paneFailMsgID.
+//	Phase 3 — "can't find pane" again: needs a full StuckThreshold probes
+//	           before parking (not just one, as a missing reset would allow).
+//
+// setStuckBackoffBaseForTest(time.Millisecond) (the #299 test seam) keeps
+// the total wall-clock under ~50ms without losing structural coverage of
+// the backoff schedule.
+func TestServe_CounterResetOnProbeRecovery(t *testing.T) {
+	const (
+		threshold          = 4
+		failsBeforeRecover = threshold - 1 // builds a streak without parking
+	)
+
+	prevBase := setStuckBackoffBaseForTest(time.Millisecond)
+	t.Cleanup(func() { setStuckBackoffBaseForTest(prevBase) })
+	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta) })
+
+	var mu sync.Mutex
+	probeCount := 0   // total capture-pane calls (one per failing AgentState probe)
+	phase3Probes := 0 // count of Phase-3 probes, to assert full threshold was needed
+
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		if len(args) == 0 || args[0] != "capture-pane" {
+			return nil, nil
+		}
+		mu.Lock()
+		probeCount++
+		n := probeCount
+		mu.Unlock()
+
+		switch {
+		case n <= failsBeforeRecover:
+			// Phase 1: build up a can't-find-pane streak.
+			return nil, &errString{"exit status 1: can't find pane: %3"}
+		case n == failsBeforeRecover+1:
+			// Phase 2: a single non-can't-find-pane error triggers the
+			// non-pane-not-found abort path (lines 957-961) which resets
+			// consecutivePaneFails=0 and paneFailMsgID="".
+			return nil, &errString{"exit status 1: tmux: socket error (not pane-not-found)"}
+		default:
+			// Phase 3: pane gone again. Must fire >= threshold can't-find-pane
+			// probes before parking (counter was reset in Phase 2, not at threshold-1).
+			mu.Lock()
+			phase3Probes++
+			mu.Unlock()
+			return nil, &errString{"exit status 1: can't find pane: %3"}
+		}
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+	r, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "hi"})
+
+	opts := fastOpts("bob")
+	opts.PrePasteSafetyDisabled = false
+	opts.StuckThreshold = threshold
+	opts.StuckPollInterval = 5 * time.Millisecond
+
+	stop, wait, _ := runServeInBackground(t, s, opts)
+	t.Cleanup(func() { stop(); wait() })
+
+	waitFor(t, 4*time.Second, func() bool {
+		a, _ := s.GetAgent(ctx, "bob")
+		return a.StuckReason != ""
+	}, "agent did not park")
+
+	mu.Lock()
+	p3 := phase3Probes
+	mu.Unlock()
+
+	// Phase 3 must have fired a full threshold of can't-find-pane probes.
+	// Without the reset at lines 957-961, the counter would be at threshold-1
+	// entering Phase 3 and park on just one more failure (p3 would be 1).
+	if p3 < threshold {
+		t.Errorf("phase3Probes = %d, want >= %d; counter was not reset before Phase 3 (lines 957-961 broken)", p3, threshold)
+	}
+
+	a, _ := s.GetAgent(ctx, "bob")
+	if a.StuckReason != store.StuckReasonPaneNotFound {
+		t.Errorf("stuck_reason = %q, want %q", a.StuckReason, store.StuckReasonPaneNotFound)
+	}
+	// No data loss: message is still queued while parked.
+	m, _ := s.GetMessage(ctx, r.PublicID)
+	if m.State != store.StateQueued {
+		t.Errorf("message state = %s, want queued (retained while parked)", m.State)
+	}
+}
+
 // waitFor polls cond until it returns true or the timeout elapses, failing the
 // test with msg on timeout.
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool, msg string) {

@@ -73,6 +73,21 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   preserved regardless. Addresses the stale-row class surfaced 2026-06-10 on alcatraz
   where a retired chamber slot leaked permanently into every `agents` listing.
 
+### Fixed
+
+- **`paneNotFoundBackoff` overflow guard is now base-agnostic (#299).** The
+  old guard (`if consecutive >= 7 { return stuckBackoffCap }`) was hard-wired to
+  the production `time.Second` base: the 7th shift (64s) happened to exceed the
+  60s cap. With the new `stuckBackoffBase` test seam (shrinkable to
+  `time.Millisecond`), that constant became wrong. The guard is replaced by a
+  value-cap (`shift >= 63 → cap; d < 0 || d > stuckBackoffCap → cap`) that
+  correctly terminates the schedule for any base. A new phased integration test
+  (`TestServe_CounterResetOnProbeRecovery`) pins the consecutive-counter reset:
+  after a non-can't-find-pane probe abort that resets the streak, a full
+  `StuckThreshold` consecutive failures are required before parking — the test
+  uses `setStuckBackoffBaseForTest(time.Millisecond)` to complete in ~30ms
+  instead of the production seconds scale.
+
 ## [0.15.1] — 2026-06-11
 
 Bugfix release: feature-frozen on top of v0.15.0 to land the five substrate-

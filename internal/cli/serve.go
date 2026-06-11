@@ -54,24 +54,37 @@ const (
 	stuckBackoffCap = 60 * time.Second
 )
 
+// stuckBackoffBase is the unit for paneNotFoundBackoff's exponential schedule.
+// Production: time.Second (1s, 2s, 4s, …, capped at stuckBackoffCap).
+// Tests shrink it via setStuckBackoffBaseForTest to avoid real second-scale
+// delays without losing the structural test of the backoff path (#299).
+var stuckBackoffBase = time.Second
+
+// setStuckBackoffBaseForTest replaces stuckBackoffBase for test isolation and
+// returns the previous value so the caller can restore it.
+func setStuckBackoffBaseForTest(d time.Duration) time.Duration {
+	prev := stuckBackoffBase
+	stuckBackoffBase = d
+	return prev
+}
+
 // paneNotFoundBackoff returns the delay before the next delivery attempt
 // after `consecutive` back-to-back `can't find pane` probe failures (#291):
-// 1s, 2s, 4s, 8s, 16s, 32s, then capped at stuckBackoffCap (60s). The first
-// failure already waits 1s, which alone converts the pre-fix ~100/s retry
-// storm into at most 1/s — the cap then drops it to 1/60s. The shift is
-// guarded so a large counter can't overflow the duration.
+// base, 2×base, 4×base, …, capped at stuckBackoffCap (60s). The first
+// failure already waits base (1s in production), which converts the pre-fix
+// ~100/s retry storm into at most 1/s — the cap drops it to 1/60s.
 func paneNotFoundBackoff(consecutive int) time.Duration {
 	if consecutive < 1 {
 		consecutive = 1
 	}
-	// time.Second << 6 = 64s already exceeds the cap, so anything from the
-	// 7th consecutive failure onward is the cap — return early to avoid
-	// shifting by a large amount.
-	if consecutive >= 7 {
+	shift := uint(consecutive - 1)
+	if shift >= 63 {
+		// shift ≥ 63: int64 left-shift by 63 overflows to negative; by ≥ 64
+		// wraps to 0 in Go. Both are wrong — clamp to cap immediately.
 		return stuckBackoffCap
 	}
-	d := time.Second << uint(consecutive-1)
-	if d > stuckBackoffCap {
+	d := stuckBackoffBase << shift
+	if d < 0 || d > stuckBackoffCap {
 		return stuckBackoffCap
 	}
 	return d
