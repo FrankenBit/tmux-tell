@@ -50,6 +50,35 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
+// registerToolSchema builds the tmux-msg.register input schema. The mailman
+// systemd unit name and the inbox / hook-context command references name the
+// ACTIVE adapter binary (#314) — so a codex agent registering through the MCP
+// surface sees tmux-msg-codex, not the claude literal — and the delivery-mode
+// prose is adapter-neutral ("the recipient agent's session"), because the
+// register tool describes substrate-general mechanism, not Claude-specific
+// behavior (ADR-0009 substrate-vs-adapter boundary). The codex chamber consumes
+// these MCP tools, and `delivery_mode=hook-context` is its onboarding path, so
+// this schema is genuinely codex-visible, not a Claude-only surface.
+//
+// Built by string concatenation rather than fmt.Sprintf because the static
+// schema carries a literal `%5` pane-id example that a format string would
+// misread as a verb.
+func registerToolSchema() json.RawMessage {
+	bin := active.BinaryName
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"name":          {"type": "string", "description": "Agent name (the new identity)"},
+			"pane":          {"type": "string", "description": "Pane id like %5 (default: $TMUX_PANE)"},
+			"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now ` + bin + `-mailman@NAME (default true; default false when delivery_mode=mailbox-only). Note: start_mailman=true with delivery_mode=mailbox-only is allowed but vestigial — the daemon starts, observes mailbox-only at startup, logs the no-work condition, and exits cleanly. The 'mailman: active' field in the response is momentary in this case."},
+			"force":         {"type": "boolean", "description": "Overwrite an existing row with the same name (default false)"},
+			"alias":         {"type": "string", "description": "Optional alternative name discover should accept for this canonical agent (e.g. 'Master Bosun of Nimbus' for canonical 'bosun'). Append-only; existing aliases preserved."},
+			"delivery_mode": {"type": "string", "enum": ["paste-and-enter", "mailbox-only", "hook-context"], "description": "How the mailman delivers to this agent (#116). 'paste-and-enter' (default): tmux paste + Enter into the agent's pane — the existing behavior for CLI-tool-hosting panes. 'mailbox-only': messages stay in state=queued; operator polls via ` + bin + ` inbox. 'hook-context' (#249): no pane paste — the recipient agent's session pulls pending messages as additionalContext via a SessionStart/UserPromptSubmit hook running '` + bin + ` hook-context'."}
+		},
+		"required": ["name"]
+	}`)
+}
+
 // newMCPServer wires the tmux-msg.* tools onto an mcp.Server.
 // Tools registered: send / resend / ping / agents / whoami / inbox /
 // message_status / status / register / control / unregister /
@@ -217,18 +246,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 
 	srv.RegisterTool("tmux-msg.register",
 		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-bus-participant scenario). The response includes `queued`: the number of messages already waiting for this agent at register time (#151) — a fresh or post-restart session learns it has backlog without a separate inbox poll; check it and run tmux-msg.inbox if >0. When that backlog exists, the don't-flood policy (#204) keeps the mailman from pasting the whole queue at once: by default it leaves the backlog queued and delivers a single `📬 N queued` nudge (the `on-register-backlog` TOML knob can switch to auto-delivering the newest N). The response then also carries `backlog_policy`, `backlog_skipped`, and `backlog_nudge`.",
-		json.RawMessage(`{
-			"type": "object",
-			"properties": {
-				"name":          {"type": "string", "description": "Agent name (the new identity)"},
-				"pane":          {"type": "string", "description": "Pane id like %5 (default: $TMUX_PANE)"},
-				"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now tmux-msg-claude-mailman@NAME (default true; default false when delivery_mode=mailbox-only). Note: start_mailman=true with delivery_mode=mailbox-only is allowed but vestigial — the daemon starts, observes mailbox-only at startup, logs the no-work condition, and exits cleanly. The 'mailman: active' field in the response is momentary in this case."},
-				"force":         {"type": "boolean", "description": "Overwrite an existing row with the same name (default false)"},
-				"alias":         {"type": "string", "description": "Optional alternative name discover should accept for this canonical agent (e.g. 'Master Bosun of Nimbus' for canonical 'bosun'). Append-only; existing aliases preserved."},
-				"delivery_mode": {"type": "string", "enum": ["paste-and-enter", "mailbox-only", "hook-context"], "description": "How the mailman delivers to this agent (#116). 'paste-and-enter' (default): tmux paste + Enter into the agent's pane — the existing behavior for CLI-tool-hosting panes. 'mailbox-only': messages stay in state=queued; operator polls via tmux-msg-claude inbox. 'hook-context' (#249): no pane paste — the recipient's Claude session pulls pending messages as additionalContext via a SessionStart/UserPromptSubmit hook running 'tmux-msg-claude hook-context'."}
-			},
-			"required": ["name"]
-		}`),
+		registerToolSchema(),
 		mcpRegisterHandler(s))
 
 	srv.RegisterTool("tmux-msg.control",

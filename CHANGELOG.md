@@ -131,6 +131,18 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   default profile reproduces every string verbatim). The `mcp.go` register tool-schema
   descriptions carry deeper Claude framing and are deferred to #314.
 
+- **Adapter-correctness: `tmux-msg.register` MCP tool schema is substrate-neutral — #314.** The
+  register tool's input-schema descriptions named the claude binary in the mailman-unit / `inbox` /
+  `hook-context` references and framed delivery as "the recipient's Claude session"; a codex agent
+  consuming the MCP surface (its `hook-context` onboarding path) saw the wrong adapter. The binary
+  references now name the active adapter, and the delivery-mode prose is adapter-neutral ("the
+  recipient agent's session"). The neutralization changes the claude schema prose too — intentional,
+  since the register tool describes substrate-general mechanism, so naming Claude there was the
+  substrate-vs-adapter leak ADR-0009 governs. The `tmux-msg.control` tool's "Claude Code
+  slash-command" framing is deliberately left as-is: the paste-and-enter control surface is
+  genuinely Claude-only (#248 decision (B)), so neutralizing it would over-claim a codex control
+  surface that does not exist.
+
 ## [0.15.1] — 2026-06-11
 
 Bugfix release: feature-frozen on top of v0.15.0 to land the five substrate-
