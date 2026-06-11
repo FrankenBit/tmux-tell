@@ -203,6 +203,39 @@ fully grounded.
   recipients first; if that turns up sender-side, the others are
   almost certainly the same.
 
+## MCP-path sender-unknown (Codex MCP server)
+
+A distinct failure mode surfaces when a Codex agent calls `tmux-msg.send` via the MCP
+server path (`[mcp_servers.tmux-msg]` in `~/.codex/config.toml`): the call fails or reports
+an unknown sender because the substrate cannot resolve the agent's identity.
+
+**Root cause.** The substrate resolves sender from `$TMUX_AGENT_NAME` or
+`$TMUX_PANE → registry`. Codex's MCP host does **not** propagate `$TMUX_PANE` to spawned
+MCP server processes, and `$TMUX_AGENT_NAME` is also absent unless explicitly injected. The
+CLI path (`tmux-msg-codex send …`) and the hook-context path run in the operator's shell
+where both variables are available; only the MCP server spawn is isolated.
+
+**Symptom.** `tmux-msg.send` calls via the MCP server return a sender-resolution error or
+send with `from = ""` instead of the agent's registered name.
+
+**Fix.** Add an `env` table to the `[mcp_servers.tmux-msg]` stanza in
+`~/.codex/config.toml`:
+
+```toml
+[mcp_servers.tmux-msg]
+command = "tmux-msg-codex"
+args = ["mcp"]
+env = { TMUX_AGENT_NAME = "lookout" }
+```
+
+Replace `"lookout"` with the agent's registered name. After updating the config, restart
+Codex (the MCP server is spawned fresh on each Codex start) and retry the send.
+
+This is an adapter-vs-substrate boundary issue per [ADR-0009](adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md):
+the fix lives in the adapter's config, not in the substrate. See
+[`cmd/tmux-msg-codex/README.md`](../cmd/tmux-msg-codex/README.md) §MCP server for the full
+wiring recipe.
+
 ## See also
 
 - [#59](https://git.frankenbit.de/frankenbit/tmux-msg/issues/59)

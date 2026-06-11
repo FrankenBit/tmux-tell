@@ -35,6 +35,21 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **Codex MCP path: document `TMUX_AGENT_NAME` env-block requirement (#320).** Codex's
+  MCP host does not propagate `$TMUX_PANE` to spawned MCP server processes, so the
+  substrate's implicit `$TMUX_PANE → registry` sender-resolution fallback never fires.
+  The remedy is a per-server `env` injection in `~/.codex/config.toml`:
+  ```toml
+  [mcp_servers.tmux-msg]
+  command = "tmux-msg-codex"
+  args = ["mcp"]
+  env = { TMUX_AGENT_NAME = "lookout" }
+  ```
+  Documented in `cmd/tmux-msg-codex/README.md` §MCP server (new file) and
+  `docs/diagnostic-playbook.md` §MCP-path sender-unknown. CLI and hook-context paths are
+  unaffected — they run in the operator's shell where the environment is fully propagated.
+  ADR-0009 boundary: fix lives in adapter docs, not substrate code. Surfaced by Lookout
+  (Codex chamber, onboarding witness 2026-06-11).
 - **Second CLI adapter: `tmux-msg-codex` (OpenAI Codex) — #248.** The substrate now ships a
   second adapter binary alongside `tmux-msg-claude`, proving the [ADR-0009](docs/adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md)
   substrate-vs-adapter boundary: all subcommand dispatch + handlers moved into an
