@@ -325,7 +325,7 @@ func TestMCP_Unregister_HappyPath(t *testing.T) {
 	}
 }
 
-func TestMCP_Unregister_PurgeMessagesAlso(t *testing.T) {
+func TestMCP_Unregister_PurgeQueueAlso(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "doomed")
 	(&fakeSystemctl{}).install(t)
 	ctx := context.Background()
@@ -333,8 +333,9 @@ func TestMCP_Unregister_PurgeMessagesAlso(t *testing.T) {
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "doomed", Body: "2"})
 
 	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
-		"name":           "doomed",
-		"purge_messages": true,
+		"name":        "doomed",
+		"purge_queue": true,
+		"force":       true,
 	})
 	if got["ok"] != true {
 		t.Errorf("ok = %v", got["ok"])

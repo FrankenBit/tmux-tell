@@ -70,6 +70,21 @@ func (s *Store) DeleteMessagesBefore(ctx context.Context, toAgent, cutoff string
 	return res.RowsAffected()
 }
 
+// DeleteAgent removes the agent row for name. Returns true if the row existed
+// and was deleted, false if it was already absent. Idempotent — cleanup
+// scripts can call it without checking first (#289).
+func (s *Store) DeleteAgent(ctx context.Context, name string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM agents WHERE name = ?`, name)
+	if err != nil {
+		return false, fmt.Errorf("store: delete agent: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: delete agent rows: %w", err)
+	}
+	return n > 0, nil
+}
+
 // DeleteStrandedDraftsBefore removes stranded_draft bookmark rows whose
 // created_at is strictly older than cutoff, optionally scoped to one
 // recipient (empty toAgent = all agents). Returns the count deleted.

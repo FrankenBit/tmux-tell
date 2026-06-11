@@ -37,7 +37,8 @@ Subcommands:
   config  Read/show the host-level config (#54). Subcommands: show
   agents  List registered agents with pane liveness
   whoami  Show this session's registration (auto-resolves identity)
-  register Register this (or another) pane on the bus (mirrors tmux-msg.register; #116)
+  register   Register this (or another) pane on the bus (mirrors tmux-msg.register; #116)
+  unregister Remove an agent from the registry + stop its mailman (mirrors tmux-msg.unregister; #289)
   serve   Run the mailman daemon for one agent
   pause   Halt one or all mailman daemons
   resume  Resume paused mailmen
@@ -136,6 +137,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runWhoamiCLI(args[1:], stdout, stderr)
 	case "register":
 		return runRegisterCLI(args[1:], stdout, stderr)
+	case "unregister":
+		return runUnregisterCLI(args[1:], stdout, stderr)
 	case "serve":
 		return runServeCLI(args[1:], stdout, stderr)
 	case "pause":

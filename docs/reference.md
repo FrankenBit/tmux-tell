@@ -345,6 +345,8 @@ tmux-msg-claude log    --thread ID                      # a reply chain, flat-ch
 tmux-msg-claude thread ID [--format tree|json]          # a reply chain, as a parent→child tree
 tmux-msg-claude stranded list|show|prune                # recover flushed operator paste snapshots
 tmux-msg-claude discover                                # re-derive agents.pane_id from tmux
+tmux-msg-claude register --name <agent> [--pane <id>] [--force]  # register a pane on the bus
+tmux-msg-claude unregister --name <agent> [--purge-queue] [--force]  # remove agent + stop mailman (#289)
 tmux-msg-claude flag-operator "<body>"                  # signal this chamber needs operator attention (#224)
 tmux-msg-claude clear-operator-flag                     # clear this chamber's awaiting_operator flag
 ```
@@ -894,10 +896,41 @@ queues the `/compact` plus the resume message (threaded via `reply_to`), and the
 mailman holds the queue for `--post-compact-pause` (default 120s) so the follow-up
 lands after the CLI tool has settled, not into the slash-command parser mid-compaction.
 
-### Removing a pane
+### Removing a pane (#289)
 
-`tmux-msg.unregister name=oldname` (or `tmux-msg-claude unregister`) stops the mailman,
-drops the agent row, and optionally purges its history (`purge_messages: true`).
+`tmux-msg.unregister name=oldname` (or `tmux-msg-claude unregister --name oldname`) is the
+reciprocal of `register`. It stops the agent's mailman, then drops the agent row from the
+registry.
+
+```bash
+# Remove a stale agent that no longer has a live pane.
+tmux-msg-claude unregister --name alcatraz
+
+# Drop queued messages too (default: preserve them so they deliver if re-registered).
+tmux-msg-claude unregister --name alcatraz --purge-queue
+
+# Override the "you have N queued messages" guard.
+tmux-msg-claude unregister --name alcatraz --force --purge-queue
+```
+
+**Semantics:**
+
+- **Mailman first.** `stopMailman` runs before the row is deleted so the daemon
+  doesn't observe a dangling agent reference.
+- **Idempotent.** Unregistering an absent agent returns `{ok: true, removed: false}` —
+  safe to call from cleanup scripts without a pre-check.
+- **Queue guard.** If the agent has queued messages, the default is to fail loudly with
+  the count. Pass `--force` / `force: true` to override. This prevents accidentally
+  discarding mail that hasn't been delivered yet.
+- **`--purge-queue`** drops only `queued` messages addressed to the agent. Delivered and
+  failed audit rows (the bus's forensic history) are preserved regardless.
+- **Sender history.** Messages *sent by* the unregistered agent (where it was
+  `from_agent`) stay in the `messages` table — `from_agent` doesn't reference a live
+  agents row. The bus history is forensic record, not live state.
+
+**MCP:** `tmux-msg.unregister({name, purge_queue?, force?})`
+
+**Response fields:** `{ok, name, removed, mailman: "stopped", deleted: N}`
 
 ### New tools require a session restart
 

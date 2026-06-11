@@ -245,13 +245,13 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpControlHandler(s))
 
 	srv.RegisterTool("tmux-msg.unregister",
-		"Remove an agent from the registry. stop_mailman defaults true.",
+		"Remove an agent from the registry (#289). Stops the mailman, drops the agent row. Idempotent: absent agent returns removed:false. Force overrides the queued-message guard.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"name":           {"type": "string"},
-				"stop_mailman":   {"type": "boolean", "description": "Run systemctl --user disable --now (default true)"},
-				"purge_messages": {"type": "boolean", "description": "Also delete delivered/failed audit rows (default false)"}
+				"name":        {"type": "string", "description": "Agent name to remove; required"},
+				"purge_queue": {"type": "boolean", "description": "Drop queued messages addressed to this agent (default false — preserved so they deliver if re-registered)"},
+				"force":       {"type": "boolean", "description": "Override the queued-message guard (otherwise fails with count when agent has pending mail)"}
 			},
 			"required": ["name"]
 		}`),
@@ -1225,9 +1225,9 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 
 func mcpUnregisterHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
-		Name          string `json:"name"`
-		StopMailman   *bool  `json:"stop_mailman"`
-		PurgeMessages bool   `json:"purge_messages"`
+		Name       string `json:"name"`
+		PurgeQueue bool   `json:"purge_queue"`
+		Force      bool   `json:"force"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -1238,42 +1238,57 @@ func mcpUnregisterHandler(s *store.Store) mcp.ToolHandler {
 			return nil, fmt.Errorf("name required")
 		}
 
-		// Stop the mailman first so it doesn't try to deliver to a soon-
-		// to-be-deleted agent.
-		stop := true
-		if in.StopMailman != nil {
-			stop = *in.StopMailman
+		// Idempotent: absent agent is success with removed:false.
+		existing, err := s.GetAgent(ctx, in.Name)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, fmt.Errorf("lookup: %w", err)
 		}
-		mailmanState := "skipped"
-		if stop {
-			if err := stopMailman(ctx, in.Name); err != nil {
-				return nil, err
-			}
-			mailmanState = "stopped"
+		if existing == nil {
+			return map[string]any{
+				"ok":      true,
+				"name":    in.Name,
+				"removed": false,
+			}, nil
 		}
 
-		var deleted int64
-		if in.PurgeMessages {
-			n, err := s.DeleteMessages(ctx, in.Name,
-				[]store.State{store.StateQueued, store.StateDelivering,
-					store.StateDelivered, store.StateFailed})
+		// Queue-depth guard: refuse if messages are queued unless force.
+		if !in.Force {
+			depth, err := s.RecipientQueueDepth(ctx, in.Name)
+			if err != nil {
+				return nil, fmt.Errorf("queue depth: %w", err)
+			}
+			if depth > 0 {
+				return nil, fmt.Errorf("agent %q has %d queued message(s); pass force:true to override",
+					in.Name, depth)
+			}
+		}
+
+		// Stop the mailman before removing the row so it doesn't observe a
+		// dangling agent reference.
+		if err := stopMailman(ctx, in.Name); err != nil {
+			return nil, err
+		}
+
+		var purged int64
+		if in.PurgeQueue {
+			n, err := s.DeleteMessages(ctx, in.Name, []store.State{store.StateQueued})
 			if err != nil {
 				return nil, err
 			}
-			deleted = n
+			purged = n
 		}
 
-		// Drop the agent row.
-		if _, err := s.DB().ExecContext(ctx, `DELETE FROM agents WHERE name = ?`, in.Name); err != nil {
+		removed, err := s.DeleteAgent(ctx, in.Name)
+		if err != nil {
 			return nil, err
 		}
 
 		return map[string]any{
-			"ok":           true,
-			"name":         in.Name,
-			"mailman":      mailmanState,
-			"deleted":      deleted,
-			"unregistered": true,
+			"ok":      true,
+			"name":    in.Name,
+			"removed": removed,
+			"mailman": "stopped",
+			"deleted": purged,
 		}, nil
 	}
 }

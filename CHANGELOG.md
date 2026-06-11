@@ -62,6 +62,16 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   to without needing a raw SQL probe. Addresses the 2026-06-10 crew-demo rig
   misdelivery where an MCP silently fell back to the production DB with no log
   trail (upstream of #288's pane-id collision).
+- **`unregister` CLI + MCP (#289).** Adds `tmux-msg-claude unregister --name <agent>`
+  (and `tmux-msg.unregister` MCP tool) as the clean reciprocal of `register`. Stops the
+  agent's mailman first (idempotent — not-running is OK), then removes the agent row.
+  Flags: `--purge-queue` drops queued messages addressed to the agent (default: preserve
+  for forensic value and re-registration); `--force` overrides the queued-message guard
+  that otherwise fails loudly with a count. Idempotent: unregistering an absent agent
+  returns `removed: false` rather than an error — safe for script cleanup paths. Delivered
+  and failed audit rows are never touched by `--purge-queue` — message history is
+  preserved regardless. Addresses the stale-row class surfaced 2026-06-10 on alcatraz
+  where a retired chamber slot leaked permanently into every `agents` listing.
 
 ## [0.15.1] — 2026-06-11
 
