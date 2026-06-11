@@ -203,6 +203,70 @@ fully grounded.
   recipients first; if that turns up sender-side, the others are
   almost certainly the same.
 
+## Drift-detection refused my send
+
+When a `tmux-msg-claude send` command reports `delivery: state=failed` and the
+mailman log shows
+`WARN drift_detected_unrecoverable id=… agent=… registered_pane=… runs=… — discover couldn't find <name> anywhere`,
+the substrate's safety machinery is working: the registered agent name doesn't
+match any reachable pane's self-declared title, so the bus refuses to paste
+rather than risk delivering to the wrong pane.
+
+This is a **real safety event**, not a bug. Drift detection treats
+name-vs-title mismatch as "the pane was repurposed since registration" and
+fails-loud rather than fail-silent.
+
+**Root cause.** The `discover` walker enumerates tmux panes and matches each
+pane's `pane_title` against the registered agent name. When no match is found
+within the configured retry budget, the mailman logs
+`drift_detected_unrecoverable` and refuses delivery. Typical triggers:
+
+- Chamber registered with a name that differs from what the chamber process
+  eventually sets as its pane title (the 2026-06-11 Caymans-Admin observation:
+  registered as `caymans-admin`, but pane self-declared as `Admin`; re-registering
+  as `admin` made delivery succeed).
+- Pane respawned and the new process didn't restore the expected title.
+- Operator renamed the pane manually but left the registry stale.
+
+**Symptom.**
+
+- `tmux-msg-claude send …` returns `state: failed` with `error: drift_detected_unrecoverable`.
+- Mailman journal shows
+  `WARN drift_detected_unrecoverable id=<public_id> agent=<name> registered_pane=<%N> runs=<count> — discover couldn't find <name> anywhere`.
+- The chamber pane itself is alive and prompt-responsive; the gap is purely on
+  the registry-vs-pane-title axis.
+
+**Fix — two paths, substrate-honest first.**
+
+1. **Match the name (recommended).** Re-register with the pane's self-declared
+   title so drift detection stays useful for genuine repurpose events:
+
+   ```bash
+   # Query each pane's self-declared title
+   tmux list-panes -a -F '#{pane_id}  #{pane_title}'
+
+   # Re-register with the matching name (lowercased per convention)
+   tmux-msg-claude register --name <pane-title-lowercased> --pane <pane-id> --force
+   ```
+
+2. **Override with `--drift-soft-fail`** (deliberate experiments / atypical
+   setups). Run a foreground mailman with the safety check relaxed:
+
+   ```bash
+   tmux-msg-claude serve --agent <name> --drift-soft-fail
+   ```
+
+   Use sparingly — the soft-fail mode bypasses the safety check that protects
+   against repurposed-pane delivery. Substrate-honest only when the operator
+   has deliberately accepted the name/title divergence and accounted for the
+   risk.
+
+**Cross-ref.** The discover walker mechanics live in
+[`reference.md`](./reference.md) §Discovery for operators who want the deeper
+substrate model. [ADR-0009](adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md)
+frames why drift detection fires consistently across adapters: it's a
+substrate-general invariant on pane-identity, not an adapter-specific behavior.
+
 ## MCP-path sender-unknown (Codex MCP server)
 
 A distinct failure mode surfaces when a Codex agent calls `tmux-msg.send` via the MCP
