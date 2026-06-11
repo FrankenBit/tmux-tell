@@ -170,7 +170,8 @@ func TestSend_SenderBacklogCapEnforced(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
 	ctx := context.Background()
 
-	// sender cap: alice queues 2, the 3rd from alice (anywhere) should fail.
+	// sender cap is per-(sender, recipient) since #296: alice queues 2 to
+	// bob, the 3rd alice→bob should fail.
 	for i := 0; i < 2; i++ {
 		var stdout, stderr bytes.Buffer
 		exit := runSendWithStore(ctx, s, sendParams{
@@ -192,6 +193,46 @@ func TestSend_SenderBacklogCapEnforced(t *testing.T) {
 	got := parseJSONResult(t, stdout.Bytes())
 	if errStr, _ := got["error"].(string); !strings.Contains(errStr, "sender backlog full") || !strings.Contains(errStr, "alice") {
 		t.Errorf("error = %q, want mention of sender backlog full + alice", errStr)
+	}
+}
+
+// TestSend_SenderBacklogCapIsPerRecipient is the #296 regression: a
+// sender saturated at one recipient must still reach a different,
+// healthy recipient. Before #296 the sender-backlog COUNT keyed on
+// from_agent alone, so alice's 2 undrained messages to bob globally
+// blocked alice→carol — one slow consumer collapsed the sender's whole
+// outbound fleet.
+func TestSend_SenderBacklogCapIsPerRecipient(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bob", "carol")
+	ctx := context.Background()
+
+	// Saturate alice→bob to the cap (2 queued, none drained).
+	for i := 0; i < 2; i++ {
+		var stdout, stderr bytes.Buffer
+		exit := runSendWithStore(ctx, s, sendParams{
+			From: "alice", To: "bob", Body: "m",
+			MaxRecipient: 100, MaxSender: 2, MaxBody: 1024,
+		}, &stdout, &stderr)
+		if exit != exitOK {
+			t.Fatalf("setup alice→bob %d: %s", i, stderr.String())
+		}
+	}
+	// alice→bob is now capped...
+	var bstdout, bstderr bytes.Buffer
+	if exit := runSendWithStore(ctx, s, sendParams{
+		From: "alice", To: "bob", Body: "m",
+		MaxRecipient: 100, MaxSender: 2, MaxBody: 1024,
+	}, &bstdout, &bstderr); exit != exitTempFail {
+		t.Fatalf("alice→bob 3rd exit = %d, want %d (per-recipient cap)", exit, exitTempFail)
+	}
+	// ...but alice→carol must still go through.
+	var cstdout, cstderr bytes.Buffer
+	if exit := runSendWithStore(ctx, s, sendParams{
+		From: "alice", To: "carol", Body: "m",
+		MaxRecipient: 100, MaxSender: 2, MaxBody: 1024,
+	}, &cstdout, &cstderr); exit != exitOK {
+		t.Errorf("alice→carol exit = %d, want %d (must not be blocked by bob's queue): %s",
+			exit, exitOK, cstderr.String())
 	}
 }
 

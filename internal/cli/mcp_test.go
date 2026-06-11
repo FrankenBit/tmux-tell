@@ -237,8 +237,8 @@ func TestParseMCPToField_InvalidShape(t *testing.T) {
 
 // TestMCP_Send_QuickNoReplyExpectedMultiRecipient exercises the 3-way combined
 // path: quick + no_reply_expected + multi-recipient fan-out via the MCP surface
-// (#220 S1 test-gap closure). Two recipients keeps the test within the
-// hardcoded capSenderBacklog=2 per-sender cap.
+// (#220 S1 test-gap closure). One message per recipient is trivially within
+// the per-(sender,recipient) capSenderBacklog=2 cap (#296).
 func TestMCP_Send_QuickNoReplyExpectedMultiRecipient(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob", "carol")

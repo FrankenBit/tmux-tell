@@ -56,6 +56,19 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   on `register --force` (CLI and MCP). New per-agent knobs: `stuck-threshold`,
   `stuck-poll-interval`.
 
+- **Sender-backlog cap is now scoped per-(sender, recipient) (#296).** The
+  cap (`capSenderBacklog`, default 2) previously counted a sender's queued
+  messages globally across all recipients, so 2 undrained messages to one
+  slow-but-healthy recipient blocked the sender's outbound to *every* other
+  recipient — one busy consumer silently collapsed a sender's whole
+  fleet-wide channel (2026-06-10: a coordination broadcast was dropped this
+  way). The cap now counts only the `(from_agent, to_agent)` pair, mirroring
+  the recipient-queue cap's scoping. It becomes a per-sender fairness slice
+  of one recipient's queue (no sender may hold more than 2 of a mailbox's 5
+  slots) rather than a global outbound ceiling; a sender blocked at one
+  recipient still reaches all others. The `ErrSenderBacklogFull` message now
+  names both ends (`from→to`).
+
 - **`scripts/record-asciinema-demo.sh` no longer shares the operator's tmux
   server (#287).** The recording driver now runs the demo session on a
   private tmux server rooted at `$TMUX_TMPDIR=/tmp/observe-gate-demo-tmux`, so

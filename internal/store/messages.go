@@ -276,6 +276,17 @@ func (s *Store) validateReplyTo(ctx context.Context, replyTo string) error {
 // InsertMessagePair); the cap is satisfied when (current_depth +
 // addedRows) ≤ cap.
 //
+// Both caps are scoped to the destination recipient (#296): the
+// recipient-queue cap counts all queued rows for to_agent, the
+// sender-backlog cap counts queued rows for the (from_agent, to_agent)
+// pair. The sender cap is therefore a per-sender fairness slice of one
+// recipient's queue (no single sender may occupy more than
+// MaxSenderBacklog of the recipient's MaxRecipientQueue slots), NOT a
+// global ceiling on a sender's total outbound — a slow recipient can no
+// longer block a sender's traffic to unrelated healthy recipients.
+// Both InsertMessagePair rows share to_agent (enforced in
+// InsertMessagePair), so the addedRows=2 pair check is well-defined.
+//
 // Atomicity guarantee: the BEGIN IMMEDIATE tx (from the _txlock=immediate
 // DSN parameter set in Open) has held the RESERVED lock since BEGIN, so
 // the COUNT(*) reads here are consistent with the subsequent INSERTs in
@@ -296,13 +307,13 @@ func checkCapsInTx(ctx context.Context, tx *sql.Tx, p InsertParams, addedRows in
 	if p.MaxSenderBacklog > 0 {
 		var backlog int
 		if err := tx.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM messages WHERE from_agent = ? AND state = ?`,
-			p.FromAgent, StateQueued).Scan(&backlog); err != nil {
+			`SELECT COUNT(*) FROM messages WHERE from_agent = ? AND to_agent = ? AND state = ?`,
+			p.FromAgent, p.ToAgent, StateQueued).Scan(&backlog); err != nil {
 			return fmt.Errorf("store: cap check sender: %w", err)
 		}
 		if backlog+addedRows > p.MaxSenderBacklog {
-			return fmt.Errorf("%w: %s (%d/%d, need %d slot(s))",
-				ErrSenderBacklogFull, p.FromAgent, backlog, p.MaxSenderBacklog, addedRows)
+			return fmt.Errorf("%w: %s→%s (%d/%d, need %d slot(s))",
+				ErrSenderBacklogFull, p.FromAgent, p.ToAgent, backlog, p.MaxSenderBacklog, addedRows)
 		}
 	}
 	return nil
@@ -604,7 +615,11 @@ func (s *Store) QueuedBacklogFloor(ctx context.Context, toAgent string, keepNewe
 }
 
 // SenderBacklog returns the number of queued messages originated by
-// fromAgent across all recipients. Used by send-side cap enforcement (#3).
+// fromAgent across all recipients. This is a global per-sender
+// diagnostic; it is NOT the cap predicate — the send-side sender cap is
+// enforced per-(sender, recipient) in checkCapsInTx since #296, via an
+// inline COUNT scoped to to_agent. Kept global because "how much does
+// this sender have in flight overall" is still a meaningful question.
 func (s *Store) SenderBacklog(ctx context.Context, fromAgent string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx,

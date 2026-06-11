@@ -323,6 +323,40 @@ func TestQueueDepthAndBacklog(t *testing.T) {
 	}
 }
 
+// TestSenderBacklogCap_ScopedPerRecipient pins the #296 invariant at the
+// store layer (where the cap predicate lives): the sender-backlog cap
+// counts queued rows for the (from_agent, to_agent) pair, not globally
+// per sender. A sender saturated at one recipient can still reach
+// another. Mutation check: drop the `AND to_agent = ?` predicate from
+// checkCapsInTx and the final alice→carol insert fails with
+// ErrSenderBacklogFull.
+func TestSenderBacklogCap_ScopedPerRecipient(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Saturate alice→bob at MaxSenderBacklog=2.
+	for i := 0; i < 2; i++ {
+		if _, err := s.InsertMessage(ctx, InsertParams{
+			FromAgent: "alice", ToAgent: "bob", Body: "m", MaxSenderBacklog: 2,
+		}); err != nil {
+			t.Fatalf("alice→bob #%d: %v", i, err)
+		}
+	}
+	// A 3rd alice→bob is over the per-recipient cap.
+	if _, err := s.InsertMessage(ctx, InsertParams{
+		FromAgent: "alice", ToAgent: "bob", Body: "m", MaxSenderBacklog: 2,
+	}); !errors.Is(err, ErrSenderBacklogFull) {
+		t.Fatalf("alice→bob #3 err = %v, want ErrSenderBacklogFull", err)
+	}
+	// But alice→carol is a different (sender, recipient) pair — bob's
+	// saturated queue must not block it.
+	if _, err := s.InsertMessage(ctx, InsertParams{
+		FromAgent: "alice", ToAgent: "carol", Body: "m", MaxSenderBacklog: 2,
+	}); err != nil {
+		t.Errorf("alice→carol err = %v, want nil (per-recipient scope must not block)", err)
+	}
+}
+
 func TestReplyTo_StoresAndReturns(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -65,9 +65,10 @@ Mapped against the code as of v0.2.1.
   - Identity precedence: explicit override (`--from`,
     `$TMUX_AGENT_NAME`) → `$TMUX_PANE` → agents registry. See
     `internal/identity/identity.go`.
-  - Per-recipient queue cap (default 5), per-sender backlog cap
-    (default 2), body size cap (16 KB). Atomic in
-    `InsertMessage` since #29.
+  - Per-recipient queue cap (default 5), per-(sender, recipient)
+    backlog cap (default 2 — scoped per recipient since #296, so one
+    slow consumer can't block a sender's traffic to others), body
+    size cap (16 KB). Atomic in `InsertMessage` since #29.
 - **What's trusted but acknowledged**: `$TMUX_PANE` is shell-
   settable. Any process the operator has shell access for can fake
   any agent identity. This is fine under the trust model — shell

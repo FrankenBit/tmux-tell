@@ -21,6 +21,13 @@ const defaultDBLocation = "/var/lib/tmux-msg/messages.db"
 // trivially safe within a process via SetMaxOpenConns(1)). N concurrent
 // senders can never overshoot the cap — at most `capRecipientQueue`
 // inserts succeed regardless of concurrency.
+//
+// capSenderBacklog is scoped per-(sender, recipient) since #296: it is
+// the most queued rows a single sender may hold in one recipient's
+// queue, a fairness slice of capRecipientQueue (2 of 5) so one sender
+// can't monopolise a mailbox. It is NOT a global per-sender outbound
+// ceiling — a sender blocked at one slow recipient can still reach all
+// others.
 const (
 	capRecipientQueue       = 5
 	capSenderBacklog        = 2
