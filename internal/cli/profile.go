@@ -1,5 +1,7 @@
 package cli
 
+import "git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+
 // Profile carries the per-adapter identity that distinguishes one CLI adapter
 // binary (tmux-msg-claude, tmux-msg-codex, …) from another while the shared
 // dispatch + handlers in this package stay adapter-agnostic. Per ADR-0009 the
@@ -28,15 +30,14 @@ package cli
 //     paste-incapable adapter delivers via hook-context (#248 decision (B),
 //     ADR-0009) and the mailman force-defers any paste-and-enter delivery to it.
 //
-// The full Claude-coupling (the internal/tmuxio observe-gate sentinels themselves)
-// stays OUT of this struct — that per-adapter PromptSentinel + Markers structure
-// is #322's PaneProfile refactor. PasteCapable is the narrow seam #323 needs in
-// the interim: a single capability boolean is enough to keep the paste layer from
-// ever reaching a pane it can't observe safely, without yet teaching it HOW to
-// observe codex panes. It is the inverse of the seam the original #248 note
-// anticipated ("until a paste-needing adapter lands"): the first non-Claude
-// adapter to land is paste-INcapable, so the seam it shapes is a refusal flag,
-// not the sentinel set.
+// The per-adapter pane-observation snippets (PromptSentinel + markers) live in
+// the Pane field as a tmuxio.PaneProfile — #322's refactor, which #323's
+// PasteCapable doc-comment anticipated ("that per-adapter PromptSentinel +
+// Markers structure is #322's PaneProfile refactor"). PasteCapable was the
+// narrow interim seam (a single boolean kept the paste layer off panes it
+// couldn't read); Pane is the deeper seam that teaches the observe-gate HOW to
+// read a non-Claude pane, so a paste-capable non-Claude adapter becomes possible
+// by supplying its own sentinel set rather than being force-deferred.
 type Profile struct {
 	BinaryName        string
 	DisplayLabel      string
@@ -47,6 +48,13 @@ type Profile struct {
 	// explicitly assert paste-capability is force-deferred rather than risking
 	// a clobber on a pane the observe-gate can't read (#323).
 	PasteCapable bool
+	// Pane carries the adapter's pane-observation snippets (prompt sentinel,
+	// compaction / awaiting-operator / status-line markers) that the
+	// internal/tmuxio classifier reads via its process-global activeProfile.
+	// cli.Run installs this into tmuxio at process start (#322). The zero value
+	// disables cursor-aware classification — adapters should supply a complete
+	// profile (e.g. tmuxio.ClaudePaneProfile() for the Claude adapter).
+	Pane tmuxio.PaneProfile
 }
 
 // active is the process-global adapter profile. A CLI binary serves exactly one
@@ -61,4 +69,5 @@ var active = Profile{
 	DeprecatedAlias:   "claude-msg",
 	DeprecatedRemoval: "v1.0",
 	PasteCapable:      true,
+	Pane:              tmuxio.ClaudePaneProfile(),
 }

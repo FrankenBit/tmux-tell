@@ -352,11 +352,18 @@ func extractInputContent(ctx context.Context, pane string) (string, error) {
 		return "", fmt.Errorf("tmuxio: observe-gate input-content capture: %w: %s",
 			err, strings.TrimSpace(string(out)))
 	}
+	sentinel := activeProfile.PromptSentinel
+	if sentinel == "" {
+		// No sentinel configured → no input-row anchor to walk from; the
+		// gate's StateAwaitingOperator path is unreachable for this adapter
+		// anyway (it needs a sentinel for cursor-aware classification).
+		return "", nil
+	}
 	var inputLines []string
 	inInput := false
 	for _, line := range strings.Split(string(out), "\n") {
 		if !inInput {
-			if rest, ok := strings.CutPrefix(line, PromptSentinel); ok {
+			if rest, ok := strings.CutPrefix(line, sentinel); ok {
 				inputLines = append(inputLines, strings.TrimRight(rest, " "))
 				inInput = true
 			}
@@ -373,22 +380,40 @@ func extractInputContent(ctx context.Context, pane string) (string, error) {
 	return strings.Join(inputLines, "\n"), nil
 }
 
+// StatusLineMarker is the glyph on the status row that bounds the BOTTOM of the
+// input area — ⏵⏵ (U+23F5 ×2), present on the bottom row of every Claude Code
+// pane in production ("⏵⏵ bypass permissions on (shift+tab to cycle)"). It is
+// the per-adapter input-area boundary snippet #322 lifts into PaneProfile;
+// extractInputContent's walk-until-boundary stops when it sees this glyph (via
+// the active profile). An adapter with a different status row supplies its own;
+// an empty value disables the status-line recognizer (the ─×20 separator
+// recognizer in isInputAreaBoundary still applies).
+//
+// FORWARD-WATCH (same shape as PromptSentinel + CompactionMarker +
+// AwaitingOperatorMarker): Claude-Code-version-dependent. If the status row's
+// leading glyph changes across a Claude Code version update, this constant needs
+// re-verification; the recognizer-case test in observe_gate_test.go surfaces the
+// drift on the Claude default.
+const StatusLineMarker = "⏵⏵"
+
 // isInputAreaBoundary reports whether a captured row marks the
 // boundary between the input area and the chrome below it (the
 // below-input separator or the status line). Used by
 // extractInputContent's walk-until-boundary multi-line capture (#96).
 //
 // Two recognizers:
-//   - status-line marker: ⏵⏵ (U+23F5) — present on the bottom row
-//     of every Claude Code pane in production
+//   - status-line marker: the active PaneProfile's StatusLineMarker (Claude:
+//     ⏵⏵ U+23F5) — present on the bottom row of every Claude Code pane in
+//     production. Skipped when the active profile leaves it empty.
 //   - separator detection: 20+ consecutive ─ (U+2500) characters —
-//     covers the below-input separator. The threshold is tuned to
-//     avoid false-positives on operator-typed content (an operator
-//     who types 20 box-drawing horizontals in a row is doing
-//     something unusual).
+//     covers the below-input separator. Adapter-universal (box-drawing
+//     separators are a TUI-wide convention), so it is NOT profile-gated. The
+//     threshold is tuned to avoid false-positives on operator-typed content (an
+//     operator who types 20 box-drawing horizontals in a row is doing something
+//     unusual).
 func isInputAreaBoundary(line string) bool {
 	trimmed := strings.TrimSpace(line)
-	if strings.HasPrefix(trimmed, "⏵⏵") {
+	if m := activeProfile.StatusLineMarker; m != "" && strings.HasPrefix(trimmed, m) {
 		return true
 	}
 	if strings.Contains(trimmed, strings.Repeat("─", 20)) {

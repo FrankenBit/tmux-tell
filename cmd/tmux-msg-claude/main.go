@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/cli"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 func main() {
@@ -30,6 +31,11 @@ func main() {
 		// defer paste-and-enter during operator-typing (internal/tmuxio), so
 		// this adapter is paste-capable.
 		PasteCapable: true,
+		// Pane-observation snippets the tmuxio classifier reads (#322): the ❯
+		// prompt sentinel + compaction / awaiting-operator / status-line
+		// markers, empirically pinned by the canary tests in
+		// internal/tmuxio/state_canary_test.go.
+		Pane: tmuxio.ClaudePaneProfile(),
 	}
 	os.Exit(cli.Run(p, os.Args[0], os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }

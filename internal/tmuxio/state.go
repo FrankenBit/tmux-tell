@@ -318,12 +318,13 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 	capAStr := string(capA)
 	capBStr := string(capB)
 
-	// Precedence 1: compaction marker.
-	if CompactionMarker != "" && strings.Contains(capBStr, CompactionMarker) {
+	// Precedence 1: compaction marker (from the active PaneProfile; empty
+	// disables the check for an adapter with no compaction UI).
+	if m := activeProfile.CompactionMarker; m != "" && strings.Contains(capBStr, m) {
 		return StateAtRestInCompaction,
 			Evidence{
-				Reason: fmt.Sprintf("compaction marker found: %q", CompactionMarker),
-				Marker: CompactionMarker,
+				Reason: fmt.Sprintf("compaction marker found: %q", m),
+				Marker: m,
 			}, nil
 	}
 
@@ -342,14 +343,15 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 	// distinguish auto-suggestion (cursor at sentinel) from operator-
 	// drafting (cursor past sentinel) — the two cases the v1 heuristic
 	// conflated as "non-empty input row".
+	sentinel := activeProfile.PromptSentinel
 	cursorX, cursorY, cursorErr := agentCursor(ctx, pane)
-	if cursorErr == nil {
+	if cursorErr == nil && sentinel != "" {
 		lines := strings.Split(capBStr, "\n")
 		if cursorY >= 0 && cursorY < len(lines) {
 			row := lines[cursorY]
-			rest, hasSentinel := strings.CutPrefix(row, PromptSentinel)
+			rest, hasSentinel := strings.CutPrefix(row, sentinel)
 			if hasSentinel {
-				sentinelCol := utf8.RuneCountInString(PromptSentinel)
+				sentinelCol := utf8.RuneCountInString(sentinel)
 				switch {
 				case cursorX == sentinelCol:
 					// Cursor right after `❯ ` — either a clean idle
@@ -382,13 +384,14 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 		}
 	}
 
-	// Precedence 5: awaiting-operator marker (backup for non-`❯`
-	// painting UIs — AskUserQuestion popups, search dialogs, etc.).
-	if AwaitingOperatorMarker != "" && strings.Contains(capBStr, AwaitingOperatorMarker) {
+	// Precedence 5: awaiting-operator marker (backup for non-sentinel-
+	// painting UIs — AskUserQuestion popups, search dialogs, etc.). From the
+	// active PaneProfile; empty disables the backup check.
+	if m := activeProfile.AwaitingOperatorMarker; m != "" && strings.Contains(capBStr, m) {
 		return StateAwaitingOperator,
 			Evidence{
-				Reason: fmt.Sprintf("awaiting-operator marker found: %q", AwaitingOperatorMarker),
-				Marker: AwaitingOperatorMarker,
+				Reason: fmt.Sprintf("awaiting-operator marker found: %q", m),
+				Marker: m,
 			}, nil
 	}
 
@@ -408,7 +411,7 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 	// Default: unknown. Distinguish two sub-cases for accurate evidence:
 	//   - sentinel found with content past it (but cursor not at input row)
 	//   - sentinel not found at all
-	hasSentinelInPane := strings.Contains(capBStr, PromptSentinel)
+	hasSentinelInPane := sentinel != "" && strings.Contains(capBStr, sentinel)
 	cursorNote := ""
 	if cursorErr != nil {
 		cursorNote = fmt.Sprintf(" (cursor query failed: %v)", cursorErr)
@@ -485,9 +488,13 @@ func countChangedLines(a, b string) int {
 // cursor-less fallback path in AgentState when display-message
 // fails or the cursor isn't on the input row.
 func isInputRowQuiet(paneContent string) bool {
+	sentinel := activeProfile.PromptSentinel
+	if sentinel == "" {
+		return false
+	}
 	sawSentinel := false
 	for _, row := range strings.Split(paneContent, "\n") {
-		rest, found := strings.CutPrefix(row, PromptSentinel)
+		rest, found := strings.CutPrefix(row, sentinel)
 		if !found {
 			continue
 		}

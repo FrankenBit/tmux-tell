@@ -5,6 +5,7 @@ import (
 	"io"
 	"path/filepath"
 
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/version"
 )
 
@@ -80,6 +81,12 @@ func warnIfDeprecatedName(argv0 string, stderr io.Writer) {
 // deprecated-alias warning; args is os.Args[1:]. Returns the process exit code.
 func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	active = p
+	// Install the adapter's pane-observation snippets into the tmuxio
+	// classifier's process-global before any subcommand (notably serve's
+	// mailman) starts observing panes (#322). The CLI binary serves exactly
+	// one adapter for its lifetime, so a single install at entry mirrors the
+	// `active` Profile global above.
+	tmuxio.SetActivePaneProfile(p.Pane)
 	warnIfDeprecatedName(argv0, stderr)
 
 	if len(args) == 0 {
