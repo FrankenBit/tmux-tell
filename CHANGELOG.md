@@ -49,6 +49,14 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   hook stdin schema). See `docs/reference.md` §Adapter integration (verified codex-cli
   0.130.0, 2026-05-10). The paste-and-enter observe-gate stays Claude-only — deferred until
   a concrete paste-needing adapter surfaces.
+- **`mailman_stuck{agent,reason}` Prometheus gauge (#300).** When metrics are
+  enabled (`--metrics-addr`), the gauge is set to `1` when the mailman parks
+  in the `#291` stuck state and drops to `0` when the stuck state is cleared
+  (via `register --force` or `ClearStuck`). Initialises from the DB on every
+  startup — a mailman restarted against an already-parked agent sets the gauge
+  before attempting any delivery, so the park window is fully visible in
+  Grafana/alerting even across daemon restarts. Two integration tests pin both
+  transitions; the unit test pins nil-safety.
 - **`mcp`/`serve` startup DB-path log (#290).** Both `tmux-msg-claude mcp` and
   `tmux-msg-claude serve` now emit an INFO line at startup naming the resolved
   DB and its resolution source:

@@ -119,6 +119,32 @@ func TestHandler_ServesValidExposition(t *testing.T) {
 	}
 }
 
+// TestSetMailmanStuck pins the #300 gauge: Set=1 on park, Set=0 on unpark.
+func TestSetMailmanStuck(t *testing.T) {
+	m := New()
+
+	// Park: gauge must be 1.
+	m.SetMailmanStuck("bob", "pane-not-found", true)
+	if got := testutil.ToFloat64(m.mailmanStuck.WithLabelValues("bob", "pane-not-found")); got != 1 {
+		t.Errorf("stuck gauge after park = %v, want 1", got)
+	}
+
+	// Unpark: gauge must drop to 0.
+	m.SetMailmanStuck("bob", "pane-not-found", false)
+	if got := testutil.ToFloat64(m.mailmanStuck.WithLabelValues("bob", "pane-not-found")); got != 0 {
+		t.Errorf("stuck gauge after unpark = %v, want 0", got)
+	}
+
+	// Two agents are independent.
+	m.SetMailmanStuck("alice", "pane-not-found", true)
+	if got := testutil.ToFloat64(m.mailmanStuck.WithLabelValues("bob", "pane-not-found")); got != 0 {
+		t.Errorf("bob gauge changed when alice parked: %v", got)
+	}
+	if got := testutil.ToFloat64(m.mailmanStuck.WithLabelValues("alice", "pane-not-found")); got != 1 {
+		t.Errorf("alice gauge = %v, want 1", got)
+	}
+}
+
 // TestNilMetrics_AllNoOp pins the load-bearing nil-safety ergonomic: a
 // disabled mailman holds a nil *Metrics and calls every method without a
 // guard. None may panic, and the nil Handler must 503 rather than crash.
@@ -130,6 +156,7 @@ func TestNilMetrics_AllNoOp(t *testing.T) {
 	m.SetQueueDepth("b", 3)
 	m.IncLoopIteration("b")
 	m.IncPasteUnsafeAbort("b", "unknown")
+	m.SetMailmanStuck("b", "pane-not-found", true)
 	if m.Registry() != nil {
 		t.Error("nil Metrics Registry() should be nil")
 	}

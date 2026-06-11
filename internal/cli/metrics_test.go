@@ -16,6 +16,27 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+// gatherGauge returns the current value of a gauge series identified by name +
+// an exact label-value set, or 0 when the series is absent.
+func gatherGauge(t *testing.T, m *metrics.Metrics, name string, labels map[string]string) float64 {
+	t.Helper()
+	families, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, fam := range families {
+		if fam.GetName() != name {
+			continue
+		}
+		for _, metric := range fam.GetMetric() {
+			if labelsMatch(metric.GetLabel(), labels) {
+				return metric.GetGauge().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
 // gatherCounter returns the value of a counter series identified by name +
 // an exact label-value set, or 0 when the series is absent (the
 // never-incremented case reads as zero, like Prometheus itself).
@@ -301,6 +322,128 @@ func TestServe_Metrics_EndpointGatedByAddr(t *testing.T) {
 	}
 	stopB()
 	waitB()
+}
+
+// TestServe_Metrics_MailmanStuck_ParkAndUnpark pins the #300 gauge wiring:
+// the serve loop sets tmux_msg_mailman_stuck=1 when the agent parks and
+// =0 when the stuck state is cleared externally (the register --force path).
+// Uses StuckThreshold=1 and a phased runner to avoid immediate re-parking
+// after the clear: Phase 1 returns "can't find pane" (parks immediately);
+// Phase 2 switches to a non-pane-not-found error (resets consecutivePaneFails
+// on each attempt, preventing re-park) so the gauge stays at 0 after clear.
+func TestServe_Metrics_MailmanStuck_ParkAndUnpark(t *testing.T) {
+	var mu sync.Mutex
+	parkMode := true // Phase 1 = can't-find-pane; Phase 2 = other error (no re-park)
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		if len(args) == 0 || args[0] != "capture-pane" {
+			return nil, nil
+		}
+		mu.Lock()
+		inParkMode := parkMode
+		mu.Unlock()
+		if inParkMode {
+			return nil, &errString{"exit status 1: can't find pane: %3"}
+		}
+		// Non-can't-find-pane error resets consecutivePaneFails (lines 957-961)
+		// so the agent never re-parks after the stuck state is cleared.
+		return nil, &errString{"exit status 1: tmux: socket gone (not pane-not-found)"}
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "hi"})
+
+	m := metrics.New()
+	opts := fastOpts("bob")
+	opts.PrePasteSafetyDisabled = false
+	opts.StuckThreshold = 1
+	opts.StuckPollInterval = 5 * time.Millisecond
+	opts.Metrics = m
+
+	stop, wait, _ := runServeInBackground(t, s, opts)
+	t.Cleanup(func() { stop(); wait() })
+
+	// Phase 1: wait for park; gauge must reach 1.
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if gatherGauge(t, m, "tmux_msg_mailman_stuck",
+			map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}) == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := gatherGauge(t, m, "tmux_msg_mailman_stuck",
+		map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}); got != 1 {
+		t.Errorf("stuck gauge after park = %v, want 1", got)
+	}
+
+	// Phase 2: switch to non-park-mode runner, then clear stuck. The next
+	// loop iteration detects the cleared stuck_reason and drops the gauge to 0.
+	// The non-park-mode runner prevents immediate re-park.
+	mu.Lock()
+	parkMode = false
+	mu.Unlock()
+	if err := s.ClearStuck(ctx, "bob"); err != nil {
+		t.Fatalf("clear stuck: %v", err)
+	}
+	clearDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(clearDeadline) {
+		if gatherGauge(t, m, "tmux_msg_mailman_stuck",
+			map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}) == 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := gatherGauge(t, m, "tmux_msg_mailman_stuck",
+		map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}); got != 0 {
+		t.Errorf("stuck gauge after unpark = %v, want 0", got)
+	}
+}
+
+// TestServe_Metrics_MailmanStuck_StartupWithParkedAgent pins the startup-with-
+// already-parked scenario: a mailman started against an agent whose stuck_reason
+// is already set (previous run parked it) must immediately reflect the parked
+// state in the gauge without waiting for another park transition.
+func TestServe_Metrics_MailmanStuck_StartupWithParkedAgent(t *testing.T) {
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		return nil, &errString{"exit status 1: can't find pane: %3"}
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+	if err := s.SetStuck(ctx, "bob", store.StuckReasonPaneNotFound); err != nil {
+		t.Fatalf("seed stuck: %v", err)
+	}
+
+	m := metrics.New()
+	opts := fastOpts("bob")
+	opts.StuckPollInterval = 5 * time.Millisecond
+	opts.Metrics = m
+
+	stop, wait, _ := runServeInBackground(t, s, opts)
+	t.Cleanup(func() { stop(); wait() })
+
+	// Gauge must reach 1 within a few loop iterations (no delivery needed).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if gatherGauge(t, m, "tmux_msg_mailman_stuck",
+			map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}) == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := gatherGauge(t, m, "tmux_msg_mailman_stuck",
+		map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}); got != 1 {
+		t.Errorf("stuck gauge at startup with parked agent = %v, want 1", got)
+	}
 }
 
 // TestPasteUnsafeReason pins the reason-label mapping that feeds the

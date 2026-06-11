@@ -576,6 +576,11 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	consecutivePaneFails := 0
 	paneFailMsgID := ""
 
+	// #300: mirrors the last-known stuck_reason for the mailman_stuck gauge.
+	// Tracks what reason the gauge was last Set=1 for, so the Set=0 call on
+	// unpark can match the label.  Empty = gauge is at 0 (or not yet seen).
+	lastStuckReason := ""
+
 	for {
 		if stopCtx.Err() != nil {
 			return exitOK
@@ -609,6 +614,18 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				return exitOK
 			}
 			continue
+		}
+
+		// #300: update mailman_stuck gauge on stuck_reason transitions.
+		// Detected here (not at SetStuck/ClearStuck call sites) so a mailman
+		// that starts up against an already-parked agent still sets the gauge.
+		if a.StuckReason != lastStuckReason {
+			if a.StuckReason != "" {
+				m.SetMailmanStuck(opts.Agent, a.StuckReason, true)
+			} else {
+				m.SetMailmanStuck(opts.Agent, lastStuckReason, false)
+			}
+			lastStuckReason = a.StuckReason
 		}
 
 		// #291 stuck-state: a parked mailman stops probing tmux entirely.

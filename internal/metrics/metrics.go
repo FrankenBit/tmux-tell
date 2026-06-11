@@ -69,6 +69,7 @@ type Metrics struct {
 	queueDepth        *prometheus.GaugeVec
 	loopIterations    *prometheus.CounterVec
 	pasteUnsafeAborts *prometheus.CounterVec
+	mailmanStuck      *prometheus.GaugeVec
 }
 
 // New builds the collector set, registers it against a fresh private
@@ -105,6 +106,10 @@ func New() *Metrics {
 			Name: "tmux_msg_paste_unsafe_aborts_total",
 			Help: "Total deliveries aborted by the pre-paste safety / drift guards because the pane was paste-unsafe, by agent and reason.",
 		}, []string{"agent", "reason"}),
+		mailmanStuck: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tmux_msg_mailman_stuck",
+			Help: "1 when the mailman is parked in the #291 stuck state (stopped probing tmux), 0 when clear. Labels: agent name and stuck reason (pane-not-found).",
+		}, []string{"agent", "reason"}),
 	}
 	reg.MustRegister(
 		m.messagesTotal,
@@ -113,6 +118,7 @@ func New() *Metrics {
 		m.queueDepth,
 		m.loopIterations,
 		m.pasteUnsafeAborts,
+		m.mailmanStuck,
 	)
 	return m
 }
@@ -192,4 +198,20 @@ func (m *Metrics) IncPasteUnsafeAbort(agent, reason string) {
 		return
 	}
 	m.pasteUnsafeAborts.WithLabelValues(agent, reason).Inc()
+}
+
+// SetMailmanStuck sets tmux_msg_mailman_stuck for the agent (#300).
+// parked=true sets the gauge to 1 (mailman is parked); parked=false sets it
+// to 0 (mailman resumed). reason is the stuck reason string from the store
+// (store.StuckReasonPaneNotFound = "pane-not-found"); callers must pass the
+// same reason on both the set and clear call so the label values match.
+func (m *Metrics) SetMailmanStuck(agent, reason string, parked bool) {
+	if m == nil {
+		return
+	}
+	v := 0.0
+	if parked {
+		v = 1.0
+	}
+	m.mailmanStuck.WithLabelValues(agent, reason).Set(v)
 }

@@ -446,6 +446,15 @@ chamber that re-registers itself after a respawn un-parks automatically.
 Both knobs are per-agent TOML-configurable (`stuck-threshold`,
 `stuck-poll-interval`); `stuck-threshold = 0` disables parking (backoff-only).
 
+**Prometheus gauge.** When metrics are enabled (`--metrics-addr`), the
+`tmux_msg_mailman_stuck{agent,reason}` gauge reflects the park state in
+real-time: it is set to `1` on the loop iteration where parking is first
+detected and drops to `0` when the stuck state is cleared. The gauge also
+initialises correctly when a mailman starts against an already-parked agent
+(e.g. after a daemon restart) — the first loop iteration reads the DB state
+and sets the gauge before any delivery is attempted. Use this in a Grafana
+alert to get paged when an agent parks.
+
 ## Verifying which DB a process is bound to (#290)
 
 Both `tmux-msg-claude serve` and `tmux-msg-claude mcp` emit a startup log line
