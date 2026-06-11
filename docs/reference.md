@@ -349,7 +349,30 @@ tmux-msg-claude register --name <agent> [--pane <id>] [--force]  # register a pa
 tmux-msg-claude unregister --name <agent> [--purge-queue] [--force]  # remove agent + stop mailman (#289)
 tmux-msg-claude flag-operator "<body>"                  # signal this chamber needs operator attention (#224)
 tmux-msg-claude clear-operator-flag                     # clear this chamber's awaiting_operator flag
+tmux-msg-claude flush  [--trigger resume|register]      # promote your own deferred messages for a trigger (#227)
 ```
+
+### Deferred delivery (#227 / #258a)
+
+`send --deliver-after=<trigger>` **stages** a message instead of queuing it: it
+sits in `state='deferred'`, invisible to inbox + mailman, until its trigger
+fires. Single-recipient only. Two triggers exist:
+
+- **`resume`** (#227) — post-compaction self-handoff. Before `/compact`, send
+  *yourself* orientation with `--deliver-after=resume`; in your resume routine
+  call `flush --trigger=resume` (or `tmux-msg.flush_deferred`) so the staged
+  text lands in the freshly-resumed context instead of being absorbed by the
+  summarizer. You can only flush messages addressed to yourself.
+- **`register`** (#258a) — spawn-die session bridge. Send *another* agent a
+  message with `--deliver-after=register` ("remember this for its next
+  dispatch", e.g. Pilot's dispatch-across-sessions pattern). It auto-promotes
+  when that agent next (re)registers — **no explicit flush needed**, the
+  register *is* the trigger fire. The register response reports
+  `deferred_promoted` (count, non-zero only). Promoted register rows deliver
+  immediately (they bypass the #204 backlog floor via the `deliver_after`
+  exemption), so they are *delivered*, not announced as backlog.
+
+Timestamp/duration triggers and `OR`-composition are a #295 follow-up.
 
 ## Chamber → operator attention signal
 
@@ -995,7 +1018,7 @@ CREATE TABLE messages (
   delivered_at  TEXT,
   error         TEXT,
   verified      INTEGER,                        -- 1=verified, 0=unverified (delivered_in_input_box), NULL=unmarked (pre-migration, or not yet delivered)
-  deliver_after TEXT,                           -- #227 deferred-delivery trigger; non-NULL only on state='deferred' (and the row it's promoted into), e.g. 'resume'
+  deliver_after TEXT,                           -- #227 deferred-delivery trigger; non-NULL only on state='deferred' (and the row it's promoted into); 'resume' (#227) or 'register' (#258a)
   expects_reply INTEGER NOT NULL DEFAULT 0       -- 1 = sender flagged reply intent: set by `ask` (#250) OR `send --expects-reply` (#270); 0 = plain send with no explicit reply expectation
 );
 CREATE INDEX ix_msg_queue ON messages(to_agent, state, id);

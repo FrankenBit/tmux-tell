@@ -206,6 +206,52 @@ func TestMCP_Register_ClearsAttentionState(t *testing.T) {
 	}
 }
 
+// TestMCP_Register_PromotesRegisterDeferred pins the #258(a) wiring on the MCP
+// path: a register-deferred message auto-promotes when the recipient registers
+// via the MCP tool (the spawn-die path chambers actually use), and the response
+// surfaces deferred_promoted. Resume-deferred rows stay staged (isolation).
+func TestMCP_Register_PromotesRegisterDeferred(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%42")
+	ctx := context.Background()
+	s := newCmdTestStore(t, "dispatcher", "pilot")
+	(&fakeSystemctl{}).install(t)
+
+	reg, err := s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "dispatcher", ToAgent: "pilot", Body: "your next dispatch",
+		DeliverAfter: "register",
+	})
+	if err != nil {
+		t.Fatalf("seed register-deferred: %v", err)
+	}
+	if _, err := s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "dispatcher", ToAgent: "pilot", Body: "resume note",
+		DeliverAfter: "resume",
+	}); err != nil {
+		t.Fatalf("seed resume-deferred: %v", err)
+	}
+
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+		"name":          "pilot",
+		"force":         true,
+		"start_mailman": false,
+	})
+	if got["ok"] != true {
+		t.Fatalf("got %v", got)
+	}
+	if dp, _ := got["deferred_promoted"].(float64); int(dp) != 1 {
+		t.Errorf("deferred_promoted = %v, want 1", got["deferred_promoted"])
+	}
+
+	queued, _ := s.ListMessages(ctx, store.ListFilter{ToAgent: "pilot", State: store.StateQueued})
+	if len(queued) != 1 || queued[0].PublicID != reg.PublicID {
+		t.Errorf("queued = %v, want only the promoted register row %s", queued, reg.PublicID)
+	}
+	deferred, _ := s.ListMessages(ctx, store.ListFilter{ToAgent: "pilot", Deferred: true})
+	if len(deferred) != 1 || deferred[0].DeliverAfter.String != "resume" {
+		t.Errorf("deferred = %v, want only the resume row still staged", deferred)
+	}
+}
+
 func TestMCP_Register_NoPaneAvailable(t *testing.T) {
 	t.Setenv("TMUX_PANE", "")
 	s := newCmdTestStore(t)

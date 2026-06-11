@@ -25,7 +25,8 @@ type sendParams struct {
 	Quick           bool // compact single-line chrome on delivery (#154)
 	// DeliverAfter, when non-empty, defers the message (#227): it is stored in
 	// StateDeferred carrying this trigger and delivers only after a matching
-	// flush_deferred call. v1 accepts "resume" (post-compaction self-handoff).
+	// flush_deferred call. Accepts "resume" (post-compaction self-handoff) and
+	// "register" (#258a — auto-promotes on the recipient's next register).
 	DeliverAfter string
 	// ExpectsReply marks the send as an `ask` (#250): sets the expects_reply
 	// column so the request-reply seams / future introspection can recognize
@@ -75,7 +76,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 	blockOnStale := fs.Bool("block-on-stale", false,
 		"with --reply-to: fail (ok:false) if the thread moved since you last spoke (#155)")
 	deliverAfter := fs.String("deliver-after", "",
-		"defer delivery until a trigger fires (#227): the message is staged (not queued) and delivers only after a matching `flush --trigger=<t>` call. v1 trigger: `resume` (post-compaction self-handoff). Single-recipient only.")
+		"defer delivery until a trigger fires (#227): the message is staged (not queued) and delivers only after the trigger. `resume` flushes via `flush --trigger=resume` (post-compaction self-handoff); `register` auto-promotes on the recipient's next (re)register (#258a). Single-recipient only.")
 	expectsReply := fs.Bool("expects-reply", false,
 		"signal that you'd like a reply — sets the expects_reply marker WITHOUT invoking ask/wait_for_reply machinery (#270). Use for lightweight intent-signaling when you're not blocking on the answer. Sender's unanswered sends appear under `sent --awaiting-reply`; recipient's owed replies appear under `inbox --unanswered`.")
 	format := fs.String("format", "json", "json|text")

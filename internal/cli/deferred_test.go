@@ -10,12 +10,16 @@ import (
 )
 
 func TestValidateDeferTrigger(t *testing.T) {
-	if err := validateDeferTrigger("resume"); err != nil {
-		t.Errorf("resume should be valid: %v", err)
+	for _, good := range []string{"resume", "register"} {
+		if err := validateDeferTrigger(good); err != nil {
+			t.Errorf("%q should be valid: %v", good, err)
+		}
 	}
-	for _, bad := range []string{"", "register", "15m", "resume ", "RESUME"} {
+	// "register" moved to valid in #258(a); timestamps + OR-composition stay
+	// a #295 follow-up. Empty + whitespace/case variants stay rejected.
+	for _, bad := range []string{"", "15m", "resume ", "RESUME", "Register"} {
 		if err := validateDeferTrigger(bad); err == nil {
-			t.Errorf("trigger %q should be rejected in v1", bad)
+			t.Errorf("trigger %q should be rejected", bad)
 		}
 	}
 }

@@ -16,21 +16,30 @@ import (
 // the message in StateDeferred until the named trigger fires; `flush_deferred
 // --trigger=<trigger>` promotes the caller's matching deferred rows to queued.
 //
-// v1 scope: the **post-compaction self-handoff** case only — `resume`, an
-// explicit "I'm back, flush my queue" signal a chamber emits as part of its
-// post-/compact resume routine. The other trigger forms sketched in #227
-// (`register` auto-promotion, RFC3339 / relative-duration timestamps,
-// `OR`-composition) are a deferred follow-up: the deferred→queued machinery is
-// general, but wiring a trigger whose promotion path doesn't exist yet would
-// ship a send that silently never delivers. So v1 accepts only the triggers it
-// actually fires, and rejects the rest with a pointer to the follow-up.
-const deferTriggerResume = "resume"
+// Scope: each trigger is accepted only once its promotion path exists, because
+// staging a send for a trigger nothing fires would silently never deliver.
+//   - `resume` (#227) — post-compaction self-handoff: an explicit "I'm back,
+//     flush my queue" a chamber emits in its post-/compact resume routine, via
+//     `flush_deferred --trigger=resume`.
+//   - `register` (#258a) — spawn-die session bridge: "remember this for my next
+//     dispatch." The register handler auto-promotes these rows when the agent
+//     (re)registers, so no explicit flush is needed (the register IS the fire).
+//
+// The remaining sketched forms — RFC3339 / relative-duration timestamps and
+// `OR`-composition — are the #295 follow-up (each needs its own promotion
+// wiring, e.g. a timestamp sweeper). So this set accepts only the triggers it
+// actually fires, and rejects the rest with a pointer to that follow-up.
+const (
+	deferTriggerResume   = "resume"
+	deferTriggerRegister = "register"
+)
 
-// validDeferTriggers is the set of trigger names v1 accepts on send /
-// flush_deferred. Kept as a set so adding `register` / timestamps later is a
-// one-line change plus the promotion wiring.
+// validDeferTriggers is the set of trigger names accepted on send /
+// flush_deferred. Kept as a set so adding a trigger is a one-line change plus
+// its promotion wiring.
 var validDeferTriggers = map[string]bool{
-	deferTriggerResume: true,
+	deferTriggerResume:   true,
+	deferTriggerRegister: true,
 }
 
 // validateDeferTrigger reports an error when trigger is not a v1-supported
@@ -47,8 +56,8 @@ func validateDeferTrigger(trigger string) error {
 		accepted = append(accepted, t)
 	}
 	sort.Strings(accepted)
-	return fmt.Errorf("unsupported deliver-after trigger %q (v1 accepts: %s). "+
-		"register-promotion, timestamp scheduling, and OR-composition are a #258 follow-up",
+	return fmt.Errorf("unsupported deliver-after trigger %q (accepts: %s). "+
+		"timestamp scheduling and OR-composition are a #295 follow-up",
 		trigger, strings.Join(accepted, ", "))
 }
 
@@ -94,7 +103,7 @@ func runFlushCLI(args []string, stdout, stderr io.Writer) int {
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
 	from := fs.String("from", "", "agent whose deferred messages to flush (env: TMUX_AGENT_NAME; default: this pane)")
 	trigger := fs.String("trigger", deferTriggerResume,
-		"the deferred-delivery trigger to fire (#227). v1: `resume` (post-compaction self-handoff).")
+		"the deferred-delivery trigger to fire (#227). `resume` (post-compaction self-handoff); `register` auto-fires on (re)register (#258a) so rarely needs an explicit flush.")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}

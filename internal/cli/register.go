@@ -195,6 +195,31 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		cfg, _ := config.Load()
 		addBacklogPolicyFields(out, applyBacklogPolicy(ctx, s, cfg, *name, *deliveryMode, queued))
 	}
+
+	// #258(a): promote this agent's register-deferred messages
+	// (deliver_after="register") — the spawn-die session-bridge ("remember
+	// this for my next dispatch", e.g. Pilot's dispatch-across-sessions). The
+	// register IS the trigger fire; no explicit flush_deferred is needed.
+	//
+	// Deliberately AFTER the #204 backlog count + floor above. The AC sketched
+	// "promote before the floor so the rows count as live" — but re-evaluating
+	// per the AC's own note: #227 already exempts deliver_after-marked rows
+	// from the floor in ClaimNext, so a promoted register row delivers on the
+	// mailman's next loop regardless of floor position. Promoting AFTER the
+	// count keeps that delivery guarantee while NOT folding these rows into the
+	// ordinary-backlog `queued` count or its don't-flood 📬 nudge — a
+	// register-deferred message is meant to be DELIVERED on register, not
+	// announced as backlog to go poll. So the announce policy sees only genuine
+	// backlog; the register rows ride the exemption straight to delivery, and
+	// the response reports them separately as `deferred_promoted` (non-zero
+	// only, to keep the common no-deferred register quiet). Best-effort:
+	// registration already succeeded, so a promote hiccup degrades to a soft
+	// field — a still-deferred row promotes on the next register.
+	if deferredPromoted, dpErr := s.PromoteDeferred(ctx, *name, deferTriggerRegister); dpErr != nil {
+		out["deferred_promoted_error"] = dpErr.Error()
+	} else if deferredPromoted > 0 {
+		out["deferred_promoted"] = deferredPromoted
+	}
 	if start {
 		if err := startMailman(ctx, *name); err != nil {
 			out["mailman"] = "failed"

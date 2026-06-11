@@ -77,7 +77,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 				"wait_for_delivered": {"type": "boolean", "description": "Block until the message reaches a terminal delivery state (delivered/failed) or timeout, returning a \"delivery\" block with state + verify_ms. Default false (#152)."},
 				"timeout":           {"type": "string", "description": "Bound for wait_for_delivered as a Go duration (e.g. \"10s\"). Default 10s."},
 				"block_on_stale":    {"type": "boolean", "description": "With reply_to: fail (ok:false) instead of queueing when the thread_freshness check finds the thread moved since you last spoke (newer messages addressed to you arrived after your last message in the chain). Default false — staleness is reported but the send still succeeds (#155)."},
-				"deliver_after":     {"type": "string", "description": "Defer delivery until a trigger fires (#227): the message is STAGED (not queued) and delivers only after a matching flush_deferred call. Primary use: post-compaction self-handoff — send yourself orientation text with deliver_after=\"resume\", then call tmux-msg.flush_deferred{trigger:\"resume\"} as part of your post-/compact resume routine so it lands in the freshly-resumed context rather than being absorbed by the summarizer. v1 accepts only \"resume\". Single-recipient only. The response carries deliver_after to confirm staging."},
+				"deliver_after":     {"type": "string", "description": "Defer delivery until a trigger fires (#227): the message is STAGED (not queued) and delivers only after the trigger. Accepts \"resume\" — post-compaction self-handoff: stage orientation text with deliver_after=\"resume\", then call tmux-msg.flush_deferred{trigger:\"resume\"} in your post-/compact resume routine so it lands in the freshly-resumed context instead of being absorbed by the summarizer — or \"register\" (#258a): a spawn-die session bridge addressed to another agent (\"remember this for its next dispatch\"); it auto-promotes when that agent next (re)registers, no explicit flush needed. Single-recipient only. The response carries deliver_after to confirm staging."},
 				"expects_reply":     {"type": "boolean", "description": "Signal that you'd like a reply — lightweight intent-marker WITHOUT the blocking wait of ask/wait_for_reply (#270). Use when you want an answer eventually but aren't blocking on it. Your unanswered sends appear under sent --awaiting-reply; the recipient's owed replies appear under inbox --unanswered. Default false."}
 			},
 			"required": ["to", "body"]
@@ -97,11 +97,11 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpResendHandler(s))
 
 	srv.RegisterTool("tmux-msg.flush_deferred",
-		"Promote your own deferred messages for a trigger to delivery (#227). A deferred message (sent with deliver_after) is STAGED — invisible to inbox/mailman — until you flush its trigger. Primary use: POST-COMPACTION SELF-HANDOFF. Before /compact, send yourself orientation with deliver_after=\"resume\"; then call this with trigger=\"resume\" as part of your resume routine, so the staged message lands in your freshly-resumed context instead of being absorbed by the summarizer. Idempotent — calling with no matching deferred messages is a no-op (promoted:0), so it's safe to call unconditionally on resume. You can only flush messages addressed to yourself. Returns {ok, trigger, promoted}. v1 trigger: \"resume\".",
+		"Promote your own deferred messages for a trigger to delivery (#227). A deferred message (sent with deliver_after) is STAGED — invisible to inbox/mailman — until you flush its trigger. Primary use: POST-COMPACTION SELF-HANDOFF. Before /compact, send yourself orientation with deliver_after=\"resume\"; then call this with trigger=\"resume\" as part of your resume routine, so the staged message lands in your freshly-resumed context instead of being absorbed by the summarizer. Idempotent — calling with no matching deferred messages is a no-op (promoted:0), so it's safe to call unconditionally on resume. You can only flush messages addressed to yourself. Returns {ok, trigger, promoted}. Triggers: \"resume\"; \"register\" also exists but auto-fires on (re)register (#258a) so rarely needs an explicit flush.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"trigger": {"type": "string", "description": "The deferred-delivery trigger to fire. v1 accepts \"resume\". Default \"resume\"."}
+				"trigger": {"type": "string", "description": "The deferred-delivery trigger to fire. Accepts \"resume\" (default) and \"register\" (though register auto-fires on (re)register, #258a). Default \"resume\"."}
 			}
 		}`),
 		mcpFlushDeferredHandler(s))
@@ -1181,6 +1181,18 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 			// not read as an empty backlog). Mirrors the CLI register path.
 			cfg, _ := config.Load()
 			addBacklogPolicyFields(resp, applyBacklogPolicy(ctx, s, cfg, in.Name, deliveryMode, queued))
+		}
+
+		// #258(a): promote register-deferred messages AFTER the backlog count +
+		// floor, so the register rows aren't folded into the ordinary-backlog
+		// 📬 nudge (they deliver via #227's deliver_after floor-exemption, not
+		// via the announce policy). See the CLI register path for the full
+		// re-evaluation of the AC's "promote before floor" sketch. Best-effort
+		// (the MCP closure has no stderr for a soft WARN); non-zero count only.
+		if deferredPromoted, dpErr := s.PromoteDeferred(ctx, in.Name, deferTriggerRegister); dpErr != nil {
+			resp["deferred_promoted_error"] = dpErr.Error()
+		} else if deferredPromoted > 0 {
+			resp["deferred_promoted"] = deferredPromoted
 		}
 
 		// Default start_mailman to true — UNLESS delivery_mode is

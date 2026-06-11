@@ -119,6 +119,71 @@ func TestRegister_CLI_SurfacesQueuedBacklog(t *testing.T) {
 	}
 }
 
+// TestRegister_CLI_PromotesRegisterDeferred pins the #258(a) wiring: a message
+// staged with deliver_after="register" auto-promotes to queued when its
+// recipient (re)registers (the spawn-die session-bridge — "remember this for my
+// next dispatch"), while a resume-deferred row to the same agent stays staged
+// (trigger isolation). The response surfaces deferred_promoted. Mutation check:
+// drop the PromoteDeferred call in runRegisterCLI and the register row stays
+// deferred → queued count is 0 and deferred_promoted is absent.
+func TestRegister_CLI_PromotesRegisterDeferred(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "messages.db")
+	ctx := context.Background()
+
+	seed, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open seed store: %v", err)
+	}
+	for _, n := range []string{"dispatcher", "pilot"} {
+		if err := seed.UpsertAgent(ctx, n, "%99"); err != nil {
+			t.Fatalf("seed agent %s: %v", n, err)
+		}
+	}
+	reg, err := seed.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "dispatcher", ToAgent: "pilot", Body: "your next dispatch",
+		DeliverAfter: "register",
+	})
+	if err != nil {
+		t.Fatalf("seed register-deferred: %v", err)
+	}
+	if _, err := seed.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "dispatcher", ToAgent: "pilot", Body: "resume note",
+		DeliverAfter: "resume",
+	}); err != nil {
+		t.Fatalf("seed resume-deferred: %v", err)
+	}
+	_ = seed.Close()
+
+	t.Setenv("CLAUDE_MSG_DB", dbPath)
+	var stdout, stderr bytes.Buffer
+	exit := runRegisterCLI([]string{
+		"--name", "pilot", "--pane", "%9",
+		"--force", "--start-mailman=false",
+	}, &stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
+	}
+	out := parseJSONResult(t, stdout.Bytes())
+	if dp, _ := out["deferred_promoted"].(float64); int(dp) != 1 {
+		t.Errorf("deferred_promoted = %v, want 1", out["deferred_promoted"])
+	}
+
+	// The register row is now queued; the resume row stays deferred (isolation).
+	check, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer check.Close()
+	queued, _ := check.ListMessages(ctx, store.ListFilter{ToAgent: "pilot", State: store.StateQueued})
+	if len(queued) != 1 || queued[0].PublicID != reg.PublicID {
+		t.Errorf("queued = %v, want only the promoted register row %s", queued, reg.PublicID)
+	}
+	deferred, _ := check.ListMessages(ctx, store.ListFilter{ToAgent: "pilot", Deferred: true})
+	if len(deferred) != 1 || deferred[0].DeliverAfter.String != "resume" {
+		t.Errorf("deferred = %v, want only the resume row still staged", deferred)
+	}
+}
+
 // TestRegister_CLI_RefusesStartMailmanWithNonDefaultDB pins the #293
 // refusal at the CLI surface. A caller with a non-default $CLAUDE_MSG_DB
 // requesting --start-mailman=true would silently misroute (agent row in

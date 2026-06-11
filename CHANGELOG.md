@@ -49,6 +49,18 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   hook stdin schema). See `docs/reference.md` §Adapter integration (verified codex-cli
   0.130.0, 2026-05-10). The paste-and-enter observe-gate stays Claude-only — deferred until
   a concrete paste-needing adapter surfaces.
+- **Deferred-delivery `register` trigger — spawn-die session bridge (#258a).**
+  `send --deliver-after=register` (and the MCP `deliver_after:"register"`) stages
+  a message addressed to another agent that auto-promotes to queued when that
+  agent next (re)registers — "remember this for its next dispatch" (e.g. Pilot's
+  dispatch-across-sessions pattern). No explicit `flush_deferred` is needed: the
+  register IS the trigger fire, on both the CLI and MCP register paths. The
+  register response reports `deferred_promoted` (count, non-zero only). Promoted
+  rows deliver immediately rather than being announced as backlog — they bypass
+  the #204 floor via #227's `deliver_after` exemption, and the promotion runs
+  *after* the backlog-announce policy so register messages don't trigger a
+  spurious 📬 nudge. The remaining `#258` triggers — timestamp/duration
+  scheduling and `OR`-composition — refile to #295 (build-on-demand). Closes #258.
 - **`mailman_stuck{agent,reason}` Prometheus gauge (#300).** When metrics are
   enabled (`--metrics-addr`), the gauge is set to `1` when the mailman parks
   in the `#291` stuck state and drops to `0` when the stuck state is cleared
