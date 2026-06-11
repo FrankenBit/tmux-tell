@@ -108,6 +108,14 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   uses `setStuckBackoffBaseForTest(time.Millisecond)` to complete in ~30ms
   instead of the production seconds scale.
 
+- **Adapter-correctness: usage hints + help prose name the running binary — #280.** Per-subcommand
+  flag-error usage hints (and `run '… discover'`-class runtime pointers) interpolate the active
+  adapter's binary name instead of a hardcoded `tmux-msg-claude`, and the top-level `mcp` /
+  `hook-context` help prose names the active adapter via a new `Profile.DisplayLabel`
+  ("Claude Code" / "Codex"). Cosmetic-only and behavior-preserving for the claude adapter (the
+  default profile reproduces every string verbatim). The `mcp.go` register tool-schema
+  descriptions carry deeper Claude framing and are deferred to #314.
+
 ## [0.15.1] — 2026-06-11
 
 Bugfix release: feature-frozen on top of v0.15.0 to land the five substrate-
