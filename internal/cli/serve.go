@@ -541,32 +541,32 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		logger.Printf("recovered count=%d", n)
 	}
 
-	// Paste-capability force-defer (#323). A paste-INcapable adapter (Codex)
-	// must never paste-and-enter into its pane: the internal/tmuxio observe-gate
-	// is calibrated for Claude's ❯ prompt sentinel + cursor disambiguation, so a
-	// Codex `›` input area is mis-classified and the gate can't reliably defer
-	// during operator-typing — the paste clobbers in-progress operator input
-	// (operator-witnessed, #323). Until the per-adapter PaneProfile refactor
-	// (#322) teaches the observe-gate to read Codex panes, force-defer: refuse
-	// the paste loop, leave the messages queued, and tell the operator to migrate
-	// this agent to a non-paste delivery mode (hook-context — Codex's designed
-	// path per #248 decision (B) / ADR-0009 — or mailbox-only).
+	// Paste-capability safe-default guard (#323, generalized #360). An adapter
+	// whose Profile declares PasteCapable=false must never paste-and-enter into
+	// its pane: paste-and-enter relies on the internal/tmuxio observe-gate reading
+	// the pane's prompt sentinel + cursor to defer during operator-typing, and an
+	// adapter that can't be read would clobber in-progress operator input. For such
+	// an adapter, force-defer: refuse the paste loop, leave the messages queued,
+	// and tell the operator to migrate to a non-paste delivery mode (hook-context
+	// or mailbox-only).
 	//
-	// Keyed on the process-global adapter Profile (active.PasteCapable), not on a
-	// DB column: the mailman for a Codex agent runs from the tmux-msg-codex binary
-	// (the systemd unit is `<BinaryName>-mailman@<agent>`, systemctl.go), so the
-	// serving process already knows its adapter — no schema change, and it fires
-	// regardless of HOW the agent reached paste-and-enter mode (explicit flag,
-	// config override, or the register-time default). That last point is why this
-	// lives at the delivery layer rather than only at register time: the #323
-	// provenance was a live Codex chamber already registered in paste mode, which
-	// a register-time guard alone would not have protected. Exit cleanly (exitOK,
-	// like the mailbox-only/hook-context short-circuit below) so systemd records
-	// success rather than crash-looping; the loud WARN carries the corrective
-	// command. Known interim limitation: a Codex agent mis-served by the
-	// tmux-msg-claude binary (wrong unit) would read active.PasteCapable=true and
-	// bypass this gate — a per-agent adapter column in #322's PaneProfile work
-	// closes that residual seam.
+	// Originally this guarded Codex specifically (#323), when the observe-gate
+	// couldn't yet read Codex's `›` sentinel. #322 dissolved that premise (the gate
+	// now reads per-adapter PaneProfile sentinels) and #360 flipped Codex to
+	// PasteCapable=true, so Codex now passes this guard. It remains as the general
+	// safe-default for ANY future paste-incapable adapter — the truth-claim it
+	// enforces shifted from "this adapter is Codex" to "this adapter's Profile
+	// signals it can't be observed for paste-safe delivery" (same premise-rewrite
+	// shape as the #293/#333 guard).
+	//
+	// Keyed on the process-global adapter Profile (active.PasteCapable), not a DB
+	// column: the mailman runs from the adapter's own binary (the systemd unit is
+	// `<BinaryName>-mailman@<agent>`, systemctl.go), so the serving process already
+	// knows its adapter — no schema change, and it fires regardless of HOW the agent
+	// reached paste-and-enter mode (explicit flag, config override, or register-time
+	// default). Exit cleanly (exitOK, like the mailbox-only/hook-context short-
+	// circuit below) so systemd records success rather than crash-looping; the loud
+	// WARN carries the corrective command.
 	if !active.PasteCapable && a.DeliveryMode == store.DeliveryModePasteAndEnter {
 		logger.Printf("WARN paste_incapable_adapter adapter=%s agent=%s delivery_mode=%s — "+
 			"refusing paste-and-enter; the observe-gate can't safely read this adapter's pane "+
