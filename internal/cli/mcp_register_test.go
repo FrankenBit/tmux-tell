@@ -65,6 +65,48 @@ func TestMCP_Register_SkipsMailmanWithNonDefaultDB(t *testing.T) {
 	}
 }
 
+// TestMCP_Register_SkipsMailmanWithMissingEnv pins #356 on the MCP path.
+// When the MCP child's env lacks DBUS_SESSION_BUS_ADDRESS or XDG_RUNTIME_DIR,
+// `tmux-msg.register` returns ok:true (the agent row is written), but
+// `mailman` is `skipped` and `mailman_error` names the missing vars and the
+// recovery path. The actual systemctl runner must never be reached.
+func TestMCP_Register_SkipsMailmanWithMissingEnv(t *testing.T) {
+	t.Setenv("TMUX_PANE", "%9")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	s := newCmdTestStore(t)
+	fs := &fakeSystemctl{}
+	fs.install(t)
+
+	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+		"name": "codex-agent",
+	})
+	if got["ok"] != true {
+		t.Errorf("ok = %v, want true (registration itself succeeds); got=%v",
+			got["ok"], got)
+	}
+	if got["mailman"] != "skipped" {
+		t.Errorf("mailman = %v, want \"skipped\"", got["mailman"])
+	}
+	mmErr, _ := got["mailman_error"].(string)
+	if !strings.Contains(mmErr, "DBUS_SESSION_BUS_ADDRESS") {
+		t.Errorf("mailman_error missing 'DBUS_SESSION_BUS_ADDRESS': %q", mmErr)
+	}
+	if !strings.Contains(mmErr, "XDG_RUNTIME_DIR") {
+		t.Errorf("mailman_error missing 'XDG_RUNTIME_DIR': %q", mmErr)
+	}
+	if !strings.Contains(mmErr, "serve --agent codex-agent") {
+		t.Errorf("mailman_error missing foreground-serve recovery hint: %q", mmErr)
+	}
+	if len(fs.calls) != 0 {
+		t.Errorf("systemctl called %d times; should be 0 (env check fires before)", len(fs.calls))
+	}
+	// Registration itself succeeded — agent row exists.
+	if _, err := s.GetAgent(context.Background(), "codex-agent"); err != nil {
+		t.Errorf("agent row missing after MCP register: %v", err)
+	}
+}
+
 func TestMCP_Register_HappyPath(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%9")
 	s := newCmdTestStore(t) // empty registry

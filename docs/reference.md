@@ -310,6 +310,35 @@ plus the mid-turn case (Enter queued while the recipient is busy). The robustnes
 input-state delivery signal plus a per-adapter clear/submit (`InputControl`) contract — is
 tracked at #336. Until it lands, Codex delivery stays hook-context.
 
+**Codex MCP env contract (#355, #356).** The Codex MCP server process is
+spawned by the Codex CLI and does **not** automatically inherit the calling
+shell's full environment. Two env-completeness requirements apply:
+
+1. **Identity resolution** — `tmux-msg.send`, `tmux-msg.inbox`, and most
+   other MCP tools resolve the caller's identity from `$TMUX_AGENT_NAME`
+   (preferred) or `$TMUX_PANE` → registry lookup. Because `$TMUX_PANE` is
+   set by tmux for every pane but is **not** propagated to the Codex MCP
+   child, the `$TMUX_PANE` path silently fails. Set `TMUX_AGENT_NAME=<name>`
+   explicitly in the MCP wrapper so the child has a fixed identity — see
+   [#320](https://git.frankenbit.de/frankenbit/tmux-msg/issues/320) for the
+   recommended `~/.codex/config.toml` MCP wrapper block.
+
+2. **Mailman daemon start** — `tmux-msg.register` calls `systemctl --user`
+   to start the mailman daemon. `systemctl --user` requires
+   `DBUS_SESSION_BUS_ADDRESS` and `XDG_RUNTIME_DIR`; these are set by
+   `pam_systemd` at login and inherited by shell processes, but **not**
+   automatically by the Codex MCP child. If either is absent, `register`
+   returns `ok:true` (the agent row is written) but `mailman: "skipped"` with
+   `mailman_error` naming the missing vars and the recovery path. Add both
+   vars to the MCP wrapper `env` block, or use `start_mailman=false` and
+   start the daemon yourself:
+   ```sh
+   tmux-msg-codex serve --agent <name>   # or: nohup … &
+   ```
+
+Both gaps share the same root cause (MCP env isolation) and the same fix
+(explicit `env` block in the Codex MCP config).
+
 *Verified against codex-cli 0.130.0 (2026-05-10), per the [`Aldenysq/agents-connector`](https://github.com/Aldenysq/agents-connector)
 integration notes — Codex hook events with `additionalContext` support: `SessionStart`,
 `UserPromptSubmit`, `PostToolUse`.*
@@ -1014,6 +1043,13 @@ When the CLI tool in a pane spawns the MCP server, the child inherits `$TMUX_PAN
 (tmux sets it for every pane — `%1`, `%3`, …). The server looks that pane id up in the
 `agents` table and uses the matching name as the session's identity. So onboarding a
 **new pane** is one call from that pane:
+
+> **Codex note (#355):** The Codex MCP server is spawned differently and does
+> **not** inherit `$TMUX_PANE` from the shell. Set `TMUX_AGENT_NAME=<name>`
+> in the Codex MCP wrapper `env` block instead — the substrate checks
+> `$TMUX_AGENT_NAME` first in the identity chain and skips the pane lookup.
+> See the [Codex adapter section](#codex----tmux-msg-codex) for the full env
+> contract.
 
 > *call `tmux-msg.register name=myname`*
 

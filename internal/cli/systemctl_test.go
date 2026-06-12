@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -92,6 +93,61 @@ func TestStartMailmanMismatchError_Actionable(t *testing.T) {
 		"/tmp/sandbox.db",   // caller's DB
 		defaultDBLocation(), // user-home default DB
 		"--start-mailman=false",
+		"serve --agent alice",
+	} {
+		if !strings.Contains(msg, frag) {
+			t.Errorf("error missing %q\nmsg=%s", frag, msg)
+		}
+	}
+}
+
+// TestStartMailmanMissingEnv_CompleteEnvClean confirms the #356 helper returns
+// no missing vars when both required D-Bus/XDG vars are present.
+func TestStartMailmanMissingEnv_CompleteEnvClean(t *testing.T) {
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+	t.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	if missing := startMailmanMissingEnv(); len(missing) != 0 {
+		t.Errorf("missing=%v for complete env; want empty", missing)
+	}
+}
+
+// TestStartMailmanMissingEnv_MissingVarsFire confirms the #356 helper fires
+// correctly when either or both required vars are absent.
+func TestStartMailmanMissingEnv_MissingVarsFire(t *testing.T) {
+	cases := []struct {
+		dbus string
+		xdg  string
+		want []string
+	}{
+		{"", "", []string{"DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"}},
+		{"unix:path=/run/user/1000/bus", "", []string{"XDG_RUNTIME_DIR"}},
+		{"", "/run/user/1000", []string{"DBUS_SESSION_BUS_ADDRESS"}},
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("dbus=%q,xdg=%q", c.dbus, c.xdg), func(t *testing.T) {
+			t.Setenv("DBUS_SESSION_BUS_ADDRESS", c.dbus)
+			t.Setenv("XDG_RUNTIME_DIR", c.xdg)
+			got := startMailmanMissingEnv()
+			if len(got) != len(c.want) {
+				t.Errorf("missing=%v, want %v", got, c.want)
+				return
+			}
+			for i, v := range c.want {
+				if got[i] != v {
+					t.Errorf("missing[%d]=%q, want %q", i, got[i], v)
+				}
+			}
+		})
+	}
+}
+
+// TestStartMailmanEnvError_Actionable pins the structure of the #356 caller-
+// facing error: missing var names named, plus the foreground-serve recovery.
+func TestStartMailmanEnvError_Actionable(t *testing.T) {
+	msg := startMailmanEnvError("alice", []string{"DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"})
+	for _, frag := range []string{
+		"DBUS_SESSION_BUS_ADDRESS",
+		"XDG_RUNTIME_DIR",
 		"serve --agent alice",
 	} {
 		if !strings.Contains(msg, frag) {

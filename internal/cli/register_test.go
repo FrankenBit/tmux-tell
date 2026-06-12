@@ -267,6 +267,50 @@ func TestRegister_CLI_AllowsNonDefaultDBWithStartMailmanFalse(t *testing.T) {
 	}
 }
 
+// TestRegister_CLI_RefusesStartMailmanWithMissingEnv pins #356 at the CLI
+// surface. A caller whose env is missing DBUS_SESSION_BUS_ADDRESS or
+// XDG_RUNTIME_DIR cannot start a systemd-managed mailman; the CLI refuses
+// with an actionable error naming the missing vars before any DB writes.
+// Uses the default DB path so the mismatch check (#293) does not fire first.
+func TestRegister_CLI_RefusesStartMailmanWithMissingEnv(t *testing.T) {
+	var systemctlCalls int
+	prev := setSystemctlRunner(func(_ context.Context, args ...string) ([]byte, error) {
+		systemctlCalls++
+		return nil, nil
+	})
+	t.Cleanup(func() { setSystemctlRunner(prev) })
+
+	t.Setenv("TMUX_PANE", "%5")
+	t.Setenv("DBUS_SESSION_BUS_ADDRESS", "")
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	// Do NOT set CLAUDE_MSG_DB — use the default so the #293 mismatch check
+	// does not fire before ours. The env check fires before store.Open, so
+	// the real DB is never touched.
+	t.Setenv("CLAUDE_MSG_DB", "")
+	var stdout, stderr bytes.Buffer
+	exit := runRegisterCLI([]string{
+		"--name", "alice", "--start-mailman=true",
+	}, &stdout, &stderr)
+
+	if exit != exitDataErr {
+		t.Fatalf("exit = %d, want exitDataErr (%d); stderr=%s stdout=%s",
+			exit, exitDataErr, stderr.String(), stdout.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "DBUS_SESSION_BUS_ADDRESS") {
+		t.Errorf("expected error naming DBUS_SESSION_BUS_ADDRESS; got %q", out)
+	}
+	if !strings.Contains(out, "XDG_RUNTIME_DIR") {
+		t.Errorf("expected error naming XDG_RUNTIME_DIR; got %q", out)
+	}
+	if !strings.Contains(out, "serve --agent") {
+		t.Errorf("expected error suggesting `serve --agent` recovery; got %q", out)
+	}
+	if systemctlCalls != 0 {
+		t.Errorf("startMailman was reached %d times; refusal should fire before", systemctlCalls)
+	}
+}
+
 func TestStore_ValidDeliveryMode(t *testing.T) {
 	cases := map[string]bool{
 		store.DeliveryModePasteAndEnter: true,

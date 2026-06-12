@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
@@ -39,31 +40,44 @@ func TestResolveMCPIdentity_TMUXPaneLookup(t *testing.T) {
 	}
 }
 
-func TestResolveMCPIdentity_NoMatchReturnsEmpty(t *testing.T) {
+// TestResolveMCPIdentity_UnregisteredPaneReturnsError confirms the #355 fix:
+// a pane that is set but not in the registry returns an error naming the pane,
+// not a silent empty string.
+func TestResolveMCPIdentity_UnregisteredPaneReturnsError(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "%999") // not registered
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })
 
-	got, err := resolveMCPIdentity(context.Background(), s)
-	if err != nil {
-		t.Fatalf("err: %v", err)
+	_, err := resolveMCPIdentity(context.Background(), s)
+	if err == nil {
+		t.Fatal("want error for unregistered pane, got nil")
 	}
-	if got != "" {
-		t.Errorf("got %q, want empty for unregistered pane", got)
+	if !strings.Contains(err.Error(), "%999") {
+		t.Errorf("error should name the unregistered pane; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "register") {
+		t.Errorf("error should suggest register; got: %v", err)
 	}
 }
 
+// TestResolveMCPIdentity_NeitherEnvSet confirms the #355 fix: when both
+// $TMUX_AGENT_NAME and $TMUX_PANE are empty (typical codex MCP child), an
+// actionable error naming the missing env source is returned.
 func TestResolveMCPIdentity_NeitherEnvSet(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "")
 	s := newCmdTestStore(t, "alice")
 
-	got, err := resolveMCPIdentity(context.Background(), s)
-	if err != nil {
-		t.Fatalf("err: %v", err)
+	_, err := resolveMCPIdentity(context.Background(), s)
+	if err == nil {
+		t.Fatal("want error when no identity source, got nil")
 	}
-	if got != "" {
-		t.Errorf("got %q, want empty when no identity source", got)
+	// Error must hint at TMUX_AGENT_NAME and the MCP wrapper env block (#355).
+	if !strings.Contains(err.Error(), "TMUX_AGENT_NAME") {
+		t.Errorf("error should mention TMUX_AGENT_NAME; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "MCP") {
+		t.Errorf("error should mention MCP wrapper; got: %v", err)
 	}
 }

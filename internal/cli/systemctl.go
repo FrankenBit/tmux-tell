@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -80,6 +81,36 @@ func startMailmanMismatchError(agentName, callerDB string) string {
 			"`%s serve --agent %s` (or `nohup %s serve --agent %s &`).",
 		callerDB, defaultDBLocation(), active.BinaryName, agentName,
 		active.BinaryName, agentName)
+}
+
+// startMailmanMissingEnv returns the names of env vars required by
+// `systemctl --user` that are absent from the current process environment (#356).
+// An empty result means the env is complete. systemctl --user connects via
+// the D-Bus session bus, which requires both DBUS_SESSION_BUS_ADDRESS and
+// XDG_RUNTIME_DIR; MCP child processes (e.g. codex) may not inherit these.
+func startMailmanMissingEnv() []string {
+	var missing []string
+	for _, v := range []string{"DBUS_SESSION_BUS_ADDRESS", "XDG_RUNTIME_DIR"} {
+		if os.Getenv(v) == "" {
+			missing = append(missing, v)
+		}
+	}
+	return missing
+}
+
+// startMailmanEnvError formats a caller-actionable error for the env-incomplete
+// case (#356). Names the missing vars and names two recovery paths: set the
+// vars in the MCP wrapper env block, or use foreground serve.
+func startMailmanEnvError(agentName string, missing []string) string {
+	return fmt.Sprintf(
+		"refusing to start systemd-managed mailman for %s: "+
+			"%s not in process environment — `systemctl --user` requires "+
+			"D-Bus session-bus access. Add the missing var(s) to the codex "+
+			"MCP wrapper env block (docs/reference.md §Codex), or use "+
+			"--start-mailman=false and start the mailman as a foreground "+
+			"subprocess: `%s serve --agent %s` (or `nohup %s serve --agent %s &`).",
+		agentName, strings.Join(missing, ", "),
+		active.BinaryName, agentName, active.BinaryName, agentName)
 }
 
 // stopMailman runs `systemctl --user disable --now tmux-msg-claude-mailman@NAME.service`.

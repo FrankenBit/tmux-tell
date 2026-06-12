@@ -101,6 +101,13 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 				startMailmanMismatchError(*name, callerDB),
 				exitDataErr)
 		}
+		// #356: refuse start_mailman when the D-Bus / XDG session vars required
+		// by `systemctl --user` are absent from this process's environment.
+		if missing := startMailmanMissingEnv(); len(missing) > 0 {
+			return writeJSONError(stdout, stderr,
+				startMailmanEnvError(*name, missing),
+				exitDataErr)
+		}
 	}
 
 	s, err := store.Open(resolvedDB)

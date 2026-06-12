@@ -322,9 +322,6 @@ func mcpPingHandler(s *store.Store) mcp.ToolHandler {
 		if err != nil {
 			return nil, err
 		}
-		if from == "" {
-			return nil, fmt.Errorf("cannot resolve sender identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
-		}
 		timeout := defaultPingTimeout
 		if in.TimeoutSeconds > 0 {
 			timeout = time.Duration(in.TimeoutSeconds * float64(time.Second))
@@ -371,12 +368,40 @@ func mcpAgentStateHandler(s *store.Store) mcp.ToolHandler {
 
 // --- tool handlers ---
 
-// resolveMCPIdentity is the MCP-side adapter over identity.Resolve. The
-// MCP path has no `--from` analogue, so it always passes "" as override.
-// Kept as a thin wrapper so handler call-sites stay readable.
+// resolveMCPIdentity is the MCP-side adapter over identity.Resolve. Returns an
+// actionable error when identity cannot be resolved — either from a store error
+// or because neither $TMUX_AGENT_NAME nor $TMUX_PANE resolved to a registered
+// agent. The empty-pane case (#355) fires for codex MCP children that don't
+// inherit shell env; the error names the missing source and recovery path.
 func resolveMCPIdentity(ctx context.Context, s *store.Store) (string, error) {
 	name, _, err := identity.Resolve(ctx, s, "")
-	return name, err
+	if err != nil {
+		return "", err
+	}
+	if name == "" {
+		return "", mcpIdentityError()
+	}
+	return name, nil
+}
+
+// mcpIdentityError constructs an actionable "cannot resolve identity" error
+// for MCP contexts (#355). Distinguishes two cases:
+//   - $TMUX_PANE is empty: likely codex MCP child with no env inheritance —
+//     instruct the operator to set TMUX_AGENT_NAME in the MCP wrapper.
+//   - $TMUX_PANE is set but not in the registry: instructs to run register.
+func mcpIdentityError() error {
+	pane := os.Getenv("TMUX_PANE")
+	if pane == "" {
+		return fmt.Errorf(
+			"cannot resolve identity: $TMUX_AGENT_NAME is unset and $TMUX_PANE is " +
+				"empty — MCP child processes (e.g. codex) do not inherit shell env. " +
+				"Add TMUX_AGENT_NAME=<name> to the MCP wrapper env block " +
+				"(docs/reference.md §Codex), or set it via the shell's MCP server config.")
+	}
+	return fmt.Errorf(
+		"cannot resolve identity: $TMUX_PANE=%s is not in the agent registry — "+
+			"run `%s register --name <name>` to register this pane",
+		pane, active.BinaryName)
 }
 
 func mcpSendHandler(s *store.Store) mcp.ToolHandler {
@@ -405,9 +430,6 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 		from, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
 			return nil, err
-		}
-		if from == "" {
-			return nil, fmt.Errorf("cannot resolve sender identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		timeout := defaultDeliveredWaitTimeout
 		if in.Timeout != "" {
@@ -671,9 +693,6 @@ func mcpFlushDeferredHandler(s *store.Store) mcp.ToolHandler {
 		if err != nil {
 			return nil, err
 		}
-		if name == "" {
-			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
-		}
 		return doFlushDeferred(ctx, s, name, in.Trigger)
 	}
 }
@@ -697,9 +716,6 @@ func mcpAskHandler(s *store.Store) mcp.ToolHandler {
 		from, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
 			return nil, err
-		}
-		if from == "" {
-			return nil, fmt.Errorf("cannot resolve sender identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		return doSendMCP(ctx, s, sendParams{
 			From:         from,
@@ -734,9 +750,6 @@ func mcpWaitForReplyHandler(s *store.Store) mcp.ToolHandler {
 		if err != nil {
 			return nil, err
 		}
-		if caller == "" {
-			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
-		}
 		timeout := 30 * time.Second
 		if in.TimeoutMs > 0 {
 			timeout = time.Duration(in.TimeoutMs) * time.Millisecond
@@ -764,9 +777,6 @@ func mcpCheckRepliesHandler(s *store.Store) mcp.ToolHandler {
 		caller, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
 			return nil, err
-		}
-		if caller == "" {
-			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		return doCheckReplies(ctx, s, caller, in.AskID, in.Since)
 	}
@@ -882,9 +892,6 @@ func mcpGetHandler(s *store.Store) mcp.ToolHandler {
 		if err != nil {
 			return nil, err
 		}
-		if requester == "" {
-			return nil, fmt.Errorf("cannot resolve requester identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
-		}
 		cfg, cfgErr := config.Load()
 		if cfgErr != nil {
 			// Config load failure should not block the access check —
@@ -910,9 +917,6 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 		from, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
 			return nil, err
-		}
-		if from == "" {
-			return nil, fmt.Errorf("cannot resolve sender identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 		res, err := doControl(ctx, s, controlParams{
 			From:         from,
@@ -982,9 +986,6 @@ func mcpWhoamiHandler(s *store.Store) mcp.ToolHandler {
 		if err != nil {
 			return nil, err
 		}
-		if name == "" {
-			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
-		}
 		a, err := s.GetAgent(ctx, name)
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
@@ -1034,9 +1035,6 @@ func mcpInboxHandler(s *store.Store) mcp.ToolHandler {
 		name, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
 			return nil, err
-		}
-		if name == "" {
-			return nil, fmt.Errorf("cannot resolve identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%s) in the agents table", os.Getenv("TMUX_PANE"))
 		}
 
 		// Ack-all path: drain announce-skipped backlog residue (#221).
@@ -1238,6 +1236,15 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 			if mismatched, callerDB := startMailmanWouldMismatchSystemd(resolveDBPath("")); mismatched {
 				resp["mailman"] = "skipped"
 				resp["mailman_error"] = startMailmanMismatchError(in.Name, callerDB)
+				return resp, nil
+			}
+			// #356: refuse start_mailman when D-Bus / XDG session vars are absent.
+			// Codex MCP children don't inherit these from the shell, so systemctl
+			// --user can't reach the user bus. Surface as skipped+error rather than
+			// a hard MCP error — the registration itself succeeded above.
+			if missing := startMailmanMissingEnv(); len(missing) > 0 {
+				resp["mailman"] = "skipped"
+				resp["mailman_error"] = startMailmanEnvError(in.Name, missing)
 				return resp, nil
 			}
 			if err := startMailman(ctx, in.Name); err != nil {
