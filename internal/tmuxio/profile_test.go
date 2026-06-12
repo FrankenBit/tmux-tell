@@ -57,6 +57,92 @@ func TestClaudePaneProfile_MatchesConsts(t *testing.T) {
 	}
 }
 
+// TestCodexPromptSentinel_Bytes pins the byte-level encoding of the Codex
+// sentinel against the empirically-captured production bytes (Lookout's %9,
+// 2026-06-12): › (U+203A, hex e2 80 ba) followed by a REGULAR space (0x20).
+// The sibling to TestPromptSentinel_BytesMatchNBSP — and the place a future
+// Codex TUI change (glyph swap, or a switch to NBSP like Claude) surfaces
+// loudly. The 0x20 (not c2 a0) is the load-bearing distinction.
+func TestCodexPromptSentinel_Bytes(t *testing.T) {
+	want := []byte{0xe2, 0x80, 0xba, 0x20}
+	got := []byte(CodexPromptSentinel)
+	if !bytesEqual(got, want) {
+		t.Errorf("CodexPromptSentinel bytes = % x, want % x (› U+203A + regular space 0x20, NOT NBSP)", got, want)
+	}
+}
+
+// TestCodexPaneProfile_Shape pins the Codex profile: the verified sentinel, and
+// the intentionally-empty marker fields (their emptiness is a documented
+// pending-characterization decision, not an oversight — see CodexPaneProfile).
+func TestCodexPaneProfile_Shape(t *testing.T) {
+	p := CodexPaneProfile()
+	if p.PromptSentinel != CodexPromptSentinel {
+		t.Errorf("PromptSentinel = %q, want %q", p.PromptSentinel, CodexPromptSentinel)
+	}
+	if p.CompactionMarker != "" || p.AwaitingOperatorMarker != "" || p.StatusLineMarker != "" {
+		t.Errorf("Codex marker fields should be empty pending characterization; got compaction=%q awaiting=%q status=%q",
+			p.CompactionMarker, p.AwaitingOperatorMarker, p.StatusLineMarker)
+	}
+}
+
+// TestAgentState_ClassifiesCodexPane is the substrate-real regression pin for
+// #322 observations 1+3: under the Codex profile, a Codex pane classifies
+// correctly from the `› ` sentinel + cursor position, using the EXACT bytes and
+// cursor coordinates captured from Lookout's %9 on 2026-06-12.
+//
+//   - idle/ghost-text: cursor at col 2 (== RuneCount("› ")) on the `› Write
+//     tests for @filename` row → StateIdle (auto-suggestion ghost-text case).
+//   - operator typing: cursor at col 18 (past the sentinel) on the `› Hello
+//     Lookout, I` row → StateAwaitingOperator → paste would defer (no clobber).
+//
+// This is the substrate-verification of the "three-of-four-reduce-to-config"
+// claim at the classification level (not just the byte level): the EXISTING
+// cursor-aware classifier does the right thing under the Codex sentinel with
+// zero per-adapter logic.
+func TestAgentState_ClassifiesCodexPane(t *testing.T) {
+	setActivePaneProfileForTest(t, CodexPaneProfile())
+
+	t.Run("idle_ghost_text_cursor_at_sentinel", func(t *testing.T) {
+		fastTemporalDelta(t)
+		// Row 2 (0-indexed): `› Write tests for @filename` — codex ghost-text.
+		pane := "history\n  context\n› Write tests for @filename\n  gpt-5.5 default · /srv/codex/lookout\n"
+		fr := newAgentStateRunner([]string{pane, pane}, 2, 2) // cursor_x=2 == RuneCount("› ")
+		prev := SetTmuxRunner(fr.run)
+		t.Cleanup(func() { SetTmuxRunner(prev) })
+
+		state, ev, err := AgentState(context.Background(), "%9")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if state != StateIdle {
+			t.Errorf("state = %v, want StateIdle (cursor at codex sentinel + ghost-text)", state)
+		}
+		if ev.PromptEmpty {
+			t.Errorf("PromptEmpty should be false (ghost-text present, not operator-typed)")
+		}
+	})
+
+	t.Run("operator_typing_cursor_past_sentinel", func(t *testing.T) {
+		fastTemporalDelta(t)
+		// Row 2: `› Hello Lookout, I` — the real Path-A capture. cursor_x=18.
+		pane := "history\n  context\n› Hello Lookout, I\n  gpt-5.5 default · /srv/codex/lookout\n"
+		fr := newAgentStateRunner([]string{pane, pane}, 18, 2)
+		prev := SetTmuxRunner(fr.run)
+		t.Cleanup(func() { SetTmuxRunner(prev) })
+
+		state, ev, err := AgentState(context.Background(), "%9")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if state != StateAwaitingOperator {
+			t.Errorf("state = %v, want StateAwaitingOperator (cursor past codex sentinel = operator typing)", state)
+		}
+		if !strings.Contains(ev.Reason, "operator mid-typing") {
+			t.Errorf("Reason should mention operator mid-typing; got %q", ev.Reason)
+		}
+	})
+}
+
 // TestSetActivePaneProfile_Installs pins the install/accessor round-trip and
 // the package default (Claude). The default matters: in-package callers that
 // never go through cli.Run (every existing tmuxio test) rely on activeProfile

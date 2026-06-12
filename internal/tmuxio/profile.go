@@ -64,6 +64,45 @@ func ClaudePaneProfile() PaneProfile {
 	}
 }
 
+// CodexPromptSentinel is the OpenAI Codex CLI TUI's input-row prefix — U+203A
+// (› SINGLE RIGHT-POINTING ANGLE QUOTATION MARK) followed by a REGULAR space
+// (U+0020). Empirically captured 2026-06-12 from Lookout's codex pane (%9),
+// hex `e2 80 ba 20` (idle ghost-text + operator-typing states).
+//
+// Contrast with the Claude PromptSentinel: Claude pairs ❯ with a NBSP (U+00A0)
+// — a deliberate choice (likely to prevent terminal-side word-wrap on the
+// sentinel); Codex uses a plain 0x20, the default fall-out rather than a design
+// choice. A reader who knows Claude's NBSP might assume Codex matches — it does
+// NOT; the trailing byte is a plain 0x20, byte-verified. If a future Codex TUI
+// update changes the glyph or the
+// space, the codex canary (TestCodexPromptSentinel_Bytes) surfaces the drift.
+const CodexPromptSentinel = "› "
+
+// CodexPaneProfile returns the OpenAI Codex CLI pane-observation profile.
+// PromptSentinel is the substrate-verified `› ` (CodexPromptSentinel); under it
+// the existing cursor-aware AgentState classifies Codex panes correctly (idle
+// at the sentinel / ghost-text, awaiting-operator when the cursor moves past) —
+// #322 observations 1 and 3, substrate-verified against real bytes.
+//
+// The marker fields are intentionally EMPTY pending characterization of Codex's
+// other UIs (the 2026-06-12 capture only exercised idle + operator-typing):
+//   - CompactionMarker / AwaitingOperatorMarker: empty disables those precedence
+//     checks. Codex's compaction / popup equivalents (if any) aren't captured
+//     yet; agent_state still classifies idle / working / awaiting-operator from
+//     the sentinel + cursor without them.
+//   - StatusLineMarker: empty — Codex's status row ("gpt-5.5 default · …") has no
+//     stable leading glyph like Claude's ⏵⏵, so its input-area lower boundary
+//     relies on the adapter-universal ─×20 separator. This only matters for
+//     extractInputContent (the observe-gate stale-draft path), which is
+//     unreachable while Codex is PasteCapable=false — so the gap is moot until
+//     the verify-token-robustness work makes Codex paste-capable. Named here so
+//     it is not a silent gap.
+func CodexPaneProfile() PaneProfile {
+	return PaneProfile{
+		PromptSentinel: CodexPromptSentinel,
+	}
+}
+
 // activeProfile is the process-global pane-observation profile, mirroring the
 // internal/cli `active` Profile pattern: a CLI binary serves exactly one adapter
 // for the life of the process, so a package-global set once at Run entry (via

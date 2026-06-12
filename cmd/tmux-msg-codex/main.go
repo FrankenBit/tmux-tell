@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/cli"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 func main() {
@@ -28,13 +29,19 @@ func main() {
 		BinaryName:   "tmux-msg-codex",
 		DisplayLabel: "Codex",
 		// No DeprecatedAlias: Codex is a new adapter with no legacy name.
-		// PasteCapable stays false (explicit for the reader): the observe-gate
-		// can't yet classify Codex's `›` input area, so paste-and-enter would
-		// clobber operator input (#323). Codex delivers via hook-context
-		// (#248 decision (B), ADR-0009); the mailman force-defers any
-		// paste-and-enter delivery to a Codex agent until #322's PaneProfile
-		// refactor teaches the observe-gate to read Codex panes.
+		// PasteCapable stays false: #322's PaneProfile now teaches the observe-
+		// gate to READ Codex's `› ` input area (agent_state classifies idle /
+		// working / awaiting-operator correctly), but the verify-token mechanism
+		// is not yet robust to Codex's paste-collapse + slow render (the
+		// cross-adapter verify-token-robustness work). Until that lands, Codex
+		// stays non-paste: delivery is hook-context (#248 decision (B), ADR-0009)
+		// and the mailman force-defers any paste-and-enter delivery to it (#323).
 		PasteCapable: false,
+		// Pane-observation snippets the tmuxio classifier reads (#322). Codex's
+		// `› ` sentinel (U+203A + space) is substrate-verified; marker fields are
+		// empty pending characterization of Codex's compaction / popup / status
+		// UIs — see tmuxio.CodexPaneProfile for the named gaps.
+		Pane: tmuxio.CodexPaneProfile(),
 	}
 	os.Exit(cli.Run(p, os.Args[0], os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
