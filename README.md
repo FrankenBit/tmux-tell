@@ -271,7 +271,7 @@ backward-compatible within a minor. See `CHANGELOG.md` for what shipped per rele
 
 ```bash
 $ tmux-msg-claude --version
-tmux-msg-claude v0.15.1
+tmux-msg-claude v0.16.0
 ```
 
 A binary built via `make build` stamps the version from `git describe`; a bare

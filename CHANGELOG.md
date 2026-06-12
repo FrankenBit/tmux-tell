@@ -33,6 +33,61 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-06-12
+
+The Foreign decks cluster: substrate-vs-adapter pane-observation work
+surfaced by Lookout's (Codex chamber) onboarding 2026-06-11. Four
+substrate-witness observations — `agent_state` probe blindness on
+non-Claude panes, paste-and-enter clobbering operator input, slow
+verify-token round-trips, and MCP-path sender-resolution gap — together
+with Codex's sandbox-DB-write motivation, drove eleven merged PRs that
+close the substrate-side substrate-vs-adapter pane-observation contract.
+
+Headlines:
+
+- **Per-adapter `PaneProfile` contract (#322).** Substrate-honest
+  decoupling of the pane-state classifier (`AgentState` / `ObserveGate`)
+  from Claude-specific constants. Three of four Foreign-decks observations
+  reduce to per-adapter config; the fourth (verify-token robustness)
+  defers to `#336` grounded in 2026-06-12 cross-adapter probe data.
+- **Second CLI adapter `tmux-msg-codex` (#248).** Ships alongside
+  `tmux-msg-claude`, proving the [ADR-0009](docs/adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md)
+  substrate-vs-adapter boundary. Codex's hook-context delivery composes
+  with the #249 helper without substrate change.
+- **Default DB moved to user-home (#308).** XDG-honored resolution
+  (`$XDG_DATA_HOME/tmux-msg/messages.db` or `~/.local/share/tmux-msg/messages.db`)
+  replaces the system-global `/var/lib/tmux-msg/messages.db`. Codex's default
+  sandbox can now write the DB without per-write operator escalation. **Hard
+  cut** — operators with an existing DB must `mv` it to the new path once
+  at deploy time.
+- **Three-act adapter-correctness discipline closed.** Codified (#314
+  register tool-schema substrate-neutral) → embodied (#280/#315/#326 binary
+  Profile threading through usage/help/schema) → enforced (#324 CI guard
+  forbids `tmux-msg-claude` literal in `internal/cli` outside `profile.go`).
+- **Paste-incapable adapter force-defer (#323 narrow fix).** Mailman
+  refuses to paste-and-enter to adapters with `PasteCapable=false`,
+  preventing the clobber while `#322`'s `PaneProfile` refactor lands the
+  substrate-uniform resolution.
+
+Plus the substrate-hygiene companions: #258a (deferred-delivery `register`
+trigger), #289 (`unregister` reciprocal of `register`), #290 (startup
+DB-path log on `mcp`/`serve`), #299 (`paneNotFoundBackoff` overflow guard
+base-agnostic + counter-reset test), #300 (`mailman_stuck` Prometheus
+gauge), #311 + #312 + #320 (diagnostic-playbook + reference + Codex MCP
+docs grounded in Lookout's substrate-witness observations).
+
+**Deferred to v0.16.1 and beyond.** Orthogonal observations from the
+cluster work (#319 gauge label leak, #327 codex env-propagation
+investigation, #328 doc-comment parallels, #332 Claude-pane observe-gate
+temporal-delta) go to v0.16.1. Substrate-hygiene follow-ups surfaced by
+the 2026-06-12 alcatraz box-crash retro (#338 `register`/`unregister`
+systemd-unit cleanup, #339 lazy `pane_id` refresh on drift, #340
+exit-cleanly on agent-not-found) go to v0.17.0. The verify-token
+robustness arc (#336) lands in the Hull-and-rigging milestone with its
+own substrate-witness-grounded design pass.
+
+The Foreign decks milestone closes with v0.16.0.
+
 ### Added
 
 - **Per-adapter `PaneProfile` pane-observation contract (#322).** The `internal/tmuxio` pane-state classifier (`AgentState` / `ObserveGate` / `extractInputContent`) now reads its prompt-sentinel + compaction / awaiting-operator / status-line snippets from a process-global `PaneProfile` — installed by `cli.Run` from the adapter's `Profile.Pane` — instead of hardcoded Claude Code constants. `ClaudePaneProfile` (assembled from the canary-pinned constants) is the package default and what the Claude binary supplies, so every existing classification path is behaviour-preserving. The codex binary now supplies `CodexPaneProfile` with its substrate-verified `› ` sentinel (U+203A + a **regular** space, bytes `e2 80 ba 20` — **not** Claude's NBSP). This resolves the codex side of two Foreign-decks observations with **zero per-adapter logic**: `agent_state` now classifies codex panes (no more "prompt sentinel not found → unknown"), and the observe-gate correctly defers paste-and-enter while a codex operator is typing — the substrate-uniform resolution of the #323 interim force-defer. Verified against live `%9` captures (cursor at sentinel → idle; cursor past → awaiting-operator) and mutation-checked (reverting a runtime read to the bare const reproduces the clobber). Codex stays `PasteCapable=false` pending verify-token robustness (#336); its marker fields are intentionally empty pending characterization of codex's compaction / popup / status UIs. The per-adapter **Verifier** seam (#322 observation 2 — the slow/fragile verify-token) is **deferred to #336**: a 2026-06-12 probe session reframed it from a codex quirk into a cross-adapter verify-token fragility (paste-collapse + mid-turn), which wants its own design grounded in that data rather than a speculative seam here.
@@ -109,6 +164,40 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   and failed audit rows are never touched by `--purge-queue` — message history is
   preserved regardless. Addresses the stale-row class surfaced 2026-06-10 on alcatraz
   where a retired chamber slot leaked permanently into every `agents` listing.
+
+### Docs
+
+- **Reference: bus host-locality + SSH'd-pane patterns (#312).** New
+  `docs/reference.md` §"Bus host-locality" names the substrate's deliberate
+  scope-boundary: the bus is host-local (one SQLite DB per host, per user
+  per #308), and SSH'd panes are one-way carriers — bus-on-host → SSH-transport
+  → remote-input, *not* bus-to-bus communication. Documents three substrate-honest
+  patterns for SSH'd panes (unregistered / mailbox-only / paste-and-enter) and
+  forward-references the Remote MCP mode opt-in (#310) as the bidirectional path
+  that's not default substrate behavior. Closes the framing gap surfaced by the
+  2026-06-11 Caymans-Admin observation ("from this side of the wire it doesn't
+  feel like 'tmux-msg from Alcatraz' — it feels like an operator pasting through
+  a transport I can't see") so future operators don't expect a reply path the
+  substrate doesn't promise. Composes with #308 (user-scope DB alignment) and
+  security.md §3.2 (the load-bearing identity invariant the host-locality
+  rests on).
+
+- **Diagnostic-playbook entry: drift-detection rejection (#311).** New
+  `docs/diagnostic-playbook.md` section "Drift-detection refused my send" walks
+  the operator through the substrate's `drift_detected_unrecoverable` safety
+  event: registered agent name doesn't match the pane's self-declared title, so
+  the bus refuses to paste rather than risk delivering to the wrong pane.
+  Documents the symptom shape (the exact `WARN drift_detected_unrecoverable`
+  log line, the `state: failed` send-response), the root cause (substrate's
+  `discover` walker matching the pane's self-declared identity (typically
+  `pane_title`, also `cmdline` / `window_name`) against
+  the registered name), and two resolution paths — substrate-honest
+  match-the-name path first, then `--drift-soft-fail` override for deliberate
+  experiments. Closes the diagnostic gap surfaced by the 2026-06-11
+  Caymans-Admin observation (registered as `caymans-admin`, pane self-declared
+  as `Admin`; re-registering as `admin` made delivery succeed). Composes with
+  ADR-0009 framing: drift detection is a substrate-general invariant on
+  pane-identity, not adapter-specific.
 
 ### Changed
 
@@ -194,37 +283,6 @@ four cleared-for-removal surfaces extend through v0.16.0 per ADR-0008
 §Discretion clause — the v0.15.1 cut surface is intentionally narrow.
 
 ### Docs
-
-- **Reference: bus host-locality + SSH'd-pane patterns (#312).** New
-  `docs/reference.md` §"Bus host-locality" names the substrate's deliberate
-  scope-boundary: the bus is host-local (one SQLite DB per host, per user
-  per #308), and SSH'd panes are one-way carriers — bus-on-host → SSH-transport
-  → remote-input, *not* bus-to-bus communication. Documents three substrate-honest
-  patterns for SSH'd panes (unregistered / mailbox-only / paste-and-enter) and
-  forward-references the Remote MCP mode opt-in (#310) as the bidirectional path
-  that's not default substrate behavior. Closes the framing gap surfaced by the
-  2026-06-11 Caymans-Admin observation ("from this side of the wire it doesn't
-  feel like 'tmux-msg from Alcatraz' — it feels like an operator pasting through
-  a transport I can't see") so future operators don't expect a reply path the
-  substrate doesn't promise. Composes with #308 (user-scope DB alignment) and
-  security.md §3.2 (the load-bearing identity invariant the host-locality
-  rests on).
-
-- **Diagnostic-playbook entry: drift-detection rejection (#311).** New
-  `docs/diagnostic-playbook.md` section "Drift-detection refused my send" walks
-  the operator through the substrate's `drift_detected_unrecoverable` safety
-  event: registered agent name doesn't match the pane's self-declared title, so
-  the bus refuses to paste rather than risk delivering to the wrong pane.
-  Documents the symptom shape (the exact `WARN drift_detected_unrecoverable`
-  log line, the `state: failed` send-response), the root cause (substrate's
-  `discover` walker matching `pane_title` / `cmdline` / `window_name` against
-  the registered name), and two resolution paths — substrate-honest
-  match-the-name path first, then `--drift-soft-fail` override for deliberate
-  experiments. Closes the diagnostic gap surfaced by the 2026-06-11
-  Caymans-Admin observation (registered as `caymans-admin`, pane self-declared
-  as `Admin`; re-registering as `admin` made delivery succeed). Composes with
-  ADR-0009 framing: drift detection is a substrate-general invariant on
-  pane-identity, not adapter-specific.
 
 - **ADR-0010 (Accepted): tool name is `tmux-tell` (#294).** Durable record of
   the 2026-06-10 blind-vote disposition. Pilot drove a two-phase private
