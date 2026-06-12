@@ -505,3 +505,48 @@ func isInputRowQuiet(paneContent string) bool {
 	}
 	return sawSentinel
 }
+
+// bottomInputRowContent returns the text past the sentinel on the
+// BOTTOM-most sentinel-prefixed row of the captured pane — the live input
+// row. ok is false when no sentinel is configured or no sentinel row is
+// present in the capture.
+//
+// Bottom-most (not first, not any) because an adapter whose prompt sentinel
+// also prefixes transcript turns — codex paints every submitted user turn
+// as `› [Pasted Content]` / `› text`, the same glyph as its live input —
+// would otherwise be read off a historical row. Only the bottom-most
+// sentinel row is the editable input. (Claude's `❯ ` is unique to the live
+// input, so bottom-most and only-one coincide there; the bottom-most rule
+// is the adapter-general form.)
+//
+// This is the anchor for the input-emptied delivery-verify signal (#336):
+// a paste that submits leaves this row empty (Claude clears it in place;
+// codex opens a fresh empty input block below), so a non-empty→empty
+// transition is the submit signal — robust to paste-collapse, which masks
+// the verify token but not the emptiness of the input row.
+func bottomInputRowContent(capture string) (content string, ok bool) {
+	sentinel := activeProfile.PromptSentinel
+	if sentinel == "" {
+		return "", false
+	}
+	lines := strings.Split(capture, "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if rest, found := strings.CutPrefix(lines[i], sentinel); found {
+			return rest, true
+		}
+	}
+	return "", false
+}
+
+// inputRowCleared reports whether the captured pane shows the live input
+// row (bottom-most sentinel row) present AND empty past the sentinel.
+// anchored is false when the input row can't be located (no sentinel
+// configured, or no sentinel row in the capture) — the caller then falls
+// back to the legacy token-match verify signal.
+func inputRowCleared(capture string) (cleared, anchored bool) {
+	rest, ok := bottomInputRowContent(capture)
+	if !ok {
+		return false, false
+	}
+	return strings.TrimSpace(rest) == "", true
+}

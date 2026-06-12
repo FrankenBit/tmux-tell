@@ -211,10 +211,36 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		return nil
 	}
 
-	// 4. Verification + retry backoff. verifyStart bounds the whole
-	// retry loop; OnVerify (when set) reports its wall-clock on either
-	// terminal outcome (token found / budget exhausted) so the caller can
-	// histogram verify-attempt latency (#146/#153).
+	// 4. Verification + retry backoff. The load-bearing signal is the
+	// INPUT-EMPTIED transition (#336): a paste that actually submitted
+	// leaves the recipient's live input row (bottom-most sentinel row)
+	// empty — Claude clears it in place, codex opens a fresh empty input
+	// block below. This is robust to paste-collapse, which masks the
+	// verify token (codex renders a large paste as `[Pasted Content]`
+	// even after submit, so token-match structurally cannot confirm it)
+	// but cannot mask the emptiness of the input. It is also honest about
+	// the dominant mid-turn failure: a queued Enter leaves the paste
+	// buffered in the input row, so the row stays non-empty and we
+	// correctly report not-submitted (where token-match both false-
+	// negatives on collapse and false-positives on a pasted-but-unsubmitted
+	// short message whose token is literally visible in the input box).
+	//
+	// When the input row can't be anchored (no sentinel configured, or the
+	// adapter's prompt isn't painted in the capture), Deliver GRACEFULLY
+	// DEGRADES to the legacy token-match signal — same shape as
+	// AgentState's cursor-less fallback. Pre-#336 behavior is preserved
+	// exactly for sentinel-less captures.
+	//
+	// Note: a successful paste-buffer (step 2) implies the input row was
+	// populated, so an empty input row after Enter means submission, not a
+	// never-filled row. A pre-Enter baseline snapshot would tighten the
+	// rare paste-silently-no-op'd edge into an explicit non-empty→empty
+	// transition guard; deferred as hardening (#336 follow-up).
+	//
+	// verifyStart bounds the whole retry loop; OnVerify (when set) reports
+	// its wall-clock on either terminal outcome (submitted / budget
+	// exhausted) so the caller can histogram verify-attempt latency
+	// (#146/#153).
 	verifyStart := time.Now()
 	var lastCapture string
 	for attempt := 0; attempt <= len(retryDelays); attempt++ {
@@ -230,7 +256,7 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 			return fmt.Errorf("tmuxio: capture-pane: %w", err)
 		}
 		lastCapture = string(out)
-		if strings.Contains(lastCapture, p.VerifyToken) {
+		if deliverySubmitted(lastCapture, p.VerifyToken) {
 			if p.OnVerify != nil {
 				p.OnVerify(time.Since(verifyStart), true)
 			}
@@ -240,8 +266,22 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 	if p.OnVerify != nil {
 		p.OnVerify(time.Since(verifyStart), false)
 	}
-	return fmt.Errorf("%w: token %q not visible after %d attempts; last capture (trunc):\n%s",
+	return fmt.Errorf("%w: input not cleared and token %q not surfaced after %d attempts; last capture (trunc):\n%s",
 		ErrUnverifiedDelivery, p.VerifyToken, len(retryDelays)+1, trim(lastCapture, 400))
+}
+
+// deliverySubmitted reports whether a post-Enter pane capture confirms the
+// paste submitted. Primary signal: the live input row emptied (input-
+// emptied, #336) — authoritative when the input row anchors, and
+// deliberately NOT corroborated by the token there (an unsubmitted paste
+// whose token is visible in a still-populated input row must read as
+// not-submitted). Fallback when the input row can't be anchored: the legacy
+// token-match (the verify token became visible anywhere in the pane).
+func deliverySubmitted(capture, verifyToken string) bool {
+	if cleared, anchored := inputRowCleared(capture); anchored {
+		return cleared
+	}
+	return strings.Contains(capture, verifyToken)
 }
 
 // SendKeys types text directly into the recipient pane and presses Enter,

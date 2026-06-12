@@ -180,6 +180,82 @@ func TestDeliver_ReturnsUnverifiedSentinelAfterRetriesExhausted(t *testing.T) {
 	}
 }
 
+// TestDeliverySubmitted exercises the #336 input-emptied verify predicate
+// directly across both adapter profiles and the sentinel-less fallback.
+// The load-bearing cases: (1) input-emptied verifies even with the token
+// absent (collapse-robustness); (2) a paste still sitting in the input row
+// reads as not-submitted even when its token is literally visible there
+// (the false-positive token-match would hit); (3) codex's bottom-most
+// anchoring ignores the same `› ` glyph on transcript turns.
+func TestDeliverySubmitted(t *testing.T) {
+	claude := ClaudePaneProfile()
+	codex := CodexPaneProfile()
+	cases := []struct {
+		name    string
+		profile PaneProfile
+		capture string
+		token   string
+		want    bool
+	}{
+		{"claude cleared input verifies without token", claude, "a submitted turn\n[Pasted Content 1800 chars]\n" + PromptSentinel, "id 7f3a", true},
+		{"claude paste in input rejects despite token visible", claude, "transcript\n" + PromptSentinel + "rendered body id 7f3a marker", "id 7f3a", false},
+		{"codex bottom-most empty ignores transcript sentinel", codex, CodexPromptSentinel + "[Pasted Content 1800 chars]\n\n" + CodexPromptSentinel, "id 7f3a", true},
+		{"codex collapsed paste in bottom input rejects", codex, "some codex output\n" + CodexPromptSentinel + "[Pasted Content 1800 chars]", "id 7f3a", false},
+		{"no sentinel falls back to token-match hit", claude, "plain pane with id 7f3a somewhere", "id 7f3a", true},
+		{"no sentinel falls back to token-match miss", claude, "plain pane, nothing here", "id 7f3a", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := ActivePaneProfile()
+			SetActivePaneProfile(tc.profile)
+			defer SetActivePaneProfile(prev)
+			if got := deliverySubmitted(tc.capture, tc.token); got != tc.want {
+				t.Errorf("deliverySubmitted(%q) = %v, want %v", tc.capture, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDeliver_InputEmptied_VerifiesOnClearedInput pins the end-to-end loop
+// wiring: with the Claude profile active, a post-Enter capture whose
+// bottom-most `❯ ` row is empty verifies the delivery even though the
+// verify token never appears in the pane (the collapse case).
+func TestDeliver_InputEmptied_VerifiesOnClearedInput(t *testing.T) {
+	shortRetries(t)
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		if args[0] == "capture-pane" {
+			return []byte("> earlier submitted turn\n[Pasted Content 1800 chars]\n" + PromptSentinel), nil
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "x", VerifyToken: "id 7f3a",
+	})
+	if err != nil {
+		t.Fatalf("expected verified via input-emptied (token absent), got %v", err)
+	}
+}
+
+// TestDeliver_InputEmptied_RejectsPasteStillInInput pins the mid-turn /
+// queued-Enter honesty: the paste is still in the bottom input row (token
+// literally visible there), so the delivery reads as unverified rather than
+// false-positive-confirmed.
+func TestDeliver_InputEmptied_RejectsPasteStillInInput(t *testing.T) {
+	shortRetries(t)
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		if args[0] == "capture-pane" {
+			return []byte("some transcript\n" + PromptSentinel + "rendered body with id 7f3a marker"), nil
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "x", VerifyToken: "id 7f3a",
+	})
+	if !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Fatalf("paste still in input row must read as unverified; got %v", err)
+	}
+}
+
 func TestDeliver_LoadBufferFailure(t *testing.T) {
 	shortRetries(t)
 	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
