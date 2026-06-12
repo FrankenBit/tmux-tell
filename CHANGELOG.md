@@ -33,6 +33,37 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-06-12
+
+Fast-follow cluster from the v0.16.0 alcatraz deploy retro (alcatraz-infra#39
+box-crash + post-deploy observations). Four substrate-hygiene fixes that
+prevent recurring the failure modes that surfaced once the v0.16.0 substrate
+hit production: chamber-rename ghost units, mailman restart-loops on missing
+agents, silent version mis-stamping at install, and the WAL-strand-on-mv
+deploy-procedure gap.
+
+Headlines:
+
+- **`unregister` now soft-fails systemctl errors (#338)** so a user-systemd
+  flake can't strand the agents-table row — the row IS authoritative state;
+  the systemd unit is a downstream consumer.
+- **`serve` exits cleanly when its agent isn't in the DB or has no `pane_id`
+  (#340)**. systemd's `Restart=on-failure` treats exit 0 as success-and-done
+  rather than restart-looping; the alcatraz-infra#39 SQLite-contention freeze
+  is now structurally impossible.
+- **`install.sh` actually version-stamps the binary it ships (#342)**. Three
+  compounding gaps closed in one cut; `--version` after install now reports
+  the real `git describe` value rather than a years-stale hardcoded default.
+- **Docs: WAL-safe DB-move recipe (#343)**. The substrate-honest "`messages.db`
+  always has invisible siblings; never move it alone" rule + the
+  checkpoint-then-`mv` (or `.backup`-dot-command) recipe, with a forward-going
+  expectation pinned to future deploy notes.
+
+Composes with the still-pending v0.17.0 cluster (#348 diagnostic surface
+gaps, #349 install.sh as substrate-honest hard-cut with `db migrate`
+sub-primitive) born from the same investigation. v0.16.1 fixes the
+*recurrence*; v0.17.0 will fix the *observability* + the *self-recovery*.
+
 ### Fixed
 
 - **`install.sh` now version-stamps the binary it builds (#342).** Three
