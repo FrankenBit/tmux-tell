@@ -35,6 +35,23 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **`install.sh` now version-stamps the binary it builds (#342).** Three
+  compounding gaps closed:
+  1. `internal/version/version.go`'s default flipped from `var Version =
+     "v0.7.0"` to `"dev"`. Pre-#342 an unstamped binary silently reported
+     a three-release-stale version that wasn't its own; now it reports
+     `"dev"` (matching the long-standing doc-comment intent).
+  2. `install.sh` no longer skips the build step on a stale `bin/$BIN_NAME`
+     from an earlier tag — the pre-#342 `if [[ ! -x ... ]]` guard meant a
+     `git pull` + `install.sh` installed yesterday's binary.
+  3. `install.sh` builds via `make bin/$BIN_NAME` (which applies
+     `LDFLAGS=-X internal/version.Version=$(git describe ...)`) instead of
+     plain `go build` (which inherits the source-default). After this
+     fix, `tmux-msg-claude --version` after a fresh `install.sh` always
+     reports the current `git describe` value (release tag for a clean
+     tag, `vX.Y.Z-N-gSHA` between tags). Surfaced during the v0.16.0
+     alcatraz deploy where the installed binary reported `v0.7.0` until
+     manual `make build` + reinstall.
 - **`serve` exits cleanly on agent-not-found (#340).** When `tmux-msg-claude
   serve --agent NAME` finds no DB row for `NAME` (or the row exists but
   `pane_id` is empty), the substrate now exits with status `0` instead of

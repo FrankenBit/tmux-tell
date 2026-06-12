@@ -90,26 +90,39 @@ USER_SYSTEMD="${USER_SYSTEMD:-$OPERATOR_HOME/.config/systemd/user}"
 
 cd "$(dirname "$0")"
 
-# 1. Build if the binary isn't already in bin/.
-if [[ ! -x "bin/$BIN_NAME" ]]; then
-    echo "==> building $BIN_NAME"
-    GO=${GO:-go}
-    if ! command -v "$GO" >/dev/null 2>&1; then
-        # Common alternate Go install path on alcatraz.
-        if [[ -x /usr/local/go/bin/go ]]; then
-            GO=/usr/local/go/bin/go
-        else
-            echo "install.sh: go not found in PATH; set GO=/path/to/go" >&2
-            exit 1
-        fi
+# 1. Build the adapter binary. Always rebuild — a stale bin/$BIN_NAME from a
+# prior `make build` at an older tag would otherwise silently install with the
+# wrong embedded version (#342). The build goes through `make` so the
+# Makefile's LDFLAGS apply (-X internal/version.Version=$(git describe ...));
+# pre-#342 install.sh used plain `go build` here and the binary inherited the
+# source-default for version (which was a hardcoded `v0.7.0` until the
+# companion fix in internal/version/version.go flipped it to `"dev"`).
+echo "==> building $BIN_NAME"
+GO=${GO:-go}
+if ! command -v "$GO" >/dev/null 2>&1; then
+    # Common alternate Go install path on alcatraz.
+    if [[ -x /usr/local/go/bin/go ]]; then
+        GO=/usr/local/go/bin/go
+    else
+        echo "install.sh: go not found in PATH; set GO=/path/to/go" >&2
+        exit 1
     fi
-    # Create bin/ owned by the operator — the build step below runs as
-    # OPERATOR_USER, and a root-owned bin/ left over from a prior install run
-    # would block its writes. `install -d` is idempotent and re-applies
-    # ownership on an existing dir, fixing a stale root-owned bin/ in place.
-    install -d -m 0755 -o "$OPERATOR_USER" -g "$OPERATOR_USER" bin
-    sudo -u "$OPERATOR_USER" "$GO" build -o "bin/$BIN_NAME" "./cmd/$BIN_NAME"
 fi
+if ! command -v make >/dev/null 2>&1; then
+    echo "install.sh: make not found; install.sh requires make for ldflags-stamped builds (#342)" >&2
+    exit 1
+fi
+# Create bin/ owned by the operator — the build below runs as OPERATOR_USER,
+# and a root-owned bin/ left from a prior install run would block its writes.
+# `install -d` is idempotent and re-applies ownership on an existing dir,
+# fixing a stale root-owned bin/ in place.
+install -d -m 0755 -o "$OPERATOR_USER" -g "$OPERATOR_USER" bin
+# Force a rebuild even if sources didn't change: `git describe` may now report
+# a different tag than the last build's embedded version, and make's
+# source-dependency tracking wouldn't notice. Removing the target makes the
+# pattern rule fire unconditionally.
+sudo -u "$OPERATOR_USER" rm -f "bin/$BIN_NAME"
+sudo -u "$OPERATOR_USER" make "bin/$BIN_NAME" GO="$GO"
 
 # 2. Install binary (root-owned, world-readable+executable).
 echo "==> installing $PREFIX/bin/$BIN_NAME"

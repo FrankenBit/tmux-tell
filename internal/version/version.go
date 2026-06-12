@@ -10,4 +10,11 @@ package version
 
 // Version is the running build's version string. Override via
 // `-ldflags "-X .../internal/version.Version=..."` at link time.
-var Version = "v0.7.0"
+//
+// Default "dev" matches the package doc above: an unstamped binary
+// reports an obviously-unstamped value rather than masquerading as a
+// specific past release. Pre-#342 this read `v0.7.0` — three releases
+// stale — so an unstamped binary installed via plain `go build` (e.g.
+// the pre-#342 install.sh path that skipped ldflags) silently reported
+// a recognizable version that wasn't its own.
+var Version = "dev"
