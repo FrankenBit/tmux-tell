@@ -284,20 +284,31 @@ Claude-only until a paste-needing adapter lands (#248). Subset verified working:
 **Paste-capability force-defer (#323).** Should a Codex agent end up in
 `paste-and-enter` mode anyway — e.g. registered without `--delivery-mode`, which
 defaults to `paste-and-enter` — the mailman refuses to paste rather than risk a clobber.
-The observe-gate reads Claude's `❯` prompt sentinel + cursor position to detect
-operator-typing and defer; it can't yet classify Codex's `›` input area, so a paste would
-land on top of in-progress operator input. The `tmux-msg-codex` binary is marked
-paste-incapable (`Profile.PasteCapable = false`), and its mailman force-defers at startup:
-it leaves messages queued, exits cleanly, and logs the migration command. Recover by moving
-the agent to a non-paste mode:
+The `tmux-msg-codex` binary is marked paste-incapable (`Profile.PasteCapable = false`),
+and its mailman force-defers at startup: it leaves messages queued, exits cleanly, and logs
+the migration command. Recover by moving the agent to a non-paste mode:
 
 ```sh
 tmux-msg-codex register --name <agent> --delivery-mode hook-context   # or mailbox-only
 systemctl --user restart tmux-msg-codex-mailman@<agent>
 ```
 
-Teaching the observe-gate to read Codex panes directly (so `paste-and-enter` becomes a
-real option for Codex) is the per-adapter `PaneProfile` refactor tracked at #322.
+**Pane-observation: the per-adapter `PaneProfile` (#322).** The observe-gate / `agent_state`
+classifier no longer hardcodes Claude's `❯` sentinel: each adapter supplies a `PaneProfile`
+(`Profile.Pane`, installed process-globally by `cli.Run`) carrying its prompt sentinel +
+compaction / awaiting-operator / status-line snippets. Claude's is `ClaudePaneProfile`
+(`❯` + NBSP); Codex's is `CodexPaneProfile` with its substrate-verified `› ` sentinel
+(U+203A + a regular space — *not* NBSP). With this, `agent_state` classifies Codex panes
+correctly and the observe-gate *would* defer paste-and-enter while a Codex operator is typing
+— the read side of the substrate-vs-adapter pane-observation contract is now adapter-uniform.
+
+Codex nonetheless stays `PasteCapable = false`: the remaining blocker is **verify-token
+robustness**, not pane-reading. Both adapters collapse a pasted message to a `[Pasted …]`
+placeholder (Codex by size ~1KB, Claude by line-count), hiding the verify token until the
+message is submitted; the current whole-pane token-match verify is fragile to that collapse
+plus the mid-turn case (Enter queued while the recipient is busy). The robustness fix — an
+input-state delivery signal plus a per-adapter clear/submit (`InputControl`) contract — is
+tracked at #336. Until it lands, Codex delivery stays hook-context.
 
 *Verified against codex-cli 0.130.0 (2026-05-10), per the [`Aldenysq/agents-connector`](https://github.com/Aldenysq/agents-connector)
 integration notes — Codex hook events with `additionalContext` support: `SessionStart`,
