@@ -10,6 +10,7 @@ import (
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 )
 
 // pingBody is the placeholder body carried by a kind=ping row. It is
@@ -39,13 +40,77 @@ const pingStateTimeout = "timeout"
 // CLI subcommand and the `tmux-msg.ping` MCP tool (#144). OK is true only
 // when the probe reached `delivered` (recipient reachable). State is one
 // of "delivered", "failed", or "timeout".
+//
+// On the UNREACHABLE path (OK=false), Reason classifies WHY (#358) and
+// Evidence carries the raw substrate signals behind that call. Both are
+// omitted on the reachable path.
 type pingResult struct {
-	OK        bool   `json:"ok"`
-	Agent     string `json:"agent"`
-	ID        string `json:"id"`
-	State     string `json:"state"`
-	ElapsedMs int64  `json:"elapsed_ms"`
-	Error     string `json:"error,omitempty"`
+	OK        bool          `json:"ok"`
+	Agent     string        `json:"agent"`
+	ID        string        `json:"id"`
+	State     string        `json:"state"`
+	ElapsedMs int64         `json:"elapsed_ms"`
+	Reason    pingReason    `json:"reason,omitempty"`
+	Evidence  *pingEvidence `json:"evidence,omitempty"`
+	Error     string        `json:"error,omitempty"`
+}
+
+// pingReason classifies an UNREACHABLE ping into the operator-actionable
+// condition behind it (#358). It is a CLOSED set of typed constants, not a
+// free-form string: the value space is the contract the CLI renderer, the
+// operator, and downstream tooling branch on to route recovery, so an
+// open-ended reason would defeat the distinguishability the feature exists to
+// provide. A new condition is a deliberate addition here, not an emergent
+// string.
+type pingReason string
+
+const (
+	// reasonPaneDead: the mailman claimed the ping and found the recipient's
+	// pane not live (the ping reached store-terminal `failed`). The session is
+	// gone — re-discover or re-register. Evidence-free beyond the row Error.
+	reasonPaneDead pingReason = "pane_dead"
+	// reasonMailmanDown: the recipient's mailman unit is not active. Nothing
+	// is draining the queue — start the daemon.
+	reasonMailmanDown pingReason = "mailman_down"
+	// reasonStuck: the mailman is parked in the #291 stuck state (N
+	// consecutive pane-probe failures → it wrote agents.stuck_reason and
+	// stopped probing tmux). Clear via `register --force`. The specific park
+	// reason rides in Evidence.StuckReason.
+	reasonStuck pingReason = "stuck"
+	// reasonBlockedDelivery: the mailman is running but not delivering — the
+	// observe-gate is refusing the paste (operator typing / popup, i.e.
+	// agent_state=awaiting-operator) or a paste-incapable adapter's paste path
+	// is force-deferred (#323). Investigate the gate, not the daemon.
+	reasonBlockedDelivery pingReason = "blocked_delivery"
+	// reasonBacklogDraining: the mailman is running and working through a real
+	// backlog (queue depth exceeds our own probe row); the ping is behind in
+	// line. Wait, or query queue depth.
+	reasonBacklogDraining pingReason = "backlog_draining"
+)
+
+// pingEvidence is the raw substrate signal-set gathered on the UNREACHABLE
+// path (#358), carried alongside the classified Reason so the operator sees
+// the basis for the call — and can still route correctly if the heuristic
+// mislabels an edge. Fields are read-only snapshots taken after the probe
+// times out / fails.
+//
+// last_delivered_at / mailman_idle_since (in the #358 example JSON) are
+// deliberately ABSENT: there is no store source for them yet — they are
+// #348's `agents`-listing extensions. Adding always-empty fields would read
+// as supported-but-broken; they join this struct when #348 lands.
+type pingEvidence struct {
+	// MailmanActive is `systemctl --user is-active <unit>` for the recipient.
+	MailmanActive bool `json:"mailman_active"`
+	// QueueDepth is the recipient's queued-message count. On the timeout path
+	// it INCLUDES this probe's own still-queued row, so depth 1 means "only
+	// our ping"; >1 means a real backlog behind/ahead of it.
+	QueueDepth int `json:"queue_depth"`
+	// CurrentState is the observe-gate / agent_state classification
+	// (idle / working / awaiting-operator / at-rest-in-compaction / unknown).
+	CurrentState string `json:"current_state"`
+	// StuckReason is the #291 park reason (e.g. "pane-not-found") when the
+	// mailman has parked itself; empty otherwise.
+	StuckReason string `json:"stuck_reason,omitempty"`
 }
 
 // pingCLIParams is the resolved input to runPingWithStore, post-flag-parse.
@@ -147,13 +212,113 @@ func pollPingTerminal(ctx context.Context, s *store.Store, id, agent string, tim
 }
 
 // pingProbe is the shared core behind both the CLI and MCP surfaces
-// (#144): insert a kind=ping row, then poll for its terminal state.
+// (#144): insert a kind=ping row, then poll for its terminal state. On an
+// UNREACHABLE outcome it gathers the substrate evidence and classifies the
+// reason (#358) — only on the failing path, so a reachable ping stays one
+// ClaimNext + one LivePanes with no extra probes.
 func pingProbe(ctx context.Context, s *store.Store, from, to string, timeout, pollInterval time.Duration) (pingResult, error) {
 	id, err := insertPing(ctx, s, from, to)
 	if err != nil {
 		return pingResult{}, err
 	}
-	return pollPingTerminal(ctx, s, id, to, timeout, pollInterval)
+	res, err := pollPingTerminal(ctx, s, id, to, timeout, pollInterval)
+	if err != nil {
+		return res, err
+	}
+	if !res.OK {
+		ev := gatherPingEvidence(ctx, s, to)
+		res.Evidence = &ev
+		res.Reason = classifyPingReason(res.State, ev)
+	}
+	return res, nil
+}
+
+// classifyPingReason maps an UNREACHABLE probe outcome to its operator-
+// actionable reason (#358). Pure + table-tested: the evidence is gathered by
+// the caller (gatherPingEvidence), so this decision tree is exercised for
+// every sub-case without a live system.
+//
+// Decision tree (only reached when the probe did NOT deliver):
+//
+//	failed                            → pane_dead        (mailman claimed it; pane not live)
+//	timeout + StuckReason set         → stuck            (parked per #291)
+//	timeout + mailman not active      → mailman_down     (nothing draining the queue)
+//	timeout + state=awaiting-operator → blocked_delivery (observe-gate refusing the paste)
+//	timeout + queue depth > 1         → backlog_draining (real backlog ahead of our probe row)
+//	timeout + (anything else)         → blocked_delivery (running + reachable yet undelivered → the gate)
+//
+// The default-to-blocked_delivery tail is the honest fallback: a running
+// mailman on a non-stuck, non-backlogged agent that still didn't deliver in
+// the bound is most likely held at the gate (a paste-unsafe pane state, or a
+// paste-incapable adapter being force-deferred). Evidence travels with the
+// reason so the operator sees the raw signals regardless of the label.
+func classifyPingReason(pingState string, ev pingEvidence) pingReason {
+	if pingState == string(store.StateFailed) {
+		return reasonPaneDead
+	}
+	switch {
+	case ev.StuckReason != "":
+		return reasonStuck
+	case !ev.MailmanActive:
+		return reasonMailmanDown
+	case ev.CurrentState == tmuxio.StateAwaitingOperator.String():
+		return reasonBlockedDelivery
+	case ev.QueueDepth > 1:
+		return reasonBacklogDraining
+	default:
+		return reasonBlockedDelivery
+	}
+}
+
+// gatherPingEvidence reads the substrate signals behind an UNREACHABLE ping
+// (#358). Best-effort: each probe failure degrades to a zero value rather than
+// erroring — the evidence is diagnostic context, not a hard contract, and a
+// partial picture still routes the operator better than a bare timeout.
+func gatherPingEvidence(ctx context.Context, s *store.Store, agent string) pingEvidence {
+	ev := pingEvidence{}
+	if a, err := s.GetAgent(ctx, agent); err == nil {
+		ev.StuckReason = a.StuckReason
+	}
+	ev.MailmanActive = mailmanActive(ctx, agent)
+	if d, err := s.RecipientQueueDepth(ctx, agent); err == nil {
+		ev.QueueDepth = d
+	}
+	st, _ := resolveAgentState(ctx, s, agent)
+	ev.CurrentState = st.State
+	return ev
+}
+
+// pingReasonSuffix builds the human-readable suffix the CLI appends to an
+// UNREACHABLE line (#358): the reason, its phrase, and the load-bearing
+// evidence (queue depth + observe-gate state, plus the park reason when
+// stuck). Callers gate on res.Reason != "".
+func pingReasonSuffix(res pingResult) string {
+	suffix := fmt.Sprintf("%s: %s", res.Reason, res.Reason.describe())
+	if res.Evidence != nil {
+		suffix += fmt.Sprintf("; queue=%d, state=%s", res.Evidence.QueueDepth, res.Evidence.CurrentState)
+		if res.Evidence.StuckReason != "" {
+			suffix += ", stuck=" + res.Evidence.StuckReason
+		}
+	}
+	return suffix
+}
+
+// describe renders a pingReason as a short human phrase for the CLI suffix.
+func (r pingReason) describe() string {
+	switch r {
+	case reasonPaneDead:
+		return "recipient pane is gone"
+	case reasonMailmanDown:
+		return "mailman daemon not running"
+	case reasonStuck:
+		return "mailman parked in the stuck state"
+	case reasonBlockedDelivery:
+		return "observe-gate is refusing delivery"
+	case reasonBacklogDraining:
+		return "mailman is working through a backlog"
+	default:
+		return string(r)
+	}
 }
 
 // runPingCLI parses ping-subcommand flags, opens the store, resolves the
@@ -222,12 +387,17 @@ func renderPingResult(stdout io.Writer, res pingResult, format string) {
 	case "json":
 		_ = writeJSONResult(stdout, res)
 	default: // text / ""
-		status := "reachable"
-		if !res.OK {
-			status = "UNREACHABLE"
-		}
 		fmt.Fprintf(stdout, "AGENT\t%s\n", res.Agent)
-		fmt.Fprintf(stdout, "PING\t%s (%s)\n", res.State, status)
+		switch {
+		case res.OK:
+			fmt.Fprintf(stdout, "PING\t%s (reachable)\n", res.State)
+		case res.Reason != "":
+			// UNREACHABLE with the structured reason as a short suffix (#358):
+			//   timeout — UNREACHABLE (blocked_delivery: observe-gate is refusing delivery; queue=7, state=awaiting-operator)
+			fmt.Fprintf(stdout, "PING\t%s — UNREACHABLE (%s)\n", res.State, pingReasonSuffix(res))
+		default:
+			fmt.Fprintf(stdout, "PING\t%s (UNREACHABLE)\n", res.State)
+		}
 		fmt.Fprintf(stdout, "ELAPSED\t%dms\n", res.ElapsedMs)
 		fmt.Fprintf(stdout, "ID\t%s\n", res.ID)
 		if res.Error != "" {

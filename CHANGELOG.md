@@ -33,6 +33,25 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Added
+
+- **`ping` surfaces a structured reason on UNREACHABLE — #358.** A timed-out /
+  failed `ping` previously collapsed mailman-down, blocked-delivery,
+  backlog-draining, a dead pane, and a parked (stuck) mailman into one opaque
+  UNREACHABLE — but the operator's recovery differs per condition. The `ping`
+  response (and the matching `tmux-msg.ping` MCP tool) now carry a closed-set
+  `reason` (`pane_dead` / `mailman_down` / `stuck` / `blocked_delivery` /
+  `backlog_draining`) plus an `evidence` block (`mailman_active`, `queue_depth`,
+  `current_state`, `stuck_reason`) on the UNREACHABLE path; the CLI renders it
+  as a short suffix
+  (`UNREACHABLE (mailman_down: mailman daemon not running; queue=1, state=unknown)`).
+  Reuses existing substrate signals (`mailmanActive`, `RecipientQueueDepth`,
+  `agents.stuck_reason`, the agent_state probe) — distinguishability is the
+  contribution, no new substrate mechanism. Reason/evidence are omitted on the
+  reachable path, so the OK wire shape is unchanged. (`last_delivered_at` /
+  `mailman_idle_since` from the issue's example join `evidence` when #348 lands
+  the `agents`-listing source for them.)
+
 ## [0.16.1] — 2026-06-12
 
 Fast-follow cluster from the v0.16.0 alcatraz deploy retro (alcatraz-infra#39
