@@ -448,19 +448,40 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	// the current iteration finish, then exit at the top of the next.
 	opCtx := context.Background()
 
-	// Startup: agent must be registered with a pane_id.
+	// Startup: agent must be registered with a pane_id. Both "no DB row" and
+	// "row exists but pane_id is empty" are substrate-PERMANENT for THIS unit
+	// instance: a restart won't recover them — only an operator-side `register`
+	// or `discover` invocation will. Exit cleanly (#340) so systemd records
+	// Result=success and STOPS restarting (Restart=on-failure ignores exit 0),
+	// matching the precedent below at the mailbox-only / hook-context /
+	// paste-incapable short-circuits. The pre-#340 behavior returned 69
+	// (UNAVAILABLE) and tight-restarted, which under enough orphan units
+	// hammered the SQLite DB into the recurring-freeze pattern that caused
+	// alcatraz-infra#39.
 	a, err := s.GetAgent(opCtx, opts.Agent)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			fmt.Fprintf(stderr, "agent %q not registered — run '%s discover'\n", opts.Agent, active.BinaryName)
-			return exitUnavailable
+			fmt.Fprintf(stderr, "agent %q not registered in DB — exiting cleanly "+
+				"to avoid systemd restart-loop (#340). Re-register with '%s register "+
+				"--name %s --pane <id>' (or '%s discover') then restart this unit.\n",
+				opts.Agent, active.BinaryName, opts.Agent, active.BinaryName)
+			if err := sdnotify.Ready(); err != nil {
+				logger.Printf("sdnotify_ready_err err=%v", err)
+			}
+			return exitOK
 		}
 		fmt.Fprintf(stderr, "get_agent: %v\n", err)
 		return exitInternal
 	}
 	if a.PaneID == "" {
-		fmt.Fprintf(stderr, "agent %q has no pane_id — run '%s discover'\n", opts.Agent, active.BinaryName)
-		return exitUnavailable
+		fmt.Fprintf(stderr, "agent %q has no pane_id — exiting cleanly to avoid "+
+			"systemd restart-loop (#340). Re-register with '%s register --name %s "+
+			"--pane <id>' (or '%s discover') then restart this unit.\n",
+			opts.Agent, active.BinaryName, opts.Agent, active.BinaryName)
+		if err := sdnotify.Ready(); err != nil {
+			logger.Printf("sdnotify_ready_err err=%v", err)
+		}
+		return exitOK
 	}
 
 	// TOML config override for delivery_mode (#132 follow-up to #116).

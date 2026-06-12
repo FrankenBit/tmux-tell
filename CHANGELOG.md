@@ -35,6 +35,21 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **`serve` exits cleanly on agent-not-found (#340).** When `tmux-msg-claude
+  serve --agent NAME` finds no DB row for `NAME` (or the row exists but
+  `pane_id` is empty), the substrate now exits with status `0` instead of
+  `69` (UNAVAILABLE). The systemd unit template's `Restart=on-failure`
+  treats `0` as success and stops restarting; the pre-#340 `69` was
+  restart-looped every 2 seconds, and under enough orphan units the
+  restart-flood hammered SQLite into the contention freeze that caused
+  [alcatraz-infra#39](https://git.frankenbit.de/frankenbit/alcatraz-infra/issues/39).
+  The log line tells the operator how to recover (`register --name … --pane …`
+  or `discover`, then restart the unit). Composes with #338 as defense-in-
+  depth: #338 prevents the orphan unit from existing in the first place
+  (unregister cleans systemd); this issue prevents the flood-cause if one
+  exists anyway. Tests `TestServe_ExitsCleanWhenAgentUnregistered` +
+  `TestServe_ExitsCleanWhenPaneEmpty` pin the exit shape. New
+  `docs/reference.md` §"`serve` exit codes" documents the matrix.
 - **`unregister` soft-fails systemctl errors (#338).** A user-systemd flake
   (e.g. "Failed to connect to user bus") no longer hard-fails the unregister
   and leaves the agent row stranded. The DB row removal proceeds; the

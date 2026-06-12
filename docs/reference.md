@@ -588,6 +588,36 @@ initialises correctly when a mailman starts against an already-parked agent
 and sets the gauge before any delivery is attempted. Use this in a Grafana
 alert to get paged when an agent parks.
 
+## `serve` exit codes (#340)
+
+`tmux-msg-claude serve --agent NAME` distinguishes **substrate-permanent**
+failures from **transient** ones in its exit code so the systemd unit
+template (`Restart=on-failure`) does the right thing for each:
+
+| Condition                              | Exit code   | systemd behavior        |
+| -------------------------------------- | ----------- | ----------------------- |
+| Agent not registered in DB             | `0` (OK)    | record success, stop    |
+| Agent row exists but `pane_id` empty   | `0` (OK)    | record success, stop    |
+| `delivery_mode` is mailbox-only / hook-context | `0` (OK)    | record success, stop    |
+| Adapter is paste-incapable but mode = paste-and-enter (#323) | `0` (OK)    | record success, stop    |
+| Tmux `can't find pane` (persistent)    | mailman parks itself in stuck-state; process stays up | n/a (see above) |
+| DB open error / get_agent error        | `70` (INTERNAL) | restart per Restart=on-failure |
+| Mailman loop crash                     | non-zero     | restart                |
+
+The substrate-honest framing: agent-not-found and empty `pane_id` are
+**substrate-permanent for this unit instance** — a restart cannot resolve them,
+only an operator-side `register` / `discover` invocation can. Exit cleanly so
+systemd records success instead of restart-looping, and the log line tells the
+operator how to recover.
+
+Pre-#340 behavior returned `69` (UNAVAILABLE) for the agent-not-found and
+empty-pane cases, which `Restart=on-failure` treated as a transient failure and
+restarted every 2 seconds. Under enough orphan units (e.g. surviving a
+chamber-name change without `unregister`, [alcatraz-infra#39](https://git.frankenbit.de/frankenbit/alcatraz-infra/issues/39))
+the restart-flood hammered SQLite into a contention freeze. The #340 fix
+prevents the flood at the substrate layer; #338's `unregister` cleanup is the
+other half of the defense-in-depth.
+
 ## Verifying which DB a process is bound to (#290)
 
 Both `tmux-msg-claude serve` and `tmux-msg-claude mcp` emit a startup log line

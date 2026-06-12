@@ -93,22 +93,35 @@ func runServeInBackground(t *testing.T, s *store.Store, opts serveOpts) (cancel 
 	return stop, func() int { wg.Wait(); return exit }, logbuf
 }
 
-func TestServe_RefusesWhenAgentUnregistered(t *testing.T) {
+// TestServe_ExitsCleanWhenAgentUnregistered pins #340: agent-not-found is
+// substrate-permanent for this unit instance, so serve exits with status 0
+// (success — systemd's Restart=on-failure ignores it) instead of 69
+// (UNAVAILABLE, which restart-looped under enough orphan units and triggered
+// the alcatraz-infra#39 DB-contention freeze). The log line must still tell
+// the operator how to recover (register or discover, then restart the unit).
+func TestServe_ExitsCleanWhenAgentUnregistered(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })
 
 	var stderr bytes.Buffer
 	exit := runServeWithStore(context.Background(), s, fastOpts("ghost"),
 		log.New(&stderr, "", 0), io.Discard, &stderr)
-	if exit != exitUnavailable {
-		t.Errorf("exit = %d, want %d", exit, exitUnavailable)
+	if exit != exitOK {
+		t.Errorf("exit = %d, want %d (exitOK: agent-not-found is "+
+			"substrate-permanent; systemd should record success and stop "+
+			"restart-looping per #340)", exit, exitOK)
 	}
-	if !strings.Contains(stderr.String(), "not registered") {
-		t.Errorf("stderr = %q", stderr.String())
+	if !strings.Contains(stderr.String(), "not registered in DB") {
+		t.Errorf("stderr missing operator-recovery hint: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "restart-loop") {
+		t.Errorf("stderr missing #340 framing: %q", stderr.String())
 	}
 }
 
-func TestServe_RefusesWhenPaneEmpty(t *testing.T) {
+// TestServe_ExitsCleanWhenPaneEmpty is the sibling check for the no-pane_id
+// branch: same shape (substrate-permanent for THIS instance), same fix.
+func TestServe_ExitsCleanWhenPaneEmpty(t *testing.T) {
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
@@ -117,8 +130,8 @@ func TestServe_RefusesWhenPaneEmpty(t *testing.T) {
 	var stderr bytes.Buffer
 	exit := runServeWithStore(ctx, s, fastOpts("bob"),
 		log.New(&stderr, "", 0), io.Discard, &stderr)
-	if exit != exitUnavailable {
-		t.Errorf("exit = %d, want %d", exit, exitUnavailable)
+	if exit != exitOK {
+		t.Errorf("exit = %d, want %d (exitOK per #340)", exit, exitOK)
 	}
 	if !strings.Contains(stderr.String(), "no pane_id") {
 		t.Errorf("stderr = %q", stderr.String())
