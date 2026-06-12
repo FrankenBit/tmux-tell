@@ -647,6 +647,63 @@ but fails to propagate it to MCP children silently falls back to the
 production DB — the 2026-06-10 crew-demo misdelivery. The log line makes this
 propagation failure immediately visible.
 
+## Moving the DB safely (#343)
+
+The bus DB at `~/.local/share/tmux-msg/messages.db` (or wherever `CLAUDE_MSG_DB`
+points) is a SQLite database in **WAL mode**. The on-disk representation is
+actually three files:
+
+```
+messages.db        ← the canonical database
+messages.db-wal    ← write-ahead log (pending commits, not yet checkpointed)
+messages.db-shm    ← shared-memory index for WAL access
+```
+
+A plain `mv messages.db /new/location/` **leaves the `-wal` and `-shm`
+sidecars at the old path**. Mailmen restarted against `/new/location/messages.db`
+read the pre-checkpoint state, losing every write since the last automatic
+checkpoint (typically minutes-to-hours of bus history). This actually happened
+during the v0.16.0 alcatraz deploy ([#343](https://git.frankenbit.de/frankenbit/tmux-msg/issues/343)
+provenance) — ~14 hours of bus messages stranded in an orphaned WAL.
+
+**The substrate-honest deploy recipe** is checkpoint-then-move, with all
+mailmen stopped so no one is writing to the WAL while the move runs:
+
+```bash
+# 1. Stop everything that writes to the DB.
+systemctl --user stop 'tmux-msg-claude-mailman@*.service'
+pkill -f 'tmux-msg-claude mcp' || true
+
+# 2. Consolidate the WAL into messages.db. After TRUNCATE the .db-wal file
+#    exists but is zero bytes — every committed transaction is now in
+#    messages.db proper, safe to move alone.
+sqlite3 ~/.local/share/tmux-msg/messages.db 'PRAGMA wal_checkpoint(TRUNCATE);'
+
+# 3. Move the file. The sidecars at the source can be deleted; SQLite will
+#    recreate them at the destination on first open.
+mv ~/.local/share/tmux-msg/messages.db /new/location/messages.db
+rm -f ~/.local/share/tmux-msg/messages.db-wal \
+      ~/.local/share/tmux-msg/messages.db-shm
+
+# 4. Update $CLAUDE_MSG_DB (or the unit-file Environment=) to the new path,
+#    restart mailmen.
+systemctl --user daemon-reload
+systemctl --user start 'tmux-msg-claude-mailman@*.service'
+```
+
+**Alternative** (preferred when the source DB can be locked momentarily): use
+SQLite's `.backup` dot-command, which is WAL-aware and copies all three files
+in a single atomic snapshot:
+
+```bash
+systemctl --user stop 'tmux-msg-claude-mailman@*.service'
+sqlite3 ~/.local/share/tmux-msg/messages.db ".backup /new/location/messages.db"
+# Update $CLAUDE_MSG_DB; restart mailmen. No -wal/-shm cleanup needed.
+```
+
+The invariant in one line: **`messages.db` always has invisible siblings;
+never move the file alone.**
+
 ## Operator-presence routing — `send --to operator`
 
 Sister substrate to the attention signal above (#228). When a chamber wants to

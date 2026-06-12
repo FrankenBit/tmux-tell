@@ -81,6 +81,19 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   [alcatraz-infra#39](https://git.frankenbit.de/frankenbit/alcatraz-infra/issues/39)'s
   stale `tmux-msg-claude-mailman@visitor.service` surviving a chamber rename.
 
+### Documentation
+
+- **WAL-safe DB-move recipe (#343).** New `docs/reference.md` §"Moving the DB
+  safely" documents the SQLite WAL invariant — `messages.db` always carries
+  invisible `-wal` + `-shm` sidecars; a plain `mv messages.db` strands them
+  and discards every commit since the last checkpoint. The recipe spells out
+  the substrate-honest deploy procedure (stop mailmen → `PRAGMA
+  wal_checkpoint(TRUNCATE)` → move → cleanup → restart), plus the `.backup`
+  alternative for single-step atomic copies. Surfaced during the v0.16.0
+  deploy where ~14 hours of bus history were stranded in an orphaned WAL at
+  `/var/lib/tmux-msg/`. **Release-notes-touching-DB-path-moves** going
+  forward must include the checkpoint step or use `.backup`.
+
 ## [0.16.0] — 2026-06-12
 
 The Foreign decks cluster: substrate-vs-adapter pane-observation work
