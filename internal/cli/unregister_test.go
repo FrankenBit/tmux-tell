@@ -311,3 +311,90 @@ func TestCLI_Unregister_Idempotent(t *testing.T) {
 		t.Errorf("removed = %v, want false", out["removed"])
 	}
 }
+
+// TestCLI_Unregister_SoftFailsSystemctlError pins #338's substrate-honest
+// framing: when `systemctl --user disable --now` errors with anything other
+// than the idempotent not-loaded shape, the unregister continues — DB row
+// removal succeeds, and the systemctl failure surfaces as `mailman: "warn"`
+// + `mailman_error`. The alternative (hard-fail like pre-#338) would have
+// left the agent row stranded if the user systemd manager flaked, which is
+// the opposite of substrate-honest cleanup.
+func TestCLI_Unregister_SoftFailsSystemctlError(t *testing.T) {
+	fs := &fakeSystemctl{err: errors.New("Failed to connect to user bus")}
+	fs.install(t)
+
+	dbPath := filepath.Join(t.TempDir(), "messages.db")
+	ctx := context.Background()
+	seed, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open seed: %v", err)
+	}
+	if err := seed.UpsertAgent(ctx, "bob", "%9"); err != nil {
+		t.Fatalf("seed agent: %v", err)
+	}
+	_ = seed.Close()
+
+	t.Setenv("CLAUDE_MSG_DB", dbPath)
+	var stdout, stderr bytes.Buffer
+	exit := runUnregisterCLI([]string{"--name", "bob"}, &stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d, want exitOK (soft-fail); stderr=%s stdout=%s",
+			exit, stderr.String(), stdout.String())
+	}
+	out := parseJSONResult(t, stdout.Bytes())
+	if out["ok"] != true {
+		t.Errorf("ok = %v, want true", out["ok"])
+	}
+	if out["removed"] != true {
+		t.Errorf("removed = %v, want true (row removal proceeds despite systemctl error)",
+			out["removed"])
+	}
+	if out["mailman"] != "warn" {
+		t.Errorf("mailman = %v, want \"warn\"", out["mailman"])
+	}
+	mmErr, _ := out["mailman_error"].(string)
+	if mmErr == "" {
+		t.Errorf("mailman_error empty; want systemctl error surface")
+	}
+
+	// Authoritative state check: the DB row is gone.
+	verify, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open verify: %v", err)
+	}
+	defer verify.Close()
+	if _, err := verify.GetAgent(ctx, "bob"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetAgent(bob) = %v, want ErrNotFound", err)
+	}
+}
+
+// TestMCP_Unregister_SoftFailsSystemctlError mirrors the CLI soft-fail check
+// on the MCP surface so both entry points share the substrate-honest shape.
+func TestMCP_Unregister_SoftFailsSystemctlError(t *testing.T) {
+	fs := &fakeSystemctl{err: errors.New("Failed to connect to user bus")}
+	fs.install(t)
+
+	s := newCmdTestStore(t, "alice", "bob")
+	ctx := context.Background()
+
+	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+		"name": "bob",
+	})
+	if got["ok"] != true {
+		t.Fatalf("ok = %v; got=%v", got["ok"], got)
+	}
+	if got["removed"] != true {
+		t.Errorf("removed = %v, want true", got["removed"])
+	}
+	if got["mailman"] != "warn" {
+		t.Errorf("mailman = %v, want \"warn\"", got["mailman"])
+	}
+	mmErr, _ := got["mailman_error"].(string)
+	if mmErr == "" {
+		t.Errorf("mailman_error empty; want systemctl error surface")
+	}
+
+	if _, err := s.GetAgent(ctx, "bob"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetAgent(bob) = %v, want ErrNotFound", err)
+	}
+}

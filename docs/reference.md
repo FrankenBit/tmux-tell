@@ -1058,8 +1058,20 @@ tmux-msg-claude unregister --name alcatraz --force --purge-queue
 
 **Semantics:**
 
-- **Mailman first.** `stopMailman` runs before the row is deleted so the daemon
-  doesn't observe a dangling agent reference.
+- **Mailman first.** `stopMailman` runs `systemctl --user disable --now
+  tmux-msg-claude-mailman@<agent>.service` before the row is deleted so the
+  daemon doesn't observe a dangling agent reference. `disable` removes the
+  `default.target.wants/` symlink so the unit also doesn't restart at next
+  boot — the cleanup that was missing before #338 and let a stale
+  visitor-mailman unit survive a chamber rename and trigger
+  alcatraz-infra#39.
+- **Soft-fail on systemctl error (#338).** If the user systemd manager is
+  unavailable, full-disk, or otherwise unhappy, the DB row removal still
+  proceeds — the agents-table row is authoritative state and a surviving
+  unit is now caught by #340's serve-exit-on-missing-agent path. The
+  response surfaces `mailman: "warn"` + `mailman_error: "<systemd output>"`
+  instead of the usual `mailman: "stopped"` so the operator sees what
+  needs follow-up.
 - **Idempotent.** Unregistering an absent agent returns `{ok: true, removed: false}` —
   safe to call from cleanup scripts without a pre-check.
 - **Queue guard.** If the agent has queued messages, the default is to fail loudly with
@@ -1073,7 +1085,7 @@ tmux-msg-claude unregister --name alcatraz --force --purge-queue
 
 **MCP:** `tmux-msg.unregister({name, purge_queue?, force?})`
 
-**Response fields:** `{ok, name, removed, mailman: "stopped", deleted: N}`
+**Response fields:** `{ok, name, removed, mailman: "stopped" | "warn", deleted: N, mailman_error?: string}`
 
 ### New tools require a session restart
 

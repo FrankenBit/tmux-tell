@@ -82,10 +82,20 @@ func runUnregisterCLI(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Stop the mailman before removing the row so it doesn't observe a
-	// dangling agent reference. stopMailman is idempotent — not-running is OK.
+	// dangling agent reference. stopMailman runs `systemctl --user disable
+	// --now`, which is idempotent for not-loaded/missing units. A hard error
+	// here (e.g. systemd-not-available, full disk, broken user manager) is
+	// soft-failed so the DB row removal still proceeds — the substrate-honest
+	// framing per #338 is that the agents-table row is authoritative state
+	// and the systemd unit is a downstream consumer. A surviving unit gets
+	// noticed by #340's serve-exit-on-missing-agent path; leaving the DB row
+	// behind because systemctl flaked would be worse.
+	mailmanStatus := "stopped"
+	var mailmanErr string
 	if err := stopMailman(ctx, *name); err != nil {
-		return writeJSONError(stdout, stderr,
-			fmt.Sprintf("stop mailman: %v", err), exitInternal)
+		mailmanStatus = "warn"
+		mailmanErr = err.Error()
+		fmt.Fprintf(stderr, "WARN unregister: stop mailman: %v\n", err)
 	}
 
 	var purged int64
@@ -104,12 +114,16 @@ func runUnregisterCLI(args []string, stdout, stderr io.Writer) int {
 			fmt.Sprintf("delete agent: %v", err), exitInternal)
 	}
 
-	_ = writeJSONResult(stdout, map[string]any{
+	out := map[string]any{
 		"ok":      true,
 		"name":    *name,
 		"removed": removed,
-		"mailman": "stopped",
+		"mailman": mailmanStatus,
 		"deleted": purged,
-	})
+	}
+	if mailmanErr != "" {
+		out["mailman_error"] = mailmanErr
+	}
+	_ = writeJSONResult(stdout, out)
 	return exitOK
 }

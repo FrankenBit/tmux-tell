@@ -33,6 +33,22 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`unregister` soft-fails systemctl errors (#338).** A user-systemd flake
+  (e.g. "Failed to connect to user bus") no longer hard-fails the unregister
+  and leaves the agent row stranded. The DB row removal proceeds; the
+  response surfaces `mailman: "warn"` + `mailman_error: "<systemd output>"`
+  instead of the happy-path `mailman: "stopped"`. Substrate-honest framing
+  per the issue: the agents-table row is authoritative state, and a unit
+  that survives the cleanup is now caught by #340's
+  serve-exit-on-missing-agent path. Mirrored across the CLI
+  (`tmux-msg-claude unregister`) and the MCP surface
+  (`tmux-msg.unregister`); both gain test coverage for the systemctl-fail
+  path. The pre-#338 hard-fail behavior was the latent gap behind
+  [alcatraz-infra#39](https://git.frankenbit.de/frankenbit/alcatraz-infra/issues/39)'s
+  stale `tmux-msg-claude-mailman@visitor.service` surviving a chamber rename.
+
 ## [0.16.0] — 2026-06-12
 
 The Foreign decks cluster: substrate-vs-adapter pane-observation work

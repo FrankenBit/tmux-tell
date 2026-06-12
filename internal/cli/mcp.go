@@ -1294,9 +1294,15 @@ func mcpUnregisterHandler(s *store.Store) mcp.ToolHandler {
 		}
 
 		// Stop the mailman before removing the row so it doesn't observe a
-		// dangling agent reference.
+		// dangling agent reference. Soft-fail per #338: the agents-table row
+		// is authoritative; the systemd unit is a downstream consumer, so a
+		// systemctl flake must not block the row removal. A surviving unit
+		// gets noticed by #340's serve-exit-on-missing-agent path.
+		mailmanStatus := "stopped"
+		var mailmanErr string
 		if err := stopMailman(ctx, in.Name); err != nil {
-			return nil, err
+			mailmanStatus = "warn"
+			mailmanErr = err.Error()
 		}
 
 		var purged int64
@@ -1313,13 +1319,17 @@ func mcpUnregisterHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 
-		return map[string]any{
+		out := map[string]any{
 			"ok":      true,
 			"name":    in.Name,
 			"removed": removed,
-			"mailman": "stopped",
+			"mailman": mailmanStatus,
 			"deleted": purged,
-		}, nil
+		}
+		if mailmanErr != "" {
+			out["mailman_error"] = mailmanErr
+		}
+		return out, nil
 	}
 }
 
