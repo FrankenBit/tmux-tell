@@ -332,6 +332,22 @@ different problem with substantively different tradeoffs; if a future
 deployment ships under a "cross-host tmux-msg" label, it'll be an explicit
 deviation from this scope, not the default behavior.
 
+### Default tmux socket only
+
+Within that host, the substrate talks to exactly **one** tmux server: the
+**default socket**. Every tmux call the binary makes is a bare `tmux …` with no
+`-L`/`-S` flag (`internal/tmuxio/{panes,clients,deliver}.go`), so `register`,
+`discover`, the pane-status probe, and delivery all see only panes on the
+default socket. Panes on a **`-L <name>`** socket are invisible to the bus: a
+mailman can't find them (it spawn-fails or loops), and `discover` won't register
+them.
+
+To run the bus on an **isolated** socket anyway — a sandbox, a demo rig, CI —
+set **`TMUX_TMPDIR`**, not `-L`. Bare `tmux` honors `TMUX_TMPDIR` for its
+default-socket directory, so the whole stack (server, mailmen, `discover`,
+delivery) lands on the isolated socket together. `-L`/`-S` do **not** work for
+this; only `TMUX_TMPDIR` does.
+
 ### SSH'd panes are one-way carriers
 
 When a tmux pane runs an SSH session to a remote host, the bus sees it as a
