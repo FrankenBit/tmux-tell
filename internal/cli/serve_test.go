@@ -257,6 +257,77 @@ func TestServe_RecoversDeliveringOnStart(t *testing.T) {
 	}
 }
 
+// TestServe_RecoversDeliveringBeforeHookContextShortCircuit pins #357: a stale
+// `delivering` row is recovered even when serve exits early via the
+// hook-context short-circuit (delivery_mode=hook-context means the mailman does
+// not paste, so it exits immediately — but RecoverDelivering must still fire
+// before that exit to unblock orphaned rows left by a prior paste-and-enter run).
+func TestServe_RecoversDeliveringBeforeHookContextShortCircuit(t *testing.T) {
+	s := newCmdTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+	// Seed a message and simulate a crash: claim it (→ delivering) but never mark.
+	r, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "orphan"})
+	_, _ = s.ClaimNext(ctx, "bob")
+	// Transition bob to hook-context — the next serve startup will short-circuit.
+	if err := s.SetDeliveryMode(ctx, "bob", store.DeliveryModeHookContext); err != nil {
+		t.Fatalf("set mode: %v", err)
+	}
+
+	var logbuf bytes.Buffer
+	logger := log.New(&logbuf, "[mailman/test] ", 0)
+	exit := runServeWithStore(context.Background(), s, fastOpts("bob"), logger, &bytes.Buffer{}, &bytes.Buffer{})
+	if exit != exitOK {
+		t.Fatalf("exit = %d, want exitOK", exit)
+	}
+	// Short-circuit must have fired.
+	if !strings.Contains(logbuf.String(), "delivery_mode=hook-context") {
+		t.Errorf("expected hook-context short-circuit log; got:\n%s", logbuf.String())
+	}
+	// RecoverDelivering must have fired BEFORE the short-circuit.
+	if !strings.Contains(logbuf.String(), "recovered count=1") {
+		t.Errorf("expected recovery log before short-circuit; got:\n%s", logbuf.String())
+	}
+	m, _ := s.GetMessage(ctx, r.PublicID)
+	if m.State != store.StateQueued {
+		t.Errorf("orphan message state = %s, want queued (recovered)", m.State)
+	}
+}
+
+// TestServe_RecoversDeliveringBeforeMailboxOnlyShortCircuit is the same pin for
+// the mailbox-only short-circuit path (#357). Unlike hook-context, mailbox-only
+// has NO other automatic recovery path — RecoverDelivering at serve startup is
+// the only mechanism.
+func TestServe_RecoversDeliveringBeforeMailboxOnlyShortCircuit(t *testing.T) {
+	s := newCmdTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+	r, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "orphan"})
+	_, _ = s.ClaimNext(ctx, "bob")
+	if err := s.SetDeliveryMode(ctx, "bob", store.DeliveryModeMailboxOnly); err != nil {
+		t.Fatalf("set mode: %v", err)
+	}
+
+	var logbuf bytes.Buffer
+	logger := log.New(&logbuf, "[mailman/test] ", 0)
+	exit := runServeWithStore(context.Background(), s, fastOpts("bob"), logger, &bytes.Buffer{}, &bytes.Buffer{})
+	if exit != exitOK {
+		t.Fatalf("exit = %d, want exitOK", exit)
+	}
+	if !strings.Contains(logbuf.String(), "delivery_mode=mailbox-only") {
+		t.Errorf("expected mailbox-only short-circuit log; got:\n%s", logbuf.String())
+	}
+	if !strings.Contains(logbuf.String(), "recovered count=1") {
+		t.Errorf("expected recovery log before short-circuit; got:\n%s", logbuf.String())
+	}
+	m, _ := s.GetMessage(ctx, r.PublicID)
+	if m.State != store.StateQueued {
+		t.Errorf("orphan message state = %s, want queued (recovered)", m.State)
+	}
+}
+
 func TestServe_MarksFailedOnDeliveryError(t *testing.T) {
 	// Fake runner: load-buffer fails. Deliver returns an error.
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {

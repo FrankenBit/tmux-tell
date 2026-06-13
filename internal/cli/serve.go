@@ -505,6 +505,23 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		}
 	}
 
+	// RecoverDelivering runs here — before any short-circuit exit — so orphaned
+	// `delivering` rows are always reset to `queued` on serve startup, regardless
+	// of the agent's delivery mode (#357). The original placement was AFTER the
+	// hook-context / mailbox-only / paste-incapable short-circuits, meaning an
+	// agent that transitioned FROM paste-and-enter (while a message was mid-flight)
+	// to one of those modes would leave rows stuck in `delivering` permanently: the
+	// next serve startup would short-circuit before recovering them. Moving recovery
+	// here fixes that: short-circuiting paths still log + exit cleanly, but the
+	// stale rows are unblocked first. For hook-context agents, doHookContext also
+	// calls RecoverDelivering (redundant but idempotent). For mailbox-only, this is
+	// the only automatic recovery path.
+	if n, err := s.RecoverDelivering(opCtx, opts.Agent); err != nil {
+		logger.Printf("recover_failed err=%v", err)
+	} else if n > 0 {
+		logger.Printf("recovered count=%d", n)
+	}
+
 	// Paste-capability force-defer (#323). A paste-INcapable adapter (Codex)
 	// must never paste-and-enter into its pane: the internal/tmuxio observe-gate
 	// is calibrated for Claude's ❯ prompt sentinel + cursor disambiguation, so a
@@ -565,12 +582,6 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			logger.Printf("sdnotify_ready_err err=%v", err)
 		}
 		return exitOK
-	}
-
-	if n, err := s.RecoverDelivering(opCtx, opts.Agent); err != nil {
-		logger.Printf("recover_failed err=%v", err)
-	} else if n > 0 {
-		logger.Printf("recovered count=%d", n)
 	}
 
 	walker := opts.Walker

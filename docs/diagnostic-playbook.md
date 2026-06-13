@@ -351,6 +351,55 @@ prevention side (a WAL-safe DB-move recipe) is tracked separately in
 [#343](https://git.frankenbit.de/frankenbit/tmux-msg/issues/343); `doctor` is
 the *detection* half of that defense-in-depth pair ([#348](https://git.frankenbit.de/frankenbit/tmux-msg/issues/348)).
 
+## Stale `delivering` row (#357)
+
+A message stuck in `delivering` state means the mailman claimed the row but
+exited before marking it delivered — and RecoverDelivering hasn't run since.
+
+**Detect.** Query the DB directly (until a dedicated surface lands):
+
+```bash
+sqlite3 ~/.local/share/tmux-msg/messages.db \
+  "SELECT public_id, to_agent, created_at FROM messages WHERE state = 'delivering';"
+```
+
+Or use `tmux-msg-claude track <id>` if you already know the message id.
+
+**Self-healing (current behavior, post-#357 fix).** `RecoverDelivering` now
+fires at every serve startup, _before_ any short-circuit exit (hook-context,
+mailbox-only, paste-incapable, agent-not-found). Restarting the mailman is
+sufficient to clear all stale `delivering` rows for that agent:
+
+```bash
+systemctl --user restart tmux-msg-claude-mailman@<agent>
+# or, for Codex:
+systemctl --user restart tmux-msg-codex-mailman@<agent>
+```
+
+**When the systemd unit is not running / was never enabled.** If the unit is
+disabled (e.g. because `register --start-mailman` failed due to missing D-Bus
+env vars — see [#356](https://git.frankenbit.de/frankenbit/tmux-msg/issues/356)),
+no automatic restart happens and no RecoverDelivering fires. Two paths:
+
+1. Fix the underlying registration (`register --start-mailman` or
+   `register --name <agent>` followed by `systemctl --user start
+   tmux-msg-claude-mailman@<agent>`). The unit start triggers recovery.
+2. Manual reset (emergency):
+   ```bash
+   sqlite3 ~/.local/share/tmux-msg/messages.db \
+     "UPDATE messages SET state = 'queued' WHERE to_agent = '<agent>' AND state = 'delivering';"
+   ```
+   Then start the mailman. Use this only when you're certain no live serve
+   process is mid-delivery for that agent — two concurrent claimers on the
+   same row is the failure mode RecoverDelivering is designed to prevent.
+
+**Why it happened before #357.** Prior to the fix, the short-circuit exits
+(hook-context, mailbox-only, paste-incapable) returned before reaching
+RecoverDelivering. An agent that transitioned from paste-and-enter (while a
+message was in `delivering`) to any of those modes would leave rows orphaned
+permanently until the agent flipped back to paste-and-enter and serve
+restarted. Tracked in [#357](https://git.frankenbit.de/frankenbit/tmux-msg/issues/357).
+
 ## See also
 
 - [#59](https://git.frankenbit.de/frankenbit/tmux-msg/issues/59)
