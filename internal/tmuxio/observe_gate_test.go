@@ -668,10 +668,13 @@ func TestSendCtrlU_PaneRequired(t *testing.T) {
 	}
 }
 
-// TestClearInput_OnePressPerLine pins the #336 InputControl clear-by-line-
-// count gesture: lineCount Ctrl+U presses (codex clears one line per press),
-// each a send-keys C-u with no Enter follow-up.
-func TestClearInput_OnePressPerLine(t *testing.T) {
+// TestClearInput_TwoPressesPerLine pins the #360 P3 fix: codex clears a
+// multi-line draft in ~2 Ctrl+U presses per line (text-clear + line-join), so
+// ClearInput sends clearPressesPerLine*lineCount presses (the prior one-per-
+// line under-cleared codex and left residual lines for the paste to compound
+// with — operator-substrate-witnessed in the #336 gate). Each press is a
+// send-keys C-u with no Enter follow-up.
+func TestClearInput_TwoPressesPerLine(t *testing.T) {
 	var calls []string
 	prev := SetTmuxRunner(func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(args, " "))
@@ -682,8 +685,9 @@ func TestClearInput_OnePressPerLine(t *testing.T) {
 	if err := ClearInput(context.Background(), "%5", 3); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(calls) != 3 {
-		t.Fatalf("tmux call count = %d, want 3 (one C-u per line)", len(calls))
+	want := 3 * clearPressesPerLine
+	if len(calls) != want {
+		t.Fatalf("tmux call count = %d, want %d (clearPressesPerLine*lineCount)", len(calls), want)
 	}
 	for i, c := range calls {
 		if !strings.Contains(c, "send-keys") || !strings.Contains(c, "C-u") {
@@ -695,10 +699,10 @@ func TestClearInput_OnePressPerLine(t *testing.T) {
 	}
 }
 
-// TestClearInput_MinimumOnePress pins the lineCount<1 clamp: a zero or
-// negative count still sends exactly one Ctrl+U (a single-line input is the
-// floor), so a caller that mis-derives the count never sends zero presses.
-func TestClearInput_MinimumOnePress(t *testing.T) {
+// TestClearInput_MinimumOneLine pins the lineCount<1 clamp: a zero or negative
+// count still clears one line's worth of presses (clearPressesPerLine), so a
+// caller that mis-derives the count never sends zero presses.
+func TestClearInput_MinimumOneLine(t *testing.T) {
 	var calls int
 	prev := SetTmuxRunner(func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 		calls++
@@ -709,8 +713,8 @@ func TestClearInput_MinimumOnePress(t *testing.T) {
 	if err := ClearInput(context.Background(), "%5", 0); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if calls != 1 {
-		t.Fatalf("tmux call count = %d, want 1 (lineCount<1 clamps to 1)", calls)
+	if calls != clearPressesPerLine {
+		t.Fatalf("tmux call count = %d, want %d (lineCount<1 clamps to one line)", calls, clearPressesPerLine)
 	}
 }
 

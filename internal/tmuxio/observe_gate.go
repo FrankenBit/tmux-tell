@@ -475,24 +475,52 @@ func NotifyPendingMessage(ctx context.Context, pane string) error {
 	return nil
 }
 
+// clearPressesPerLine is how many Ctrl+U presses ClearInput sends per visual
+// line of input content. Codex's TUI clears a multi-line draft in TWO presses
+// per line — one to clear the line's TEXT, a second to JOIN it onto the line
+// above (deleting the newline) — so a single press per line under-clears and
+// leaves residual lines that the subsequent paste then compounds with
+// (operator-substrate-witnessed in the #336 live-probe gate; banked in the
+// codex-paste-substrate findings). An N-line codex draft needs ~2N-1 presses
+// (N text-clears + N-1 joins); sending 2N over-clears by at most one harmless
+// press. Claude clears the whole input on the FIRST Ctrl+U, so for it every
+// press after the first lands on an already-empty line and is a no-op. So 2N
+// is adapter-agnostic-by-over-clear — it satisfies codex's per-line cost and
+// stays harmless for Claude, with no per-adapter branch.
+//
+// Why deterministic over-clear and not a cursor-loop-until-empty: a loop that
+// reads the cursor after each press to stop when the row is empty would be
+// "exact", but it reintroduces the slow-render timing fragility the #336
+// probes exposed — codex renders large input slowly, so a cursor read taken
+// right after a Ctrl+U can observe stale pre-clear state and either stop early
+// or spin. Deterministic 2N sidesteps pane-timing entirely. See the PR body
+// for the rejected-alternative reasoning.
+const clearPressesPerLine = 2
+
+// sendCtrlU sends exactly one Ctrl+U keystroke to pane via a single send-keys
+// call (no Enter follow-up). The shared primitive under SendCtrlU / ClearInput.
+func sendCtrlU(ctx context.Context, pane string) error {
+	if out, err := tmuxRun(ctx, nil, "send-keys", "-t", pane, "C-u"); err != nil {
+		return fmt.Errorf("tmuxio: send-keys C-u: %w: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // ClearInput clears the recipient's input row, the InputControl-axis clear
-// gesture (#336). It sends one Ctrl+U per line of current input content
-// (minimum one): some adapter TUIs — codex — clear only ONE line per
-// Ctrl+U, so a single press under-clears a multi-line draft and leaves
-// residual lines that the subsequent paste then compounds with. Claude
-// clears the whole input on the first Ctrl+U, so the extra presses land on
-// an already-empty line and are harmless. Sending lineCount presses is
-// therefore adapter-agnostic-by-over-clear — no per-adapter branch.
+// gesture (#336). It sends clearPressesPerLine (2) Ctrl+U presses per line of
+// current input content (minimum one line): codex needs ~2 presses per line to
+// fully clear a multi-line draft (text-clear + line-join), and Claude's extra
+// presses land on an already-empty line and are harmless — see
+// clearPressesPerLine for the adapter-agnostic over-clear rationale.
 //
 // lineCount is the number of (visual) lines in the content being cleared —
-// e.g. strings.Count(content, "\n")+1 for extractInputContent's output,
-// which captures visual rows, matching codex's per-visual-line clear.
-// Values < 1 are treated as 1.
+// e.g. strings.Count(content, "\n")+1 for extractInputContent's output, which
+// captures visual rows, matching codex's per-visual-line clear. Values < 1 are
+// treated as 1.
 //
 // Like the single-press form it does NOT follow up with Enter — the caller
-// owns the subsequent paste + Enter via Deliver. Codex's per-line clear is
-// operator-substrate-witnessed (#336); the exact press count is a P3 probe
-// item, but over-clear keeps the gesture safe if the estimate is high.
+// owns the subsequent paste + Enter via Deliver.
 func ClearInput(ctx context.Context, pane string, lineCount int) error {
 	if pane == "" {
 		return errors.New("tmuxio: pane required")
@@ -500,19 +528,24 @@ func ClearInput(ctx context.Context, pane string, lineCount int) error {
 	if lineCount < 1 {
 		lineCount = 1
 	}
-	for i := 0; i < lineCount; i++ {
-		if out, err := tmuxRun(ctx, nil, "send-keys", "-t", pane, "C-u"); err != nil {
-			return fmt.Errorf("tmuxio: send-keys C-u (%d/%d): %w: %s",
-				i+1, lineCount, err, strings.TrimSpace(string(out)))
+	presses := lineCount * clearPressesPerLine
+	for i := 0; i < presses; i++ {
+		if err := sendCtrlU(ctx, pane); err != nil {
+			return fmt.Errorf("tmuxio: clear-input (%d/%d): %w", i+1, presses, err)
 		}
 	}
 	return nil
 }
 
-// SendCtrlU sends a single Ctrl+U keystroke to the receiver pane — the
-// one-line form of ClearInput, retained for callers clearing a known
-// single-line input. Prefer ClearInput(ctx, pane, lineCount) when the
-// content may be multi-line (codex clears one line per press).
+// SendCtrlU sends a single Ctrl+U keystroke to the receiver pane. Unlike
+// ClearInput it sends exactly ONE press regardless of adapter — the one-line
+// form retained for callers clearing a known single-line input (where codex's
+// line-join cost does not apply: a single line has nothing above to join onto,
+// so one press clears it). Prefer ClearInput(ctx, pane, lineCount) when the
+// content may be multi-line.
 func SendCtrlU(ctx context.Context, pane string) error {
-	return ClearInput(ctx, pane, 1)
+	if pane == "" {
+		return errors.New("tmuxio: pane required")
+	}
+	return sendCtrlU(ctx, pane)
 }
