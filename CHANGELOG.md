@@ -48,6 +48,30 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   --user reset-failed`. Same directives added to both adapter templates
   (`tmux-msg-claude-mailman@.service` + `tmux-msg-codex-mailman@.service`)
   for symmetry.
+- **`ping` exit code is now keyed on the reachability class — #366.**
+  `pingExitCode` previously mapped on the raw probe state (`delivered`→0,
+  `timeout`→`EX_TEMPFAIL`, `failed`→`EX_UNAVAILABLE`). It now maps on the #366
+  `class`: `reachable`→0, `pending`→`EX_TEMPFAIL` (75, retry may help),
+  `unreachable`→`EX_UNAVAILABLE` (69, retry won't help). **Behavioral shift:**
+  `mailman_down` and `stuck` (both `state=timeout`, previously `EX_TEMPFAIL`) now
+  class `unreachable` → **`EX_UNAVAILABLE`** — a down or parked mailman won't
+  self-heal on a retry, so tempfail over-promised recoverability.
+  `backlog_draining` / `blocked_delivery` stay `EX_TEMPFAIL` (now via `pending`);
+  `pane_dead` stays `EX_UNAVAILABLE`. Scripts branching on `ping`'s exit code for
+  the mailman_down/stuck case should expect 69 where they previously saw 75.
+- **Delivery verification keys off an input-emptied signal, not token-match**
+  (#336). A paste that submits leaves the recipient's live input row (the
+  bottom-most prompt-sentinel row) empty — Claude clears it in place, codex
+  opens a fresh empty input block below. This is robust to paste-collapse
+  (codex renders a large paste as `[Pasted Content]` even after submit,
+  masking the verify token) and honest about mid-turn delivery (a queued
+  Enter leaves the paste sitting in the input row → correctly reported
+  not-yet-delivered), replacing the token-match signal that both
+  false-negatived on collapse and false-positived on a pasted-but-unsubmitted
+  message whose token was literally visible in the input box. Falls back to
+  token-match when the input row can't be anchored (pre-#336 behavior for
+  sentinel-less panes). Targets the dominant `delivered_in_input_box` warning
+  class (~84/24h, predominantly mid-turn).
 
 - **Delivery-failure notices are now a compact one line — #362.** When a
   message lands `failed` or `delivered_in_input_box`, the auto-notice back to
@@ -141,21 +165,6 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   (`PENDING (backlog_draining: …) — retry or wait, the mailman is working`).
   Reason/evidence remain omitted on the reachable path, so the OK wire shape
   gains only the `class` field.
-
-### Changed
-
-- **`ping` exit code is now keyed on the reachability class — #366.**
-  `pingExitCode` previously mapped on the raw probe state (`delivered`→0,
-  `timeout`→`EX_TEMPFAIL`, `failed`→`EX_UNAVAILABLE`). It now maps on the #366
-  `class`: `reachable`→0, `pending`→`EX_TEMPFAIL` (75, retry may help),
-  `unreachable`→`EX_UNAVAILABLE` (69, retry won't help). **Behavioral shift:**
-  `mailman_down` and `stuck` (both `state=timeout`, previously `EX_TEMPFAIL`) now
-  class `unreachable` → **`EX_UNAVAILABLE`** — a down or parked mailman won't
-  self-heal on a retry, so tempfail over-promised recoverability.
-  `backlog_draining` / `blocked_delivery` stay `EX_TEMPFAIL` (now via `pending`);
-  `pane_dead` stays `EX_UNAVAILABLE`. Scripts branching on `ping`'s exit code for
-  the mailman_down/stuck case should expect 69 where they previously saw 75.
-
 - **Diagnostic surface for MCP/DB-binding divergence — #348 (PR 1 of 2).** When a
   deploy moves the DB but doesn't restart the long-lived MCP server processes,
   those processes keep writing to the orphaned inode — invisible to `sqlite3` on
@@ -180,7 +189,6 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   MCP-binding divergence" entry pointing at `doctor` as the triage primitive.
   The `agents`-listing mailman-activity fields (`mailman_last_delivered_at` /
   `mailman_idle_since`, which need a store migration) follow in PR 2.
-
 - **`agents` listing surfaces mailman delivery-recency — #348 (PR 2 of 2, closes #348).**
   `agents` (CLI + the `tmux-msg.agents` MCP tool) now carries
   `mailman_last_delivered_at` — the RFC3339 time of the most recent delivery to
@@ -195,6 +203,18 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   table grows. The same `RecipientLastDelivered` derive feeds the #363/#366
   ping-evidence slot (one substrate-property, two consumer surfaces). Closes the
   #348 observability arc opened by PR 1.
+- **Header-first 3-part framed paste for large messages** (#336): a large
+  message delivers as a Header / Body / Footer frame, each pasted as its own
+  buffer, so the short `[Sender · … · id <id>]` / `[· id <id>]` bounds stay
+  visible even when the body collapses in the recipient TUI. Small and quick
+  messages are unchanged (single paste, no footer).
+- **`-settle-delay` serve flag** plus per-agent `settle-delay` TOML knob
+  (#360): operator-tunable pause between paste and the submit Enter, for an
+  adapter whose TUI needs longer to ingest a (possibly collapsed) paste.
+- **`ClearInput` clear-by-line-count** (#336): the mailman's stranded-draft
+  clear sends one Ctrl+U per input line, so a multi-line draft on an adapter
+  that clears line-by-line (codex) is fully cleared before the replacement
+  paste.
 
 ## [0.16.1] — 2026-06-12
 
