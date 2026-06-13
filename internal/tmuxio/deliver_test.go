@@ -256,6 +256,19 @@ func TestDeliver_InputEmptied_RejectsPasteStillInInput(t *testing.T) {
 	}
 }
 
+// TestSetSettleDelay_UpdatesPackageDelay pins the #360 exported setter the
+// serve `-settle-delay` flag wires through: it overwrites the process-level
+// settle pause (sibling to SetRetrySchedule). Uses SetSettleDelayForTest to
+// snapshot/restore so the suite's other settle-sensitive tests are unaffected.
+func TestSetSettleDelay_UpdatesPackageDelay(t *testing.T) {
+	prev := SetSettleDelayForTest(0)
+	t.Cleanup(func() { SetSettleDelayForTest(prev) })
+	SetSettleDelay(1234 * time.Millisecond)
+	if settleDelay != 1234*time.Millisecond {
+		t.Errorf("SetSettleDelay = %v, want 1.234s", settleDelay)
+	}
+}
+
 func TestDeliver_LoadBufferFailure(t *testing.T) {
 	shortRetries(t)
 	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {

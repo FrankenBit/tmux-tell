@@ -236,6 +236,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"interval to re-check the paused flag")
 	deliverTimeout := fs.Duration("deliver-timeout", 30*time.Second,
 		"per-message deadline for the tmux delivery sequence")
+	settleDelay := fs.Duration("settle-delay", tmuxio.DefaultSettleDelay,
+		"pause between paste-buffer and the submit Enter, giving the TUI time to ingest a (possibly collapsed/chunked) paste before it is asked to submit. 500ms suits Claude; codex collapses >~1KB pastes into `[Pasted Content]` chunks that need longer to ingest, so a codex mailman may need a larger value (e.g. 2s) or the submit-Enter is eaten and the paste sits unsubmitted (#360). Per-agent TOML knob: `settle-delay = \"2s\"`.")
 	verifyRetryBudget := fs.Duration("verify-retry-budget", tmuxio.DefaultRetryBudget,
 		"total verify-token retry window for post-paste verification (#153). The default ~5s schedule (100ms/250ms/500ms/1s/1.5s/1.65s across 7 capture attempts) scales proportionally to this budget — e.g. 10s doubles each delay, 15s triples. Per-agent TOML knob: `verify-retry-budget = \"15s\"` for large-payload hubs. Inspect with #146's tmux_msg_delivery_verify_attempt_seconds histogram before tuning.")
 	postCompactPause := fs.Duration("post-compact-pause", 120*time.Second,
@@ -357,6 +359,23 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	// effectively applies the per-agent verify-retry-budget to the right
 	// scope without per-call plumbing through DeliverParams.
 	tmuxio.SetRetrySchedule(tmuxio.DeriveRetrySchedule(*verifyRetryBudget))
+	// Resolve the paste→Enter settle delay (#360), same precedence chain as
+	// the verify-retry budget: TOML per-agent value unless the CLI flag was
+	// set; a malformed value WARNs and keeps the flag value (default 500ms).
+	if !flagWasSet(fs, "settle-delay") {
+		if raw := config.ResolveString(cfg, *agent, "settle-delay", ""); raw != "" {
+			if d, perr := time.ParseDuration(raw); perr != nil {
+				fmt.Fprintf(stderr, "WARN config: settle-delay %q: %v — using %v\n",
+					raw, perr, *settleDelay)
+			} else {
+				*settleDelay = d
+			}
+		}
+	}
+	// Install the paste→Enter settle pause (#360). Same process-global-set-once
+	// shape as the retry schedule above: applies the per-agent settle-delay to
+	// the right scope without per-call plumbing through DeliverParams.
+	tmuxio.SetSettleDelay(*settleDelay)
 	// Resolve the render length-marker threshold (#160) once at startup.
 	// Stored as a human byte-size string; parse it here so the hot
 	// delivery path holds a plain int. A malformed value WARNs and falls

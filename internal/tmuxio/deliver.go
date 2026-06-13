@@ -85,7 +85,20 @@ func SetRetryDelaysForTest(delays []time.Duration) []time.Duration {
 // 800-2000 byte bodies left the text in the input box without
 // submitting. The operator had to press Enter manually. Adding the
 // delay lets the TUI settle before the submit keystroke lands.
-var settleDelay = 500 * time.Millisecond
+//
+// #360: 500ms is calibrated for Claude. Codex collapses a >~1KB paste into
+// chunked `[Pasted Content N chars]` placeholders that need MORE ingest time
+// before Enter submits them — at 500ms the codex submit-Enter is eaten and the
+// chunks sit unsubmitted (delivered_in_input_box). The serve `-settle-delay`
+// flag makes this tunable per-agent so a codex mailman can run a longer settle.
+const DefaultSettleDelay = 500 * time.Millisecond
+
+var settleDelay = DefaultSettleDelay
+
+// SetSettleDelay overrides the paste→Enter settle pause for this process. Wired
+// to the serve `-settle-delay` flag (#360) so an adapter/agent whose TUI needs
+// longer to ingest a collapsed paste (codex) can be configured without a rebuild.
+func SetSettleDelay(d time.Duration) { settleDelay = d }
 
 // SetSettleDelayForTest swaps the settle delay. Tests using a fake
 // tmux runner want near-zero values so they don't sleep 500ms per
