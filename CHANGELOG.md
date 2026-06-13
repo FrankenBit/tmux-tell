@@ -144,6 +144,27 @@ sub-primitive) born from the same investigation. v0.16.1 fixes the
   `/var/lib/tmux-msg/`. **Release-notes-touching-DB-path-moves** going
   forward must include the checkpoint step or use `.backup`.
 
+- **DB-move recipe amended with `refresh-all-mcps` step (#349 Fix 1).** The
+  v0.16.0 deploy retrospective surfaced a second substrate-state gap behind
+  the `mv messages.db` footgun: chamber MCP servers are stdio-spawned by
+  Claude Code at session start, NOT systemd-managed. The `systemctl --user
+  stop/start 'tmux-msg-claude-mailman@*.service'` cycle in the WAL recipe
+  cleanly cycles mailmen but leaves long-lived MCP servers running on the
+  OLD DB inode (file handle survives `mv` since the dirent rename doesn't
+  invalidate the open fd). Result: chamber MCPs write to a ghost inode
+  invisible to the new path; mailmen read from the canonical path; substrate
+  ends up in two-DB split-brain with no surface flagging the divergence.
+  Recipe now adds step 5 (`tmux-msg-claude refresh-all-mcps`) firing the
+  `mcp-restart-tmux-msg` macro per registered agent so each chamber's
+  Claude Code re-initializes its tmux-msg MCP stdio against the current
+  binary + canonical DB. **Release-notes touching DB-path moves must
+  mention the `refresh-all-mcps` step explicitly** — it's not optional and
+  not implied by "restart mailmen"; the substrate-honest deploy procedure
+  has to call it out. Substrate-empirical provenance: 2026-06-12 post-v0.16.0
+  investigation found 2+ hours of bus messages from one chamber stranded on
+  a ghost inode (no operator-facing symptom until manual `pgrep -af
+  tmux-msg-claude mcp` surfaced the long-lived processes).
+
 ## [0.16.0] — 2026-06-12
 
 The Foreign decks cluster: substrate-vs-adapter pane-observation work

@@ -734,6 +734,16 @@ rm -f ~/.local/share/tmux-msg/messages.db-wal \
 #    restart mailmen.
 systemctl --user daemon-reload
 systemctl --user start 'tmux-msg-claude-mailman@*.service'
+
+# 5. Refresh every chamber's MCP server so they re-bind against the new DB.
+#    Chamber MCP servers are stdio-spawned by Claude Code at session start,
+#    NOT systemd-managed — restarting mailmen does not restart them.
+#    A long-lived MCP server holds the OLD DB inode open (file handle survives
+#    the rename), so writes from that chamber's MCP land in a ghost-inode DB
+#    invisible to the new path. refresh-all-mcps fires the mcp-restart-tmux-msg
+#    macro per registered agent → each chamber's Claude Code re-initializes its
+#    tmux-msg MCP stdio against the current binary + canonical DB.
+tmux-msg-claude refresh-all-mcps
 ```
 
 **Alternative** (preferred when the source DB can be locked momentarily): use
@@ -744,10 +754,39 @@ in a single atomic snapshot:
 systemctl --user stop 'tmux-msg-claude-mailman@*.service'
 sqlite3 ~/.local/share/tmux-msg/messages.db ".backup /new/location/messages.db"
 # Update $CLAUDE_MSG_DB; restart mailmen. No -wal/-shm cleanup needed.
+systemctl --user start 'tmux-msg-claude-mailman@*.service'
+tmux-msg-claude refresh-all-mcps  # same MCP-rebind reason as above
 ```
 
+**Why the MCP-restart step is required (substrate-honest framing).** The deploy
+recipe touches *two* sets of `tmux-msg-claude` processes, not one:
+
+- **Systemd-managed mailmen** (`tmux-msg-claude-mailman@<agent>.service`) — the
+  stop/start cycle above handles these cleanly; they read the new DB on the
+  fresh process's first open.
+- **Chamber MCP servers** (`tmux-msg-claude mcp` stdio-spawned by Claude Code
+  per chamber session) — these are NOT systemd-managed; they survive the
+  mailman restart cycle. A long-lived MCP server retains its open file handle
+  on the old DB *inode* even after `mv` renames the dirent. SQLite happily
+  writes to that handle; the resulting messages live on the orphan inode and
+  are invisible to mailmen reading the canonical path.
+
+Without `refresh-all-mcps`, the substrate ends up in **two-DB split-brain**:
+chamber MCPs write to the ghost inode, mailmen read from the canonical path,
+neither side surfaces the divergence. This actually happened during the
+v0.16.0 alcatraz deploy ([#349](https://git.frankenbit.de/frankenbit/tmux-msg/issues/349)
+provenance) — 2+ hours of bus messages from one chamber stranded on a ghost
+inode until the post-deploy investigation surfaced it.
+
+**Release-notes touching DB-path moves must mention the
+`refresh-all-mcps` step.** It's not optional and not always-implied by
+"restart mailmen"; the substrate-honest deploy procedure has to call it out
+explicitly. Same shape for any future deploy that touches DB-binding
+substrate-state.
+
 The invariant in one line: **`messages.db` always has invisible siblings;
-never move the file alone.**
+never move the file alone.** And: **mailmen are not the only readers; refresh
+the MCPs too.**
 
 ## Operator-presence routing — `send --to operator`
 
