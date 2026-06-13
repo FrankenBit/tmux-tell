@@ -49,6 +49,19 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   (`tmux-msg-claude-mailman@.service` + `tmux-msg-codex-mailman@.service`)
   for symmetry.
 
+- **Delivery-failure notices are now a compact one line — #362.** When a
+  message lands `failed` or `delivered_in_input_box`, the auto-notice back to
+  the sender was a verbose six-line block (`:warning: Delivery failure / id /
+  recipient / class / reason / body-preview`) that cluttered the pane (operator
+  feedback). It's now a single greppable line —
+  `:warning: <id> → <recipient> <class>: <reason> — resend <id>` (the
+  `delivered_in_input_box` soft-fail renders as `unverified`). The original body
+  is no longer inlined; full detail stays recoverable on demand via
+  `track <id>` / `get <id>`, so compacting **relocates** verbosity to a query
+  rather than dropping it. Same trigger, same `notify-on-*` knobs, same
+  cap-exemption. The out-of-band hook channel + agent-discretion directions from
+  #362 are deferred to #379 (gated on #336's hook-context-ack).
+
 ### Added
 
 - **`ping` surfaces a structured reason on UNREACHABLE — #358.** A timed-out /

@@ -3,7 +3,6 @@ package cli
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"log"
 	"strings"
 	"testing"
@@ -61,11 +60,19 @@ func TestMaybeInsertFailureNotice_GeneratesNoticeOnFailed(t *testing.T) {
 	if !strings.Contains(notice.Body, res.PublicID) {
 		t.Errorf("notice body should cite original public_id; got %q", notice.Body)
 	}
-	if !strings.Contains(notice.Body, "the original message body") {
-		t.Errorf("notice body should include original body preview; got %q", notice.Body)
+	// #362: compact one-line notice — the original body is NOT inlined (it's
+	// recoverable via `get <id>`); the notice carries the class + recovery verb.
+	if strings.Contains(notice.Body, "the original message body") {
+		t.Errorf("compact notice should NOT inline the original body; got %q", notice.Body)
 	}
 	if !strings.Contains(notice.Body, "failed") {
 		t.Errorf("notice body should mention failure class; got %q", notice.Body)
+	}
+	if !strings.Contains(notice.Body, "resend "+res.PublicID) {
+		t.Errorf("notice body should carry the resend recovery verb; got %q", notice.Body)
+	}
+	if strings.Contains(notice.Body, "\n") {
+		t.Errorf("compact notice should be a single line; got %q", notice.Body)
 	}
 	if !strings.Contains(logbuf.String(), "notify_inserted") {
 		t.Errorf("expected notify_inserted log line; got %s", logbuf.String())
@@ -184,49 +191,54 @@ func TestMaybeInsertFailureNotice_BypassesRecipientQueueCap(t *testing.T) {
 	}
 }
 
-// TestRenderFailureNoticeBody_Shape pins the body format the
-// notification renders, since future tooling may grep for these
-// stable fields.
+// TestRenderFailureNoticeBody_Shape pins the #362 compact one-line shape:
+// greppable (:warning: prefix + trailing resend verb), single line, carrying
+// id / recipient / class / reason — and NOT inlining the original body.
 func TestRenderFailureNoticeBody_Shape(t *testing.T) {
 	msg := &store.Message{
 		PublicID:  "abcd",
 		FromAgent: "alice", ToAgent: "bob",
 		Body: "the original body content",
 		Kind: store.KindMessage,
-		// State/CreatedAt/etc. left zero — rendering shouldn't touch.
-		DeliveredAt: sql.NullString{},
-		Error:       sql.NullString{},
 	}
 	body := renderFailureNoticeBody(msg, "failed", "tmux pane gone")
-	required := []string{
-		":warning:", "Delivery failure",
-		"Original message id: abcd",
-		"Recipient: bob",
-		"Failure class: failed",
-		"Reason: tmux pane gone",
-		"Original body preview:",
-		"the original body content",
+	if strings.Contains(body, "\n") {
+		t.Errorf("notice must be one line; got %q", body)
 	}
-	for _, want := range required {
+	for _, want := range []string{":warning:", "abcd", "bob", "failed", "tmux pane gone", "resend abcd"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("body missing %q in:\n%s", want, body)
+			t.Errorf("body missing %q in: %s", want, body)
 		}
+	}
+	if strings.Contains(body, "the original body content") {
+		t.Errorf("compact notice must not inline the original body; got %q", body)
+	}
+
+	// delivered_in_input_box maps to the "unverified" human headline (the raw
+	// state label doesn't leak into the operator-facing notice).
+	ib := renderFailureNoticeBody(msg, "delivered_in_input_box", "verify token timed out")
+	if !strings.Contains(ib, "unverified") {
+		t.Errorf("delivered_in_input_box should render the 'unverified' headline; got %q", ib)
+	}
+	if strings.Contains(ib, "delivered_in_input_box") {
+		t.Errorf("raw state label leaked into the notice; got %q", ib)
 	}
 }
 
-// TestRenderFailureNoticeBody_TruncatesLongBodies verifies the
-// preview cap doesn't blow up the notice body on large messages.
-func TestRenderFailureNoticeBody_TruncatesLongBodies(t *testing.T) {
+// TestRenderFailureNoticeBody_BodyIndependent confirms the compact notice stays
+// bounded + one-line regardless of the original body's size (#362) — the body
+// is no longer inlined, so a huge message can't bloat the notice.
+func TestRenderFailureNoticeBody_BodyIndependent(t *testing.T) {
 	long := strings.Repeat("x", 500)
-	msg := &store.Message{
-		PublicID: "id", FromAgent: "a", ToAgent: "b",
-		Body: long, Kind: store.KindMessage,
+	msg := &store.Message{PublicID: "id", FromAgent: "a", ToAgent: "b", Body: long, Kind: store.KindMessage}
+	body := renderFailureNoticeBody(msg, "failed", "pane gone")
+	if strings.Contains(body, long) {
+		t.Errorf("compact notice must not inline the body, however long; got %q", body)
 	}
-	body := renderFailureNoticeBody(msg, "failed", "reason")
-	if !strings.Contains(body, "...(truncated)") {
-		t.Errorf("body should carry the truncation marker; got len=%d", len(body))
+	if strings.Contains(body, "\n") {
+		t.Error("notice should be one line")
 	}
-	if strings.Count(body, "x") > 250 {
-		t.Errorf("preview not bounded; saw %d x's", strings.Count(body, "x"))
+	if len(body) > 200 {
+		t.Errorf("notice should stay compact regardless of body size; got %d chars: %s", len(body), body)
 	}
 }

@@ -1273,24 +1273,27 @@ func indentForBody(s string) string {
 	return b.String()
 }
 
-// renderFailureNoticeBody formats the human-readable body of a
-// delivery-failure notice. The shape is stable enough for both
-// human reading in the recipient's pane AND simple grep-based parsing
-// by future tools.
+// renderFailureNoticeBody formats the delivery-failure notice sent back to the
+// original sender (#362). Compact-by-design: a single greppable line carrying
+// the actionable essence — which message, to whom, what went wrong, and the
+// recovery verb — rather than the multi-line block that cluttered the pane
+// (operator feedback 2026-06-13). The full detail (original body, exact state)
+// stays recoverable on demand via `track <id>` / `get <id>`, so compacting
+// relocates verbosity to a query rather than dropping it.
+//
+// The `:warning:` prefix + trailing `resend <id>` keep it both human-legible
+// and grep-parseable. failureKind is mapped to a short human headline
+// ("unverified" for the delivered_in_input_box soft-fail, "failed" for a hard
+// failure); the raw reason carries the specifics. resend is the universal
+// recovery verb — the resend primitive replays both `failed` and
+// `delivered_in_input_box` rows (#157).
 func renderFailureNoticeBody(msg *store.Message, failureKind, reason string) string {
-	preview := msg.Body
-	const maxPreview = 200
-	if len(preview) > maxPreview {
-		preview = preview[:maxPreview] + "...(truncated)"
+	headline := failureKind
+	if failureKind == "delivered_in_input_box" {
+		headline = "unverified"
 	}
-	return fmt.Sprintf(`:warning: Delivery failure
-  Original message id: %s
-  Recipient: %s
-  Failure class: %s
-  Reason: %s
-  Original body preview:
-    %s`,
-		msg.PublicID, msg.ToAgent, failureKind, reason, preview)
+	return fmt.Sprintf(":warning: %s → %s %s: %s — resend %s",
+		msg.PublicID, msg.ToAgent, headline, reason, msg.PublicID)
 }
 
 // handlePing processes a kind=ping reachability probe (#144). It runs
