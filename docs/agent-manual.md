@@ -163,6 +163,15 @@ shapes:
   recipient was mid-typing. The content almost certainly arrived; it just wasn't
   *confirmed*. For a no-reply ack, let it ride — resending only re-clutters their
   input row. For something load-bearing, check `message_status` before assuming.
+- **`ping AGENT` returns `PENDING`, not `REACHABLE`.** The agent is reachable and
+  the mailman is *working* — your probe just couldn't confirm in-bound delivery
+  yet (a backlog draining ahead of you, or the mailman gated on a *prior*
+  delivery while that recipient is mid-typing — the **same observe-gate hold that
+  produces `delivered_in_input_box`**, seen from the prober's side). The headline
+  says it outright: *retry or wait, the mailman is working*. Contrast
+  `UNREACHABLE` — *won't clear on its own, operator action needed* — which is the
+  substrate genuinely broken (mailman down / stuck / pane dead). **`PENDING` is
+  transient and retryable; `UNREACHABLE` is terminal and needs a human.**
 - **A send *refused* with a drift warning.** Your registration and your pane have
   diverged (see "Who you are"). Run `discover` and retry.
 - **`refresh-all-mcps` firing across the fleet.** If you see this, an operator is
