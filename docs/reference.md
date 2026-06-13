@@ -273,10 +273,23 @@ firing event name on stdin as `hook_event_name`, which the helper echoes back in
 
 ### Codex — `tmux-msg-codex`
 
-Codex (the OpenAI CLI) delivers via `hook-context` the same way: its hook output schema
-(`hookSpecificOutput.hookEventName` + `additionalContext`) matches Claude's, so the same
-`hook-context` helper presents messages unchanged. Register the agent `hook-context`, then
-wire a Codex hook in `~/.codex/config.toml`:
+Codex (the OpenAI CLI) supports **both** delivery modes, like Claude:
+
+- **`paste-and-enter`** *(default, #360)* — the mailman pastes into the Codex pane through
+  the observe-gate. #322 taught the gate to read Codex's `› ` sentinel + cursor (so it
+  defers while a Codex operator is typing) and #336 made the verify signal cursor-anchored
+  (so it confirms delivery even when a >1KB paste collapses to `[Pasted Content]` and the
+  verify token never renders literally). With both in place, Codex is `PasteCapable = true`
+  and the register-time default works for it — no extra wiring needed. **See the
+  [dual-prompt note](#codex-dual-prompt-the-submit-visual) below** so the submit visual
+  isn't misread as a lost delivery.
+- **`hook-context`** — no paste; the recipient's own Codex session injects pending messages
+  on its next turn. Codex's hook output schema (`hookSpecificOutput.hookEventName` +
+  `additionalContext`) matches Claude's, so the same `hook-context` helper presents messages
+  unchanged. Choose this when you'd rather not have the mailman paste into the pane.
+
+To use `hook-context`, register the agent `hook-context`, then wire a Codex hook in
+`~/.codex/config.toml`:
 
 ```toml
 [features]
@@ -313,22 +326,25 @@ command with `--event-name`; the helper then emits it deterministically regardle
 CLI's stdin shape. Wire one hook block per event you enable (`SessionStart`,
 `UserPromptSubmit`, `PostToolUse`), each pinning its own `--event-name`.
 
-The mailman short-circuits for a `hook-context` agent (it never pastes), so the Codex
-adapter does **not** exercise the paste-and-enter observe-gate — that path stays
-Claude-only until a paste-needing adapter lands (#248). Subset verified working:
-`register` / `send` / `inbox` / `serve` (short-circuit) + the hook-context round-trip
-(`cmd/tmux-msg-codex` end-to-end test).
+The mailman short-circuits for a `hook-context` agent (it never pastes); a
+`paste-and-enter` Codex agent exercises the full observe-gate paste path, the same one
+Claude uses (#360). Subset verified working: `register` / `send` / `inbox` / `serve` +
+the hook-context round-trip (`cmd/tmux-msg-codex` end-to-end test) + paste-and-enter
+delivery to a live Codex pane.
 
-**Paste-capability force-defer (#323).** Should a Codex agent end up in
-`paste-and-enter` mode anyway — e.g. registered without `--delivery-mode`, which
-defaults to `paste-and-enter` — the mailman refuses to paste rather than risk a clobber.
-The `tmux-msg-codex` binary is marked paste-incapable (`Profile.PasteCapable = false`),
-and its mailman force-defers at startup: it leaves messages queued, exits cleanly, and logs
-the migration command. Recover by moving the agent to a non-paste mode:
+**Paste-capability safe-default guard (#323, generalized #360).** The mailman refuses to
+paste-and-enter into a pane whose adapter declares `PasteCapable = false` — paste-and-enter
+relies on the observe-gate reading the pane's prompt sentinel + cursor to defer during
+operator-typing, and an unreadable pane would clobber in-progress input. This guarded Codex
+specifically while its `› ` sentinel was unreadable (#323); #322 + #336 dissolved that
+premise and #360 flipped Codex to `PasteCapable = true`, so **Codex now passes this guard**.
+It remains as the general safe-default for any *future* paste-incapable adapter: such an
+adapter's mailman force-defers at startup (leaves messages queued, exits cleanly, logs the
+migration command). Recover by moving that agent to a non-paste mode:
 
 ```sh
-tmux-msg-codex register --name <agent> --delivery-mode hook-context   # or mailbox-only
-systemctl --user restart tmux-msg-codex-mailman@<agent>
+tmux-msg-<adapter> register --name <agent> --delivery-mode hook-context   # or mailbox-only
+systemctl --user restart tmux-msg-<adapter>-mailman@<agent>
 ```
 
 **Pane-observation: the per-adapter `PaneProfile` (#322).** The observe-gate / `agent_state`
@@ -337,16 +353,32 @@ classifier no longer hardcodes Claude's `❯` sentinel: each adapter supplies a 
 compaction / awaiting-operator / status-line snippets. Claude's is `ClaudePaneProfile`
 (`❯` + NBSP); Codex's is `CodexPaneProfile` with its substrate-verified `› ` sentinel
 (U+203A + a regular space — *not* NBSP). With this, `agent_state` classifies Codex panes
-correctly and the observe-gate *would* defer paste-and-enter while a Codex operator is typing
-— the read side of the substrate-vs-adapter pane-observation contract is now adapter-uniform.
+correctly and the observe-gate defers paste-and-enter while a Codex operator is typing —
+the read side of the substrate-vs-adapter pane-observation contract is adapter-uniform.
 
-Codex nonetheless stays `PasteCapable = false`: the remaining blocker is **verify-token
-robustness**, not pane-reading. Both adapters collapse a pasted message to a `[Pasted …]`
+This is what unblocked `PasteCapable = true` (#360). The historical blocker was **verify-token
+robustness**, not pane-reading: both adapters collapse a pasted message to a `[Pasted …]`
 placeholder (Codex by size ~1KB, Claude by line-count), hiding the verify token until the
-message is submitted; the current whole-pane token-match verify is fragile to that collapse
-plus the mid-turn case (Enter queued while the recipient is busy). The robustness fix — an
-input-state delivery signal plus a per-adapter clear/submit (`InputControl`) contract — is
-tracked at #336. Until it lands, Codex delivery stays hook-context.
+message is submitted, so the old whole-pane token-match verify was fragile to that collapse
+plus the mid-turn case (Enter queued while the recipient is busy). #336 replaced it with a
+**cursor-anchored input-emptied signal** (delivery is confirmed when the input row empties,
+read from the cursor position, independent of whether the token rendered) plus a per-adapter
+clear/submit (`InputControl`) contract. That signal is collapse-robust and cross-adapter, so
+Codex inherits it the same as Claude — the verify fragility is no longer a Codex-specific gate.
+
+#### Codex dual-prompt: the submit visual
+
+When a Codex agent submits a pasted message, its TUI shows a visual that is easy to misread
+as "the delivery vanished": the submitted prompt **lingers in place** as a transcript row
+(Codex expands the collapsed `[Pasted Content]` there) while a **new, empty input prompt
+opens below it** and the cursor jumps down to the new row. So a Codex pane briefly shows
+*two* `› ` rows — the lingering submitted one and the fresh input.
+
+This is purely cosmetic. The message **did** submit. The mailman's verify signal is
+cursor-anchored (#336): it reads the input-row state from the cursor's position, and the
+cursor is on the new bottom input, so the lingering submitted row above is irrelevant to the
+confirmation. An operator watching the pane should read the dual-`›` layout as "submitted —
+new input ready", not "stuck". (Pinned by `TestDeliverySubmitted_CodexDualPrompt`.)
 
 **Codex MCP env contract (#355, #356).** The Codex MCP server process is
 spawned by the Codex CLI and does **not** automatically inherit the calling
