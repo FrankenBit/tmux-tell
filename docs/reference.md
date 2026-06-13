@@ -788,6 +788,19 @@ The invariant in one line: **`messages.db` always has invisible siblings;
 never move the file alone.** And: **mailmen are not the only readers; refresh
 the MCPs too.**
 
+**Substrate-vs-adapter note: codex chambers.** `refresh-all-mcps` fires the
+`mcp-restart-tmux-msg` macro per registered agent, but the macro is
+claude-only per [#248](https://git.frankenbit.de/frankenbit/tmux-msg/issues/248)
+(B)'s substrate-vs-adapter decision: the paste-and-enter control surface that
+delivers slash-commands is genuinely Claude-bound. For codex chambers,
+`refresh-all-mcps` walks the registry row but the macro lands as a no-op at
+the recipient's codex pane (the codex CLI doesn't process `/mcp` slash
+commands). **The Unix-file-semantics invariant applies symmetrically across
+adapters** — a codex MCP server has the same open-fd-on-old-inode problem as
+a claude one — **only the macro-delivery surface differs**. After the move,
+**restart the codex CLI manually** in each codex chamber's session so its
+child MCP server re-binds against the canonical DB.
+
 ## Operator-presence routing — `send --to operator`
 
 Sister substrate to the attention signal above (#228). When a chamber wants to

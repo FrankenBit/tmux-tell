@@ -163,7 +163,12 @@ sub-primitive) born from the same investigation. v0.16.1 fixes the
   has to call it out. Substrate-empirical provenance: 2026-06-12 post-v0.16.0
   investigation found 2+ hours of bus messages from one chamber stranded on
   a ghost inode (no operator-facing symptom until manual `pgrep -af
-  tmux-msg-claude mcp` surfaced the long-lived processes).
+  'tmux-msg-claude mcp'` — and `pgrep -af 'tmux-msg-codex mcp'` for codex
+  chambers — surfaced the long-lived processes). Substrate-vs-adapter note:
+  the recipe addresses Claude-chamber MCP refresh via `refresh-all-mcps`;
+  codex chambers need manual codex-CLI restart since the substrate's
+  `mcp-restart-tmux-msg` macro is claude-only per #248 (B). Same Unix
+  file-semantics invariant; different macro-delivery surface.
 
 ## [0.16.0] — 2026-06-12
 
