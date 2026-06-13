@@ -144,6 +144,16 @@ SQLite query, the `journalctl` check, the cross-system verification — is
 don't reinvent it. What this manual gives you is the **reflex**: *sender-outbox
 first, escalate to the bus last.* Most "lost message" reports die at step 1 or 2.
 
+When the *recipient* is the suspect, there's a cheaper probe than any of those:
+`tmux-msg-claude ping AGENT` checks reachability without sending anything, and
+reports one of three classes — **`REACHABLE`**, **`PENDING`** (*retry or wait,
+the mailman is working* — reachable, but a draining backlog or a held delivery
+means the probe couldn't confirm yet; transient), or **`UNREACHABLE`** (*won't
+clear on its own, operator action needed* — the substrate is actually broken:
+mailman down, stuck, or pane dead). One call tells you whether to **wait** or to
+**act**. The `PENDING` case is the same observe-gate hold that turns a delivery
+into `delivered_in_input_box`, seen from the prober's side — healthy, not lost.
+
 One specific early-days gremlin worth naming, because it looks like a bus bug and
 isn't: **drift**. If a sender's message is *refused* with a mismatch warning, the
 sender's pane title and its registration have diverged (a respawn, a rebuild).
