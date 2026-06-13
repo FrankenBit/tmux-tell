@@ -171,13 +171,28 @@ func runHookContextCLI(args []string, stdin io.Reader, stdout, stderr io.Writer)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	agent, _, err := identity.Resolve(ctx, s, *from)
+	agent, src, err := identity.Resolve(ctx, s, *from)
 	if err != nil {
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
 	if agent == "" {
 		return writeJSONError(stdout, stderr,
 			"cannot resolve identity: pass --from, set $TMUX_AGENT_NAME, or register this pane", exitUsage)
+	}
+	// When --from was supplied explicitly, verify the name is registered (#361).
+	// identity.Resolve returns the override verbatim without a registry check, so
+	// a typo silently no-ops (ClaimNext finds nothing) rather than surfacing the
+	// misconfiguration. Hooks run in the operator's shell, where $TMUX_PANE IS
+	// set — omitting --from and letting the pane-lookup resolve dynamically is
+	// the preferred wiring; --from is retained for edge cases but must name a
+	// registered agent.
+	if src == identity.SourceExplicit {
+		if _, gerr := s.GetAgent(ctx, agent); gerr != nil {
+			return writeJSONError(stdout, stderr,
+				fmt.Sprintf("agent %q is not registered — check --from value, or omit --from to resolve from $TMUX_PANE (run `%s register --name %s` to register)",
+					agent, active.BinaryName, agent),
+				exitUsage)
+		}
 	}
 
 	out, _, err := doHookContext(ctx, s, agent, eventName)

@@ -139,6 +139,36 @@ func TestServe_HookContextShortCircuits(t *testing.T) {
 	}
 }
 
+// TestRunHookContextCLI_UnregisteredFromAgentErrors pins #361: passing --from
+// with an agent name that is not in the registry must fail with a non-zero exit
+// and a JSON error body, not silently no-op (which would mask misconfiguration).
+func TestRunHookContextCLI_UnregisteredFromAgentErrors(t *testing.T) {
+	db := filepath.Join(t.TempDir(), "messages.db")
+	s, err := store.Open(db)
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	// Deliberately do NOT register "ghost" — it must be treated as unregistered.
+	s.Close()
+
+	var stdout, stderr bytes.Buffer
+	exit := runHookContextCLI(
+		[]string{"--db", db, "--from", "ghost"},
+		nil, &stdout, &stderr)
+	if exit == exitOK {
+		t.Fatalf("expected non-zero exit for unregistered --from agent; stdout=%s", stdout.String())
+	}
+	var out struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("stdout not valid JSON: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(out.Error, "ghost") || !strings.Contains(out.Error, "not registered") {
+		t.Errorf("error message should mention the agent name and 'not registered'; got %q", out.Error)
+	}
+}
+
 // TestRunHookContextCLI_EventNameOverride pins that --event-name overrides the
 // stdin-derived hook_event_name in the emitted hookSpecificOutput.hookEventName.
 // This is the deterministic-event-name seam (#248): some CLIs (Codex) require

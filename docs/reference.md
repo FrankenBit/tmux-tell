@@ -264,8 +264,25 @@ hooks = true        # or run codex with `--enable hooks`
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = "tmux-msg-codex hook-context --from <agent> --event-name UserPromptSubmit"
+command = "tmux-msg-codex hook-context --event-name UserPromptSubmit"
+
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "tmux-msg-codex hook-context --event-name SessionStart"
 ```
+
+After editing `~/.codex/config.toml`, Codex will ask you to approve or deny each new hook
+command in its UI. Both hooks must be **explicitly enabled** (the approval flow sets an
+`enabled = true` flag per hook in `~/.codex/config.toml`'s `[hooks.state]` section);
+hooks left in the `trusted_hash`-but-no-`enabled` state are not run.
+
+**Identity resolution:** hooks run in the operator's shell (not in a subprocess like the
+MCP server), so `$TMUX_PANE` **is** set in the hook's environment. Omitting `--from` is
+the recommended wiring — the helper resolves the agent name from `$TMUX_PANE` via the
+registry on every hook fire, which keeps the hook command pane-independent (one command in
+`config.toml` works for any pane). If you supply `--from <name>`, the name must be a
+registered agent — passing an unregistered name hard-errors rather than silently no-oping.
 
 **Why `--event-name`:** Codex *requires* the output's `hookEventName` to match the firing
 event — it rejects a mismatch (`hook returned invalid user prompt submit JSON output`).
