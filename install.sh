@@ -36,18 +36,37 @@ ADAPTER=${ADAPTER:-claude}
 # want manual control. `--prune-orphans` is passed through to the
 # bootstrap subcommand to actively disable orphan mailman units (default
 # is print-only).
+#
+# For --adapter=codex, `--agent=NAME` is required (or set TMUX_AGENT_NAME
+# in the environment). It identifies which codex chamber to configure the
+# codex hook blocks + MCP env block for (#384).
 BOOTSTRAP=1
 PRUNE_ORPHANS=0
+AGENT_NAME=${AGENT_NAME:-}
 for arg in "$@"; do
     case "$arg" in
         --adapter=*) ADAPTER="${arg#--adapter=}" ;;
+        --agent=*)   AGENT_NAME="${arg#--agent=}" ;;
         --no-bootstrap) BOOTSTRAP=0 ;;
         --prune-orphans) PRUNE_ORPHANS=1 ;;
-        *) echo "install.sh: unknown argument: $arg (expected --adapter=NAME | --no-bootstrap | --prune-orphans)" >&2; exit 1 ;;
+        *) echo "install.sh: unknown argument: $arg (expected --adapter=NAME | --agent=NAME | --no-bootstrap | --prune-orphans)" >&2; exit 1 ;;
     esac
 done
 if [[ -z "$ADAPTER" || ! -d "$(dirname "$0")/cmd/tmux-msg-${ADAPTER}" ]]; then
     echo "install.sh: no adapter 'cmd/tmux-msg-${ADAPTER}/' in this repo." >&2
+    exit 1
+fi
+# For codex adapter: resolve --agent from TMUX_AGENT_NAME if not passed
+# explicitly, then require it (the codex bootstrap is per-agent, not a
+# discover-all sweep like the claude bootstrap).
+if [[ "$ADAPTER" == "codex" && "$BOOTSTRAP" -eq 1 && -z "$AGENT_NAME" ]]; then
+    AGENT_NAME=${TMUX_AGENT_NAME:-}
+fi
+if [[ "$ADAPTER" == "codex" && "$BOOTSTRAP" -eq 1 && -z "$AGENT_NAME" ]]; then
+    echo "install.sh: --agent=NAME required for --adapter=codex bootstrap (#384)" >&2
+    echo "  Identifies which codex chamber to configure hook blocks + MCP env for." >&2
+    echo "  Pass --agent=<name> or run from a shell where TMUX_AGENT_NAME is set," >&2
+    echo "  or skip automatic config with --no-bootstrap." >&2
     exit 1
 fi
 BIN_NAME="tmux-msg-${ADAPTER}"
@@ -180,47 +199,77 @@ echo "Install complete."
 # historical print-next-steps behavior available.
 if [[ "$BOOTSTRAP" -eq 0 ]]; then
     echo
-    echo "Next steps (--no-bootstrap chosen; run as $OPERATOR_USER, NOT as root):"
-    echo "  systemctl --user daemon-reload"
-    echo "  # ensure your user systemd manager runs at boot:"
-    echo "  sudo loginctl enable-linger $OPERATOR_USER"
-    echo "  # populate the agents table from the current tmux state:"
-    echo "  $BIN_NAME discover"
-    echo "  # enable a mailman per agent you want to receive messages:"
-    echo "  systemctl --user enable --now ${UNIT_NAME%@.service}@surveyor.service"
-    echo "  # refresh chamber MCPs against the freshly-installed binary:"
-    echo "  $BIN_NAME refresh-all-mcps"
+    if [[ "$ADAPTER" == "codex" ]]; then
+        echo "Next steps for codex (--no-bootstrap chosen; run as $OPERATOR_USER, NOT as root):"
+        echo "  # register the codex chamber as hook-context:"
+        echo "  $BIN_NAME register --name <agent> --delivery-mode=hook-context"
+        echo "  # OR run the automated config writer:"
+        echo "  $BIN_NAME codex-install --agent=<agent>"
+        echo "  # then manually approve hooks in Codex on next launch:"
+        echo "  #   UserPromptSubmit: tmux-msg-codex hook-context"
+        echo "  #   SessionStart:     tmux-msg-codex hook-context"
+    else
+        echo "Next steps (--no-bootstrap chosen; run as $OPERATOR_USER, NOT as root):"
+        echo "  systemctl --user daemon-reload"
+        echo "  # ensure your user systemd manager runs at boot:"
+        echo "  sudo loginctl enable-linger $OPERATOR_USER"
+        echo "  # populate the agents table from the current tmux state:"
+        echo "  $BIN_NAME discover"
+        echo "  # enable a mailman per agent you want to receive messages:"
+        echo "  systemctl --user enable --now ${UNIT_NAME%@.service}@surveyor.service"
+        echo "  # refresh chamber MCPs against the freshly-installed binary:"
+        echo "  $BIN_NAME refresh-all-mcps"
+    fi
     exit 0
 fi
 
-# Bootstrap path. enable-linger is a root operation; the rest runs as
-# the operator with their tmux + D-Bus session.
-echo
-echo "==> enabling user-manager linger for $OPERATOR_USER"
-loginctl enable-linger "$OPERATOR_USER" || {
-    echo "install.sh: loginctl enable-linger failed; bootstrap requires the operator's user manager to be reachable." >&2
-    echo "  Re-run with --no-bootstrap if you want to handle this manually." >&2
-    exit 1
-}
-
-# Drop privileges to the operator + thread through the env the bootstrap
-# subcommand needs: HOME for the systemd-dir derivation and DB resolution,
-# XDG_RUNTIME_DIR + DBUS_SESSION_BUS_ADDRESS for `systemctl --user`, TMUX*
-# (best-effort) for the discover walker.
+# Bootstrap path. enable-linger is a root operation (claude adapter only;
+# codex uses hook-context delivery and has no systemd mailman daemons).
+# The rest runs as the operator with their tmux + D-Bus session.
 OPERATOR_UID=$(id -u "$OPERATOR_USER")
-BOOTSTRAP_FLAGS=()
-if [[ "$PRUNE_ORPHANS" -eq 1 ]]; then
-    BOOTSTRAP_FLAGS+=(--prune-orphans)
+
+if [[ "$ADAPTER" == "codex" ]]; then
+    # Codex bootstrap: register agent as hook-context + write codex config
+    # blocks. No mailmen, no MCP refresh against systemd. TMUX* preserved
+    # so the discover walker can find the codex pane (#384).
+    echo
+    echo "==> running codex-install (register + hook config write) for agent '$AGENT_NAME'"
+    sudo -u "$OPERATOR_USER" \
+        --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR \
+        env \
+            HOME="$OPERATOR_HOME" \
+            "$PREFIX/bin/$BIN_NAME" codex-install \
+                --agent="$AGENT_NAME"
+
+    echo
+    echo "Codex install complete."
+else
+    echo
+    echo "==> enabling user-manager linger for $OPERATOR_USER"
+    loginctl enable-linger "$OPERATOR_USER" || {
+        echo "install.sh: loginctl enable-linger failed; bootstrap requires the operator's user manager to be reachable." >&2
+        echo "  Re-run with --no-bootstrap if you want to handle this manually." >&2
+        exit 1
+    }
+
+    # Drop privileges to the operator + thread through the env the bootstrap
+    # subcommand needs: HOME for the systemd-dir derivation and DB resolution,
+    # XDG_RUNTIME_DIR + DBUS_SESSION_BUS_ADDRESS for `systemctl --user`, TMUX*
+    # (best-effort) for the discover walker.
+    BOOTSTRAP_FLAGS=()
+    if [[ "$PRUNE_ORPHANS" -eq 1 ]]; then
+        BOOTSTRAP_FLAGS+=(--prune-orphans)
+    fi
+
+    echo "==> running bootstrap (discover + mailman enable + orphan walk + refresh)"
+    sudo -u "$OPERATOR_USER" \
+        --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR \
+        env \
+            HOME="$OPERATOR_HOME" \
+            XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+            "$PREFIX/bin/$BIN_NAME" bootstrap "${BOOTSTRAP_FLAGS[@]}"
+
+    echo
+    echo "Bootstrap complete. The bus is wired."
 fi
-
-echo "==> running bootstrap (discover + mailman enable + orphan walk + refresh)"
-sudo -u "$OPERATOR_USER" \
-    --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR \
-    env \
-        HOME="$OPERATOR_HOME" \
-        XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
-        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
-        "$PREFIX/bin/$BIN_NAME" bootstrap "${BOOTSTRAP_FLAGS[@]}"
-
-echo
-echo "Bootstrap complete. The bus is wired."
