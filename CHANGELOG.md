@@ -33,6 +33,22 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Changed
+
+- **Mailman unit templates add `StartLimitBurst=5` + `StartLimitInterval=60s`
+  ([alcatraz-infra#40](https://git.frankenbit.de/frankenbit/alcatraz-infra/issues/40)).**
+  Belt-and-suspenders against the restart-flood class behind
+  [alcatraz-infra#39](https://git.frankenbit.de/frankenbit/alcatraz-infra/issues/39).
+  v0.16.1's #338 + #340 substantively closed the original failure mode by
+  preventing both the orphan unit (#338 disables on unregister) and the
+  restart-loop (#340 exits with 0 on agent-not-found so `Restart=on-failure`
+  doesn't trigger). The unit-template cap is insurance against future failure
+  modes that exit non-zero in a tight loop: after 5 starts in 60s, systemd
+  marks the unit `failed` and stops restarting until manual `systemctl
+  --user reset-failed`. Same directives added to both adapter templates
+  (`tmux-msg-claude-mailman@.service` + `tmux-msg-codex-mailman@.service`)
+  for symmetry.
+
 ### Added
 
 - **`ping` surfaces a structured reason on UNREACHABLE — #358.** A timed-out /

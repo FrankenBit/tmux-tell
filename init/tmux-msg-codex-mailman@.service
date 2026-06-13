@@ -30,6 +30,16 @@ Documentation=https://git.frankenbit.de/frankenbit/tmux-msg
 After=default.target
 PartOf=default.target
 
+# Restart-flood cap (alcatraz-infra#40 belt-and-suspenders against alcatraz-infra#39
+# pattern). After 5 starts in 60s, systemd marks the unit `failed` and stops
+# restarting until manual intervention (`systemctl --user reset-failed`).
+# v0.16.1 made the original visitor-mailman flood class structurally impossible
+# (#338 disables the unit on unregister; #340 exits with 0 on agent-not-found
+# so Restart=on-failure doesn't trigger), but the cap is still useful insurance
+# against future failure modes that exit non-zero in a tight loop.
+StartLimitBurst=5
+StartLimitInterval=60s
+
 [Service]
 Type=notify
 ExecStart=/usr/local/bin/tmux-msg-codex serve --agent %i
