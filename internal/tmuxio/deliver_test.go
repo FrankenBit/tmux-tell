@@ -248,6 +248,57 @@ func TestDeliverySubmitted(t *testing.T) {
 	}
 }
 
+// TestDeliverySubmitted_CodexDualPrompt pins the #360 dual-prompt behavior:
+// when codex submits, the submitted prompt LINGERS as a transcript row (codex
+// expands the collapsed `[Pasted Content]` in place) while a NEW empty input
+// prompt opens below it and the cursor jumps down to it. The capture therefore
+// holds MULTIPLE `› ` rows. A row-scanning "is any input row empty?" check
+// would be ambiguous — it could latch onto the lingering submitted row (which
+// still holds the expanded paste) and misjudge. The cursor-anchored signal is
+// unambiguous: it reads emptiness from lines[cursorY] only, and the cursor is
+// on the new bottom input, so the lingering submitted row above is irrelevant.
+//
+// This is the AC that protects an operator from misreading "delivery vanished"
+// (per the #360 issue): the bus message DID submit; the dual `›` layout is just
+// codex's submit visual, and the verify signal correctly anchors the live row.
+func TestDeliverySubmitted_CodexDualPrompt(t *testing.T) {
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	defer SetActivePaneProfile(prev)
+
+	// Realistic post-submit layout: a transcript turn, the LINGERING submitted
+	// prompt (a long submitted message that collapsed past the token tail — the
+	// >1KB case where the verify token never renders literally), a blank gap,
+	// then the NEW empty bottom input. The token is ABSENT from the capture on
+	// purpose: token-match cannot verify this, and a naive scan that latched
+	// onto the FIRST `›` row would see the non-empty submitted row and wrongly
+	// reject. Only the cursor-anchored signal — reading lines[cursorY] where the
+	// cursor jumped to the new bottom input — verifies it. This is the case the
+	// dual-prompt layout has to survive.
+	const sub = CodexPromptSentinel + "[Pasted Content 1800 chars]"
+	bottom := CodexPromptSentinel // empty new input
+	capture := "codex working on the prior turn\n" + sub + "\n\n" + bottom
+	cursorY := 3 // 0:transcript 1:submitted 2:blank 3:bottom input
+	sentinelCol := 2
+
+	if !deliverySubmitted(capture, sentinelCol, cursorY, true, "absent-token") {
+		t.Errorf("dual-prompt with cursor on the new empty bottom input should verify "+
+			"via cursor-anchor even with the token absent (cursor anchors lines[%d]=%q "+
+			"at sentinel col %d)", cursorY, bottom, sentinelCol)
+	}
+
+	// Same dual-prompt layout, but the operator has started typing into the new
+	// bottom input (cursor past the sentinel). Not cleared ⇒ not-submitted: the
+	// gate must NOT mistake a half-typed new input for a delivered message just
+	// because a submitted `›` row lingers above.
+	typed := CodexPromptSentinel + "operator reply in progress"
+	capture2 := "codex working on the prior turn\n" + sub + "\n\n" + typed
+	if deliverySubmitted(capture2, 12, cursorY, true, "absent-token") {
+		t.Errorf("dual-prompt with a half-typed bottom input must NOT verify " +
+			"(cursor past sentinel ⇒ populated, lingering submitted row above is irrelevant)")
+	}
+}
+
 // TestDeliver_InputEmptied_VerifiesOnClearedInput pins the end-to-end loop
 // wiring: with the Claude profile active, a post-Enter capture whose
 // bottom-most `❯ ` row is empty verifies the delivery even though the
