@@ -35,6 +35,24 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Changed
 
+- **Codex is now `PasteCapable` — paste-and-enter delivery (#360).** The
+  `tmux-msg-codex` binary flips `Profile.PasteCapable` `false → true`, so a Codex
+  agent registered with the default delivery mode now receives messages pasted
+  into its pane like Claude, instead of only via `hook-context`. This lands as
+  the derivative of #336: #322 taught the observe-gate to read Codex's `› `
+  sentinel + cursor (so it defers while a Codex operator is typing — the #323
+  clobber premise is dissolved), and #336 replaced the collapse-fragile
+  token-match verify with a cursor-anchored input-emptied signal that confirms
+  Codex deliveries even when a >1KB paste collapses to `[Pasted Content]`. The
+  serve-time paste-incapable guard is **kept and generalized** (#323 → #360): it
+  no longer means "this adapter is Codex" but "this adapter's Profile signals it
+  can't be observed for paste-safe delivery" — Codex now passes it; it remains
+  the safe-default force-defer for any future paste-incapable adapter. Existing
+  Codex agents already registered `hook-context` are unaffected (the mode is a
+  per-agent column); `hook-context` stays available as the no-paste alternative.
+  **Operator note:** Codex's post-submit *dual-`›` visual* (the submitted prompt
+  lingers while a new empty input opens below + the cursor jumps down) is
+  cosmetic — the message did submit; see docs/reference.md §Codex.
 - **Mailman unit templates add `StartLimitBurst=5` + `StartLimitInterval=60s`
   ([alcatraz-infra#40](https://git.frankenbit.de/frankenbit/alcatraz-infra/issues/40)).**
   Belt-and-suspenders against the restart-flood class behind
@@ -221,10 +239,16 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 - **`-settle-delay` serve flag** plus per-agent `settle-delay` TOML knob
   (#360): operator-tunable pause between paste and the submit Enter, for an
   adapter whose TUI needs longer to ingest a (possibly collapsed) paste.
-- **`ClearInput` clear-by-line-count** (#336): the mailman's stranded-draft
-  clear sends one Ctrl+U per input line, so a multi-line draft on an adapter
-  that clears line-by-line (codex) is fully cleared before the replacement
-  paste.
+- **`ClearInput` clear-by-line-count** (#336, refined #360): the mailman's
+  stranded-draft clear sends `clearPressesPerLine` (2) Ctrl+U per input line, so
+  a multi-line draft on an adapter that clears line-by-line (codex) is fully
+  cleared before the replacement paste. The press count was corrected from one
+  to two per line under #360: codex clears a multi-line draft in ~2 presses per
+  line (text-clear + line-join), so one-per-line under-cleared and left residual
+  lines for the paste to compound with (P3, operator-substrate-witnessed in the
+  #336 live-probe gate). Claude clears all on the first press, so its extra
+  presses are harmless no-ops — adapter-agnostic over-clear, no per-adapter
+  branch.
 
 ## [0.16.1] — 2026-06-12
 
