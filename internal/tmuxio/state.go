@@ -506,47 +506,48 @@ func isInputRowQuiet(paneContent string) bool {
 	return sawSentinel
 }
 
-// bottomInputRowContent returns the text past the sentinel on the
-// BOTTOM-most sentinel-prefixed row of the captured pane — the live input
-// row. ok is false when no sentinel is configured or no sentinel row is
-// present in the capture.
-//
-// Bottom-most (not first, not any) because an adapter whose prompt sentinel
-// also prefixes transcript turns — codex paints every submitted user turn
-// as `› [Pasted Content]` / `› text`, the same glyph as its live input —
-// would otherwise be read off a historical row. Only the bottom-most
-// sentinel row is the editable input. (Claude's `❯ ` is unique to the live
-// input, so bottom-most and only-one coincide there; the bottom-most rule
-// is the adapter-general form.)
-//
-// This is the anchor for the input-emptied delivery-verify signal (#336):
-// a paste that submits leaves this row empty (Claude clears it in place;
-// codex opens a fresh empty input block below), so a non-empty→empty
-// transition is the submit signal — robust to paste-collapse, which masks
-// the verify token but not the emptiness of the input row.
-func bottomInputRowContent(capture string) (content string, ok bool) {
-	sentinel := activeProfile.PromptSentinel
-	if sentinel == "" {
-		return "", false
-	}
-	lines := strings.Split(capture, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if rest, found := strings.CutPrefix(lines[i], sentinel); found {
-			return rest, true
-		}
-	}
-	return "", false
-}
-
 // inputRowCleared reports whether the captured pane shows the live input
-// row (bottom-most sentinel row) present AND empty past the sentinel.
-// anchored is false when the input row can't be located (no sentinel
-// configured, or no sentinel row in the capture) — the caller then falls
-// back to the legacy token-match verify signal.
-func inputRowCleared(capture string) (cleared, anchored bool) {
-	rest, ok := bottomInputRowContent(capture)
-	if !ok {
+// row empty, anchored on the CURSOR position (#336 cursor-anchor fix).
+//
+// The cursor is the only reliable empty-input signal for adapters that
+// paint placeholder / auto-suggestion ghost-text into an EMPTY composer.
+// Codex renders a dim example prompt (e.g. "Improve documentation in
+// @filename") into its empty input row — the "idle ghost-text" state
+// profile.go documents — which a plain-text emptiness scan of
+// `capture-pane -p` misreads as a POPULATED input, false-negativing the
+// verify (the exact `delivered_in_input_box verified=0` failure #336 set
+// out to fix). A plain-text scan cannot tell dim ghost-text from a real
+// buffered paste; the cursor can — it stays at the sentinel column when the
+// input is genuinely empty and moves past it once content (a buffered
+// paste, operator typing) is present. This is the same discriminator
+// AgentState's cursor-aware idle classification uses (#69 v2 substrate);
+// the verify signal now reuses it rather than AgentState's cursor-LESS
+// fallback (which the original #336 floor adopted as its primary check —
+// the regression this fix corrects).
+//
+// Using the cursor's row (not a bottom-most scan) also subsumes the
+// transcript-sentinel problem the bottom-most rule was guarding against:
+// codex paints every submitted turn with the same `› ` glyph, but the
+// cursor sits only on the live input, so cursorY anchors the editable row
+// directly.
+//
+// anchored is false when the cursor can't anchor the input row — cursor
+// query failed (cursorOK false), no sentinel configured, the cursor row is
+// outside the capture's range, or that row doesn't start with the sentinel.
+// The caller then falls back to the legacy token-match verify signal.
+func inputRowCleared(capture string, cursorX, cursorY int, cursorOK bool) (cleared, anchored bool) {
+	sentinel := activeProfile.PromptSentinel
+	if !cursorOK || sentinel == "" {
 		return false, false
 	}
-	return strings.TrimSpace(rest) == "", true
+	lines := strings.Split(capture, "\n")
+	if cursorY < 0 || cursorY >= len(lines) {
+		return false, false
+	}
+	if _, ok := strings.CutPrefix(lines[cursorY], sentinel); !ok {
+		return false, false
+	}
+	// Cursor at the sentinel column ⇒ empty input (ghost-text doesn't move
+	// the cursor). Cursor past it ⇒ a buffered paste or an operator draft.
+	return cursorX == utf8.RuneCountInString(sentinel), true
 }

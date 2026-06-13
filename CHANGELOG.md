@@ -60,18 +60,28 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   `pane_dead` stays `EX_UNAVAILABLE`. Scripts branching on `ping`'s exit code for
   the mailman_down/stuck case should expect 69 where they previously saw 75.
 - **Delivery verification keys off an input-emptied signal, not token-match**
-  (#336). A paste that submits leaves the recipient's live input row (the
-  bottom-most prompt-sentinel row) empty — Claude clears it in place, codex
-  opens a fresh empty input block below. This is robust to paste-collapse
-  (codex renders a large paste as `[Pasted Content]` even after submit,
-  masking the verify token) and honest about mid-turn delivery (a queued
-  Enter leaves the paste sitting in the input row → correctly reported
-  not-yet-delivered), replacing the token-match signal that both
+  (#336). A paste that submits leaves the recipient's live input row empty —
+  Claude clears it in place, codex opens a fresh empty input block below.
+  Emptiness is read from the **cursor position** (the cursor sits at the
+  sentinel column when the input is empty and moves past it once content is
+  present), reusing the cursor-aware discriminator `AgentState` already uses
+  (#69) rather than a plain-text scan. Cursor-anchoring is what makes the
+  signal robust to placeholder ghost-text: codex paints a dim example prompt
+  into an empty composer (the "idle ghost-text" state) that `capture-pane -p`
+  renders as literal text — a plain-text emptiness check misreads it as a
+  populated input and false-negatives the verify (caught by the #336 live
+  probe before merge; the cursor stays at the sentinel regardless of
+  ghost-text). The signal is also robust to paste-collapse (codex renders a
+  large paste as `[Pasted Content]` even after submit, masking the verify
+  token) and honest about mid-turn delivery (a queued Enter leaves the paste
+  buffered in the input row with the cursor past the sentinel → correctly
+  reported not-yet-delivered), replacing the token-match signal that both
   false-negatived on collapse and false-positived on a pasted-but-unsubmitted
   message whose token was literally visible in the input box. Falls back to
-  token-match when the input row can't be anchored (pre-#336 behavior for
-  sentinel-less panes). Targets the dominant `delivered_in_input_box` warning
-  class (~84/24h, predominantly mid-turn).
+  token-match when the input row can't be anchored (cursor query failed or
+  the cursor isn't on a sentinel row — pre-#336 behavior preserved there).
+  Targets the dominant `delivered_in_input_box` warning class (~84/24h,
+  predominantly mid-turn).
 
 - **Delivery-failure notices are now a compact one line — #362.** When a
   message lands `failed` or `delivered_in_input_box`, the auto-notice back to

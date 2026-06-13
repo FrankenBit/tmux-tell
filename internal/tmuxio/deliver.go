@@ -242,23 +242,27 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 
 	// 4. Verification + retry backoff. The load-bearing signal is the
 	// INPUT-EMPTIED transition (#336): a paste that actually submitted
-	// leaves the recipient's live input row (bottom-most sentinel row)
-	// empty — Claude clears it in place, codex opens a fresh empty input
-	// block below. This is robust to paste-collapse, which masks the
-	// verify token (codex renders a large paste as `[Pasted Content]`
-	// even after submit, so token-match structurally cannot confirm it)
-	// but cannot mask the emptiness of the input. It is also honest about
-	// the dominant mid-turn failure: a queued Enter leaves the paste
-	// buffered in the input row, so the row stays non-empty and we
-	// correctly report not-submitted (where token-match both false-
-	// negatives on collapse and false-positives on a pasted-but-unsubmitted
-	// short message whose token is literally visible in the input box).
+	// leaves the recipient's live input row empty — Claude clears it in
+	// place, codex opens a fresh empty input block below. Emptiness is read
+	// from the CURSOR position (cursor-anchor): the cursor sits at the
+	// sentinel column when the input is empty and moves past it once content
+	// is present. This is robust to paste-collapse, which masks the verify
+	// token (codex renders a large paste as `[Pasted Content]` even after
+	// submit, so token-match structurally cannot confirm it) but cannot move
+	// the cursor off the sentinel; and to placeholder ghost-text (codex
+	// paints a dim example prompt into an empty composer that a plain-text
+	// scan misreads as populated — the cursor stays put). It is also honest
+	// about the dominant mid-turn failure: a queued Enter leaves the paste
+	// buffered in the input row with the cursor PAST the sentinel, so we
+	// correctly report not-submitted (where token-match both false-negatives
+	// on collapse and false-positives on a pasted-but-unsubmitted short
+	// message whose token is literally visible in the input box).
 	//
-	// When the input row can't be anchored (no sentinel configured, or the
-	// adapter's prompt isn't painted in the capture), Deliver GRACEFULLY
-	// DEGRADES to the legacy token-match signal — same shape as
-	// AgentState's cursor-less fallback. Pre-#336 behavior is preserved
-	// exactly for sentinel-less captures.
+	// When the input row can't be anchored (cursor query failed, no sentinel
+	// configured, or the cursor isn't on a sentinel row), Deliver GRACEFULLY
+	// DEGRADES to the legacy token-match signal — same shape as AgentState's
+	// cursor-less fallback. Pre-#336 behavior is preserved for captures the
+	// cursor can't anchor.
 	//
 	// Note: a successful paste-buffer (step 2) implies the input row was
 	// populated, so an empty input row after Enter means submission, not a
@@ -285,7 +289,11 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 			return fmt.Errorf("tmuxio: capture-pane: %w", err)
 		}
 		lastCapture = string(out)
-		if deliverySubmitted(lastCapture, p.VerifyToken) {
+		// Cursor position anchors the input-emptied signal (#336 cursor-
+		// anchor): cursorOK=false (query failed) degrades to token-match
+		// inside deliverySubmitted via inputRowCleared's anchored=false path.
+		cursorX, cursorY, cursorErr := agentCursor(ctx, p.Pane)
+		if deliverySubmitted(lastCapture, cursorX, cursorY, cursorErr == nil, p.VerifyToken) {
 			if p.OnVerify != nil {
 				p.OnVerify(time.Since(verifyStart), true)
 			}
@@ -301,13 +309,17 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 
 // deliverySubmitted reports whether a post-Enter pane capture confirms the
 // paste submitted. Primary signal: the live input row emptied (input-
-// emptied, #336) — authoritative when the input row anchors, and
-// deliberately NOT corroborated by the token there (an unsubmitted paste
-// whose token is visible in a still-populated input row must read as
-// not-submitted). Fallback when the input row can't be anchored: the legacy
-// token-match (the verify token became visible anywhere in the pane).
-func deliverySubmitted(capture, verifyToken string) bool {
-	if cleared, anchored := inputRowCleared(capture); anchored {
+// emptied, #336), anchored on the cursor position (cursorX/cursorY, cursorOK
+// reports whether the cursor query succeeded) — authoritative when the input
+// row anchors, and deliberately NOT corroborated by the token there (an
+// unsubmitted paste whose token is visible in a still-populated input row
+// must read as not-submitted). Cursor-anchoring is what makes the signal
+// robust to placeholder ghost-text (codex paints a dim example prompt into
+// an empty composer that a plain-text scan misreads as populated). Fallback
+// when the input row can't be anchored: the legacy token-match (the verify
+// token became visible anywhere in the pane).
+func deliverySubmitted(capture string, cursorX, cursorY int, cursorOK bool, verifyToken string) bool {
+	if cleared, anchored := inputRowCleared(capture, cursorX, cursorY, cursorOK); anchored {
 		return cleared
 	}
 	return strings.Contains(capture, verifyToken)

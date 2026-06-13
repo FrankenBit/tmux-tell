@@ -183,36 +183,66 @@ func TestDeliver_ReturnsUnverifiedSentinelAfterRetriesExhausted(t *testing.T) {
 }
 
 // TestDeliverySubmitted exercises the #336 input-emptied verify predicate
-// directly across both adapter profiles and the sentinel-less fallback.
-// The load-bearing cases: (1) input-emptied verifies even with the token
-// absent (collapse-robustness); (2) a paste still sitting in the input row
-// reads as not-submitted even when its token is literally visible there
-// (the false-positive token-match would hit); (3) codex's bottom-most
-// anchoring ignores the same `› ` glyph on transcript turns.
+// directly across both adapter profiles and the cursor-less fallback. The
+// signal is CURSOR-ANCHORED (#336 cursor-anchor fix): the cursor at the
+// sentinel column means an empty input; past it means populated. The
+// load-bearing cases: (1) input-emptied verifies even with the token absent
+// (collapse-robustness); (2) a paste still in the input row (cursor past
+// sentinel) reads as not-submitted even when its token is literally visible
+// (the false-positive token-match would hit); (3) codex's empty composer
+// verifies EVEN WITH placeholder ghost-text present (the regression this
+// fix corrects — a plain-text emptiness scan misreads the dim ghost-text as
+// content); (4) when the cursor can't anchor the input row, it degrades to
+// token-match.
+//
+// sentinelCol is 2 for both adapters (`❯`+NBSP and `› ` are each 2 runes),
+// so cursorX==2 ⇒ empty, cursorX>2 ⇒ populated.
 func TestDeliverySubmitted(t *testing.T) {
 	claude := ClaudePaneProfile()
 	codex := CodexPaneProfile()
 	cases := []struct {
-		name    string
-		profile PaneProfile
-		capture string
-		token   string
-		want    bool
+		name     string
+		profile  PaneProfile
+		capture  string
+		cursorX  int
+		cursorY  int
+		cursorOK bool
+		token    string
+		want     bool
 	}{
-		{"claude cleared input verifies without token", claude, "a submitted turn\n[Pasted Content 1800 chars]\n" + PromptSentinel, "id 7f3a", true},
-		{"claude paste in input rejects despite token visible", claude, "transcript\n" + PromptSentinel + "rendered body id 7f3a marker", "id 7f3a", false},
-		{"codex bottom-most empty ignores transcript sentinel", codex, CodexPromptSentinel + "[Pasted Content 1800 chars]\n\n" + CodexPromptSentinel, "id 7f3a", true},
-		{"codex collapsed paste in bottom input rejects", codex, "some codex output\n" + CodexPromptSentinel + "[Pasted Content 1800 chars]", "id 7f3a", false},
-		{"no sentinel falls back to token-match hit", claude, "plain pane with id 7f3a somewhere", "id 7f3a", true},
-		{"no sentinel falls back to token-match miss", claude, "plain pane, nothing here", "id 7f3a", false},
+		// Claude: cleared input row (cursor at sentinel col 2) verifies
+		// without the token — collapse-robust.
+		{"claude cleared input verifies without token", claude, "a submitted turn\n[Pasted Content 1800 chars]\n" + PromptSentinel, 2, 2, true, "id 7f3a", true},
+		// Claude: paste still in the input row (cursor past sentinel) →
+		// not-submitted, even though the token is visible there.
+		{"claude paste in input rejects despite token visible", claude, "transcript\n" + PromptSentinel + "rendered body id 7f3a marker", 30, 1, true, "id 7f3a", false},
+		// Codex: empty input block (cursor at col 2) on the bottom row;
+		// transcript `› ` row above is ignored because the cursor anchors
+		// the live row directly.
+		{"codex empty input verifies via cursor", codex, CodexPromptSentinel + "[Pasted Content 1800 chars]\n\n" + CodexPromptSentinel, 2, 2, true, "id 7f3a", true},
+		// Codex REGRESSION CASE: empty composer carrying dim placeholder
+		// ghost-text. cursor at col 2 ⇒ empty ⇒ verifies. The pre-fix
+		// plain-text scan saw "Improve documentation in @filename" past the
+		// sentinel and false-negatived this exact shape.
+		{"codex empty input with ghost-text verifies (regression)", codex, "some codex reply\n" + CodexPromptSentinel + "Improve documentation in @filename", 2, 1, true, "id 7f3a", true},
+		// Codex: collapsed paste buffered in the input (cursor past
+		// sentinel) → not-submitted.
+		{"codex collapsed paste in input rejects", codex, "some codex output\n" + CodexPromptSentinel + "[Pasted Content 1800 chars]", 30, 1, true, "id 7f3a", false},
+		// Cursor on a non-sentinel row → can't anchor → token-match hit.
+		{"unanchored cursor falls back to token-match hit", claude, "plain pane with id 7f3a somewhere", 0, 0, true, "id 7f3a", true},
+		{"unanchored cursor falls back to token-match miss", claude, "plain pane, nothing here", 0, 0, true, "id 7f3a", false},
+		// Cursor query failed (cursorOK=false): input-emptied unavailable
+		// even though the input row IS cleared → degrades to token-match,
+		// which misses the absent token → unverified.
+		{"cursor unavailable degrades to token-match", claude, "transcript\n" + PromptSentinel, 0, 0, false, "id 7f3a", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			prev := ActivePaneProfile()
 			SetActivePaneProfile(tc.profile)
 			defer SetActivePaneProfile(prev)
-			if got := deliverySubmitted(tc.capture, tc.token); got != tc.want {
-				t.Errorf("deliverySubmitted(%q) = %v, want %v", tc.capture, got, tc.want)
+			if got := deliverySubmitted(tc.capture, tc.cursorX, tc.cursorY, tc.cursorOK, tc.token); got != tc.want {
+				t.Errorf("deliverySubmitted(%q, x=%d y=%d ok=%v) = %v, want %v", tc.capture, tc.cursorX, tc.cursorY, tc.cursorOK, got, tc.want)
 			}
 		})
 	}
@@ -227,6 +257,11 @@ func TestDeliver_InputEmptied_VerifiesOnClearedInput(t *testing.T) {
 	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
 		if args[0] == "capture-pane" {
 			return []byte("> earlier submitted turn\n[Pasted Content 1800 chars]\n" + PromptSentinel), nil
+		}
+		if args[0] == "display-message" {
+			// Cursor on the bottom sentinel row (idx 2) at the sentinel
+			// column (2) → empty input → input-emptied verifies.
+			return []byte("2/2"), nil
 		}
 		return nil, nil
 	})
@@ -247,6 +282,11 @@ func TestDeliver_InputEmptied_RejectsPasteStillInInput(t *testing.T) {
 	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
 		if args[0] == "capture-pane" {
 			return []byte("some transcript\n" + PromptSentinel + "rendered body with id 7f3a marker"), nil
+		}
+		if args[0] == "display-message" {
+			// Cursor on the input row (idx 1) PAST the sentinel (col 30) →
+			// paste still buffered → not-submitted (honest mid-turn).
+			return []byte("30/1"), nil
 		}
 		return nil, nil
 	})
@@ -281,6 +321,10 @@ func TestDeliver_FramedThreePartPaste(t *testing.T) {
 		if args[0] == "capture-pane" {
 			// Claude sentinel, input cleared past it → input-emptied verifies.
 			return []byte("transcript\n" + PromptSentinel), nil
+		}
+		if args[0] == "display-message" {
+			// Cursor on the input row (idx 1) at the sentinel column (2).
+			return []byte("2/1"), nil
 		}
 		return nil, nil
 	})
