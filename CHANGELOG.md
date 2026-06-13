@@ -111,6 +111,21 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   The `agents`-listing mailman-activity fields (`mailman_last_delivered_at` /
   `mailman_idle_since`, which need a store migration) follow in PR 2.
 
+- **`agents` listing surfaces mailman delivery-recency — #348 (PR 2 of 2, closes #348).**
+  `agents` (CLI + the `tmux-msg.agents` MCP tool) now carries
+  `mailman_last_delivered_at` — the RFC3339 time of the most recent delivery to
+  each agent — so the operator can spot the "queued but mailman silent"
+  divergence smell (non-zero `queued` + empty/old last-delivered) in one glance.
+  The CLI text view renders it as a compact `MAILMAN` column (`2m ago` / `3h ago`
+  / `never`). **Derived from `messages.delivered_at`, not a stored per-agent
+  column** (the investigation found the source already exists + is retained
+  forever by default) — so there is **no write on the mailman delivery hot path**
+  and no second source-of-truth to drift; a read-only covering index on
+  `messages(to_agent, state, delivered_at)` keeps the per-agent MAX cheap as the
+  table grows. The same `RecipientLastDelivered` derive feeds the #363/#366
+  ping-evidence slot (one substrate-property, two consumer surfaces). Closes the
+  #348 observability arc opened by PR 1.
+
 ## [0.16.1] — 2026-06-12
 
 Fast-follow cluster from the v0.16.0 alcatraz deploy retro (alcatraz-infra#39

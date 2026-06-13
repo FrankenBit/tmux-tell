@@ -173,7 +173,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpCheckRepliesHandler(s))
 
 	srv.RegisterTool("tmux-msg.agents",
-		"List registered agents with pane liveness.",
+		"List registered agents with pane liveness. Each row carries pane_status / paused / queued / attention_state / stuck, plus mailman_last_delivered_at (#348) — the RFC3339 time of the most recent delivery to that agent, derived from the delivery rows (omitted when none in retained history). A non-zero queued + an empty/old mailman_last_delivered_at is the \"queued but mailman silent\" divergence smell.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -976,6 +976,11 @@ func mcpAgentsHandler(s *store.Store) mcp.ToolHandler {
 				return nil, err
 			}
 			v.Queued = depth
+			if last, ok, err := s.RecipientLastDelivered(ctx, a.Name); err != nil {
+				return nil, err
+			} else if ok {
+				v.MailmanLastDelivered = last
+			}
 			if in.AvailableOnly && (v.PaneStatus != "live" || v.Paused) {
 				continue
 			}

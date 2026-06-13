@@ -174,6 +174,12 @@ var migrations = []string{
 	// Message.ExpectsReply and the Unanswered / AwaitingReply ListFilter
 	// booleans (#270). Default 0 — every existing send is unaffected.
 	`ALTER TABLE messages ADD COLUMN expects_reply INTEGER NOT NULL DEFAULT 0`,
+	// #348: covering index for RecipientLastDelivered's per-agent
+	// MAX(delivered_at) WHERE to_agent=? AND state=?. Read-only forward-design:
+	// alcatraz scale doesn't need it today, but the per-recipient delivery-recency
+	// query becomes load-bearing as the (infinite-retention-by-default) messages
+	// table grows over the substrate's lifetime — index-now beats scan-then-add.
+	`CREATE INDEX IF NOT EXISTS idx_messages_recipient_state_delivered ON messages(to_agent, state, delivered_at)`,
 }
 
 // Close releases the underlying database handle.

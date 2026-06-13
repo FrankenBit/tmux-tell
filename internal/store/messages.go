@@ -560,6 +560,35 @@ func (s *Store) RecipientQueueDepth(ctx context.Context, toAgent string) (int, e
 	return n, err
 }
 
+// RecipientLastDelivered returns the timestamp (RFC3339) of the most recent
+// delivery to toAgent and ok=false when there is none in retained history
+// (#348). A delivery is any row that reached state=delivered — both the
+// verify-confirmed and the delivered_in_input_box soft-fail paths set that
+// state + stamp delivered_at, so this counts every paste that reached the pane;
+// failed (pane-gone) rows are excluded.
+//
+// Source-of-truth-derived from messages.delivered_at rather than a denormalized
+// agents column: the delivery rows ARE the truth, so deriving can't drift from
+// them and adds no write to the mailman's delivery hot path. Under the default
+// infinite retention this is exact-forever; under a finite retention window,
+// deliveries older than the window have been pruned, so a long-quiet mailman
+// returns ok=false — which reads as "idle ≥ retention window", itself the
+// divergence smell the operator wants (substrate-honest about what the
+// retained substrate still knows).
+func (s *Store) RecipientLastDelivered(ctx context.Context, toAgent string) (string, bool, error) {
+	var ts sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT MAX(delivered_at) FROM messages WHERE to_agent = ? AND state = ?`,
+		toAgent, StateDelivered).Scan(&ts)
+	if err != nil {
+		return "", false, err
+	}
+	if !ts.Valid || ts.String == "" {
+		return "", false, nil
+	}
+	return ts.String, true, nil
+}
+
 // QueuedBacklogFloor computes the claim-floor for a (re)registering agent's
 // pre-existing queued backlog under the #204 don't-flood policy. It keeps the
 // `keepNewest` highest-id queued messages deliverable and reports the floor

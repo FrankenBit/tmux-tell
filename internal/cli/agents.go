@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
@@ -56,6 +57,42 @@ type agentView struct {
 	// pane-probe failures). Empty (healthy) omitted from JSON so existing
 	// callers see no schema-shape change.
 	Stuck string `json:"stuck,omitempty"`
+	// MailmanLastDelivered is the RFC3339 timestamp of the most recent delivery
+	// to this agent (#348), derived from messages.delivered_at — NOT a stored
+	// per-agent column (source-of-truth-derived, no delivery-hot-path write).
+	// Empty when the mailman has never delivered within retained history; a
+	// non-zero Queued + empty/old MailmanLastDelivered is the "queued but
+	// mailman silent" divergence smell the operator can spot in one glance.
+	// Also the field the #363/#366 ping-evidence block consumes.
+	MailmanLastDelivered string `json:"mailman_last_delivered_at,omitempty"`
+}
+
+// mailmanIdleHuman renders the agents-listing MAILMAN column (#348): a compact
+// "how long since this mailman last delivered" so the operator can eyeball the
+// "queued but silent" divergence smell. "never" when there's no delivery in
+// retained history; a best-effort raw echo if the stamp doesn't parse.
+func mailmanIdleHuman(last string, now time.Time) string {
+	if last == "" {
+		return "never"
+	}
+	t, err := time.Parse(time.RFC3339Nano, last) // store stamps fractional seconds
+	if err != nil {
+		return last
+	}
+	d := now.Sub(t)
+	if d < 0 {
+		d = 0
+	}
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds ago", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
 
 func runAgentsWithStore(ctx context.Context, s *store.Store,
@@ -90,6 +127,12 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 		}
 		v.Queued = depth
 
+		if last, ok, err := s.RecipientLastDelivered(ctx, a.Name); err != nil {
+			return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+		} else if ok {
+			v.MailmanLastDelivered = last
+		}
+
 		if availableOnly && (v.PaneStatus != "live" || v.Paused) {
 			continue
 		}
@@ -101,7 +144,8 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 		_ = writeJSONResult(stdout, rows)
 		return exitOK
 	case "text", "":
-		header := []string{"NAME", "PANE", "STATUS", "PAUSED", "QUEUED", "ATTENTION", "STUCK"}
+		now := time.Now()
+		header := []string{"NAME", "PANE", "STATUS", "PAUSED", "QUEUED", "ATTENTION", "STUCK", "MAILMAN"}
 		out := make([][]string, 0, len(rows))
 		for _, r := range rows {
 			pane := r.Pane
@@ -118,6 +162,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 			}
 			out = append(out, []string{
 				r.Name, pane, r.PaneStatus, yesNo(r.Paused), itoa(r.Queued), attention, stuck,
+				mailmanIdleHuman(r.MailmanLastDelivered, now),
 			})
 		}
 		renderTextTable(stdout, header, out)
