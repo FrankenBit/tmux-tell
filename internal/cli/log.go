@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/render"
@@ -83,7 +84,7 @@ func runLogWithStore(ctx context.Context, s *store.Store,
 				fmt.Fprintln(stdout)
 			}
 			// Body block from the renderer + a small footer.
-			fmt.Fprint(stdout, render.Message(m, byteMarkerThreshold))
+			fmt.Fprint(stdout, render.Message(m, byteMarkerThreshold, time.Now()))
 			fmt.Fprintf(stdout, "  state=%s  created=%s",
 				m.State, m.CreatedAt)
 			if m.DeliveredAt.Valid {

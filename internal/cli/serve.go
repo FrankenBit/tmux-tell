@@ -1353,7 +1353,7 @@ func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarker
 	}
 	return tmuxio.Deliver(ctx, tmuxio.DeliverParams{
 		Pane:        pane,
-		Body:        render.Message(*msg, byteMarkerThreshold),
+		Body:        render.Message(*msg, byteMarkerThreshold, time.Now()),
 		VerifyToken: "id " + msg.PublicID,
 		OnVerify:    onVerify,
 	})

@@ -48,35 +48,101 @@ func formatClock(iso string) string {
 	return "??:??:??"
 }
 
+// parseISO parses one of the two ISO 8601 UTC layouts the store writes
+// (with or without milliseconds). The bool reports success so callers can
+// fall back to a placeholder rather than block on a format mismatch.
+func parseISO(iso string) (time.Time, bool) {
+	for _, layout := range []string{
+		"2006-01-02T15:04:05.000Z",
+		"2006-01-02T15:04:05Z",
+	} {
+		if t, err := time.Parse(layout, iso); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// formatDuration returns the compact `⇢<duration>` delivery-duration field
+// (#368) for the span from a message's send time (created, ISO 8601 UTC) to
+// end — its delivered_at when set, else the render moment. A single
+// most-significant unit on the s/m/h/d ladder (cutoffs 60s / 60m / 24h):
+// `⇢2s`, `⇢15m`, `⇢2h`, `⇢5d`. Header value is operational signal, not audit
+// precision — exact delivered_at lives in `message_status`.
+//
+// Returns "" (the field is omitted) when the span is under one second —
+// same-second deliveries, and negative spans from clock skew, both clamp to
+// "instant", where a `⇢0s` field would be noise (#368 design call: omit-when-
+// zero over render-zero). Returns "" too when created doesn't parse, mirroring
+// formatClock's render-with-placeholder-over-block stance.
+func formatDuration(created string, end time.Time) string {
+	createdT, ok := parseISO(created)
+	if !ok {
+		return ""
+	}
+	switch d := end.Sub(createdT); {
+	case d < time.Second: // same-second or negative (skew) — omit
+		return ""
+	case d < time.Minute:
+		return fmt.Sprintf("⇢%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("⇢%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("⇢%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("⇢%dd", int(d.Hours()/24))
+	}
+}
+
+// deliveryEnd returns the instant a message's delivery-duration is measured
+// to: its delivered_at when the row carries one, else renderedAt (the
+// "elapsed so far" case — a message rendered before delivery completes, e.g.
+// the paste at the delivery moment, or a still-queued row in `log`).
+func deliveryEnd(m store.Message, renderedAt time.Time) time.Time {
+	if m.DeliveredAt.Valid && m.DeliveredAt.String != "" {
+		if t, ok := parseISO(m.DeliveredAt.String); ok {
+			return t
+		}
+	}
+	return renderedAt
+}
+
 // Message renders a single message as the recipient should see it.
 // Format depends on whether the message has a reply_to (see README).
 //
 // Regular message:
 //
-//	[Bosun · 11:04:12 · id 7f3a]
+//	[Bosun · 11:04:12 · ⇢2s · id 7f3a]
 //
 //	<body>
 //
 // Reply (the to_agent is the operator-visible recipient, but the header
 // shows the original sender for clarity):
 //
-//	[Surveyor → Bosun · re 7f3a · id 9c1d]
+//	[Surveyor → Bosun · re 7f3a · ⇢4s · id 9c1d]
 //
 //	<body>
 //
+// The `⇢<duration>` field (#368) is the delivery duration — how long the
+// message sat between send and delivery — on a single most-significant unit
+// (s/m/h/d), spliced after the send-clock (regular) or after `re <id>` (the
+// threaded form carries no send-clock). It's omitted for sub-second
+// deliveries, where its absence reads as "instant". See formatDuration.
+//
 // When m.Quick is true, the full bracket-header block collapses to a single
 // line (compact chrome, #154) — the load-bearing sender/thread/content fields
-// are preserved, spatial framing is dropped:
+// are preserved, spatial framing is dropped. The send-clock + duration ride
+// along (#368) so a quick ack's timing stays verifiable:
 //
-//	✓ Bosun · acked, ⚓               (plain quick)
-//	✓ Surveyor · re 7f3a · acked, ⚓  (quick reply)
+//	✓ Bosun · 11:04:12 · ⇢2s · acked, ⚓               (plain quick)
+//	✓ Surveyor · re 7f3a · 11:05:00 · ⇢3s · acked, ⚓  (quick reply)
 //
 // When the body exceeds byteMarkerThreshold, a compact length marker is
 // appended to the header (#160) — `· 2.3k` — so a reader scrolling
 // history can distinguish a two-line ack from a 3K wall of review text,
 // and a sender sees the size cost of what they're about to send:
 //
-//	[Surveyor → Quartermaster · re abad · id 4825 · 2.3k]
+//	[Surveyor → Quartermaster · re abad · ⇢2m · id 4825 · 2.3k]
 //
 // The length marker is not applied to quick messages (the one-line chrome
 // is already the compactness signal; size markers are for review-text
@@ -93,24 +159,35 @@ func formatClock(iso string) string {
 // header and body separates the envelope label from content, and the
 // bracket-open at the start of each new header delimits consecutive
 // messages on visual scan.
-func Message(m store.Message, byteMarkerThreshold int) string {
+func Message(m store.Message, byteMarkerThreshold int, renderedAt time.Time) string {
 	if m.Quick {
-		return messageQuickChrome(m)
+		return messageQuickChrome(m, renderedAt)
 	}
 	var nrSuffix string
 	if m.NoReplyExpected {
 		nrSuffix = " · 🔕"
 	}
 	marker := byteMarkerSuffix(m.Body, byteMarkerThreshold)
+	// Delivery-duration field (#368): how long the message sat between send and
+	// delivery, spliced after the send-clock (regular) or after `re <id>` (the
+	// threaded form, which carries no send-clock). Omitted when sub-second.
+	dur := formatDuration(m.CreatedAt, deliveryEnd(m, renderedAt))
 	var header string
-	clock := formatClock(m.CreatedAt)
 	if m.ReplyTo.Valid && m.ReplyTo.String != "" {
-		header = fmt.Sprintf("[%s → %s · re %s · id %s%s%s]",
+		reSeg := "re " + m.ReplyTo.String
+		if dur != "" {
+			reSeg += " · " + dur
+		}
+		header = fmt.Sprintf("[%s → %s · %s · id %s%s%s]",
 			titleCase(m.FromAgent), titleCase(m.ToAgent),
-			m.ReplyTo.String, m.PublicID, nrSuffix, marker)
+			reSeg, m.PublicID, nrSuffix, marker)
 	} else {
+		clockSeg := formatClock(m.CreatedAt)
+		if dur != "" {
+			clockSeg += " · " + dur
+		}
 		header = fmt.Sprintf("[%s · %s · id %s%s%s]",
-			titleCase(m.FromAgent), clock, m.PublicID, nrSuffix, marker)
+			titleCase(m.FromAgent), clockSeg, m.PublicID, nrSuffix, marker)
 	}
 	if rm := replayMarker(m); rm != "" {
 		// Replay chrome (#157 PR1) sits on its own line between header and
@@ -127,23 +204,32 @@ func Message(m store.Message, byteMarkerThreshold int) string {
 // content — and drops the spatial framing (no bracket-header block, no blank
 // line between envelope and body).
 //
-//	✓ Bosun · acked, ⚓               (no reply_to)
-//	✓ Surveyor · re 7f3a · acked, ⚓  (with reply_to)
+//	✓ Bosun · 11:04:12 · ⇢2s · acked, ⚓               (no reply_to)
+//	✓ Surveyor · re 7f3a · 11:05:00 · ⇢3s · acked, ⚓  (with reply_to)
 //
 // The `✓` prefix marks the compact form at a glance so a reader scrolling
-// history can distinguish it from a regular bracket-header message.
+// history can distinguish it from a regular bracket-header message. The
+// send-clock + `⇢<duration>` (#368) ride along — the compact form used to drop
+// the send-time entirely, leaving a quick ack's timing unverifiable.
 // No-reply-expected (🔕), if set, is preserved as a prefix on the body so it
 // remains visible without a dedicated chrome field.
-func messageQuickChrome(m store.Message) string {
+func messageQuickChrome(m store.Message, renderedAt time.Time) string {
 	sender := titleCase(m.FromAgent)
 	body := m.Body
 	if m.NoReplyExpected {
 		body = "🔕 " + body
 	}
-	if m.ReplyTo.Valid && m.ReplyTo.String != "" {
-		return fmt.Sprintf("✓ %s · re %s · %s\n", sender, m.ReplyTo.String, body)
+	// The compact form previously dropped the send-time entirely (#368 Gap 1) —
+	// a quick reply's send/reply time wasn't verifiable from the message. Add
+	// the send-clock + delivery-duration, mirroring the bracket header's fields.
+	stamp := formatClock(m.CreatedAt)
+	if dur := formatDuration(m.CreatedAt, deliveryEnd(m, renderedAt)); dur != "" {
+		stamp += " · " + dur
 	}
-	return fmt.Sprintf("✓ %s · %s\n", sender, body)
+	if m.ReplyTo.Valid && m.ReplyTo.String != "" {
+		return fmt.Sprintf("✓ %s · re %s · %s · %s\n", sender, m.ReplyTo.String, stamp, body)
+	}
+	return fmt.Sprintf("✓ %s · %s · %s\n", sender, stamp, body)
 }
 
 // replayMarker returns the "↻ Replayed: original sent at <ts>" chrome line for

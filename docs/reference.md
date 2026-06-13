@@ -50,23 +50,42 @@ To confirm a freshly-registered agent is reachable *without* sending it a messag
 
 Headers come in two shapes:
 
-**Compact** — `[Sender · HH:MM:SS · id XXXX]` — an unthreaded message (no `reply_to`);
-the common case, a new thread:
+**Compact** — `[Sender · HH:MM:SS · ⇢<dur> · id XXXX]` — an unthreaded message (no
+`reply_to`); the common case, a new thread:
 
 ```
-[Alice · 14:02:09 · id 7f3a]
+[Alice · 14:02:09 · ⇢2s · id 7f3a]
 
 please check CI on the latest push
 ```
 
-**Threaded** — `[Sender → Recipient · re YYYY · id XXXX]` — when `reply_to=YYYY` is
-set; surfaces the direction *and* the parent message for thread-following:
+**Threaded** — `[Sender → Recipient · re YYYY · ⇢<dur> · id XXXX]` — when `reply_to=YYYY`
+is set; surfaces the direction *and* the parent message for thread-following:
 
 ```
-[Bob → Alice · re 7f3a · id 9c1d]
+[Bob → Alice · re 7f3a · ⇢4s · id 9c1d]
 
 on it — green in ~3 min
 ```
+
+**Delivery duration** — the `⇢<dur>` field (#368) is how long the message sat between
+send and delivery — the substrate-honest signal of the gap between "queued" (persisted)
+and "delivered" (in the recipient's context). It sits between the send-time and the id
+(or, on a threaded header, after `re <id>`), as a single most-significant unit:
+
+| Span | Field | Typical cause |
+|---|---|---|
+| < 60s | `⇢3s`, `⇢45s` | standard paste-and-enter cycle |
+| < 60m | `⇢2m`, `⇢15m` | held by the observe-gate while the recipient typed |
+| < 24h | `⇢2h`, `⇢14h` | hook-context not pulling, mailman stuck |
+| ≥ 24h | `⇢2d`, `⇢5d` | substrate-blocked recipient |
+
+It's the duration from `created_at` to `delivered_at` — or to the render moment for a
+message rendered before delivery completes (the paste itself, or a still-queued row in
+`log`), so a pending message reads as "has been waiting ⇢X". A sub-second span is
+**omitted** (its absence reads as "instant"; a `⇢0s` would be noise). Header value is
+operational signal, not audit precision — the exact `delivered_at` is in
+`tmux-msg.message_status`.
 
 **No-reply marker** — either shape can carry a trailing `· 🔕` when the sender sets
 `--no-reply-expected` (CLI) or `no_reply_expected=true` (MCP); a discipline aid for
@@ -104,13 +123,15 @@ bracket-header block to a single line; for routine acks where typing-overhead-to
 ratio is high:
 
 ```
-✓ Bosun · acked, ⚓
-✓ Quartermaster · re bd19 · acked, ⚓
+✓ Bosun · 14:02:09 · ⇢2s · acked, ⚓
+✓ Quartermaster · re bd19 · 14:03:00 · ⇢3s · acked, ⚓
 ```
 
 The compact form preserves the load-bearing fields — sender, optional thread linkage (`re
-<id>` when `reply_to` is set), and content — and drops the spatial framing (no timestamp,
-no message id, no blank line between envelope and body). The `✓` prefix marks the shape
+<id>` when `reply_to` is set), the send-time + `⇢<duration>` (#368), and content — and
+drops the spatial framing (no message id, no blank line between envelope and body). The
+send-time was previously dropped too; it's kept now so a quick ack's timing stays
+verifiable from the message itself. The `✓` prefix marks the shape
 at a glance so a reader scrolling history can distinguish it from a regular bracket-header
 message. `no_reply_expected`, if set, is preserved as a `🔕` prefix on the body. The
 length marker is not applied to quick messages (single-line chrome is already the
