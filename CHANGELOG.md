@@ -64,6 +64,25 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **`tmux-msg-claude db migrate <new-path>` atomic helper — #349 Fix 3.**
+  New CLI sub-primitive that wraps the WAL-safe DB move recipe documented in
+  v0.16.1 into one command: (1) validate destination, (2) stop per-agent
+  mailmen via `systemctl --user`, (3) `PRAGMA wal_checkpoint(TRUNCATE)` on
+  the source, (4) `mv` source → destination (with a cross-volume copy
+  fallback for EXDEV), (5) clean source `-wal` + `-shm` sidecars, (6)
+  restart per-agent mailmen, (7) fire `refresh-all-mcps` against the
+  destination so chamber MCPs rebind to the new inode, (8) self-verify
+  by counting `messages` rows in the moved DB. `--dry-run` prints the
+  plan without touching the filesystem or systemd. Hook-context agents
+  are skipped on steps 2 + 6 (no mailman to start/stop). If the
+  destination is **not** the user-home default the binary computes on
+  its own, steps 6 + 7 are skipped with a warning — systemd-managed
+  mailmen + chamber MCPs both resolve only the default path post-#308,
+  so a bespoke destination needs foreground `serve` + manual MCP
+  restart on the operator side. The command also warns when
+  `$CLAUDE_MSG_DB` is set in the calling shell, since it can't rewrite
+  rc files itself. Refuses to overwrite an existing destination
+  (operator-typo guard) and refuses source-equals-destination.
 - **`ping` surfaces a structured reason on UNREACHABLE — #358.** A timed-out /
   failed `ping` previously collapsed mailman-down, blocked-delivery,
   backlog-draining, a dead pane, and a parked (stuck) mailman into one opaque
