@@ -327,6 +327,7 @@ func TestMCP_ToolsListContract(t *testing.T) {
 		"tmux-msg.wait_for_reply":      true,
 		"tmux-msg.check_replies":       true,
 		"tmux-msg.ping":                true,
+		"tmux-msg.whoami_db":           true,
 		"tmux-msg.agents":              true,
 		"tmux-msg.whoami":              true,
 		"tmux-msg.inbox":               true,

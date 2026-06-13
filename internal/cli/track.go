@@ -81,6 +81,8 @@ func runTrackCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("track", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	canonical := fs.Bool("canonical", false,
+		"open the canonical XDG-default DB by name (ignores --db / $CLAUDE_MSG_DB) — the operator's ground-truth \"is id X actually in the canonical DB?\" query when an MCP view might be bound to a stale inode (#348)")
 	format := fs.String("format", "text", "text|json")
 	watch := fs.Bool("watch", false,
 		"poll until the message reaches a terminal state (delivered/failed); exits when state stops changing or timeout fires (#49)")
@@ -97,7 +99,15 @@ func runTrackCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	id := fs.Arg(0)
 
-	s, err := store.Open(resolveDBPath(*dbPath))
+	openPath := resolveDBPath(*dbPath)
+	if *canonical {
+		if *dbPath != "" {
+			return writeJSONError(stdout, stderr,
+				"--canonical and --db are mutually exclusive (--canonical forces the XDG default)", exitUsage)
+		}
+		openPath = defaultDBLocation()
+	}
+	s, err := store.Open(openPath)
 	if err != nil {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("open store: %v", err), exitInternal)

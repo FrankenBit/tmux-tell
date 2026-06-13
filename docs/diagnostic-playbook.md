@@ -302,6 +302,55 @@ the fix lives in the adapter's config, not in the substrate. See
 [`cmd/tmux-msg-codex/README.md`](../cmd/tmux-msg-codex/README.md) §MCP server for the full
 wiring recipe.
 
+## Post-deploy MCP-binding divergence
+
+A deploy that moves the DB file (e.g. the #308 path move from
+`/var/lib/tmux-msg/` to `~/.local/share/tmux-msg/`) but does **not** restart the
+long-lived chamber MCP server processes leaves those processes writing to the
+**old inode**. The MCP servers are stdio-spawned by the host (Claude Code /
+Codex) at session start, not by systemd, so a `docker compose`-style restart
+doesn't touch them — they keep their pre-deploy open file handle.
+
+**Symptom.** A sender's `tmux-msg.agents` reports `queued: N` for a recipient,
+but the recipient's mailman sees `queue_depth = 0` (and the message never
+arrives). Both are correct *within their own DB* — the sender's MCP is writing
+to an orphaned inode no mailman reads. Forgejo/other surfaces look fine; only
+the bus-side delivery is lost. Pre-#348, diagnosing this meant `/proc/PID/exe`
+archeology + `pgrep -af tmux-msg-claude` + `sqlite3` on the canonical path.
+
+**Triage primitive — `tmux-msg-claude doctor`.** One command walks every live
+`tmux-msg-claude` process, reads each one's *actual* open DB handle from
+`/proc/PID/fd` (inode and all), and flags any that diverge from the canonical
+DB:
+
+```bash
+tmux-msg-claude doctor          # exits non-zero on any divergence
+tmux-msg-claude doctor --format json
+```
+
+```
+CANONICAL	/home/alex/.local/share/tmux-msg/messages.db (inode 1895479)
+✓ PID 326865  binary=/usr/local/bin/tmux-msg-claude  db=…/messages.db (inode 1895479)  — canonical
+✗ PID 12381   binary=/usr/local/bin/tmux-msg-claude (deleted)  db=/var/lib/tmux-msg/messages.db (inode 12345) [file removed]  — orphan DB inode — file removed; writes invisible to mailmen on the canonical path
+DIVERGENCE: one or more processes hold a DB binding invisible to mailmen on the canonical path. Run `tmux-msg-claude refresh-all-mcps` to restart MCP servers (and check for stale mailmen).
+```
+
+**Ask one process directly** — `tmux-msg.whoami_db` (MCP tool) returns the
+calling server's live binding `{pid, binary_path, started_at, db_path,
+db_inode, db_deleted}` straight from `/proc`, so you can confirm where a
+specific session is writing without enumerating the fleet.
+
+**Confirm ground truth** — `tmux-msg-claude track <id> --canonical` opens the
+canonical XDG-default DB by name (ignoring `--db` / `$CLAUDE_MSG_DB`), answering
+"is id X *actually* in the canonical DB?" without trusting a possibly-stale MCP
+view.
+
+**Fix.** `tmux-msg-claude refresh-all-mcps` restarts the MCP servers so they
+rebind to the canonical DB; re-run `doctor` to confirm a clean fleet. The
+prevention side (a WAL-safe DB-move recipe) is tracked separately in
+[#343](https://git.frankenbit.de/frankenbit/tmux-msg/issues/343); `doctor` is
+the *detection* half of that defense-in-depth pair ([#348](https://git.frankenbit.de/frankenbit/tmux-msg/issues/348)).
+
 ## See also
 
 - [#59](https://git.frankenbit.de/frankenbit/tmux-msg/issues/59)

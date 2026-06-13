@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
 	"git.frankenbit.de/frankenbit/tmux-msg/internal/version"
@@ -34,6 +35,7 @@ Subcommands:
   digest  Campaign-arc narrative summary: by-counterparty threads + in-flight follow-ups (#161)
   tail    Live cross-chamber firehose with compositional filters (#148)
   health  One-command per-agent health audit from journalctl + systemd (#42)
+  doctor  Walk live tmux-msg processes + flag MCP/mailman DB-binding divergence (#348); exits non-zero on divergence
   config  Read/show the host-level config (#54). Subcommands: show
   agents  List registered agents with pane liveness
   whoami  Show this session's registration (auto-resolves identity)
@@ -81,6 +83,12 @@ func warnIfDeprecatedName(argv0 string, stderr io.Writer) {
 // deprecated-alias warning; args is os.Args[1:]. Returns the process exit code.
 func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	active = p
+	// Stamp process start for whoami_db's started_at (#348) — a long-lived MCP
+	// server holds this for its lifetime so an operator can spot a pre-deploy
+	// process still bound to a stale inode.
+	if processStart.IsZero() {
+		processStart = time.Now()
+	}
 	// Install the adapter's pane-observation snippets into the tmuxio
 	// classifier's process-global before any subcommand (notably serve's
 	// mailman) starts observing panes (#322). The CLI binary serves exactly
@@ -135,6 +143,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runTailCLI(args[1:], stdout, stderr)
 	case "health":
 		return runHealthCLI(args[1:], stdout, stderr)
+	case "doctor":
+		return runDoctorCLI(args[1:], stdout, stderr)
 	case "config":
 		return runConfigCLI(args[1:], stdout, stderr)
 	case "agents":

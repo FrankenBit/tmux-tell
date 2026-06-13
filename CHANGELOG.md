@@ -52,6 +52,31 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   `mailman_idle_since` from the issue's example join `evidence` when #348 lands
   the `agents`-listing source for them.)
 
+- **Diagnostic surface for MCP/DB-binding divergence — #348 (PR 1 of 2).** When a
+  deploy moves the DB but doesn't restart the long-lived MCP server processes,
+  those processes keep writing to the orphaned inode — invisible to `sqlite3` on
+  the canonical path and to fresh mailmen, so a sender's `queued: N` and a
+  recipient's `queue_depth: 0` are both "correct" and nothing flags the
+  divergence. Three new read-only surfaces make it legible without `/proc`
+  archeology:
+  - **`tmux-msg.whoami_db`** (MCP tool) — the live server's own binding
+    `{pid, binary_path, started_at, db_path, db_inode, db_deleted}`, read from
+    `/proc` (the open handle, not a re-resolution that could mask the divergence).
+  - **`tmux-msg-claude doctor`** (CLI) — walks every live `tmux-msg-claude`
+    process, compares each one's open DB inode against the canonical DB, prints a
+    per-process verdict, and exits non-zero on any divergence (orphaned inode,
+    different inode, or a since-replaced `(deleted)` binary). Usable as a runbook
+    gate.
+  - **`tmux-msg-claude track <id> --canonical`** — opens the canonical XDG-default
+    DB by name (ignoring `--db` / `$CLAUDE_MSG_DB`), the operator's ground-truth
+    "is id X actually in the canonical DB?" query.
+
+  All `/proc`-based and read-only (consistent with the existing `discover`
+  walker; Linux substrate). `docs/diagnostic-playbook.md` gains a "post-deploy
+  MCP-binding divergence" entry pointing at `doctor` as the triage primitive.
+  The `agents`-listing mailman-activity fields (`mailman_last_delivered_at` /
+  `mailman_idle_since`, which need a store migration) follow in PR 2.
+
 ## [0.16.1] — 2026-06-12
 
 Fast-follow cluster from the v0.16.0 alcatraz deploy retro (alcatraz-infra#39

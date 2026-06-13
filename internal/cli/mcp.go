@@ -298,6 +298,11 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpPingHandler(s))
 
+	srv.RegisterTool("tmux-msg.whoami_db",
+		"Report THIS MCP server's live DB binding (#348): {pid, binary_path, started_at, db_path, db_inode, db_deleted}. Read straight from /proc (the open file handle + exe symlink) — NOT by re-resolving the configured path, so it reveals where the process is *actually* writing even after a deploy moved the DB out from under it (the orphan-inode case: a process spawned pre-deploy keeps writing to the unlinked inode, invisible to sqlite3 on the canonical path). `db_deleted: true` is the orphan smell; a divergent `db_inode` across processes is the cross-surface-divergence `doctor` aggregates. No DB access at all (can't itself be misrouted); safe to expose to peers.",
+		json.RawMessage(`{"type": "object", "properties": {}}`),
+		mcpWhoamiDBHandler())
+
 	return srv
 }
 
