@@ -92,10 +92,11 @@ func TestClassifyPingReason(t *testing.T) {
 // reason as the short suffix (#358 AC#3) and that the no-reason / reachable
 // paths still render cleanly.
 func TestRenderPingResult_ReasonSuffix(t *testing.T) {
-	t.Run("blocked_delivery suffix carries reason + phrase + evidence", func(t *testing.T) {
+	t.Run("blocked_delivery renders PENDING with reason + phrase + evidence + retry hint", func(t *testing.T) {
 		var out bytes.Buffer
 		renderPingResult(&out, pingResult{
 			OK: false, Agent: "bob", ID: "abcd", State: pingStateTimeout, ElapsedMs: 5000,
+			Class:  classPending,
 			Reason: reasonBlockedDelivery,
 			Evidence: &pingEvidence{
 				MailmanActive: true, QueueDepth: 7, CurrentState: tmuxio.StateAwaitingOperator.String(),
@@ -103,27 +104,37 @@ func TestRenderPingResult_ReasonSuffix(t *testing.T) {
 		}, "text")
 		s := out.String()
 		for _, want := range []string{
-			"UNREACHABLE",
+			"PENDING",
 			"blocked_delivery",
-			"observe-gate is refusing delivery",
+			"mailman busy on a prior delivery",
 			"queue=7",
 			"state=awaiting-operator",
+			"retry or wait", // #366 retryability hint (Herald pre-flight)
 		} {
 			if !strings.Contains(s, want) {
 				t.Errorf("text %q missing %q", s, want)
 			}
 		}
+		// blocked_delivery is healthy-pending (#366), not broken — the ping never
+		// reaches the observe-gate, so it must not render the UNREACHABLE headline.
+		if strings.Contains(s, "UNREACHABLE") {
+			t.Errorf("blocked_delivery is pending, text %q must not say UNREACHABLE", s)
+		}
 	})
 
-	t.Run("stuck suffix carries the park reason", func(t *testing.T) {
+	t.Run("stuck renders UNREACHABLE with the park reason + act hint", func(t *testing.T) {
 		var out bytes.Buffer
 		renderPingResult(&out, pingResult{
 			OK: false, Agent: "bob", ID: "abcd", State: pingStateTimeout,
+			Class:    classUnreachable,
 			Reason:   reasonStuck,
 			Evidence: &pingEvidence{MailmanActive: true, QueueDepth: 3, CurrentState: "unknown", StuckReason: store.StuckReasonPaneNotFound},
 		}, "text")
-		if s := out.String(); !strings.Contains(s, "stuck=pane-not-found") {
-			t.Errorf("text %q missing stuck park reason", s)
+		s := out.String()
+		for _, want := range []string{"UNREACHABLE", "stuck=pane-not-found", "operator action needed"} {
+			if !strings.Contains(s, want) {
+				t.Errorf("text %q missing %q", s, want)
+			}
 		}
 	})
 
@@ -140,13 +151,13 @@ func TestRenderPingResult_ReasonSuffix(t *testing.T) {
 		}
 	})
 
-	t.Run("reachable renders without a reason", func(t *testing.T) {
+	t.Run("reachable renders REACHABLE without a reason", func(t *testing.T) {
 		var out bytes.Buffer
 		renderPingResult(&out, pingResult{
-			OK: true, Agent: "bob", ID: "abcd", State: "delivered",
+			OK: true, Agent: "bob", ID: "abcd", State: "delivered", Class: classReachable,
 		}, "text")
 		s := out.String()
-		if !strings.Contains(s, "reachable") || strings.Contains(s, "UNREACHABLE") {
+		if !strings.Contains(s, "REACHABLE") || strings.Contains(s, "UNREACHABLE") {
 			t.Errorf("reachable text %q malformed", s)
 		}
 	})
@@ -156,13 +167,18 @@ func TestRenderPingResult_ReasonSuffix(t *testing.T) {
 // omitted on the reachable path and round-trip on the UNREACHABLE path (#358),
 // so the OK wire shape is unchanged for existing consumers.
 func TestPingResult_JSONOmitsReasonOnOK(t *testing.T) {
-	t.Run("OK omits reason + evidence", func(t *testing.T) {
-		b, err := json.Marshal(pingResult{OK: true, Agent: "bob", State: "delivered"})
+	t.Run("OK omits reason + evidence but carries class", func(t *testing.T) {
+		b, err := json.Marshal(pingResult{OK: true, Agent: "bob", State: "delivered", Class: classReachable})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if s := string(b); strings.Contains(s, "reason") || strings.Contains(s, "evidence") {
+		s := string(b)
+		if strings.Contains(s, "reason") || strings.Contains(s, "evidence") {
 			t.Errorf("OK ping JSON should omit reason/evidence, got %s", s)
+		}
+		// class is present on every path (#366), including reachable.
+		if !strings.Contains(s, `"class":"reachable"`) {
+			t.Errorf("OK ping JSON should carry class=reachable, got %s", s)
 		}
 	})
 

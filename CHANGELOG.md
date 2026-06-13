@@ -51,6 +51,40 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   reachable path, so the OK wire shape is unchanged. (`last_delivered_at` /
   `mailman_idle_since` from the issue's example join `evidence` when #348 lands
   the `agents`-listing source for them.)
+- **`ping` adds a coarse reachability `class` over the structured reason — #366.**
+  #358's flat UNREACHABLE umbrella over-claimed brokenness for the healthy cases
+  (a `backlog_draining` agent is plainly reachable — mailman up, pane live, just
+  draining a queue with our probe behind in line). `ping` (and the
+  `tmux-msg.ping` MCP tool) now carry a closed-set `class` on **every** path —
+  `reachable`, `pending`, or `unreachable` — layered over the existing `reason`:
+  branch on `class` for coarse reachability-routing, on `reason` for fine
+  recovery-routing. The map is single-sourced (`reachabilityClass`): a confirmed
+  delivery is `reachable`; `backlog_draining` and `blocked_delivery` are
+  `pending` (substrate healthy and making progress — retry or wait); and
+  `mailman_down` / `stuck` / `pane_dead` are `unreachable` (broken — operator
+  must act). `blocked_delivery` classes `pending` **unconditionally**: a ping
+  short-circuits before the observe-gate (it never pastes), so it can only mean
+  "mailman alive but busy on a prior delivery," never a paste-incapable
+  force-defer or a wedged gate. The CLI headline is the three-way `REACHABLE` /
+  `PENDING (…)` / `UNREACHABLE (…)`, each failing line carrying a trailing
+  retryability hint
+  (`PENDING (backlog_draining: …) — retry or wait, the mailman is working`).
+  Reason/evidence remain omitted on the reachable path, so the OK wire shape
+  gains only the `class` field.
+
+### Changed
+
+- **`ping` exit code is now keyed on the reachability class — #366.**
+  `pingExitCode` previously mapped on the raw probe state (`delivered`→0,
+  `timeout`→`EX_TEMPFAIL`, `failed`→`EX_UNAVAILABLE`). It now maps on the #366
+  `class`: `reachable`→0, `pending`→`EX_TEMPFAIL` (75, retry may help),
+  `unreachable`→`EX_UNAVAILABLE` (69, retry won't help). **Behavioral shift:**
+  `mailman_down` and `stuck` (both `state=timeout`, previously `EX_TEMPFAIL`) now
+  class `unreachable` → **`EX_UNAVAILABLE`** — a down or parked mailman won't
+  self-heal on a retry, so tempfail over-promised recoverability.
+  `backlog_draining` / `blocked_delivery` stay `EX_TEMPFAIL` (now via `pending`);
+  `pane_dead` stays `EX_UNAVAILABLE`. Scripts branching on `ping`'s exit code for
+  the mailman_down/stuck case should expect 69 where they previously saw 75.
 
 - **Diagnostic surface for MCP/DB-binding divergence — #348 (PR 1 of 2).** When a
   deploy moves the DB but doesn't restart the long-lived MCP server processes,

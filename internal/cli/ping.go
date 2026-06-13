@@ -41,14 +41,18 @@ const pingStateTimeout = "timeout"
 // when the probe reached `delivered` (recipient reachable). State is one
 // of "delivered", "failed", or "timeout".
 //
-// On the UNREACHABLE path (OK=false), Reason classifies WHY (#358) and
-// Evidence carries the raw substrate signals behind that call. Both are
-// omitted on the reachable path.
+// Class (#366) is the coarse reachability classification — reachable /
+// pending / unreachable — layered over the fine-grained Reason; it is set on
+// every path (reachable on the OK path) so tooling can branch on reachability
+// without memorizing the reason→class map. On the failing path (OK=false),
+// Reason classifies WHY (#358) and Evidence carries the raw substrate signals
+// behind that call; both are omitted on the reachable path.
 type pingResult struct {
 	OK        bool          `json:"ok"`
 	Agent     string        `json:"agent"`
 	ID        string        `json:"id"`
 	State     string        `json:"state"`
+	Class     pingClass     `json:"class"`
 	ElapsedMs int64         `json:"elapsed_ms"`
 	Reason    pingReason    `json:"reason,omitempty"`
 	Evidence  *pingEvidence `json:"evidence,omitempty"`
@@ -77,15 +81,45 @@ const (
 	// stopped probing tmux). Clear via `register --force`. The specific park
 	// reason rides in Evidence.StuckReason.
 	reasonStuck pingReason = "stuck"
-	// reasonBlockedDelivery: the mailman is running but not delivering — the
-	// observe-gate is refusing the paste (operator typing / popup, i.e.
-	// agent_state=awaiting-operator) or a paste-incapable adapter's paste path
-	// is force-deferred (#323). Investigate the gate, not the daemon.
+	// reasonBlockedDelivery: the mailman is running and reachable, but our ping
+	// row wasn't claimed within the bound because the daemon is occupied on a
+	// PRIOR delivery — classically gated on operator-typing for the head message
+	// (the gathered current_state=awaiting-operator reflects that head delivery,
+	// not our ping). A ping never traverses the observe-gate itself: serve.go's
+	// mailman loop short-circuits kind=ping before the gate, so this names a
+	// healthy-but-pending condition (classes pending, #366), not a broken one —
+	// wait for the in-flight delivery to clear.
 	reasonBlockedDelivery pingReason = "blocked_delivery"
 	// reasonBacklogDraining: the mailman is running and working through a real
 	// backlog (queue depth exceeds our own probe row); the ping is behind in
 	// line. Wait, or query queue depth.
 	reasonBacklogDraining pingReason = "backlog_draining"
+)
+
+// pingClass is the coarse reachability classification (#366) layered over the
+// fine-grained pingReason. Where pingReason answers "what specific condition?"
+// (the recovery-routing contract), pingClass answers "is the substrate
+// healthy?" (the reachability-routing contract) — the three-way split the flat
+// #358 `reachable:false` binary collapsed:
+//
+//	reachable   — the probe confirmed delivery (mailman up, pane live).
+//	pending     — the substrate is healthy and making forward progress, but the
+//	              probe didn't confirm within its bound: the mailman is draining
+//	              a backlog ahead of our row, or is busy on a prior delivery.
+//	              Retrying / waiting helps.
+//	unreachable — the substrate is broken: the mailman is down, parked in the
+//	              #291 stuck state, or the recipient's pane is gone. Retrying
+//	              won't help; the operator must act.
+//
+// Like pingReason it is a CLOSED set: tooling branches on class for coarse
+// reachability-routing and on reason for fine recovery-routing. The mapping is
+// single-sourced in reachabilityClass — no render site re-derives it.
+type pingClass string
+
+const (
+	classReachable   pingClass = "reachable"
+	classPending     pingClass = "pending"
+	classUnreachable pingClass = "unreachable"
 )
 
 // pingEvidence is the raw substrate signal-set gathered on the UNREACHABLE
@@ -230,6 +264,7 @@ func pingProbe(ctx context.Context, s *store.Store, from, to string, timeout, po
 		res.Evidence = &ev
 		res.Reason = classifyPingReason(res.State, ev)
 	}
+	res.Class = reachabilityClass(res)
 	return res, nil
 }
 
@@ -243,15 +278,17 @@ func pingProbe(ctx context.Context, s *store.Store, from, to string, timeout, po
 //	failed                            → pane_dead        (mailman claimed it; pane not live)
 //	timeout + StuckReason set         → stuck            (parked per #291)
 //	timeout + mailman not active      → mailman_down     (nothing draining the queue)
-//	timeout + state=awaiting-operator → blocked_delivery (observe-gate refusing the paste)
+//	timeout + state=awaiting-operator → blocked_delivery (mailman busy on a prior gated delivery)
 //	timeout + queue depth > 1         → backlog_draining (real backlog ahead of our probe row)
-//	timeout + (anything else)         → blocked_delivery (running + reachable yet undelivered → the gate)
+//	timeout + (anything else)         → blocked_delivery (mailman alive but hasn't claimed our ping)
 //
-// The default-to-blocked_delivery tail is the honest fallback: a running
-// mailman on a non-stuck, non-backlogged agent that still didn't deliver in
-// the bound is most likely held at the gate (a paste-unsafe pane state, or a
-// paste-incapable adapter being force-deferred). Evidence travels with the
-// reason so the operator sees the raw signals regardless of the label.
+// The default-to-blocked_delivery tail is the honest fallback: a running,
+// non-stuck, non-backlogged mailman that still hadn't claimed our ping row
+// within the bound is alive but momentarily occupied — typically finishing a
+// prior delivery. The ping never reaches the observe-gate itself (serve.go
+// short-circuits kind=ping before it), so this is a healthy-but-pending
+// condition, not a paste-blocked one. Evidence travels with the reason so the
+// operator sees the raw signals regardless of the label.
 func classifyPingReason(pingState string, ev pingEvidence) pingReason {
 	if pingState == string(store.StateFailed) {
 		return reasonPaneDead
@@ -267,6 +304,54 @@ func classifyPingReason(pingState string, ev pingEvidence) pingReason {
 		return reasonBacklogDraining
 	default:
 		return reasonBlockedDelivery
+	}
+}
+
+// reachabilityClass maps a probe outcome to its coarse reachability class
+// (#366) — the single canonical site for the reason→class mapping, so no
+// render or tooling site re-derives it. A confirmed delivery is reachable; the
+// two "healthy but unconfirmed-in-bound" reasons are pending; the three
+// "substrate broken" reasons are unreachable.
+//
+// blocked_delivery maps to pending UNCONDITIONALLY — not decided by
+// current_state. A ping never traverses the observe-gate: serve.go's mailman
+// loop short-circuits kind=ping immediately after ClaimNext, before the gate,
+// the paste-capability check, and the paste itself (handlePing only probes
+// pane liveness). So the persistent-broken sub-cases a state-split would guard
+// against — a paste-incapable adapter force-defer, a wedged gate — cannot
+// produce a ping blocked_delivery; a paste-incapable adapter's mailman marks a
+// ping delivered fine. For a ping, blocked_delivery only ever means "the
+// mailman is alive but occupied on a prior delivery and hasn't looped back to
+// claim our row" — reachable+pending, the same family as backlog_draining. The
+// observe-gate's own MaxWait cap (non-disableable, 5min default; deliver-anyway
+// on the cap) guarantees the mailman makes forward progress, so there is no
+// indefinite park to reclassify as broken.
+func reachabilityClass(res pingResult) pingClass {
+	if res.OK {
+		return classReachable
+	}
+	switch res.Reason {
+	case reasonBacklogDraining, reasonBlockedDelivery:
+		return classPending
+	default: // reasonPaneDead, reasonMailmanDown, reasonStuck (and any unset)
+		return classUnreachable
+	}
+}
+
+// hint returns the short retryability cue the CLI appends to a PENDING or
+// UNREACHABLE headline (#366) so the operator sees the load-bearing
+// distinction the class exists to carry: a PENDING probe is worth retrying
+// (the substrate is healthy and working), an UNREACHABLE one needs operator
+// action (it won't clear on its own). Anchoring the headline on retryability
+// was Herald's #366 naming-pre-flight ask. Reachable needs no cue (confirmed).
+func (c pingClass) hint() string {
+	switch c {
+	case classPending:
+		return "retry or wait, the mailman is working"
+	case classUnreachable:
+		return "won't clear on its own, operator action needed"
+	default:
+		return ""
 	}
 }
 
@@ -313,7 +398,7 @@ func (r pingReason) describe() string {
 	case reasonStuck:
 		return "mailman parked in the stuck state"
 	case reasonBlockedDelivery:
-		return "observe-gate is refusing delivery"
+		return "mailman busy on a prior delivery"
 	case reasonBacklogDraining:
 		return "mailman is working through a backlog"
 	default:
@@ -390,13 +475,21 @@ func renderPingResult(stdout io.Writer, res pingResult, format string) {
 		fmt.Fprintf(stdout, "AGENT\t%s\n", res.Agent)
 		switch {
 		case res.OK:
-			fmt.Fprintf(stdout, "PING\t%s (reachable)\n", res.State)
+			fmt.Fprintf(stdout, "PING\t%s (REACHABLE)\n", res.State)
+		case res.Class == classPending:
+			// PENDING: substrate healthy + progressing, the probe just didn't
+			// confirm in-bound (#366). The trailing hint anchors the operator on
+			// the retryable-vs-act distinction that separates PENDING from
+			// UNREACHABLE:
+			//   timeout — PENDING (backlog_draining: mailman is working through a backlog; queue=7, state=working) — retry or wait, the mailman is working
+			fmt.Fprintf(stdout, "PING\t%s — PENDING (%s) — %s\n", res.State, pingReasonSuffix(res), classPending.hint())
 		case res.Reason != "":
-			// UNREACHABLE with the structured reason as a short suffix (#358):
-			//   timeout — UNREACHABLE (blocked_delivery: observe-gate is refusing delivery; queue=7, state=awaiting-operator)
-			fmt.Fprintf(stdout, "PING\t%s — UNREACHABLE (%s)\n", res.State, pingReasonSuffix(res))
+			// UNREACHABLE: substrate broken (#358/#366), structured reason suffix
+			// plus the act-now hint:
+			//   timeout — UNREACHABLE (mailman_down: mailman daemon not running; queue=1, state=unknown) — won't clear on its own, operator action needed
+			fmt.Fprintf(stdout, "PING\t%s — UNREACHABLE (%s) — %s\n", res.State, pingReasonSuffix(res), classUnreachable.hint())
 		default:
-			fmt.Fprintf(stdout, "PING\t%s (UNREACHABLE)\n", res.State)
+			fmt.Fprintf(stdout, "PING\t%s (UNREACHABLE) — %s\n", res.State, classUnreachable.hint())
 		}
 		fmt.Fprintf(stdout, "ELAPSED\t%dms\n", res.ElapsedMs)
 		fmt.Fprintf(stdout, "ID\t%s\n", res.ID)
@@ -406,18 +499,25 @@ func renderPingResult(stdout io.Writer, res pingResult, format string) {
 	}
 }
 
-// pingExitCode maps a probe outcome to a sysexits-style code so tooling
-// can branch on reachability:
-//   - delivered → 0 (reachable)
-//   - failed    → exitUnavailable (registered but unreachable: pane gone)
-//   - timeout   → exitTempFail (no answer in time: daemon down/paused/busy)
+// pingExitCode maps a probe outcome to a sysexits-style code so tooling can
+// branch on reachability — keyed on the #366 reachability class:
+//   - reachable   → exitOK (0)
+//   - pending     → exitTempFail (substrate healthy + progressing; retry may help)
+//   - unreachable → exitUnavailable (substrate broken; retry won't help)
+//
+// This refines the pre-#366 state-keyed mapping along the substrate-permanent-
+// vs-transient axis: mailman_down and stuck (state=timeout, previously
+// exitTempFail) now class unreachable → exitUnavailable, because a down or
+// parked mailman won't self-heal on a retry. backlog_draining and
+// blocked_delivery stay exitTempFail (now via class=pending); pane_dead stays
+// exitUnavailable (now via class=unreachable).
 func pingExitCode(res pingResult) int {
-	switch res.State {
-	case string(store.StateDelivered):
+	switch res.Class {
+	case classReachable:
 		return exitOK
-	case pingStateTimeout:
+	case classPending:
 		return exitTempFail
-	default: // failed
+	default: // classUnreachable (and the defensive unset case)
 		return exitUnavailable
 	}
 }

@@ -219,16 +219,76 @@ func TestRunPingWithStore_UnknownRecipient(t *testing.T) {
 
 func TestPingExitCode(t *testing.T) {
 	cases := []struct {
-		state string
+		class pingClass
 		want  int
 	}{
-		{string(store.StateDelivered), exitOK},
-		{string(store.StateFailed), exitUnavailable},
-		{pingStateTimeout, exitTempFail},
+		{classReachable, exitOK},
+		{classPending, exitTempFail},
+		{classUnreachable, exitUnavailable},
 	}
 	for _, c := range cases {
-		if got := pingExitCode(pingResult{State: c.state}); got != c.want {
-			t.Errorf("pingExitCode(%s) = %d, want %d", c.state, got, c.want)
+		if got := pingExitCode(pingResult{Class: c.class}); got != c.want {
+			t.Errorf("pingExitCode(class=%s) = %d, want %d", c.class, got, c.want)
+		}
+	}
+}
+
+// TestReachabilityClass proves the #366 reason→class map: a confirmed delivery
+// is reachable, the two healthy-but-unconfirmed reasons are pending (notably
+// blocked_delivery UNCONDITIONALLY — a ping never reaches the observe-gate), and
+// the three substrate-broken reasons are unreachable. All three classes are
+// produced, mirroring the AC#4-style coverage proof on classifyPingReason.
+func TestReachabilityClass(t *testing.T) {
+	cases := []struct {
+		name string
+		res  pingResult
+		want pingClass
+	}{
+		{"delivered → reachable", pingResult{OK: true, State: string(store.StateDelivered)}, classReachable},
+		{"backlog_draining → pending", pingResult{Reason: reasonBacklogDraining}, classPending},
+		{"blocked_delivery → pending (unconditional, #366)", pingResult{Reason: reasonBlockedDelivery}, classPending},
+		{"mailman_down → unreachable", pingResult{Reason: reasonMailmanDown}, classUnreachable},
+		{"stuck → unreachable", pingResult{Reason: reasonStuck}, classUnreachable},
+		{"pane_dead → unreachable", pingResult{Reason: reasonPaneDead}, classUnreachable},
+	}
+	seen := map[pingClass]bool{}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reachabilityClass(tc.res); got != tc.want {
+				t.Errorf("reachabilityClass(%+v) = %q, want %q", tc.res, got, tc.want)
+			}
+		})
+		seen[tc.want] = true
+	}
+	for _, c := range []pingClass{classReachable, classPending, classUnreachable} {
+		if !seen[c] {
+			t.Errorf("no case produced class %q", c)
+		}
+	}
+}
+
+// TestPingExitCode_ReasonChain documents the #366 exit-code contract end-to-end
+// (reason → class → sysexits code), including the deliberate shift of
+// mailman_down + stuck from exitTempFail (pre-#366, keyed on state=timeout) to
+// exitUnavailable (now keyed on class=unreachable) — a down or parked mailman
+// won't self-heal on retry, so tempfail over-promised recoverability.
+func TestPingExitCode_ReasonChain(t *testing.T) {
+	cases := []struct {
+		reason pingReason
+		want   int
+		note   string
+	}{
+		{reasonBacklogDraining, exitTempFail, "pending — unchanged"},
+		{reasonBlockedDelivery, exitTempFail, "pending — unchanged"},
+		{reasonMailmanDown, exitUnavailable, "#366 shift: was exitTempFail"},
+		{reasonStuck, exitUnavailable, "#366 shift: was exitTempFail"},
+		{reasonPaneDead, exitUnavailable, "unreachable — unchanged"},
+	}
+	for _, c := range cases {
+		res := pingResult{State: pingStateTimeout, Reason: c.reason}
+		res.Class = reachabilityClass(res)
+		if got := pingExitCode(res); got != c.want {
+			t.Errorf("reason %s → class %s → exit %d, want %d (%s)", c.reason, res.Class, got, c.want, c.note)
 		}
 	}
 }
