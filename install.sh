@@ -29,10 +29,21 @@ PREFIX=${PREFIX:-/usr/local}
 # operator picks another once codex/copilot adapters exist (#177). Accept both
 # --adapter=X and an ADAPTER=X env override.
 ADAPTER=${ADAPTER:-claude}
+# Bootstrap orchestration flags (#349 Fix 2). Default is to run the
+# substrate-honest hard-cut after the binary install so an `install.sh`
+# operator gets a fully-wired bus in one invocation. `--no-bootstrap`
+# preserves the historical print-next-steps behavior for operators who
+# want manual control. `--prune-orphans` is passed through to the
+# bootstrap subcommand to actively disable orphan mailman units (default
+# is print-only).
+BOOTSTRAP=1
+PRUNE_ORPHANS=0
 for arg in "$@"; do
     case "$arg" in
         --adapter=*) ADAPTER="${arg#--adapter=}" ;;
-        *) echo "install.sh: unknown argument: $arg (expected --adapter=NAME)" >&2; exit 1 ;;
+        --no-bootstrap) BOOTSTRAP=0 ;;
+        --prune-orphans) PRUNE_ORPHANS=1 ;;
+        *) echo "install.sh: unknown argument: $arg (expected --adapter=NAME | --no-bootstrap | --prune-orphans)" >&2; exit 1 ;;
     esac
 done
 if [[ -z "$ADAPTER" || ! -d "$(dirname "$0")/cmd/tmux-msg-${ADAPTER}" ]]; then
@@ -158,12 +169,58 @@ fi
 
 echo
 echo "Install complete."
+
+# 5. Bootstrap (#349 Fix 2). Substrate-honest hard-cut: run discover +
+# enable per-agent mailmen + walk orphan systemd units + refresh chamber
+# MCPs as one orchestrated pass, instead of printing a manual ritual the
+# operator must remember. The bootstrap subcommand handles the
+# stale-DB-detect step too (offers `db migrate` from the pre-#308
+# system-global path if it's the only DB present; aborts if both
+# legacy + default exist). The `--no-bootstrap` escape hatch keeps the
+# historical print-next-steps behavior available.
+if [[ "$BOOTSTRAP" -eq 0 ]]; then
+    echo
+    echo "Next steps (--no-bootstrap chosen; run as $OPERATOR_USER, NOT as root):"
+    echo "  systemctl --user daemon-reload"
+    echo "  # ensure your user systemd manager runs at boot:"
+    echo "  sudo loginctl enable-linger $OPERATOR_USER"
+    echo "  # populate the agents table from the current tmux state:"
+    echo "  $BIN_NAME discover"
+    echo "  # enable a mailman per agent you want to receive messages:"
+    echo "  systemctl --user enable --now ${UNIT_NAME%@.service}@surveyor.service"
+    echo "  # refresh chamber MCPs against the freshly-installed binary:"
+    echo "  $BIN_NAME refresh-all-mcps"
+    exit 0
+fi
+
+# Bootstrap path. enable-linger is a root operation; the rest runs as
+# the operator with their tmux + D-Bus session.
 echo
-echo "Next steps (run as $OPERATOR_USER, NOT as root):"
-echo "  systemctl --user daemon-reload"
-echo "  # ensure your user systemd manager runs at boot:"
-echo "  sudo loginctl enable-linger $OPERATOR_USER"
-echo "  # populate the agents table from the current tmux state:"
-echo "  $BIN_NAME discover"
-echo "  # enable a mailman per agent you want to receive messages:"
-echo "  systemctl --user enable --now ${UNIT_NAME%@.service}@surveyor.service"
+echo "==> enabling user-manager linger for $OPERATOR_USER"
+loginctl enable-linger "$OPERATOR_USER" || {
+    echo "install.sh: loginctl enable-linger failed; bootstrap requires the operator's user manager to be reachable." >&2
+    echo "  Re-run with --no-bootstrap if you want to handle this manually." >&2
+    exit 1
+}
+
+# Drop privileges to the operator + thread through the env the bootstrap
+# subcommand needs: HOME for the systemd-dir derivation and DB resolution,
+# XDG_RUNTIME_DIR + DBUS_SESSION_BUS_ADDRESS for `systemctl --user`, TMUX*
+# (best-effort) for the discover walker.
+OPERATOR_UID=$(id -u "$OPERATOR_USER")
+BOOTSTRAP_FLAGS=()
+if [[ "$PRUNE_ORPHANS" -eq 1 ]]; then
+    BOOTSTRAP_FLAGS+=(--prune-orphans)
+fi
+
+echo "==> running bootstrap (discover + mailman enable + orphan walk + refresh)"
+sudo -u "$OPERATOR_USER" \
+    --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR \
+    env \
+        HOME="$OPERATOR_HOME" \
+        XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+        "$PREFIX/bin/$BIN_NAME" bootstrap "${BOOTSTRAP_FLAGS[@]}"
+
+echo
+echo "Bootstrap complete. The bus is wired."

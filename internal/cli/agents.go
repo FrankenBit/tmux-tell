@@ -65,6 +65,12 @@ type agentView struct {
 	// mailman silent" divergence smell the operator can spot in one glance.
 	// Also the field the #363/#366 ping-evidence block consumes.
 	MailmanLastDelivered string `json:"mailman_last_delivered_at,omitempty"`
+	// DeliveryMode mirrors agents.delivery_mode so callers can filter
+	// hook-context agents out of mailman-related iteration without a
+	// second lookup (#349 Fix 2: install.sh's bootstrap path skips
+	// `systemctl --user enable` for hook-context agents). Emitted on the
+	// JSON wire only; the text formatter is unchanged.
+	DeliveryMode string `json:"delivery_mode,omitempty"`
 }
 
 // mailmanIdleHuman renders the agents-listing MAILMAN column (#348): a compact
@@ -112,6 +118,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 			Paused:         a.Paused,
 			AttentionState: a.AttentionState,
 			Stuck:          a.StuckReason,
+			DeliveryMode:   a.DeliveryMode,
 		}
 		switch {
 		case a.PaneID == "":

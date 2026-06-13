@@ -52,6 +52,7 @@ Subcommands:
   state   Probe a agent's current activity via read-only capture-pane (#71)
   refresh-all-mcps  Bulk-fire mcp-restart-tmux-msg to every registered agent (#62)
   db      DB-housekeeping verbs (#349). Subcommands: migrate
+  bootstrap  Substrate-honest install hard-cut: discover + enable mailmen + orphan walk + refresh (#349)
   mcp     Speak MCP over stdio (%s tools)
   hook-context  Present pending messages as additionalContext for a hook-context agent — invoked by a %s SessionStart/UserPromptSubmit hook (#249)
 
@@ -178,6 +179,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runRefreshAllMcpsCLI(args[1:], stdout, stderr)
 	case "db":
 		return runDBCLI(args[1:], stdout, stderr)
+	case "bootstrap":
+		return runBootstrapCLI(args[1:], stdout, stderr)
 	case "flag-operator":
 		return runFlagOperatorCLI(args[1:], stdout, stderr)
 	case "clear-operator-flag":

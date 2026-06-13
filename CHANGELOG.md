@@ -64,6 +64,28 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **`install.sh` becomes a substrate-honest hard-cut — #349 Fix 2.**
+  Adds a `bootstrap` subcommand to the binary + a new orchestration path
+  in `install.sh` so an operator gets a fully-wired bus in one
+  invocation instead of remembering a manual post-install ritual. The
+  bootstrap path runs as the operator (install.sh drops privs) and
+  fires six steps: (1) `systemctl --user daemon-reload`, (2) stale-DB
+  detect — if the pre-#308 `/var/lib/tmux-msg/messages.db` is the only
+  DB present, delegate to `db migrate` (#349 Fix 3); if both legacy
+  AND user-home default exist, abort, (3) `discover` to populate the
+  agents table from the current tmux state, (4) `systemctl --user
+  enable --now` per non-hook-context agent, (5) orphan walk of
+  `~/.config/systemd/user/` for `tmux-msg-<adapter>-mailman@<NAME>.service`
+  instance units whose `<NAME>` isn't in the freshly-discovered agents
+  table — print by default, disable with `--prune-orphans` (composes
+  with #338 for the prevention side of the alcatraz-infra#39
+  ghost-tenant pattern), (6) `refresh-all-mcps` so chamber MCPs rebind
+  to the freshly-installed binary + canonical DB. `install.sh
+  --no-bootstrap` opts out of steps 1-6 and prints the historical
+  manual next-steps for operators who want full control. `agents
+  --format json` gains a `delivery_mode` field so the bootstrap (and
+  future filtered consumers) can skip hook-context agents in mailman
+  iteration without a second lookup.
 - **`tmux-msg-claude db migrate <new-path>` atomic helper — #349 Fix 3.**
   New CLI sub-primitive that wraps the WAL-safe DB move recipe documented in
   v0.16.1 into one command: (1) validate destination, (2) stop per-agent
