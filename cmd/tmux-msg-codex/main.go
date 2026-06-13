@@ -25,7 +25,15 @@ import (
 )
 
 func main() {
-	p := cli.Profile{
+	os.Exit(cli.Run(codexProfile(), os.Args[0], os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+// codexProfile is the Codex adapter Profile cli.Run consumes. Extracted from
+// main so main_test.go can pin its load-bearing fields (notably the #360
+// PasteCapable=true flip) against accidental regression — the flip is the
+// headline behavior of #360, so it earns a pin.
+func codexProfile() cli.Profile {
+	return cli.Profile{
 		BinaryName:   "tmux-msg-codex",
 		DisplayLabel: "Codex",
 		// No DeprecatedAlias: Codex is a new adapter with no legacy name.
@@ -46,5 +54,4 @@ func main() {
 		// UIs — see tmuxio.CodexPaneProfile for the named gaps.
 		Pane: tmuxio.CodexPaneProfile(),
 	}
-	os.Exit(cli.Run(p, os.Args[0], os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
