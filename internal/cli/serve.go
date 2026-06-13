@@ -953,7 +953,13 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					// operator's content producing a compound message.
 				} else {
 					clearCtx, ccancel := context.WithTimeout(stopCtx, 2*time.Second)
-					clearErr := tmuxio.SendCtrlU(clearCtx, paneForDelivery)
+					// Clear by line-count (#336 InputControl): codex clears one
+					// line per Ctrl+U, so a multi-line stranded draft needs one
+					// press per line. outcome.InputContent is extractInputContent's
+					// visual-row join, so its line count is the right press count;
+					// Claude clears all on the first press and ignores the rest.
+					clearLines := strings.Count(outcome.InputContent, "\n") + 1
+					clearErr := tmuxio.ClearInput(clearCtx, paneForDelivery, clearLines)
 					ccancel()
 					if clearErr != nil {
 						logger.Printf("WARN stranded_draft_clear_failed id=%s err=%v — falling back to (a) compound delivery; draft snapshot already archived",

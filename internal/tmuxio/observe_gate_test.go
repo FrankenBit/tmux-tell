@@ -668,6 +668,60 @@ func TestSendCtrlU_PaneRequired(t *testing.T) {
 	}
 }
 
+// TestClearInput_OnePressPerLine pins the #336 InputControl clear-by-line-
+// count gesture: lineCount Ctrl+U presses (codex clears one line per press),
+// each a send-keys C-u with no Enter follow-up.
+func TestClearInput_OnePressPerLine(t *testing.T) {
+	var calls []string
+	prev := SetTmuxRunner(func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		return nil, nil
+	})
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	if err := ClearInput(context.Background(), "%5", 3); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(calls) != 3 {
+		t.Fatalf("tmux call count = %d, want 3 (one C-u per line)", len(calls))
+	}
+	for i, c := range calls {
+		if !strings.Contains(c, "send-keys") || !strings.Contains(c, "C-u") {
+			t.Errorf("call %d: expected send-keys C-u; got %q", i, c)
+		}
+		if strings.Contains(c, "Enter") {
+			t.Errorf("call %d: send-keys should NOT include Enter; got %q", i, c)
+		}
+	}
+}
+
+// TestClearInput_MinimumOnePress pins the lineCount<1 clamp: a zero or
+// negative count still sends exactly one Ctrl+U (a single-line input is the
+// floor), so a caller that mis-derives the count never sends zero presses.
+func TestClearInput_MinimumOnePress(t *testing.T) {
+	var calls int
+	prev := SetTmuxRunner(func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		calls++
+		return nil, nil
+	})
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	if err := ClearInput(context.Background(), "%5", 0); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("tmux call count = %d, want 1 (lineCount<1 clamps to 1)", calls)
+	}
+}
+
+// TestClearInput_PaneRequired pins input validation symmetric with the rest
+// of the package.
+func TestClearInput_PaneRequired(t *testing.T) {
+	if err := ClearInput(context.Background(), "", 2); err == nil {
+		t.Fatal("expected error for empty pane")
+	}
+}
+
 // TestObserveGate_WorkingDeliverImmediately_FastPath pins the #106
 // opt-in: when WorkingDeliverImmediately is true and the first poll
 // classifies StateWorking (pane content changed across the temporal-
