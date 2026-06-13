@@ -1376,9 +1376,16 @@ func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarker
 	if msg.Kind == store.KindControl {
 		return tmuxio.SendKeys(ctx, pane, msg.Body)
 	}
+	// Framed delivery (#336): large messages paste as Header/Body/Footer
+	// separate buffers so the short frame stays visible even if the body
+	// collapses; small/quick messages return header="" footer="" and deliver
+	// as a single Body paste (unchanged path). render.MessageParts decides.
+	header, body, footer := render.MessageParts(*msg, byteMarkerThreshold, time.Now())
 	return tmuxio.Deliver(ctx, tmuxio.DeliverParams{
 		Pane:        pane,
-		Body:        render.Message(*msg, byteMarkerThreshold, time.Now()),
+		Header:      header,
+		Body:        body,
+		Footer:      footer,
 		VerifyToken: "id " + msg.PublicID,
 		OnVerify:    onVerify,
 	})

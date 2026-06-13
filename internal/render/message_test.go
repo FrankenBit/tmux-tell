@@ -494,3 +494,85 @@ func TestMessage_Quick_GainsClockAndDuration(t *testing.T) {
 		}
 	}
 }
+
+// largeBody returns a body comfortably over DefaultByteMarkerThreshold so
+// MessageParts frames it (the byte-marker is the frame signal, #336).
+func largeBody() string {
+	return strings.Repeat("review text that exceeds the marker threshold. ", 20) // ~940 bytes
+}
+
+func TestMessageParts_SmallMessageNoFrame(t *testing.T) {
+	m := store.Message{
+		PublicID:  "7f3a",
+		FromAgent: "bosun",
+		ToAgent:   "surveyor",
+		Body:      "short ack",
+		CreatedAt: "2026-06-07T10:30:00.000Z",
+	}
+	at, _ := parseISO(m.CreatedAt)
+	header, body, footer := MessageParts(m, DefaultByteMarkerThreshold, at)
+	if header != "" || footer != "" {
+		t.Errorf("small message must not be framed; header=%q footer=%q", header, footer)
+	}
+	// Body is the full single-paste render — byte-identical to Message().
+	if body != Message(m, DefaultByteMarkerThreshold, at) {
+		t.Errorf("unframed body should equal Message() output; got:\n%q", body)
+	}
+}
+
+func TestMessageParts_QuickNoFrame(t *testing.T) {
+	m := store.Message{
+		PublicID:  "7f3a",
+		FromAgent: "bosun",
+		Body:      largeBody(), // large, but Quick suppresses framing
+		Quick:     true,
+		CreatedAt: "2026-06-07T10:30:00.000Z",
+	}
+	at, _ := parseISO(m.CreatedAt)
+	header, body, footer := MessageParts(m, DefaultByteMarkerThreshold, at)
+	if header != "" || footer != "" {
+		t.Errorf("quick message must not be framed; header=%q footer=%q", header, footer)
+	}
+	if body != Message(m, DefaultByteMarkerThreshold, at) {
+		t.Errorf("quick unframed body should equal Message() output")
+	}
+}
+
+func TestMessageParts_LargeMessageFramed(t *testing.T) {
+	body := largeBody()
+	m := store.Message{
+		PublicID:  "7f3a",
+		FromAgent: "bosun",
+		ToAgent:   "surveyor",
+		Body:      body,
+		CreatedAt: "2026-06-07T10:30:00.000Z",
+	}
+	at, _ := parseISO(m.CreatedAt)
+	gotHeader, gotBody, gotFooter := MessageParts(m, DefaultByteMarkerThreshold, at)
+	if gotHeader == "" || gotFooter == "" {
+		t.Fatalf("large message must be framed; header=%q footer=%q", gotHeader, gotFooter)
+	}
+	// Header is the bracket-header line (with length marker) + blank-line spacing.
+	if !strings.HasPrefix(gotHeader, "[Bosun · ") || !strings.Contains(gotHeader, "id 7f3a") {
+		t.Errorf("header part malformed: %q", gotHeader)
+	}
+	if !strings.HasSuffix(gotHeader, "\n\n") {
+		t.Errorf("header part should carry trailing blank-line spacing: %q", gotHeader)
+	}
+	// Body part is the raw body (not the inline render).
+	if gotBody != body {
+		t.Errorf("framed body should be the raw message body")
+	}
+	// Footer carries the id as the collapse-resistant lower bound.
+	if !strings.Contains(gotFooter, "[· id 7f3a]") {
+		t.Errorf("footer should carry the id marker; got %q", gotFooter)
+	}
+	// Concatenating the three parts reproduces the framed layout.
+	full := gotHeader + gotBody + gotFooter
+	if !strings.HasPrefix(full, "[Bosun · ") || !strings.HasSuffix(full, "[· id 7f3a]\n") {
+		t.Errorf("concatenated frame malformed:\n%s", full)
+	}
+	if !strings.Contains(full, "\n\n"+body+"\n\n[· id 7f3a]\n") {
+		t.Errorf("framed body should sit between blank-line-separated header and footer:\n%s", full)
+	}
+}

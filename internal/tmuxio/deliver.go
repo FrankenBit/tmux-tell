@@ -36,8 +36,21 @@ func SetTmuxRunner(r func(ctx context.Context, stdin io.Reader, args ...string) 
 type DeliverParams struct {
 	// Pane is the target tmux pane id (e.g. "%3").
 	Pane string
-	// Body is the rendered text to paste, including header and rule.
+	// Header and Footer are the optional short frame parts of the #336
+	// header-first 3-part framed paste. When non-empty they are pasted as
+	// their OWN buffers — Header before Body, Footer after — so the short
+	// frame stays literal even when a large Body collapses in the recipient
+	// TUI, keeping the message bounds operator-visible. A single submit
+	// (Enter) follows the last part. Both empty ⇒ a plain single-paste of
+	// Body (unchanged pre-#336 behavior). render.MessageParts populates
+	// these; only large messages are framed.
+	Header string
+	// Body is the rendered text to paste. When Header/Footer are empty this
+	// is the full rendered message (header + body); when framed, just the
+	// message body.
 	Body string
+	// Footer — see Header. Pasted after Body.
+	Footer string
 	// VerifyToken is a short string the caller knows must appear in the
 	// pane's visible content after Enter is pressed (typically the
 	// message public_id). Empty disables verification.
@@ -186,21 +199,24 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		return errors.New("tmuxio: body required")
 	}
 
-	bufName := uniqueBufferName()
-
-	// 1. load-buffer from stdin
-	if out, err := tmuxRun(ctx, strings.NewReader(p.Body),
-		"load-buffer", "-b", bufName, "-"); err != nil {
-		return fmt.Errorf("tmuxio: load-buffer: %w: %s", err, strings.TrimSpace(string(out)))
+	// 1+2. Paste the message into the pane. When framed (#336 header-first
+	// 3-part), Header and Footer are pasted as their OWN buffers around Body
+	// — separate short paste-events that stay literal even if a large Body
+	// collapses in the recipient TUI — and they accumulate in the input
+	// before the single submit (step 3). Unframed (Header/Footer empty),
+	// this is a plain single paste of Body, byte-for-byte the pre-#336 path.
+	if p.Header != "" {
+		if err := pasteChunk(ctx, p.Pane, p.Header); err != nil {
+			return err
+		}
 	}
-	// Ensure we delete the named buffer if anything below fails. -d on
-	// paste-buffer covers the happy path; this handles failure cleanup.
-	defer func() { _, _ = tmuxRun(ctx, nil, "delete-buffer", "-b", bufName) }()
-
-	// 2. paste-buffer (with -d so the buffer is deleted on success)
-	if out, err := tmuxRun(ctx, nil,
-		"paste-buffer", "-b", bufName, "-t", p.Pane, "-d"); err != nil {
-		return fmt.Errorf("tmuxio: paste-buffer: %w: %s", err, strings.TrimSpace(string(out)))
+	if err := pasteChunk(ctx, p.Pane, p.Body); err != nil {
+		return err
+	}
+	if p.Footer != "" {
+		if err := pasteChunk(ctx, p.Pane, p.Footer); err != nil {
+			return err
+		}
 	}
 	// 2.5. Settle. Let Claude Code's TUI finish ingesting the pasted
 	// characters before we ask it to submit. Without this, the Enter
@@ -318,6 +334,27 @@ func SendKeys(ctx context.Context, pane, text string) error {
 	if out, err := tmuxRun(ctx, nil,
 		"send-keys", "-t", pane, "Enter"); err != nil {
 		return fmt.Errorf("tmuxio: send-keys Enter: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// pasteChunk loads content into a unique named buffer and pastes it into the
+// pane, deleting the buffer on success via paste-buffer -d (and explicitly
+// on paste failure, where -d never ran). A unique buffer per chunk lets
+// concurrent mailmen never race the default buffer, and lets the #336 framed
+// delivery paste Header / Body / Footer as separate accumulating pastes into
+// the same input before a single submit. load-buffer failure leaves no
+// buffer to clean up.
+func pasteChunk(ctx context.Context, pane, content string) error {
+	bufName := uniqueBufferName()
+	if out, err := tmuxRun(ctx, strings.NewReader(content),
+		"load-buffer", "-b", bufName, "-"); err != nil {
+		return fmt.Errorf("tmuxio: load-buffer: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	if out, err := tmuxRun(ctx, nil,
+		"paste-buffer", "-b", bufName, "-t", pane, "-d"); err != nil {
+		_, _ = tmuxRun(ctx, nil, "delete-buffer", "-b", bufName)
+		return fmt.Errorf("tmuxio: paste-buffer: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }

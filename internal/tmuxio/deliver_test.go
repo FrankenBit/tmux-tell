@@ -79,8 +79,10 @@ func TestDeliver_HappyPath_PastesAndVerifies(t *testing.T) {
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
-	// Expect: load-buffer, paste-buffer, send-keys, capture-pane, [delete-buffer in defer].
-	wantCmds := []string{"load-buffer", "paste-buffer", "send-keys", "capture-pane", "delete-buffer"}
+	// Expect: load-buffer, paste-buffer (-d cleans up the buffer on success,
+	// so no separate delete-buffer call), send-keys, capture-pane. A single
+	// unframed Body pastes as one chunk via pasteChunk (#336).
+	wantCmds := []string{"load-buffer", "paste-buffer", "send-keys", "capture-pane"}
 	if len(*calls) < len(wantCmds) {
 		t.Fatalf("got %d calls, want at least %d: %v", len(*calls), len(wantCmds), *calls)
 	}
@@ -266,6 +268,60 @@ func TestSetSettleDelay_UpdatesPackageDelay(t *testing.T) {
 	SetSettleDelay(1234 * time.Millisecond)
 	if settleDelay != 1234*time.Millisecond {
 		t.Errorf("SetSettleDelay = %v, want 1.234s", settleDelay)
+	}
+}
+
+// TestDeliver_FramedThreePartPaste pins the #336 header-first 3-part frame:
+// Header, Body, Footer each paste as their OWN buffer (load-buffer +
+// paste-buffer) in order, then a SINGLE send-keys Enter submits the
+// accumulated input. Verify then sees the cleared input (input-emptied).
+func TestDeliver_FramedThreePartPaste(t *testing.T) {
+	shortRetries(t)
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		if args[0] == "capture-pane" {
+			// Claude sentinel, input cleared past it → input-emptied verifies.
+			return []byte("transcript\n" + PromptSentinel), nil
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane:        "%3",
+		Header:      "[Bosun · id 7f3a]\n\n",
+		Body:        "big body",
+		Footer:      "\n\n[· id 7f3a]\n",
+		VerifyToken: "id 7f3a",
+	})
+	if err != nil {
+		t.Fatalf("framed deliver err: %v", err)
+	}
+	var loads, pastes, sendKeys int
+	var loadStdins []string
+	sawEnterAfterPastes := false
+	for _, c := range *calls {
+		switch c.args[0] {
+		case "load-buffer":
+			loads++
+			loadStdins = append(loadStdins, c.stdin)
+		case "paste-buffer":
+			pastes++
+		case "send-keys":
+			sendKeys++
+			if pastes == 3 {
+				sawEnterAfterPastes = true
+			}
+		}
+	}
+	if loads != 3 || pastes != 3 {
+		t.Fatalf("want 3 load-buffer + 3 paste-buffer (header/body/footer); got loads=%d pastes=%d", loads, pastes)
+	}
+	wantStdins := []string{"[Bosun · id 7f3a]\n\n", "big body", "\n\n[· id 7f3a]\n"}
+	for i, w := range wantStdins {
+		if i >= len(loadStdins) || loadStdins[i] != w {
+			t.Errorf("load-buffer %d stdin = %q, want %q", i, loadStdins[i], w)
+		}
+	}
+	if sendKeys != 1 || !sawEnterAfterPastes {
+		t.Errorf("want a single send-keys Enter AFTER all 3 pastes; sendKeys=%d afterPastes=%v", sendKeys, sawEnterAfterPastes)
 	}
 }
 
