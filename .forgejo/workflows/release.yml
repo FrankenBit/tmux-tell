@@ -24,10 +24,19 @@ on:
         description: 'Override version bump (auto / patch / minor / major)'
         required: false
         default: 'auto'
+        # Forgejo Actions UI rejects missing-type as "Invalid input type ''"
+        # (operator-witnessed v0.17.0 cut attempt 2026-06-14); explicit
+        # type: string accepts free-text. Polish to type: choice in a
+        # follow-up if Forgejo's UI supports the dropdown shape cleanly.
+        type: string
       dry_run:
         description: 'Preview only — log proposed CHANGELOG + version, do not push or open PR'
         required: false
         default: 'false'
+        # Same Forgejo UI strictness as bump_override above. Polish to
+        # type: boolean in a follow-up if Forgejo's UI supports the
+        # checkbox shape; the downstream script already string-compares 'true'.
+        type: string
 
 jobs:
   prep:
