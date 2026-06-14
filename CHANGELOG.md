@@ -116,6 +116,17 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **CI-driven deploy workflow — #393.** `.forgejo/workflows/deploy.yml` adds
+  a manual `workflow_dispatch` trigger that runs on a dedicated
+  `alcatraz-host` host-mode Forgejo runner (paired with #392's
+  alcatraz-infra-side wrapper + runner setup), invokes the deploy wrapper
+  (`--adapter=claude --prune-orphans`), then hard-fails on `doctor`
+  divergence per #348's exit-code contract. Concurrency-queued at the
+  workflow layer + wrapper-side flock for direct invocations. Codex
+  adapter stays operator-manual for MVP; first-deploy smoke gated on
+  alcatraz-infra Phase 1 runner setup (binary install + visudo +
+  registration + `systemctl enable`).
+
 - **`install.sh` becomes a substrate-honest hard-cut — #349 Fix 2.**
   Adds a `bootstrap` subcommand to the binary + a new orchestration path
   in `install.sh` so an operator gets a fully-wired bus in one
