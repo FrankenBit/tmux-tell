@@ -74,6 +74,18 @@ Ratified by the operator 2026-06-14.
 
 ### Plan content shape
 
+Every plan file opens with a **stable metadata header** for grep + UI
+discovery:
+
+```
+# Plan: <issue title>
+
+> Issue: <issue-N> · Status: Draft | InReview | Approved | Superseded
+> Chamber: <name> · Created: YYYY-MM-DD · Last revised: YYYY-MM-DD
+```
+
+Body sections:
+
 - **Context** — what's the issue, what constraints apply
 - **Approach** — proposed implementation direction in enough detail to
   reveal architectural decisions
@@ -88,39 +100,62 @@ is." Roughly mirrors the ADR template at one issue-tier down.
 
 ### Review cycle
 
-1. Chamber composes plan at the `/tmp` location.
-2. Chamber bus-pings Surveyor + Bosun with the file path (`/tmp/tmux-tell-plans/<N>.md`).
+1. Chamber **atomically creates** the plan file at the `/tmp` location.
+   Use `set -C` (noclobber) or equivalent so creation **fails loud** if
+   `/tmp/tmux-tell-plans/<N>-<title>.md` already exists — prevents
+   silent overwrite of an in-flight plan from a parallel chamber or
+   stale prior session.
+2. Chamber bus-pings Surveyor + Bosun with the file path
+   (`/tmp/tmux-tell-plans/<N>-<title>.md`).
 3. Reviewers read the file filesystem-local. Lookout — when actively
    reviewing per the parallel-review protocol — reads the same file.
 4. Reviewers post review verdict + observations via bus message:
    APPROVED, REQUEST_CHANGES, or COMMENT.
-5. Plan iterations: chamber edits file in place; reviewers re-read +
-   re-stamp.
-6. **APPROVED → chamber starts implementation.** Subsequent commits
-   land on a normal feature branch; PR review runs against the
-   implementation per the existing protocol (substrate-state-level by
-   Surveyor, containment-strength by Lookout, code-level by Bosun).
-7. **At PR merge or implementation completion**, chamber posts plan
-   content as a comment on the work issue with a clear header like:
+5. Plan iterations: chamber edits file in place (flips the metadata
+   header's `Last revised` date + `Status` if the state changed);
+   reviewers re-read + re-stamp.
+6. **APPROVED → chamber archives the APPROVED plan to the work
+   issue immediately, then starts implementation.** Posting the
+   approved plan to the issue at this moment closes the `/tmp` loss
+   window — even if reboot or cleanup wipes the file, the
+   approved plan is durable on the issue. Archive comment header:
 
    ```
-   ## Plan archive — finalized at PR #N merge
+   ## Plan archive — APPROVED at <YYYY-MM-DD HH:MM>, implementation starting
    ```
 
-   The /tmp file may then be deleted (or left to natural `/tmp`
-   cleanup).
+7. Subsequent commits land on a normal feature branch; PR review runs
+   against the implementation per the existing protocol
+   (substrate-state-level by Surveyor, containment-strength by
+   Lookout, code-level by Bosun).
+8. **At PR merge or implementation completion**, chamber posts a
+   second comment on the issue noting completion (or, if the plan
+   was superseded mid-implementation, a revised-plan comment with the
+   supersession context). The /tmp file may then be deleted (or left
+   to natural `/tmp` cleanup).
 
 ### Plan supersession
 
 When implementation surfaces evidence that the plan was wrong, the
-chamber edits the plan file in place with a revision section. The
-issue comment at completion captures the final plan; the bus messages
-between reviewers + chamber preserve the iteration history.
+chamber edits the plan file in place (status flips to `Superseded`
+in the metadata header) AND posts a supersession comment on the
+issue. The supersession comment names what changed, why, and which
+prior comment it supersedes. Format:
+
+```
+## Plan supersession — <reason>
+
+Supersedes the APPROVED plan archived at <prior-comment-link>.
+
+<new plan content or revised sections, with the "what changed" diff>
+```
 
 If a plan is substantively superseded mid-cycle (e.g., the
 #392 trigger-file → dedicated-runner pivot), the chamber announces the
-supersession on the bus, edits the plan to the new direction, and the
-review cycle re-runs against the revised plan.
+supersession on the bus, edits the plan to the new direction, posts
+the supersession comment on the issue, and the review cycle re-runs
+against the revised plan. The substrate-archaeology on the issue
+captures the full evolution.
 
 ## Alternatives considered
 
@@ -158,14 +193,26 @@ filesystem-local-read assumes all chambers share `/tmp`.
 
 **Discipline pins this commits to:**
 
-- "Plan must be on the issue before `/tmp` is cleared" — guards against
-  loss on reboot
-- "Old-plan-file curation" — periodic check `find /tmp/tmux-tell-plans
-  -mtime +7` surfaces stale plans; archive to issue + delete, OR
-  rescue via issue-post if still relevant
-- "Plan supersession leaves no git trail" — accept this trade-off;
-  issue-comment at completion captures the FINAL plan; iteration
-  history lives in bus messages
+- **"Approved plan on issue before implementation starts"** — archive at
+  APPROVED-time, not only at completion. Closes the `/tmp` loss
+  window: even if reboot or cleanup wipes the file, the
+  approved plan is durable on the issue from the moment chamber
+  starts implementing.
+- **"Atomic create, fail-loud on existing"** — use `set -C` or
+  equivalent when creating the plan file. Prevents silent overwrite
+  of an in-flight plan from a parallel chamber or stale prior session.
+- **"Stale-file triage, not delete-by-age"** — periodic walks (e.g.,
+  weekly) over `/tmp/tmux-tell-plans/` surface files that need
+  attention. Each surfaced file is **triaged manually**: archive to
+  issue if it's a finalized plan that didn't get archived, rescue via
+  bus-ping to the chamber if the work is still in-flight, or delete
+  with explicit rationale. Never bulk-delete by age — `mtime` is a
+  signal to investigate, not authority to remove.
+- **"Plan supersession leaves no git trail; substrate-archaeology is
+  on the issue"** — accept this trade-off; the APPROVED comment +
+  any supersession comments on the issue capture the evolution;
+  iteration history within a single plan-state lives in bus messages
+  between reviewers + chamber.
 
 ## What would change the decision
 
