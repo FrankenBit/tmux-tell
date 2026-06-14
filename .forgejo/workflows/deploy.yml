@@ -13,8 +13,13 @@ name: deploy
 # `timeout-minutes` is not accepted as a job-level property. Top-level
 # `concurrency:` block also tripped the schema validator and was dropped;
 # wrapper-side flock on /run/lock/tmux-tell-deploy.lock provides the
-# concurrency gate at the substrate-honest level (a queued second deploy
-# blocks at the flock instead of being rejected by the workflow scheduler).
+# concurrency gate at the substrate-honest level. The wrapper uses
+# `flock --nonblock` (fail-fast on contention per Lookout 2347), so a
+# concurrent second deploy exits non-zero immediately with "another deploy
+# is in progress" instead of queueing. The workflow run surfaces that as
+# a failed job; operator-retry is the recovery path. Conservative-then-
+# soften: if the fail-fast surfaces real coordination pain, switch to a
+# blocking flock or re-add workflow-level concurrency at that point.
 
 on:
   workflow_dispatch:
