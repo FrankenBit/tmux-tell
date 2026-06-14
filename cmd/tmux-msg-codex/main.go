@@ -48,6 +48,14 @@ func codexProfile() cli.Profile {
 		// CROSS-ADAPTER — Claude collapses multi-line too and is paste-capable —
 		// so it is inherited, not a Codex-specific gate.
 		PasteCapable: true,
+		// Codex has NO `/mcp` slash command (only a `--verbose` flag; an MCP
+		// restart needs a full session restart — #411). So a `/mcp …` control
+		// delivery is SKIPPED (logged + marked delivered) rather than pasted as
+		// literal text that pollutes the prompt and breaks the session — the
+		// breakage witnessed on Lookout after a refresh-all-mcps cascade (#419).
+		// Explicit false (not relying on the zero value) so the capability
+		// statement is visible. Broader per-command compat is #420.
+		SupportsMCPSlashCommand: false,
 		// Pane-observation snippets the tmuxio classifier reads (#322). Codex's
 		// `› ` sentinel (U+203A + space) is substrate-verified; marker fields are
 		// empty pending characterization of Codex's compaction / popup / status

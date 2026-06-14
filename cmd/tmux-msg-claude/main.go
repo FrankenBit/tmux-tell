@@ -31,6 +31,9 @@ func main() {
 		// defer paste-and-enter during operator-typing (internal/tmuxio), so
 		// this adapter is paste-capable.
 		PasteCapable: true,
+		// Claude Code has the `/mcp` slash command, so `/mcp …` control
+		// deliveries paste normally (#419).
+		SupportsMCPSlashCommand: true,
 		// Pane-observation snippets the tmuxio classifier reads (#322): the ❯
 		// prompt sentinel + compaction / awaiting-operator / status-line
 		// markers, empirically pinned by the canary tests in

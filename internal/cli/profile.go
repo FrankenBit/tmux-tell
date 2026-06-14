@@ -48,6 +48,19 @@ type Profile struct {
 	// explicitly assert paste-capability is force-deferred rather than risking
 	// a clobber on a pane the observe-gate can't read (#323).
 	PasteCapable bool
+	// SupportsMCPSlashCommand reports whether this adapter's CLI has the `/mcp`
+	// slash command (disable/enable/restart of MCP servers). Claude Code does;
+	// codex does NOT — it has only a `--verbose` flag, and an MCP restart needs
+	// a full session restart (#411). When false, the mailman SKIPS delivering a
+	// `/mcp …` control command (marks it delivered + logs a WARN) rather than
+	// letting it land as literal text in the recipient's prompt and break the
+	// session (#419, witnessed on Lookout after a refresh-all-mcps cascade).
+	//
+	// Zero value (false) is the safe default — an adapter that doesn't assert
+	// `/mcp` support has the command skipped rather than pasted blind. Claude
+	// asserts true explicitly. This is the narrow Option-A seam; the broader
+	// per-(command, adapter) compat map is #420, into which this bool folds.
+	SupportsMCPSlashCommand bool
 	// Pane carries the adapter's pane-observation snippets (prompt sentinel,
 	// compaction / awaiting-operator / status-line markers) that the
 	// internal/tmuxio classifier reads via its process-global activeProfile.
@@ -64,10 +77,11 @@ type Profile struct {
 // exercise handlers directly without going through Run, observe the historical
 // behavior unchanged.
 var active = Profile{
-	BinaryName:        "tmux-msg-claude",
-	DisplayLabel:      "Claude Code",
-	DeprecatedAlias:   "claude-msg",
-	DeprecatedRemoval: "v1.0",
-	PasteCapable:      true,
-	Pane:              tmuxio.ClaudePaneProfile(),
+	BinaryName:              "tmux-msg-claude",
+	DisplayLabel:            "Claude Code",
+	DeprecatedAlias:         "claude-msg",
+	DeprecatedRemoval:       "v1.0",
+	PasteCapable:            true,
+	SupportsMCPSlashCommand: true,
+	Pane:                    tmuxio.ClaudePaneProfile(),
 }

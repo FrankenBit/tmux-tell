@@ -286,6 +286,18 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **Codex `/mcp` control commands are skipped, not pasted as literal text
+  (#419).** A `/mcp …` control delivery (e.g. the `/mcp disable tmux-msg` rows a
+  `refresh-all-mcps` cascade fans out) to a codex agent has no matching slash
+  command in the codex CLI, so it landed as literal text in the `›` prompt and
+  broke the session — witnessed on Lookout during the first Phase-1 deploy. The
+  mailman now skips delivering a `/mcp …` control command to an adapter whose
+  `Profile.SupportsMCPSlashCommand` is false (codex): it marks the message
+  delivered (consumed, not pasted) and logs a structured
+  `WARN control_command_unsupported adapter=… agent=… id=… body=…`. Claude
+  (which has `/mcp`) is unchanged. This is the narrow Option-A fix for the
+  active breakage; the broader per-(command, adapter) compat surface (codex's
+  mixed `/cost` / `/compact` / `/rename` / `/clear` support) is tracked in #420.
 - **`bootstrap` restarts mailmen so deployed binaries actually take
   effect.** First-deploy-lane smoke on alcatraz 2026-06-14 (#393's
   deploy.yml against a live cluster) surfaced the substrate gap:

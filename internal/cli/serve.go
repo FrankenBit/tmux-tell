@@ -1162,6 +1162,23 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				opts.NotifyOnDeliveredInInputBox, opts.Agent, msg,
 				"delivered_in_input_box",
 				"paste+Enter completed but verify token didn't surface in time")
+		case errors.Is(derr, errControlUnsupported):
+			// #419: a `/mcp …` control command for an adapter without the `/mcp`
+			// slash command (codex). Recognised-and-skipped: mark delivered (the
+			// command is consumed, not pasted, so no retry / no failure notice),
+			// with a greppable WARN carrying the recipient + id + body for
+			// operator-traceability when reading mailman logs after a deploy.
+			logger.Printf("WARN control_command_unsupported adapter=%s agent=%s id=%s body=%q — "+
+				"skipped paste (the %s CLI has no such slash command; it would land as literal "+
+				"text in the prompt); marking delivered",
+				active.BinaryName, opts.Agent, msg.PublicID, msg.Body, active.DisplayLabel)
+			if err := s.MarkDelivered(opCtx, msg.PublicID); err != nil {
+				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
+			}
+			m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateDelivered)
+			if sec, ok := deliveryLatencySeconds(msg.CreatedAt); ok {
+				m.ObserveDeliveryLatency(opts.Agent, sec)
+			}
 		default:
 			logger.Printf("deliver_failed id=%s err=%v", msg.PublicID, derr)
 			if err := s.MarkFailed(opCtx, msg.PublicID, derr.Error()); err != nil {
@@ -1365,6 +1382,32 @@ func pingHealthy(ctx context.Context, pane string) (reason string, ok bool) {
 	return "", true
 }
 
+// errControlUnsupported is returned by deliverOne when a KindControl command
+// targets an adapter that lacks the corresponding slash command (#419). The
+// serve loop's outcome switch logs a structured WARN and marks the message
+// delivered — the command is consumed (recognised-but-skipped), not pasted —
+// mirroring the ErrUnverifiedDelivery soft-outcome shape. Currently only the
+// codex `/mcp` case triggers it; the broader per-(command, adapter) compat map
+// is #420, into which this sentinel composes (carry a command-name field, or
+// split per-variant).
+var errControlUnsupported = errors.New("cli: control command unsupported by this adapter")
+
+// isMCPControlCommand reports whether a control message body is an `/mcp …`
+// slash command — `/mcp disable|enable|restart …`, or a bare `/mcp`. The
+// restart macro synthesises `/mcp disable tmux-msg` + `/mcp enable tmux-msg`
+// rows, both of which this catches.
+//
+// Matches the FIRST whitespace-delimited token via strings.Fields rather than a
+// literal-space prefix: the meaning is "any `/mcp` command", not "a `/mcp`
+// followed by exactly the space separator we happen to emit today". Fields
+// splits on any whitespace run (space / tab / newline / multi-space), so a
+// peer-constructed or future control row using a tab/newline separator is still
+// caught (Lookout #421 review). `/mcpfoo` stays false — a different first token.
+func isMCPControlCommand(body string) bool {
+	f := strings.Fields(body)
+	return len(f) > 0 && f[0] == "/mcp"
+}
+
 // deliverOne dispatches a single message to a pane based on its Kind:
 // regular messages go through the paste-buffer renderer with verification;
 // control commands type their body directly via send-keys -l so they hit
@@ -1374,6 +1417,13 @@ func pingHealthy(ctx context.Context, pane string) (reason string, ok bool) {
 // callback (#146); it never fires for control messages (no verification).
 func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarkerThreshold int, onVerify func(time.Duration, bool)) error {
 	if msg.Kind == store.KindControl {
+		// #419: a `/mcp …` control command sent to an adapter that lacks the
+		// `/mcp` slash command (codex) would land as literal text in the prompt
+		// and break the session. Skip the paste; the serve-loop outcome switch
+		// logs a WARN and marks it delivered (the command is consumed).
+		if isMCPControlCommand(msg.Body) && !active.SupportsMCPSlashCommand {
+			return errControlUnsupported
+		}
 		return tmuxio.SendKeys(ctx, pane, msg.Body)
 	}
 	// Framed delivery (#336): large messages paste as Header/Body/Footer
