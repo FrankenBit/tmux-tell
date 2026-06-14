@@ -116,6 +116,15 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **Plan-first workflow for size/M+ work — [ADR-0013](docs/adr/0013-plan-first-workflow.md).**
+  Dispatcher signals plan-first on substantial work; chamber composes the plan at
+  `/tmp/tmux-tell-plans/<issue-N>-<title>.md`, reviewers read filesystem-local +
+  post verdicts via tmux-tell bus, plan content gets archived as a comment on the
+  work issue at implementation completion. Default-on for size/M+; default-off
+  for size/S and below; both sides may override with explicit announcement.
+  Surfaces architectural disagreements before code, at the cheapest revision
+  moment. Alcatraz-local for now (all chambers share `/tmp`); multi-machine
+  development would migrate to a different substrate.
 - **Release-prep workflow — #394.** `.forgejo/workflows/release.yml` adds
   a manual `workflow_dispatch` trigger (`bump_override` + `dry_run` inputs)
   that determines the next version from conventional commits since the
