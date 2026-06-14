@@ -64,23 +64,43 @@ jobs:
         id: notes
         env:
           TAG: ${{ steps.version.outputs.tag }}
+          REPO: ${{ github.repository }}
+          SERVER: ${{ github.server_url }}
         run: |
           set -euo pipefail
-          # Same Python extractor as release-publish.yml's earlier shape;
-          # accepts both `[vX.Y.Z]` and bare `[X.Y.Z]` for forward-tolerance
-          # with the Keep-a-Changelog default form.
+          # Condensed-body extractor: take the narrative prose between
+          # `## [vX.Y.Z]` and the FIRST `### ` subsection (Added / Changed /
+          # Fixed / Docs / etc.), then append a link to the full CHANGELOG
+          # at the tag for detail-readers.
+          #
+          # Why condensed: the per-PR detail under ### sections accumulates
+          # to ~25k chars on a cluster cut (witnessed pre-v0.17.0), which
+          # overwhelms the Forgejo release listing. The CHANGELOG's own
+          # convention is "narrative + Headlines bullets + Plus-the-
+          # companions + Deferred notes" at the top of each version
+          # section — that IS the operator-facing release-notes shape.
+          # The per-PR detail stays canonical in CHANGELOG.md on the
+          # tagged commit; the release body links to it.
+          #
+          # Shape decided 2026-06-15 during v0.17.0 cut + v0.16.x backfill
+          # (#425 sibling work). Tags both with and without `v` prefix
+          # accepted for Keep-a-Changelog tolerance.
           python3 <<'PY' > /tmp/release-notes.md
           import os, re, sys
 
           tag = os.environ['TAG']
           version = tag.lstrip('v')
+          server = os.environ['SERVER'].rstrip('/')
+          repo = os.environ['REPO']
 
           with open('CHANGELOG.md') as f:
               content = f.read()
 
+          # Stop at the first `### ` subsection OR the next `## [` version
+          # header OR end-of-file — whichever comes first.
           patterns = [
-              rf'^## \[{re.escape(tag)}\][^\n]*\n(.*?)(?=^## \[|\Z)',
-              rf'^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)',
+              rf'^## \[{re.escape(tag)}\][^\n]*\n(.*?)(?=^### |^## \[|\Z)',
+              rf'^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^### |^## \[|\Z)',
           ]
           section = None
           for pat in patterns:
@@ -93,7 +113,19 @@ jobs:
               sys.stderr.write(f'::error::CHANGELOG section not found for {tag} (or {version})\n')
               sys.exit(1)
 
+          # Link to CHANGELOG.md at the tag — no fragment anchor (Lookout
+          # 67721 finding). Browser fragment matching is exact, and Forgejo's
+          # heading-slug scheme isn't load-bearing-verified; rather than guess
+          # the slug and silently no-op on mismatch, link honestly to the
+          # whole file. The reader skips to their section via in-page search;
+          # the link target is the canonical-substrate-truth either way.
+          changelog_url = f'{server}/{repo}/src/tag/{tag}/CHANGELOG.md'
+
           print(section)
+          print()
+          print('---')
+          print()
+          print(f'**Full per-PR detail**: [CHANGELOG.md @ {tag}]({changelog_url})')
           PY
 
           # Random delimiter (Lookout 67564 robustness nit). A fixed string

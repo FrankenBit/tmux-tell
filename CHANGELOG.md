@@ -313,6 +313,18 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **`release-draft.yml` extracts the condensed narrative + headlines,
+  not the full per-PR detail.** Witnessed during v0.17.0 cut + v0.16.x
+  backfill 2026-06-15: a cluster release's CHANGELOG section runs ~25k
+  chars (the per-PR detail under `### Added` / `### Changed` / `### Fixed`),
+  which overwhelms the Forgejo release listing. The CHANGELOG's own
+  convention is "narrative + Headlines bullets + Plus-the-companions +
+  Deferred notes" at the top of each version section — that IS the
+  operator-facing release-notes shape. The Python extractor now stops at
+  the first `### ` subsection and appends a "Full per-PR detail" link to
+  CHANGELOG.md at the tag for detail-readers. CHANGELOG.md stays the
+  canonical comprehensive substrate; the release body becomes a curated
+  surface that fits in one screen.
 - **Release workflows use a repo-scoped `RELEASE_TOKEN` PAT for PR /
   release-draft creation.** First v0.17.0 cut attempt 2026-06-15 surfaced
   that Forgejo Actions' auto-issued `GITHUB_TOKEN` honors `contents:
