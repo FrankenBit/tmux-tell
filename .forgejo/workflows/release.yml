@@ -1,5 +1,4 @@
 name: release
-run-name: release-prep (bump=${{ inputs.bump_override }}, dry_run=${{ inputs.dry_run }})
 
 # Release-prep workflow for tmux-msg cuts (#394). Mechanical CHANGELOG
 # transition + version determination + release-prep PR creation. The
@@ -8,6 +7,15 @@ run-name: release-prep (bump=${{ inputs.bump_override }}, dry_run=${{ inputs.dry
 # the operator handles tag/release/deploy manually after merging the
 # release-prep PR. Conservative-then-soften per the first-deploy-lane
 # discipline pin.
+#
+# Schema-compatibility notes (Forgejo Actions YAML schema, validated against
+# git.frankenbit.de's instance at 2026-06-14, alongside deploy.yml fix):
+# `gitea.*` is not accepted by the schema validator — use `github.*`
+# (Forgejo aliases the namespace). `timeout-minutes`, `run-name`, and
+# top-level `concurrency:` were all rejected by the validator and removed.
+# Concurrency is enforced at the substrate-honest level: only one
+# release-prep/vX.Y.Z branch can exist at a time (the API call fails if
+# the branch already exists from a concurrent dispatch).
 
 on:
   workflow_dispatch:
@@ -21,17 +29,10 @@ on:
         required: false
         default: 'false'
 
-concurrency:
-  # Serialize release prep so two concurrent dispatches can't race to
-  # create overlapping release-prep/vX.Y.Z branches.
-  group: tmux-msg-release-prep
-  cancel-in-progress: false
-
 jobs:
   prep:
     name: release-prep PR
     runs-on: go
-    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
@@ -191,7 +192,7 @@ jobs:
           LATEST: ${{ steps.version.outputs.latest }}
           BUMP: ${{ steps.version.outputs.bump }}
           REASON: ${{ steps.version.outputs.reason }}
-          REPO: ${{ gitea.repository }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           BRANCH="release-prep/$NEW"
