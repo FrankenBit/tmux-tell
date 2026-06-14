@@ -286,6 +286,22 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **`bootstrap` restarts mailmen so deployed binaries actually take
+  effect.** First-deploy-lane smoke on alcatraz 2026-06-14 (#393's
+  deploy.yml against a live cluster) surfaced the substrate gap:
+  `install.sh` rebuilds + replaces the `tmux-msg-claude` binary, but
+  bootstrap's step-4 `systemctl --user enable --now` is a **no-op on
+  an already-active mailman** — so the mailman process kept running
+  the now-deleted-inode pre-install binary indefinitely, and `doctor`
+  correctly flagged DIVERGENCE on every deploy. Step 4 now runs
+  `systemctl --user enable` (without --now) followed by
+  `systemctl --user restart` per non-hook-context mailman, which
+  unconditionally cycles the process so it picks up the canonical
+  on-disk binary. The new `restartMailman` helper in
+  internal/cli/systemctl.go mirrors `startMailman` / `stopMailman`
+  shape + carries the substrate gap rationale inline. Doctor-clean
+  post-deploy state is now structural, not coincidental.
+
 - **`deploy.yml` + `release.yml` aligned with Forgejo Actions schema
   validator (#393 / #394 fast-follow).** First-dispatch smoke surfaced
   4-class schema rejections: `gitea.*` → `github.*` (Forgejo aliases the

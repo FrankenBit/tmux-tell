@@ -54,8 +54,13 @@ type bootstrapResult struct {
 //     `db migrate` (Fix 3) to move the data into place. If both exist,
 //     abort: operator-resolution required.
 //  3. Discover — populate `agents` from the current tmux state.
-//  4. Enable mailmen — `systemctl --user enable --now` per registered
-//     agent whose delivery_mode != hook-context.
+//  4. Enable + restart mailmen — `systemctl --user enable` + `restart` per
+//     registered agent whose delivery_mode != hook-context. Restart (rather
+//     than enable --now) is what makes an already-running mailman pick up a
+//     freshly-installed binary; first-deploy-lane on alcatraz 2026-06-14
+//     surfaced the substrate gap: enable --now is a no-op on an active unit,
+//     so the mailman kept running its deleted-inode pre-install binary +
+//     doctor flagged DIVERGENCE. See restartMailman in systemctl.go.
 //  5. Orphan walk — walk USER_SYSTEMD for `<adapter>-mailman@<NAME>.service`
 //     instance units whose <NAME> isn't in the freshly-discovered agents
 //     table. Print by default; disable with --prune-orphans.
@@ -150,14 +155,26 @@ func runBootstrapCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	result.Discovered = len(agents)
 
-	// Step 4: enable mailmen for non-hook-context agents.
+	// Step 4: enable + restart mailmen for non-hook-context agents.
+	//
+	// `systemctl --user enable` (without --now) persists the unit at boot.
+	// `restart` then unconditionally cycles the process: starts the unit if
+	// inactive, kills + respawns if active. The respawn is what makes an
+	// already-running mailman pick up the freshly-installed binary inode
+	// (#349 Fix 2 surfaced the gap on alcatraz 2026-06-14 first-deploy
+	// smoke: enable --now alone left mailmen on the deleted-inode binary).
 	for _, a := range agents {
 		if a.DeliveryMode == store.DeliveryModeHookContext {
 			continue
 		}
-		if err := startMailman(ctx, a.Name); err != nil {
+		if out, err := systemctlRun(ctx, "enable", mailmanUnit(a.Name)); err != nil {
 			return writeJSONError(stdout, stderr,
-				fmt.Sprintf("enable mailman for %s: %v", a.Name, err),
+				fmt.Sprintf("enable mailman for %s: %v: %s", a.Name, err, strings.TrimSpace(string(out))),
+				exitUnavailable)
+		}
+		if err := restartMailman(ctx, a.Name); err != nil {
+			return writeJSONError(stdout, stderr,
+				fmt.Sprintf("restart mailman for %s: %v", a.Name, err),
 				exitUnavailable)
 		}
 		result.MailmanEnabled++

@@ -113,6 +113,29 @@ func startMailmanEnvError(agentName string, missing []string) string {
 		active.BinaryName, agentName, active.BinaryName, agentName)
 }
 
+// restartMailman runs `systemctl --user restart tmux-msg-<adapter>-mailman@NAME.service`.
+//
+// Used by `bootstrap` (step 4) after `enable`: an already-active mailman left
+// from a prior install does NOT pick up a freshly-installed binary (the
+// process keeps a handle on the now-replaced inode); `enable --now` is a
+// no-op on already-active units, so without an explicit restart the mailman
+// goes on running the deleted-inode binary indefinitely. doctor catches this
+// as DIVERGENCE; the first-deploy-lane learning surface fired on alcatraz
+// 2026-06-14 and named the gap. Restart kills the old PID + spawns a new one
+// with the canonical binary, closing the substrate gap at its source.
+//
+// Returns nil on success; the output is included in the error on failure so
+// the operator sees the systemd reason. systemctl restart starts the unit if
+// it isn't running, so the call composes with enable to give a substrate-
+// honest "ensure mailman is alive with the canonical binary" semantic.
+func restartMailman(ctx context.Context, agent string) error {
+	out, err := systemctlRun(ctx, "restart", mailmanUnit(agent))
+	if err != nil {
+		return fmt.Errorf("systemctl restart: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // stopMailman runs `systemctl --user disable --now tmux-msg-claude-mailman@NAME.service`.
 // Treats "not-loaded" output as success so the call is idempotent.
 func stopMailman(ctx context.Context, agent string) error {

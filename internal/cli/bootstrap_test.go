@@ -190,10 +190,14 @@ func TestBootstrap_HappyPath_NoLegacyDB(t *testing.T) {
 	}
 
 	enables := 0
+	restarts := 0
 	disables := 0
 	for _, c := range systemctlCalls {
 		if strings.HasPrefix(c, "enable") {
 			enables++
+		}
+		if strings.HasPrefix(c, "restart") {
+			restarts++
 		}
 		if strings.HasPrefix(c, "disable") {
 			disables++
@@ -201,6 +205,12 @@ func TestBootstrap_HappyPath_NoLegacyDB(t *testing.T) {
 	}
 	if enables != 2 {
 		t.Errorf("enable calls=%d want 2; calls=%v", enables, systemctlCalls)
+	}
+	// Step 4 also restarts each non-hook-context mailman so a deploy that
+	// replaced the binary doesn't leave the old PID on the deleted inode
+	// (alcatraz first-deploy-lane surface 2026-06-14).
+	if restarts != 2 {
+		t.Errorf("restart calls=%d want 2; calls=%v", restarts, systemctlCalls)
 	}
 	if disables != 0 {
 		t.Errorf("disable calls=%d want 0 (no --prune-orphans); calls=%v", disables, systemctlCalls)
