@@ -1,5 +1,4 @@
 name: deploy
-run-name: deploy ${{ inputs.ref || gitea.ref_name }} to alcatraz
 
 # Manual deploy to alcatraz via the dedicated host-mode Forgejo runner +
 # /srv/scripts/deploy-tmux-tell.sh wrapper (alcatraz-infra #392). Operator
@@ -7,6 +6,15 @@ run-name: deploy ${{ inputs.ref || gitea.ref_name }} to alcatraz
 # the deploy to a specific tag / commit. No automatic trigger by design —
 # auto-deploy-on-push is a follow-up once the manual path is established
 # (#394 release.yml chains here via repository_dispatch / workflow_call).
+#
+# Schema-compatibility notes (Forgejo Actions YAML schema, validated against
+# git.frankenbit.de's instance at 2026-06-14): `gitea.*` is not accepted by
+# the schema validator — use `github.*` (Forgejo aliases the namespace).
+# `timeout-minutes` is not accepted as a job-level property. Top-level
+# `concurrency:` block also tripped the schema validator and was dropped;
+# wrapper-side flock on /run/lock/tmux-tell-deploy.lock provides the
+# concurrency gate at the substrate-honest level (a queued second deploy
+# blocks at the flock instead of being rejected by the workflow scheduler).
 
 on:
   workflow_dispatch:
@@ -16,18 +24,10 @@ on:
         required: false
         default: 'main'
 
-concurrency:
-  # Belt-and-braces: workflow-level concurrency queues parallel triggers,
-  # AND the wrapper's flock on /run/lock/tmux-tell-deploy.lock guards
-  # direct invocations (runner restart, alex shell). Both layers matter.
-  group: tmux-msg-deploy-alcatraz
-  cancel-in-progress: false
-
 jobs:
   deploy:
     name: install + bootstrap on alcatraz
     runs-on: alcatraz-host
-    timeout-minutes: 10
     steps:
       - name: checkout requested ref
         uses: actions/checkout@v4
@@ -41,7 +41,7 @@ jobs:
       - name: deploy state
         run: |
           set -euo pipefail
-          echo "ref:        ${{ inputs.ref || gitea.ref_name }}"
+          echo "ref:        ${{ inputs.ref || github.ref_name }}"
           echo "workspace:  $GITHUB_WORKSPACE"
           echo "describe:   $(git describe --tags --always)"
           echo "head:       $(git rev-parse HEAD)"
