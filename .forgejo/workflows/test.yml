@@ -1,5 +1,4 @@
 name: test
-run-name: test on ${{ gitea.ref }} (${{ gitea.event_name }})
 
 on:
   push:
