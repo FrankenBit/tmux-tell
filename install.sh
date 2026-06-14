@@ -14,9 +14,15 @@
 #     claude-msg → tmux-msg-claude and claude-mailman@ → the new template
 #     (#177 / ADR-0008; removed at v1.0 boundary per ADR-0008 §Discretion clause extension)
 #
-# The actual mailman enablement (`systemctl --user enable --now
-# tmux-msg-claude-mailman@AGENT.service`) is the operator's job — the install
-# script makes no assumptions about which agents you want serviced.
+# The actual mailman enablement (`systemctl --user enable
+# tmux-msg-claude-mailman@AGENT.service` followed by `systemctl --user
+# restart tmux-msg-claude-mailman@AGENT.service`) is the operator's job —
+# the install script makes no assumptions about which agents you want
+# serviced. The `bootstrap` subcommand (#349 Fix 2, run automatically
+# unless `--no-bootstrap` is passed) handles this for every registered
+# non-hook-context agent: `enable` then `restart` per-mailman, because
+# `enable --now` is a no-op on an already-active unit and would leave
+# the mailman process running the deleted pre-install inode (#410).
 #
 # Re-running is safe: existing files are overwritten, the DB is never
 # touched.
@@ -215,8 +221,12 @@ if [[ "$BOOTSTRAP" -eq 0 ]]; then
         echo "  sudo loginctl enable-linger $OPERATOR_USER"
         echo "  # populate the agents table from the current tmux state:"
         echo "  $BIN_NAME discover"
-        echo "  # enable a mailman per agent you want to receive messages:"
-        echo "  systemctl --user enable --now ${UNIT_NAME%@.service}@surveyor.service"
+        echo "  # enable + restart a mailman per agent you want to receive"
+        echo "  # messages (restart is needed if the unit was already active —"
+        echo "  # \`enable --now\` is a no-op then, leaving the deleted-inode"
+        echo "  # binary running per #410):"
+        echo "  systemctl --user enable ${UNIT_NAME%@.service}@surveyor.service"
+        echo "  systemctl --user restart ${UNIT_NAME%@.service}@surveyor.service"
         echo "  # refresh chamber MCPs against the freshly-installed binary:"
         echo "  $BIN_NAME refresh-all-mcps"
     fi

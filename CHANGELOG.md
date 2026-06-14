@@ -187,7 +187,11 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   DB present, delegate to `db migrate` (#349 Fix 3); if both legacy
   AND user-home default exist, abort, (3) `discover` to populate the
   agents table from the current tmux state, (4) `systemctl --user
-  enable --now` per non-hook-context agent, (5) orphan walk of
+  enable` followed by `systemctl --user restart` per non-hook-context
+  agent (the restart is needed because `enable --now` is a no-op on an
+  already-active unit, leaving the deleted pre-install inode running
+  post-deploy — see the #410 ### Fixed entry for the substrate-empirical
+  witness), (5) orphan walk of
   `~/.config/systemd/user/` for `tmux-msg-<adapter>-mailman@<NAME>.service`
   instance units whose `<NAME>` isn't in the freshly-discovered agents
   table — print by default, disable with `--prune-orphans` (composes
@@ -310,6 +314,18 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   #336 live-probe gate). Claude clears all on the first press, so its extra
   presses are harmless no-ops — adapter-agnostic over-clear, no per-adapter
   branch.
+
+### Documentation
+
+- **`install.sh` top comment + `--no-bootstrap` next-steps describe the
+  `enable + restart` mailman shape (#413).** Stale `enable --now`
+  references in the install.sh prelude + the `--no-bootstrap` operator
+  hint predated #410's substrate change. `enable --now` is a no-op on an
+  already-active unit and leaves the deleted-inode binary running
+  post-deploy; the substrate-honest shape is `enable` followed by
+  `restart`. Updated both surfaces to surface the substrate truth (#410
+  reference inline) so future contributors don't re-teach the old
+  conflation. Lookout flagged on PR #410 review (comment 67482).
 
 ### Fixed
 
