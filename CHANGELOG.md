@@ -412,6 +412,22 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   delivers in ~1.3s. Claude delivery is byte-unchanged. Supersedes #401's
   original settle-default framing — the failure is settle-independent.
 
+### Documentation
+
+- **BookStack: release & deploy procedure page — #428.** New
+  [Release & Deploy Procedure](https://docs.saratow.net/books/tmux-tell/page/release-deploy-procedure)
+  page in the *tmux-tell* book documents the post-v0.17.0 cut-and-ship path: the
+  four-workflow chain (`release.yml` → release-prep PR → `release-draft.yml` →
+  draft release → operator **Publish** → `release-publish.yml` → `deploy.yml`),
+  the two operator touchpoints, the Phase 1 host-mode runner
+  (`forgejo-runner-alcatraz-host.service`, `runs-on: alcatraz-host`), the
+  `deploy-tmux-tell.sh` wrapper as the NOPASSWD security boundary, `RELEASE_TOKEN`
+  (master-PAT stopgap, #423 tracks the least-privilege follow-up), the `doctor`
+  soft-fail (#411/#414), and the canonical-substrate-surface routing discipline
+  (#418/#426) — release UI = publish, `CHANGELOG.md`@tag = comprehensive, release
+  body = curated narrative. Cross-links to the alcatraz-infra Service Inventory
+  (host-mode runner unit family). Doc-only; no code or wire change.
+
 ## [0.16.1] — 2026-06-12
 
 Fast-follow cluster from the v0.16.0 alcatraz deploy retro (alcatraz-infra#39
