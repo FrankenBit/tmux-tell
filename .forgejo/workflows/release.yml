@@ -44,25 +44,58 @@ jobs:
 
       - name: determine target version
         id: version
+        env:
+          BUMP_OVERRIDE: ${{ inputs.bump_override }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
+
+          # --- Input validation (Lookout c859 hardening note 1) ------------
+          # Reject unknown values up front so an operator typo (`yes` for
+          # dry_run, `mayor` for bump_override) fails loudly at step start
+          # rather than falling through to a silent wrong-mode execution.
+          case "$BUMP_OVERRIDE" in
+              auto|patch|minor|major) ;;
+              *)
+                  echo "::error::invalid bump_override '$BUMP_OVERRIDE' (expected: auto | patch | minor | major)"
+                  exit 1
+                  ;;
+          esac
+          case "$DRY_RUN" in
+              true|false) ;;
+              *)
+                  echo "::error::invalid dry_run '$DRY_RUN' (expected: true | false)"
+                  exit 1
+                  ;;
+          esac
+
+          # --- Latest-tag validation (Lookout c859 hardening note 2) -------
+          # git describe could return a malformed tag (manually pushed bad
+          # tag, or no tags at all). Validate strict vMAJ.MIN.PATCH before
+          # the IFS/arithmetic below so a malformed value doesn't propagate
+          # into the new branch name or the PR body.
           LATEST=$(git describe --tags --abbrev=0)
+          if ! [[ "$LATEST" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::latest tag '$LATEST' does not match vMAJ.MIN.PATCH"
+              exit 1
+          fi
           echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
 
-          OVERRIDE="${{ inputs.bump_override }}"
-          if [[ "$OVERRIDE" != "auto" ]]; then
-              BUMP="$OVERRIDE"
-              REASON="override=$OVERRIDE"
+          if [[ "$BUMP_OVERRIDE" != "auto" ]]; then
+              BUMP="$BUMP_OVERRIDE"
+              REASON="override=$BUMP_OVERRIDE"
           else
               # Conventional-commit bump determination from titles + bodies.
               # Pre-v1.0: BREAKING CHANGE is suppressed to minor (the project
               # is still pre-1.0 settling-shape per CHANGELOG cadence notes).
+              # Here-strings (Lookout c859 note 3) — no echo|grep subshell so
+              # pipefail can't surprise us if grep returns 1 on no-match.
               TITLES=$(git log --format=%s "$LATEST..HEAD")
               BODIES=$(git log --format=%B "$LATEST..HEAD")
-              if echo "$BODIES" | grep -qE "^BREAKING CHANGE:"; then
+              if grep -qE "^BREAKING CHANGE:" <<<"$BODIES"; then
                   BUMP="minor"
                   REASON="BREAKING CHANGE detected (pre-v1.0 suppressed to minor)"
-              elif echo "$TITLES" | grep -qE "^feat(\(.*\))?:"; then
+              elif grep -qE "^feat(\(.*\))?:" <<<"$TITLES"; then
                   BUMP="minor"
                   REASON="feat: commit(s) since $LATEST"
               else
@@ -73,13 +106,16 @@ jobs:
           echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
           echo "reason=$REASON" >> "$GITHUB_OUTPUT"
 
-          # Compute new version. Tag format is vMAJ.MIN.PATCH.
+          # Compute new version. Tag format is vMAJ.MIN.PATCH (validated above).
           IFS=. read -r MAJ MIN PATCH <<<"${LATEST#v}"
           case "$BUMP" in
               major) MAJ=$((MAJ+1)); MIN=0; PATCH=0 ;;
               minor) MIN=$((MIN+1)); PATCH=0 ;;
               patch) PATCH=$((PATCH+1)) ;;
               *)
+                  # Unreachable — input validation above + override allowlist
+                  # gate this — but defensive guard against a future code path
+                  # that bypasses the validation.
                   echo "::error::unknown bump '$BUMP'"
                   exit 1
                   ;;
@@ -92,19 +128,27 @@ jobs:
 
       - name: mechanical CHANGELOG transition
         id: changelog
+        env:
+          NEW: ${{ steps.version.outputs.new }}
         run: |
           set -euo pipefail
-          NEW="${{ steps.version.outputs.new }}"
+          export DATE
           DATE=$(date -u +%Y-%m-%d)
-          python3 - <<PYEOF
-          import re, sys
+          # Quoted heredoc (Lookout c859 hardening note 4) — Python reads
+          # NEW + DATE via os.environ. No shell expansion inside the heredoc
+          # body so literal `$` chars in any future regex/string can't be
+          # eaten by bash.
+          python3 - <<'PYEOF'
+          import os, re, sys
           from pathlib import Path
+          NEW_NO_V = os.environ["NEW"].lstrip("v")
+          DATE = os.environ["DATE"]
           p = Path("CHANGELOG.md")
           text = p.read_text()
           # Replace first `## [Unreleased]` with two headers: empty new
           # [Unreleased] + the bumped section header. Preserves the existing
           # [Unreleased] body as the body of the bumped section.
-          replacement = "## [Unreleased]\n\n## [${NEW#v}] — ${DATE}"
+          replacement = f"## [Unreleased]\n\n## [{NEW_NO_V}] — {DATE}"
           new_text, n = re.subn(
               r"^## \[Unreleased\]",
               replacement,
@@ -163,7 +207,11 @@ jobs:
           git push --set-upstream origin "$BRANCH"
 
           # Build PR body via Python so we can JSON-escape it cleanly.
-          python3 - <<PYEOF >/tmp/pr-payload.json
+          # Quoted heredoc (Lookout c859 hardening note 4) — Python reads
+          # everything it needs via os.environ; no shell expansion wanted
+          # inside the heredoc body (it would only risk eating a literal `$`
+          # in a release-note bullet).
+          python3 - <<'PYEOF' >/tmp/pr-payload.json
           import json, os
           notes = open("/tmp/release-notes.md").read()
           body = f"""## Summary
