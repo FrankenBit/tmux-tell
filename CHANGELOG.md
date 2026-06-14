@@ -116,6 +116,17 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **Release-prep workflow — #394.** `.forgejo/workflows/release.yml` adds
+  a manual `workflow_dispatch` trigger (`bump_override` + `dry_run` inputs)
+  that determines the next version from conventional commits since the
+  last tag (`feat:` → minor, `BREAKING CHANGE:` → minor pre-v1.0, else →
+  patch; override wins), mechanically transitions `## [Unreleased]` →
+  `## [vX.Y.Z] — DATE`, and opens a release-prep PR via the Forgejo API.
+  Post-merge tag + Forgejo-release + deploy.yml dispatch automation
+  deferred to release-publish.yml (v0.17.1 follow-up); for this cut the
+  operator handles tag/release/deploy manually after merging the
+  release-prep PR.
+
 - **CI-driven deploy workflow — #393.** `.forgejo/workflows/deploy.yml` adds
   a manual `workflow_dispatch` trigger that runs on a dedicated
   `alcatraz-host` host-mode Forgejo runner (paired with #392's
