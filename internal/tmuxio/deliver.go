@@ -299,6 +299,21 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 			}
 			return nil
 		}
+		// Resubmit (#401): when a collapsed paste is still sitting in the input,
+		// codex's first Enter was absorbed while it was still ingesting the
+		// bracketed paste — re-send Enter. When codex has gone idle it submits;
+		// Enter-on-empty is a safe no-op (operator + Lookout confirmed), so a
+		// resubmit that races an already-submitted paste is harmless. The next
+		// loop iteration waits a retryDelays backoff before re-checking, giving
+		// codex time to process this Enter. No-op for adapters without a
+		// collapse marker (Claude) — pasteStillInInput is false, so they submit
+		// on the first Enter exactly as before.
+		if pasteStillInInput(lastCapture) {
+			if out, err := tmuxRun(ctx, nil, "send-keys", "-t", p.Pane, "Enter"); err != nil {
+				return fmt.Errorf("tmuxio: send-keys Enter (resubmit): %w: %s",
+					err, strings.TrimSpace(string(out)))
+			}
+		}
 	}
 	if p.OnVerify != nil {
 		p.OnVerify(time.Since(verifyStart), false)
@@ -319,6 +334,16 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 // when the input row can't be anchored: the legacy token-match (the verify
 // token became visible anywhere in the pane).
 func deliverySubmitted(capture string, cursorX, cursorY int, cursorOK bool, verifyToken string) bool {
+	// Collapse-marker override (#401): if the adapter collapses pastes to a
+	// marker (codex `[Pasted Content`) and that marker is still in the INPUT
+	// area, the paste is definitively NOT submitted. This OVERRIDES the
+	// cursor-anchor, which false-positives on a stuck collapsed paste: codex
+	// parks the cursor on an empty sub-line of the multi-line input while the
+	// `[Pasted Content]` sits a line above, so inputRowCleared reads "empty".
+	// The marker is the authoritative not-submitted signal for that case.
+	if pasteStillInInput(capture) {
+		return false
+	}
 	if cleared, anchored := inputRowCleared(capture, cursorX, cursorY, cursorOK); anchored {
 		return cleared
 	}

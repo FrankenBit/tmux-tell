@@ -380,6 +380,39 @@ func extractInputContent(ctx context.Context, pane string) (string, error) {
 	return strings.Join(inputLines, "\n"), nil
 }
 
+// pasteStillInInput reports whether the active adapter's paste-collapse marker
+// (codex `[Pasted Content`) is present in the LIVE input — i.e. a collapsed
+// paste is sitting unsubmitted. Returns false when the adapter has no collapse
+// marker (Claude) or no prompt sentinel, so it is codex-specific by config (#401).
+//
+// The live input is scoped to the BOTTOM-MOST prompt sentinel (the last line
+// starting with the sentinel) through the end of the capture. This is what
+// distinguishes a STUCK paste from a SUBMITTED one in codex's post-submit
+// dual-prompt layout: when codex submits, the paste lingers as a transcript
+// entry (`› [Pasted Content N]`) ABOVE a NEW empty input prompt — scoping to the
+// FIRST sentinel would grab the lingering transcript copy and false-positive
+// "stuck", but the LAST sentinel is the new empty input, so the marker is
+// correctly absent. A genuinely stuck paste, by contrast, IS the bottom-most
+// sentinel block, so the marker is present.
+func pasteStillInInput(capture string) bool {
+	marker := activeProfile.PasteCollapseMarker
+	sentinel := activeProfile.PromptSentinel
+	if marker == "" || sentinel == "" {
+		return false
+	}
+	lines := strings.Split(capture, "\n")
+	lastSentinel := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, sentinel) {
+			lastSentinel = i
+		}
+	}
+	if lastSentinel < 0 {
+		return false
+	}
+	return strings.Contains(strings.Join(lines[lastSentinel:], "\n"), marker)
+}
+
 // StatusLineMarker is the glyph on the status row that bounds the BOTTOM of the
 // input area — ⏵⏵ (U+23F5 ×2), present on the bottom row of every Claude Code
 // pane in production ("⏵⏵ bypass permissions on (shift+tab to cycle)"). It is

@@ -42,11 +42,23 @@ package tmuxio
 // (slow codex verify-token) is gated on an ANSI-rendering investigation whose
 // outcome decides whether the verify path stays config-only or needs an adapter
 // seam; the field is held until that investigation lands rather than guessed.
+//   - PasteCollapseMarker: substring an adapter's TUI shows in the INPUT row for
+//     a paste it collapsed (codex's `[Pasted Content N chars]`). Two uses, both
+//     in the paste-delivery verify path (#401): (1) a definitive not-submitted
+//     signal — while the marker is in the input area the paste has NOT submitted,
+//     which OVERRIDES the cursor-anchor (that false-positives when a multi-line
+//     collapsed paste parks the cursor on an empty sub-line); (2) the resubmit
+//     trigger — codex's first Enter is absorbed while it is still ingesting the
+//     bracketed paste, so the mailman re-sends Enter while the marker persists
+//     (Enter-on-empty is a safe no-op, operator + Lookout confirmed). Empty
+//     disables both — correct for Claude, which submits a collapsed paste on the
+//     first Enter and needs no resubmit.
 type PaneProfile struct {
 	PromptSentinel         string
 	CompactionMarker       string
 	AwaitingOperatorMarker string
 	StatusLineMarker       string
+	PasteCollapseMarker    string
 }
 
 // ClaudePaneProfile returns the Claude Code pane-observation profile — the
@@ -78,6 +90,14 @@ func ClaudePaneProfile() PaneProfile {
 // space, the codex canary (TestCodexPromptSentinel_Bytes) surfaces the drift.
 const CodexPromptSentinel = "› "
 
+// CodexPasteCollapseMarker is the substring codex shows in the input row for a
+// paste it collapsed — `[Pasted Content 1024 chars]` and similar. Matched as a
+// prefix-substring (the char-count varies) and scoped to the input area, so a
+// submitted paste's transcript entry doesn't trip it. Substrate-verified on
+// Lookout `%8` (#401): a >1KB paste renders as `› [Pasted Content N chars]`.
+// Load-bearing for the codex paste-submit fix — see PaneProfile.PasteCollapseMarker.
+const CodexPasteCollapseMarker = "[Pasted Content"
+
 // CodexPaneProfile returns the OpenAI Codex CLI pane-observation profile.
 // PromptSentinel is the substrate-verified `› ` (CodexPromptSentinel); under it
 // the existing cursor-aware AgentState classifies Codex panes correctly (idle
@@ -99,7 +119,8 @@ const CodexPromptSentinel = "› "
 //     it is not a silent gap.
 func CodexPaneProfile() PaneProfile {
 	return PaneProfile{
-		PromptSentinel: CodexPromptSentinel,
+		PromptSentinel:      CodexPromptSentinel,
+		PasteCollapseMarker: CodexPasteCollapseMarker,
 	}
 }
 

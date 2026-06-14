@@ -228,6 +228,12 @@ func TestDeliverySubmitted(t *testing.T) {
 		// Codex: collapsed paste buffered in the input (cursor past
 		// sentinel) → not-submitted.
 		{"codex collapsed paste in input rejects", codex, "some codex output\n" + CodexPromptSentinel + "[Pasted Content 1800 chars]", 30, 1, true, "id 7f3a", false},
+		// Codex #401 marker override: a stuck collapsed paste where the cursor
+		// happens to sit AT the sentinel column (col 2) on the [Pasted Content]
+		// row — without the marker override inputRowCleared would false-positive
+		// "empty/submitted"; the collapse marker on the live (bottom-most) input
+		// is the authoritative not-submitted signal and overrides it.
+		{"codex stuck collapse marker overrides cursor false-positive", codex, "transcript\n" + CodexPromptSentinel + "[Pasted Content 2048 chars]", 2, 1, true, "absent-token", false},
 		// Cursor on a non-sentinel row → can't anchor → token-match hit.
 		{"unanchored cursor falls back to token-match hit", claude, "plain pane with id 7f3a somewhere", 0, 0, true, "id 7f3a", true},
 		{"unanchored cursor falls back to token-match miss", claude, "plain pane, nothing here", 0, 0, true, "id 7f3a", false},
@@ -346,6 +352,144 @@ func TestDeliver_InputEmptied_RejectsPasteStillInInput(t *testing.T) {
 	})
 	if !errors.Is(err, ErrUnverifiedDelivery) {
 		t.Fatalf("paste still in input row must read as unverified; got %v", err)
+	}
+}
+
+// TestPasteStillInInput pins the #401 collapse-marker detection that drives
+// both the verify override and the resubmit. The marker is authoritative ONLY
+// in the LIVE (bottom-most sentinel) input, so codex's post-submit dual-prompt
+// (lingering `[Pasted Content]` in the transcript above a new empty input) is
+// NOT mistaken for stuck. No marker configured (Claude) ⇒ always false.
+func TestPasteStillInInput(t *testing.T) {
+	cases := []struct {
+		name    string
+		profile PaneProfile
+		capture string
+		want    bool
+	}{
+		{
+			name:    "codex stuck collapse in live input",
+			profile: CodexPaneProfile(),
+			capture: "some transcript turn\n" + CodexPromptSentinel + "[Pasted Content 2048 chars] tail",
+			want:    true,
+		},
+		{
+			name:    "codex multi-line stuck (marker above cursor sub-line)",
+			profile: CodexPaneProfile(),
+			capture: CodexPromptSentinel + "[Pasted Content 2048 chars]\n  [· id abcd]\n",
+			want:    true,
+		},
+		{
+			// Dual-prompt SUBMITTED: lingering marker in the transcript, new
+			// empty input is the bottom-most sentinel → NOT stuck.
+			name:    "codex dual-prompt submitted (lingering transcript marker)",
+			profile: CodexPaneProfile(),
+			capture: CodexPromptSentinel + "[Pasted Content 2048 chars]\n\n" + CodexPromptSentinel,
+			want:    false,
+		},
+		{
+			name:    "codex clean empty input",
+			profile: CodexPaneProfile(),
+			capture: "a reply\n" + CodexPromptSentinel,
+			want:    false,
+		},
+		{
+			// Claude has no collapse marker → never reports stuck, even if the
+			// literal substring appears in the pane.
+			name:    "claude (no marker) ignores literal pasted-content text",
+			profile: ClaudePaneProfile(),
+			capture: "transcript\n" + PromptSentinel + "[Pasted Content 2048 chars]",
+			want:    false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prev := ActivePaneProfile()
+			SetActivePaneProfile(tc.profile)
+			defer SetActivePaneProfile(prev)
+			if got := pasteStillInInput(tc.capture); got != tc.want {
+				t.Errorf("pasteStillInInput(%q) = %v, want %v", tc.capture, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestDeliver_Codex_ResubmitsStuckCollapsedPaste pins the #401 fix end-to-end on
+// the Deliver loop: codex's first Enter is absorbed while it ingests the
+// bracketed paste, so the collapsed `[Pasted Content]` sits stuck in the input.
+// While the marker persists Deliver re-sends Enter; once codex goes idle (the
+// capture clears) it verifies. Asserts MORE than one Enter was pressed (the
+// initial submit + at least one resubmit) and that the delivery verifies.
+func TestDeliver_Codex_ResubmitsStuckCollapsedPaste(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var enterPresses, captureN int
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captureN++
+			if captureN <= 2 {
+				// Stuck: collapsed paste is the live (bottom) input.
+				return []byte("transcript\n" + CodexPromptSentinel + "[Pasted Content 2048 chars] tail"), nil
+			}
+			// Idle: input cleared (submitted).
+			return []byte("transcript\n" + CodexPromptSentinel), nil
+		case "display-message":
+			return []byte("2/1"), nil // cursor at sentinel (moot while marker present)
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%8", Body: "x", VerifyToken: "tok",
+	})
+	if err != nil {
+		t.Fatalf("expected verify after resubmit, got %v", err)
+	}
+	if enterPresses < 2 {
+		t.Errorf("expected >=2 Enter presses (initial submit + resubmit), got %d", enterPresses)
+	}
+}
+
+// TestDeliver_Claude_NoResubmit pins that the #401 resubmit is codex-specific:
+// Claude has no collapse marker, so a still-unverified capture does NOT trigger
+// extra Enter presses — exactly one Enter (the initial submit) is sent.
+func TestDeliver_Claude_NoResubmit(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var enterPresses int
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			// Token never surfaces, input never clears → stays unverified, but
+			// Claude must NOT resubmit (no collapse marker).
+			return []byte("transcript\n" + PromptSentinel + "half-typed operator draft"), nil
+		case "display-message":
+			return []byte("30/1"), nil // cursor past sentinel → not cleared
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "x", VerifyToken: "never-appears",
+	})
+	if !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Fatalf("want ErrUnverifiedDelivery, got %v", err)
+	}
+	if enterPresses != 1 {
+		t.Errorf("Claude must send exactly 1 Enter (no resubmit); got %d", enterPresses)
 	}
 }
 
