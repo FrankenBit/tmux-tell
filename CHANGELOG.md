@@ -286,6 +286,20 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **`deploy.yml` + `release.yml` aligned with Forgejo Actions schema
+  validator (#393 / #394 fast-follow).** First-dispatch smoke surfaced
+  4-class schema rejections: `gitea.*` → `github.*` (Forgejo aliases the
+  namespace), `timeout-minutes` removed (the runner's instance-level 3h
+  job-timeout is now the upper bound — substantive **weakening** from
+  the workflow's previous 10-minute cap; deploys exceeding ~10min should
+  be flagged for follow-up since they exceed the original design intent),
+  `run-name` removed (cosmetic; tripped validator), top-level
+  `concurrency:` removed (wrapper-side `flock --nonblock` provides
+  fail-fast concurrency gate at the substrate-honest level; release-prep
+  branch-already-exists API failure provides natural gate for release.yml).
+  Schema-compatibility notes added to both file headers naming the
+  constraint for future contributors.
+
 - **Codex paste-and-enter no longer silently drops large messages (#401).**
   A codex paste that collapses to `[Pasted Content N chars]` needs a SECOND
   Enter to submit: the first Enter expands the collapsed block, the second
