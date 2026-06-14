@@ -250,6 +250,25 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   presses are harmless no-ops — adapter-agnostic over-clear, no per-adapter
   branch.
 
+### Fixed
+
+- **Codex paste-and-enter no longer silently drops large messages (#401).**
+  A codex paste that collapses to `[Pasted Content N chars]` needs a SECOND
+  Enter to submit: the first Enter expands the collapsed block, the second
+  submits it (a `tmux paste-buffer` quirk — operator-witnessed + Engineer-tested
+  on Lookout). The mailman sent only one Enter, so >~1KB codex messages sat
+  unsubmitted in the input — and the #336 cursor-anchor verify *false-positived*
+  on them (codex parks the cursor on an empty sub-line while the `[Pasted
+  Content]` lingers above), so the bus logged the drops as `delivered`. Both are
+  fixed via a codex-supplied `PaneProfile.PasteCollapseMarker` (`[Pasted
+  Content`; Claude's is empty → unchanged): while the marker is in the LIVE input
+  the paste is definitively not-submitted (overrides the cursor-anchor), and the
+  mailman re-sends Enter while it persists (Enter-on-empty is a safe no-op, so a
+  resubmit racing an already-submitted paste is harmless) — bounded by the
+  existing verify-retry budget. Real-path validated: a 2.5KB collapsed paste
+  delivers in ~1.3s. Claude delivery is byte-unchanged. Supersedes #401's
+  original settle-default framing — the failure is settle-independent.
+
 ## [0.16.1] — 2026-06-12
 
 Fast-follow cluster from the v0.16.0 alcatraz deploy retro (alcatraz-infra#39

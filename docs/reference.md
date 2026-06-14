@@ -380,6 +380,32 @@ cursor is on the new bottom input, so the lingering submitted row above is irrel
 confirmation. An operator watching the pane should read the dual-`›` layout as "submitted —
 new input ready", not "stuck". (Pinned by `TestDeliverySubmitted_CodexDualPrompt`.)
 
+#### Codex two-Enter submit + the resubmit (#401)
+
+A codex paste large enough to collapse to `[Pasted Content N chars]` needs **two** Enters
+to submit when delivered via `tmux paste-buffer`: the **first Enter expands** the collapsed
+block (it does NOT submit), the **second Enter submits** the now-expanded content
+(operator-witnessed + Engineer-tested). A single Enter — what the mailman originally sent —
+leaves the paste sitting unsubmitted, and the cursor-anchor verify *false-positives* on it
+(codex parks the cursor on an empty sub-line while the `[Pasted Content]` lingers a line
+above, so the input row reads "empty").
+
+The mailman handles both, driven by the codex `PaneProfile.PasteCollapseMarker`
+(`[Pasted Content`):
+
+- **Verify override** — while the marker is present in the LIVE input (scoped to the
+  bottom-most `› ` row, so a *submitted* paste's lingering transcript copy doesn't count),
+  the paste is definitively **not** submitted; this overrides the cursor-anchor false-positive.
+- **Resubmit** — while the marker persists the mailman re-sends Enter each verify retry; the
+  marker survives both the collapsed and expanded states, so the loop keeps Entering until the
+  paste truly submits (typically two), then the marker clears and verification confirms.
+  Enter-on-empty is a safe no-op, so a resubmit racing an already-submitted paste is harmless.
+  Bounded by the verify-retry budget. Claude has no collapse marker → it never resubmits
+  (it submits on the first Enter), so its behavior is unchanged.
+
+Pinned by `TestPasteStillInInput`, `TestDeliver_Codex_ResubmitsStuckCollapsedPaste`, and
+`TestDeliver_Claude_NoResubmit`.
+
 **Codex MCP env contract (#355, #356).** The Codex MCP server process is
 spawned by the Codex CLI and does **not** automatically inherit the calling
 shell's full environment. Two env-completeness requirements apply:
