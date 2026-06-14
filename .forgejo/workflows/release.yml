@@ -196,7 +196,17 @@ jobs:
       - name: commit on release-prep branch + push + open PR
         if: inputs.dry_run != 'true'
         env:
-          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # RELEASE_TOKEN (repo-scoped admin PAT, 2026-06-15) rather than
+          # the auto-issued GITHUB_TOKEN. Forgejo Actions' auto-token
+          # honors `contents: write` (the branch push works) but does NOT
+          # propagate `pull-requests: write` to the runtime token — the
+          # PR-create POST hits 403. Witnessed during the first v0.17.0
+          # cut attempt (run 11771, 2026-06-15 00:21). RELEASE_TOKEN is
+          # the master/Bosun PAT stored as a repo secret; it composes
+          # with the canonical-substrate-surface routing per #418 (the
+          # Forgejo UI is the publish surface, the elevated PAT is the
+          # API-side write capability).
+          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN }}
           NEW: ${{ steps.version.outputs.new }}
           LATEST: ${{ steps.version.outputs.latest }}
           BUMP: ${{ steps.version.outputs.bump }}
@@ -204,6 +214,12 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # Fail loud at step start if the elevated PAT is missing rather
+          # than letting the PR-create POST below surface as an ambiguous
+          # 401/403 (Lookout 67638 containment fold). The bash
+          # `${var:?msg}` expansion exits non-zero with `msg` on stderr
+          # when GITEA_TOKEN is unset or empty.
+          : "${GITEA_TOKEN:?RELEASE_TOKEN repo secret is required for release API writes (set in repo Settings → Actions → Secrets)}"
           BRANCH="release-prep/$NEW"
 
           # release-bot identity for the prep commit. Hand-curated content

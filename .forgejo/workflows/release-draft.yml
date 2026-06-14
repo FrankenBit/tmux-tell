@@ -116,11 +116,22 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           BODY: ${{ steps.notes.outputs.body }}
           TARGET: ${{ github.event.pull_request.merge_commit_sha }}
-          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # RELEASE_TOKEN (repo-scoped admin PAT, 2026-06-15) rather than
+          # the auto-issued GITHUB_TOKEN. Same Forgejo gap as release.yml:
+          # declared `contents: write` doesn't propagate to the release-
+          # create POST scope on the runtime token, so the call would 403.
+          # RELEASE_TOKEN is the master/Bosun PAT stored as a repo secret.
+          TOKEN: ${{ secrets.RELEASE_TOKEN }}
           REPO: ${{ github.repository }}
           API: ${{ github.api_url }}
         run: |
           set -euo pipefail
+          # Fail loud at step start if the elevated PAT is missing rather
+          # than letting the draft-release POST surface as an ambiguous
+          # 401/403 (Lookout 67638 containment fold). The bash
+          # `${var:?msg}` expansion exits non-zero with `msg` on stderr
+          # when TOKEN is unset or empty.
+          : "${TOKEN:?RELEASE_TOKEN repo secret is required for release API writes (set in repo Settings → Actions → Secrets)}"
           payload=$(python3 -c '
           import json, os
           print(json.dumps({

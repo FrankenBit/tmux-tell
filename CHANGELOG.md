@@ -313,6 +313,18 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **Release workflows use a repo-scoped `RELEASE_TOKEN` PAT for PR /
+  release-draft creation.** First v0.17.0 cut attempt 2026-06-15 surfaced
+  that Forgejo Actions' auto-issued `GITHUB_TOKEN` honors `contents:
+  write` (the release-prep branch push works) but does NOT propagate
+  `pull-requests: write` or release-create scope to the runtime token —
+  `release.yml`'s PR-create POST and `release-draft.yml`'s draft-release
+  POST both 403'd. Switched both to `${{ secrets.RELEASE_TOKEN }}`
+  (the master/Bosun PAT stored as a repo secret). Substrate-honest
+  reason: declared workflow permissions don't currently map to the
+  runtime token's actual API scope on this Forgejo version; an
+  explicit-secret path is the workable seam until that upstream gap is
+  closed.
 - **Codex `/mcp` control commands are skipped, not pasted as literal text
   (#419).** A `/mcp …` control delivery (e.g. the `/mcp disable tmux-msg` rows a
   `refresh-all-mcps` cascade fans out) to a codex agent has no matching slash
