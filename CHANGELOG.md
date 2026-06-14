@@ -116,6 +116,33 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **Release automation: full UI-driven cut loop — `release-draft.yml` +
+  `release-publish.yml`.** Closes the v0.17.0 cut automation loop end-to-end
+  using Forgejo's release UI as the canonical publish substrate (operator
+  reviews + clicks **Publish**; no CLI tag-push). Four-workflow chain:
+  - **release.yml** (existing, #394): `workflow_dispatch` → creates
+    `release-prep/vX.Y.Z` PR with mechanical CHANGELOG transition + version
+    determination.
+  - **release-draft.yml** (new): triggers on the release-prep PR merging to
+    main; extracts the version from the head branch name + the matching
+    CHANGELOG section, creates a **draft** Forgejo release pre-populated with
+    that content + the merge-commit as target.
+  - **release-publish.yml** (new): triggers on `release: types: [published]`
+    when operator clicks Publish; chains `deploy.yml` via `workflow_call`
+    passing the release tag.
+  - **deploy.yml** (existing, #393): gains a `workflow_call` trigger
+    alongside `workflow_dispatch` so release-publish can chain it. Same
+    `ref` input on both paths.
+  Operator's only manual step in the cut becomes: review the release-prep
+  PR + merge it; review the auto-created draft release + click **Publish**.
+  Forgejo creates the tag from the draft; deploy fires automatically.
+  Originally deferred from #394 to v0.17.1 per #406's MVP shape; folded in
+  as a fast-follow 2026-06-14 evening per operator call ("no time pressure
+  for the cut; better test surface from running the full automation chain").
+  Substantively the evaporation-test pattern firing at the tool-axis: the
+  manual `git tag && git push` step evaporates when we route through
+  Forgejo's UI publish (the canonical-substrate-surface) instead of
+  parallel-tracking with CLI.
 - **Plan-first workflow for size/M+ work — [ADR-0013](docs/adr/0013-plan-first-workflow.md).**
   Dispatcher signals plan-first on substantial work; chamber composes the plan
   with a stable metadata header at `/tmp/tmux-tell-plans/<issue-N>-<title>.md`

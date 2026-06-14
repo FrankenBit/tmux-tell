@@ -1,0 +1,75 @@
+name: release-publish
+
+# Triggered when a Forgejo release transitions to published — operator
+# clicks Publish on the draft created by release-draft.yml (or on a
+# manually-created release). Chains deploy.yml via workflow_call,
+# passing the release's tag as the deploy ref. Closes the v0.17.0 cut
+# automation loop.
+#
+# Why `release: published` rather than `push: tags`: Forgejo's release
+# UI is the canonical source-of-truth for what shipped; the tag is the
+# Forgejo-side side-effect of clicking Publish. Triggering on the
+# release event captures operator INTENT directly (publish this thing)
+# rather than the tag-creation side-effect. A CLI-tag-push without a
+# release artifact does NOT trigger this workflow — substrate-honest
+# forced-via-UI path.
+#
+# The split (full cut automation loop):
+# - release.yml: workflow_dispatch → release-prep PR creation
+# - release-draft.yml: PR-merge → DRAFT release creation (pre-populated)
+# - release-publish.yml (this file): release-published → deploy chain
+# - deploy.yml: workflow_call invoked above OR workflow_dispatch direct
+#
+# Schema-compatibility per the cluster precedent: `github.*` not
+# `gitea.*` (Forgejo namespace alias); no top-level `run-name` /
+# `timeout-minutes` / `concurrency`. Concurrency-by-construction: each
+# release is unique by tag.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  # Tag-name validation gate (Lookout 67564 containment finding). The
+  # release-draft.yml path validates `^v[0-9]+\.[0-9]+\.[0-9]+$` via the
+  # head_ref strip before creating the draft, so the auto-path is safe.
+  # But `release: published` ALSO fires when an operator manually creates
+  # a release in the UI without going through release-draft.yml — the
+  # tag-name input there is unconstrained. Re-validate at the trigger
+  # boundary before handing the tag to deploy.yml: deploy's `ref` input
+  # flows into `actions/checkout`'s ref param, and a malformed tag would
+  # produce confusing failures downstream (or succeed against an arbitrary
+  # ref). Defense-in-depth — same regex as release-draft.yml's version
+  # extractor.
+  validate-tag:
+    name: validate release tag shape
+    runs-on: go
+    outputs:
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - name: check tag matches ^v[0-9]+\.[0-9]+\.[0-9]+$
+        id: check
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release tag '$TAG' does not match ^v[0-9]+\.[0-9]+\.[0-9]+\$ — refusing to chain deploy.yml"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "==> validated tag: $TAG"
+
+  deploy:
+    name: deploy released tag
+    needs: validate-tag
+    uses: ./.forgejo/workflows/deploy.yml
+    with:
+      ref: ${{ needs.validate-tag.outputs.tag }}
+    # `secrets: inherit` was over-broad (Lookout 67564 containment finding).
+    # deploy.yml's `actions/checkout@v4` step uses the automatic per-job
+    # `secrets.GITHUB_TOKEN`, which is auto-available regardless of the
+    # workflow_call secrets-pass shape; the wrapper step then calls
+    # `sudo /srv/scripts/deploy-tmux-tell.sh` which doesn't read any
+    # workflow-level secrets. So no secrets need to flow from this caller.
+    # Omit `secrets:` entirely — substrate-honest least-privilege.

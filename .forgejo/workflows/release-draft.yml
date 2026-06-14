@@ -1,0 +1,144 @@
+name: release-draft
+
+# Triggered when a `release-prep/v*` PR merges to main. Creates a DRAFT
+# Forgejo release with the CHANGELOG `## [vX.Y.Z]` section pre-populated
+# as the release body + the target tag name + the merge commit as target.
+# Operator visits the releases UI, reviews, optionally edits, clicks
+# Publish — Forgejo then creates the tag + fires `release: published`
+# which release-publish.yml picks up to chain the deploy.
+#
+# The split:
+# - release.yml: workflow_dispatch → release-prep PR creation
+# - release-draft.yml (this file): PR-merge → DRAFT release creation
+# - release-publish.yml: release-published → deploy chain
+# - deploy.yml: workflow_call invoked above OR workflow_dispatch direct
+#
+# The operator's manual step is `click Publish` in the Forgejo releases
+# UI with all content pre-populated — substrate-honestly cleaner than
+# CLI tag push (which would create the tag without a release artifact).
+#
+# Schema-compatibility per the cluster precedent: `github.*` not
+# `gitea.*` (Forgejo namespace alias); no top-level `run-name` /
+# `timeout-minutes` / `concurrency`. Concurrency-by-construction: each
+# release-prep/vX.Y.Z PR is unique by version.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+jobs:
+  draft:
+    name: create draft release from merged release-prep PR
+    # Only fires when the PR was actually merged AND came from a
+    # release-prep/* branch (per release.yml's convention).
+    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release-prep/')
+    runs-on: go
+    permissions:
+      contents: write
+    steps:
+      - name: checkout merged main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: extract version from release-prep branch name
+        id: version
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          # release.yml creates the branch as `release-prep/vX.Y.Z`; strip
+          # the prefix to get the tag name.
+          TAG="${HEAD_REF#release-prep/}"
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::head ref '$HEAD_REF' did not yield a valid vX.Y.Z tag (got '$TAG')"
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "==> target tag: $TAG"
+
+      - name: extract CHANGELOG section
+        id: notes
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Same Python extractor as release-publish.yml's earlier shape;
+          # accepts both `[vX.Y.Z]` and bare `[X.Y.Z]` for forward-tolerance
+          # with the Keep-a-Changelog default form.
+          python3 <<'PY' > /tmp/release-notes.md
+          import os, re, sys
+
+          tag = os.environ['TAG']
+          version = tag.lstrip('v')
+
+          with open('CHANGELOG.md') as f:
+              content = f.read()
+
+          patterns = [
+              rf'^## \[{re.escape(tag)}\][^\n]*\n(.*?)(?=^## \[|\Z)',
+              rf'^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^## \[|\Z)',
+          ]
+          section = None
+          for pat in patterns:
+              m = re.search(pat, content, flags=re.DOTALL | re.MULTILINE)
+              if m:
+                  section = m.group(1).strip()
+                  break
+
+          if not section:
+              sys.stderr.write(f'::error::CHANGELOG section not found for {tag} (or {version})\n')
+              sys.exit(1)
+
+          print(section)
+          PY
+
+          # Random delimiter (Lookout 67564 robustness nit). A fixed string
+          # like `EOF_NOTES` would collide if the CHANGELOG section ever
+          # contained that literal token; a 16-byte hex delimiter makes the
+          # collision-probability vanishingly small.
+          DELIM="EOF_$(head -c 16 /dev/urandom | xxd -p)"
+          {
+            echo "body<<$DELIM"
+            cat /tmp/release-notes.md
+            echo "$DELIM"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "==> extracted release notes ($(wc -l < /tmp/release-notes.md) lines):"
+          head -20 /tmp/release-notes.md
+          echo "  [...]"
+
+      - name: create DRAFT Forgejo release
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          BODY: ${{ steps.notes.outputs.body }}
+          TARGET: ${{ github.event.pull_request.merge_commit_sha }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          API: ${{ github.api_url }}
+        run: |
+          set -euo pipefail
+          payload=$(python3 -c '
+          import json, os
+          print(json.dumps({
+              "tag_name": os.environ["TAG"],
+              "target_commitish": os.environ["TARGET"],
+              "name": os.environ["TAG"],
+              "body": os.environ["BODY"],
+              "draft": True,
+              "prerelease": False,
+          }))
+          ')
+
+          response=$(curl -sf -X POST \
+              -H "Authorization: token $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "$payload" \
+              "$API/repos/$REPO/releases")
+
+          html_url=$(echo "$response" | python3 -c 'import json,sys; print(json.load(sys.stdin)["html_url"])')
+          echo "==> draft release created: $html_url"
+          echo "==> operator: review + click Publish in the UI to fire the deploy chain"

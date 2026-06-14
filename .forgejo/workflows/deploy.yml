@@ -28,6 +28,20 @@ on:
         description: 'Branch / tag / commit to deploy (default: main)'
         required: false
         default: 'main'
+        # Explicit type required by Forgejo Actions dispatch UI per #417
+        # (operator-witnessed "Invalid input type ''" 2026-06-14).
+        type: string
+  # workflow_call entry point so release-publish.yml can chain the deploy
+  # after a tag push creates the Forgejo release. Same `ref` input as the
+  # workflow_dispatch trigger; release-publish.yml passes the tag name.
+  # Closes the v0.17.0 cut automation loop (deferred from #394 / #406 as
+  # release-publish.yml fast-follow; operator-greenlit 2026-06-14 evening).
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Branch / tag / commit to deploy'
+        required: true
+        type: string
 
 jobs:
   deploy:
