@@ -55,11 +55,17 @@ jobs:
             --prune-orphans
 
       - name: post-deploy smoke
+        # Hard-fail on doctor divergence per Lookout 732d advisory: install
+        # success (last step) and doctor-clean are orthogonal signals — install
+        # = "binary deployed + bootstrap ran", doctor = "MCP/mailman DB-binding
+        # has no divergence" (#348). The AC "doctor reports clean" requires
+        # both, so the workflow must fail on doctor non-zero. First-deploy
+        # lane is conservative; if false-positives surface (e.g. pre-existing
+        # divergence from a disconnected chamber), soften to `|| true` with a
+        # ::warning:: + named rationale at that point.
         run: |
           set -euo pipefail
           echo "==> installed binary version"
           tmux-msg-claude --version
           echo "==> doctor (MCP / mailman DB-binding divergence check, #348)"
-          tmux-msg-claude doctor || {
-              echo "::warning::doctor reported divergence — investigate before subsequent deploys"
-          }
+          tmux-msg-claude doctor
