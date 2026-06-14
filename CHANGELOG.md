@@ -117,11 +117,14 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 ### Added
 
 - **Plan-first workflow for size/M+ work — [ADR-0013](docs/adr/0013-plan-first-workflow.md).**
-  Dispatcher signals plan-first on substantial work; chamber composes the plan at
-  `/tmp/tmux-tell-plans/<issue-N>-<title>.md`, reviewers read filesystem-local +
-  post verdicts via tmux-tell bus, plan content gets archived as a comment on the
-  work issue at implementation completion. Default-on for size/M+; default-off
-  for size/S and below; both sides may override with explicit announcement.
+  Dispatcher signals plan-first on substantial work; chamber composes the plan
+  with a stable metadata header at `/tmp/tmux-tell-plans/<issue-N>-<title>.md`
+  (atomic create, fail-loud on existing); reviewers read filesystem-local +
+  post verdicts via tmux-tell bus; **APPROVED plan is archived to the work
+  issue before implementation starts** (closes the `/tmp` loss window); a
+  completion comment lands at PR merge, supersession comments handle plan
+  revisions mid-implementation. Default-on for size/M+; default-off for
+  size/S and below; both sides may override with explicit announcement.
   Surfaces architectural disagreements before code, at the cheapest revision
   moment. Alcatraz-local for now (all chambers share `/tmp`); multi-machine
   development would migrate to a different substrate.
