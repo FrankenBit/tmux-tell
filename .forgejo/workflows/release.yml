@@ -1,0 +1,208 @@
+name: release
+run-name: release-prep (bump=${{ inputs.bump_override }}, dry_run=${{ inputs.dry_run }})
+
+# Release-prep workflow for tmux-msg cuts (#394). Mechanical CHANGELOG
+# transition + version determination + release-prep PR creation. The
+# post-merge tag + Forgejo-release + deploy.yml dispatch automation is
+# deferred to v0.17.1 follow-up (release-publish.yml) — for v0.17.0 MVP
+# the operator handles tag/release/deploy manually after merging the
+# release-prep PR. Conservative-then-soften per the first-deploy-lane
+# discipline pin.
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_override:
+        description: 'Override version bump (auto / patch / minor / major)'
+        required: false
+        default: 'auto'
+      dry_run:
+        description: 'Preview only — log proposed CHANGELOG + version, do not push or open PR'
+        required: false
+        default: 'false'
+
+concurrency:
+  # Serialize release prep so two concurrent dispatches can't race to
+  # create overlapping release-prep/vX.Y.Z branches.
+  group: tmux-msg-release-prep
+  cancel-in-progress: false
+
+jobs:
+  prep:
+    name: release-prep PR
+    runs-on: go
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: checkout main (full history for `git describe`)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: determine target version
+        id: version
+        run: |
+          set -euo pipefail
+          LATEST=$(git describe --tags --abbrev=0)
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+
+          OVERRIDE="${{ inputs.bump_override }}"
+          if [[ "$OVERRIDE" != "auto" ]]; then
+              BUMP="$OVERRIDE"
+              REASON="override=$OVERRIDE"
+          else
+              # Conventional-commit bump determination from titles + bodies.
+              # Pre-v1.0: BREAKING CHANGE is suppressed to minor (the project
+              # is still pre-1.0 settling-shape per CHANGELOG cadence notes).
+              TITLES=$(git log --format=%s "$LATEST..HEAD")
+              BODIES=$(git log --format=%B "$LATEST..HEAD")
+              if echo "$BODIES" | grep -qE "^BREAKING CHANGE:"; then
+                  BUMP="minor"
+                  REASON="BREAKING CHANGE detected (pre-v1.0 suppressed to minor)"
+              elif echo "$TITLES" | grep -qE "^feat(\(.*\))?:"; then
+                  BUMP="minor"
+                  REASON="feat: commit(s) since $LATEST"
+              else
+                  BUMP="patch"
+                  REASON="no feat: commits since $LATEST"
+              fi
+          fi
+          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
+          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
+
+          # Compute new version. Tag format is vMAJ.MIN.PATCH.
+          IFS=. read -r MAJ MIN PATCH <<<"${LATEST#v}"
+          case "$BUMP" in
+              major) MAJ=$((MAJ+1)); MIN=0; PATCH=0 ;;
+              minor) MIN=$((MIN+1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH+1)) ;;
+              *)
+                  echo "::error::unknown bump '$BUMP'"
+                  exit 1
+                  ;;
+          esac
+          NEW="v${MAJ}.${MIN}.${PATCH}"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "==> previous tag: $LATEST"
+          echo "==> bump:         $BUMP ($REASON)"
+          echo "==> next version: $NEW"
+
+      - name: mechanical CHANGELOG transition
+        id: changelog
+        run: |
+          set -euo pipefail
+          NEW="${{ steps.version.outputs.new }}"
+          DATE=$(date -u +%Y-%m-%d)
+          python3 - <<PYEOF
+          import re, sys
+          from pathlib import Path
+          p = Path("CHANGELOG.md")
+          text = p.read_text()
+          # Replace first `## [Unreleased]` with two headers: empty new
+          # [Unreleased] + the bumped section header. Preserves the existing
+          # [Unreleased] body as the body of the bumped section.
+          replacement = "## [Unreleased]\n\n## [${NEW#v}] — ${DATE}"
+          new_text, n = re.subn(
+              r"^## \[Unreleased\]",
+              replacement,
+              text,
+              count=1,
+              flags=re.M,
+          )
+          if n == 0:
+              print("::error::CHANGELOG.md has no [Unreleased] section to rename", file=sys.stderr)
+              sys.exit(1)
+          p.write_text(new_text)
+          PYEOF
+
+          # Capture the moved section's content for the PR body (everything
+          # between the new bumped header and the next `## [` header).
+          awk -v ver="${NEW#v}" '
+              $0 ~ "^## \\[" ver "\\]" { in_block=1; next }
+              in_block && $0 ~ "^## \\[" { exit }
+              in_block { print }
+          ' CHANGELOG.md > /tmp/release-notes.md
+
+      - name: dry-run preview
+        if: inputs.dry_run == 'true'
+        run: |
+          set -euo pipefail
+          echo "::notice::DRY RUN — would create release-prep PR for ${{ steps.version.outputs.new }}"
+          echo
+          echo "==> CHANGELOG.md diff:"
+          git diff --no-color CHANGELOG.md | head -60
+          echo
+          echo "==> release-notes.md (proposed PR body content):"
+          cat /tmp/release-notes.md
+          # Exit 0: workflow_dispatch dry-run completes cleanly without mutation.
+
+      - name: commit on release-prep branch + push + open PR
+        if: inputs.dry_run != 'true'
+        env:
+          GITEA_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NEW: ${{ steps.version.outputs.new }}
+          LATEST: ${{ steps.version.outputs.latest }}
+          BUMP: ${{ steps.version.outputs.bump }}
+          REASON: ${{ steps.version.outputs.reason }}
+          REPO: ${{ gitea.repository }}
+        run: |
+          set -euo pipefail
+          BRANCH="release-prep/$NEW"
+
+          # release-bot identity for the prep commit. Hand-curated content
+          # (CHANGELOG body) stays attributed via the [Unreleased] entries'
+          # original authorship — this commit only moves the section header.
+          git config user.name "release-bot"
+          git config user.email "release-bot@frankenbit.de"
+          git checkout -b "$BRANCH"
+          git add CHANGELOG.md
+          git commit -m "chore(release): $NEW — CHANGELOG transition (#394)"
+          git push --set-upstream origin "$BRANCH"
+
+          # Build PR body via Python so we can JSON-escape it cleanly.
+          python3 - <<PYEOF >/tmp/pr-payload.json
+          import json, os
+          notes = open("/tmp/release-notes.md").read()
+          body = f"""## Summary
+
+          Mechanical CHANGELOG transition for {os.environ['NEW']} per #394's release.yml.
+
+          ## Bump determination
+
+          - Previous tag: \`{os.environ['LATEST']}\`
+          - Bump: **{os.environ['BUMP']}** ({os.environ['REASON']})
+
+          ## {os.environ['NEW']} release notes (moved from [Unreleased])
+
+          {notes}
+
+          ## Post-merge manual steps
+
+          The post-merge tag + Forgejo-release + deploy automation is **deferred
+          to v0.17.1** (release-publish.yml follow-up). For this cut, operator:
+
+          1. Merge this PR (rebase) → main advances with the CHANGELOG move
+          2. Tag: \`git tag {os.environ['NEW']} <merge-sha> && git push origin {os.environ['NEW']}\`
+          3. Create Forgejo release from the CHANGELOG section above
+          4. Dispatch \`deploy.yml\` workflow_dispatch with \`ref={os.environ['NEW']}\`
+             (requires alcatraz-infra#392 Phase 1 runner-registration complete)
+
+          — release-bot (workflow #394)
+          """
+          print(json.dumps({
+              "title": f"chore(release): {os.environ['NEW']}",
+              "head": f"release-prep/{os.environ['NEW']}",
+              "base": "main",
+              "body": body,
+          }))
+          PYEOF
+
+          curl -fsS -X POST \
+              -H "Authorization: token $GITEA_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data @/tmp/pr-payload.json \
+              "https://git.frankenbit.de/api/v1/repos/$REPO/pulls" \
+              | python3 -c "import json,sys; d=json.load(sys.stdin); print(f'::notice::release-prep PR opened at {d[\"html_url\"]}')"
