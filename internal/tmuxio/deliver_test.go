@@ -388,6 +388,32 @@ func TestPasteStillInInput(t *testing.T) {
 			want:    false,
 		},
 		{
+			// #443 Obs2 (operator-witnessed probe, 2026-06-15): three collapsed
+			// blocks stage on ONE logical input row after a SINGLE sentinel
+			// (codex appends " #2"/" #3" to the 2nd+ placeholders). The bottom-
+			// most-sentinel scope therefore contains every staged marker, so the
+			// detector reports stuck for the N-block composer exactly as for one
+			// block — no early false-negative. This is what lets the #401
+			// settle-until-empty resubmit loop handle N blocks unchanged.
+			name:    "codex multi-block staged (three collapsed on one input row, #443)",
+			profile: CodexPaneProfile(),
+			capture: "some transcript turn\n" + CodexPromptSentinel +
+				"[Pasted Content 2437 chars][Pasted Content 2437 chars] #2[Pasted Content 2437 chars] #3",
+			want: true,
+		},
+		{
+			// #443 Obs2: a single Enter on a ready composer submits ALL blocks in
+			// one model turn; the expanded LITERAL paste text lands in the
+			// transcript (NOT the "[Pasted Content]" placeholder) and the bottom-
+			// most sentinel is the new empty composer → NOT stuck. The loop stops
+			// on the #336 empty-input signal; no over-send (why fixed-N would be
+			// wrong — Lookout's blank-follow-up caution).
+			name:    "codex multi-block submitted (expanded literal text, empty input, #443)",
+			profile: CodexPaneProfile(),
+			capture: "1396 1398 1400 :: BLOCK-C END\n\n" + CodexPromptSentinel,
+			want:    false,
+		},
+		{
 			name:    "codex clean empty input",
 			profile: CodexPaneProfile(),
 			capture: "a reply\n" + CodexPromptSentinel,

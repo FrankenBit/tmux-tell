@@ -394,6 +394,18 @@ func extractInputContent(ctx context.Context, pane string) (string, error) {
 // "stuck", but the LAST sentinel is the new empty input, so the marker is
 // correctly absent. A genuinely stuck paste, by contrast, IS the bottom-most
 // sentinel block, so the marker is present.
+//
+// Multi-block (#443 Obs2, operator-witnessed probe 2026-06-15): when several
+// collapsed pastes are staged before submit, codex renders them ALL on one
+// logical input row after a SINGLE sentinel (`› [Pasted Content N][Pasted
+// Content N] #2[Pasted Content N] #3`), NOT one sentinel per block. So the
+// bottom-most-sentinel scope still contains every staged marker — this detector
+// reports stuck for an N-block composer exactly as it does for one block, with
+// no early false-negative. That is what lets the #401 settle-until-empty-input
+// resubmit loop handle N blocks unchanged: a single Enter on a ready composer
+// submits the whole frame in one model turn (two-phase readiness, not
+// placeholder-count == Enter-count), and the loop stops the instant the marker
+// clears — so it never over-sends a blank follow-up after submit.
 func pasteStillInInput(capture string) bool {
 	marker := activeProfile.PasteCollapseMarker
 	sentinel := activeProfile.PromptSentinel

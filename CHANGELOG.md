@@ -33,6 +33,26 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Added
+
+- **Regression coverage + characterization for codex multi-block collapsed-paste
+  submit (Observation 2 of #443).** No behavior change — the #401
+  settle-until-empty-input resubmit loop already handles N staged collapsed
+  blocks correctly; this pins *why* via an operator-witnessed pane probe
+  (2026-06-15) and two `TestPasteStillInInput` cases. The probe confirmed,
+  dual-axis: (pane-side) codex stages all collapsed blocks on ONE logical input
+  row after a SINGLE `› ` sentinel (`[Pasted Content N][Pasted Content N] #2…`),
+  so the detector's bottom-most-sentinel scope (#402) sees every staged marker —
+  no early false-negative on a multi-block composer; and (model-side, confirmed
+  by the codex chamber) a single Enter on a ready composer submits the WHOLE
+  frame in ONE model turn with no markers dropped. This is codex's two-phase
+  *readiness* mechanism (Enter consumed until the composer settles), NOT
+  placeholder-count == Enter-count — which is why the loop stops on the
+  empty-input signal and never over-sends a blank follow-up turn (a fixed-N
+  "count markers, send N Enters" approach would have fired extra Enters into the
+  emptied/working composer). Closes Observation 2 of #443; the umbrella #443
+  stays open for Observation 1 (codex-config delivery, #384/#438 territory).
+
 ### Fixed
 
 - **Deploy chain now rolls BOTH adapter binaries, effectively (#436).** The
