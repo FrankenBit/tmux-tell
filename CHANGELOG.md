@@ -33,6 +33,46 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+Substrate-hygiene fast-follow #2 after v0.17.1, closing the residue the
+rapid-iteration window left behind: a `register` delivery_mode-flip footgun, a
+release-bump parser gap, the post-deploy rate verification, and the codification
+of the very CHANGELOG convention this prelude is the first applied instance of. A
+quiet thread runs through the cluster — **substrate-empirical honesty**, naming
+what the substrate actually did rather than what was assumed: Pilot quantified the
+warning-rate fix to its primary driver and declined to over-claim the rest, and
+QM's parser fix corrected the issue's own framing (the old parser silently
+downgraded a breaking change to *patch* — it wasn't minor-by-coincidence).
+
+Headlines:
+
+- **`register` requires an explicit disposition when a delivery_mode flip orphans
+  queued messages (#390).** A flip that fences `N > 0` pre-flip messages below the
+  new mailman's backlog floor now errors unless the operator passes
+  `--purge-stale-queue` or `--keep-stale-queue`; `inbox` annotates fenced rows
+  `(backlog-fenced)`. The substrate never unilaterally discards or re-routes
+  operator-addressed messages — the disposition is the operator's call.
+- **Post-deploy rate verification: `delivered_in_input_box` warnings down 97.6%
+  (#387).** 84 events/24h → 2/24h after #369's cursor-anchor verify-signal (the
+  primary driver) + #446's single-paste demote; the 2 residuals predate the #446
+  deploy. Rate floor confirmed, mechanism-attribution honest.
+- **`release.yml` recognizes the `<type>!:` breaking-change shortcut (#407).** A
+  `feat!:`-titled commit no longer slips past the `feat:` regex to silently bump
+  *patch*; the title shortcut now maps to minor (pre-1.0-suppressed) alongside the
+  `BREAKING CHANGE:` footer.
+- **CHANGELOG density convention codified + §Release cuts modernized (#454).** The
+  #391 convention (per-entry crisp headline + links; per-release narrative prelude
+  + `Headlines:`; forward-living-comprehensive) is now contributor-discipline in
+  CONTRIBUTING; §Release cuts steps 7–8 follow #418's four-workflow chain.
+- **First-worked-instances fire on this cut.** This prelude is the convention's
+  first applied instance after its own codification (#454); the release-prep PR
+  opens with #457's four-workflow-chain body prose (#425's first-worked-instance);
+  and the deploy rolls both adapter binaries (#436 cardinality at n=2, via #439).
+
+Substrate-empirical contributions worth pinning: #369's cursor-anchor → the 97.6%
+warning-rate floor; #390 → an operator-disposition-explicit gate on
+message-orphaning flips; #407 → a MINOR-with-break correctly attributed instead of
+a silent patch.
+
 ### Documentation
 
 - **Post-deploy rate verification: cursor-anchor verify-signal reduces
