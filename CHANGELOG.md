@@ -33,6 +33,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.17.2] — 2026-06-15
+
 Substrate-hygiene fast-follow #2 after v0.17.1, closing the residue the
 rapid-iteration window left behind: a `register` delivery_mode-flip footgun, a
 release-bump parser gap, the post-deploy rate verification, and the codification
