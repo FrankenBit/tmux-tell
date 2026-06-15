@@ -53,6 +53,30 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   emptied/working composer). Closes Observation 2 of #443; the umbrella #443
   stays open for Observation 1 (codex-config delivery, #384/#438 territory).
 
+### Changed
+
+- **Single-paste delivery for all messages — demoted #336's header-first 3-part
+  framed paste (#446, supersedes #336, closes #389).** A large message used to
+  paste as three separate `tmux paste-buffer` events (Header / Body / Footer) so
+  the short frame stayed inline-readable when a large Body collapsed in the
+  recipient TUI. The whole message now pastes as a SINGLE buffer + Enter, like
+  every short message always did. Operator's substrate-economy call: the framing
+  added moving parts without proportional value (the message expands in the
+  transcript on submit anyway, so the upfront-Header benefit is marginal; the
+  Footer only repeated the header's id; message bounds are legible without it),
+  and the separate-Header paste event opened the #389 standalone-submit window
+  (the Header could submit on its own before the Body, forcing a manual
+  re-retrieval). A decisive 2026-06-15 codex probe confirmed the framing's #336
+  visibility benefit *does* survive on codex (collapse is size-triggered, so a
+  short Header stays literal) — but the surviving benefit didn't outweigh the
+  cost. **#389 is structurally closed**: with no separate Header paste event there
+  is no standalone-submit window, so the trailing-newline escape candidate
+  (carried from #430) is no longer needed. Unchanged: the #160 `· 2.3k` header
+  byte-marker (only the *framing* trigger was coupled to the threshold — the
+  length suffix still rides in the header), the #336 cursor-anchored
+  input-emptied verify, and the #401 codex resubmit loop (a large single Body
+  still collapses on codex and is handled there).
+
 ### Fixed
 
 - **Deploy chain now rolls BOTH adapter binaries, effectively (#436).** The

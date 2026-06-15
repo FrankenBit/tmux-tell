@@ -1426,16 +1426,15 @@ func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarker
 		}
 		return tmuxio.SendKeys(ctx, pane, msg.Body)
 	}
-	// Framed delivery (#336): large messages paste as Header/Body/Footer
-	// separate buffers so the short frame stays visible even if the body
-	// collapses; small/quick messages return header="" footer="" and deliver
-	// as a single Body paste (unchanged path). render.MessageParts decides.
-	header, body, footer := render.MessageParts(*msg, byteMarkerThreshold, time.Now())
+	// Single-paste delivery (#446 demoted #336's header-first 3-part framing):
+	// the whole rendered message pastes as ONE buffer + Enter. A large body
+	// that collapses in the recipient TUI (codex `[Pasted Content]`) expands on
+	// submit and is handled by the #401 resubmit loop; the #336 cursor-anchor
+	// verify confirms the submit regardless of collapse. The #160 byte-marker
+	// length suffix still rides in the header — only the framing went.
 	return tmuxio.Deliver(ctx, tmuxio.DeliverParams{
 		Pane:        pane,
-		Header:      header,
-		Body:        body,
-		Footer:      footer,
+		Body:        render.Message(*msg, byteMarkerThreshold, time.Now()),
 		VerifyToken: "id " + msg.PublicID,
 		OnVerify:    onVerify,
 	})

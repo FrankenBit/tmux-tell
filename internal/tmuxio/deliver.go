@@ -36,21 +36,12 @@ func SetTmuxRunner(r func(ctx context.Context, stdin io.Reader, args ...string) 
 type DeliverParams struct {
 	// Pane is the target tmux pane id (e.g. "%3").
 	Pane string
-	// Header and Footer are the optional short frame parts of the #336
-	// header-first 3-part framed paste. When non-empty they are pasted as
-	// their OWN buffers — Header before Body, Footer after — so the short
-	// frame stays literal even when a large Body collapses in the recipient
-	// TUI, keeping the message bounds operator-visible. A single submit
-	// (Enter) follows the last part. Both empty ⇒ a plain single-paste of
-	// Body (unchanged pre-#336 behavior). render.MessageParts populates
-	// these; only large messages are framed.
-	Header string
-	// Body is the rendered text to paste. When Header/Footer are empty this
-	// is the full rendered message (header + body); when framed, just the
-	// message body.
+	// Body is the full rendered message text, pasted as a SINGLE buffer
+	// (#446 demoted #336's header-first 3-part framing). A large Body that
+	// collapses in the recipient TUI (codex `[Pasted Content]`) expands on
+	// submit and is handled by the resubmit loop (#401) + cursor-anchor
+	// verify below.
 	Body string
-	// Footer — see Header. Pasted after Body.
-	Footer string
 	// VerifyToken is a short string the caller knows must appear in the
 	// pane's visible content after Enter is pressed (typically the
 	// message public_id). Empty disables verification.
@@ -199,24 +190,14 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		return errors.New("tmuxio: body required")
 	}
 
-	// 1+2. Paste the message into the pane. When framed (#336 header-first
-	// 3-part), Header and Footer are pasted as their OWN buffers around Body
-	// — separate short paste-events that stay literal even if a large Body
-	// collapses in the recipient TUI — and they accumulate in the input
-	// before the single submit (step 3). Unframed (Header/Footer empty),
-	// this is a plain single paste of Body, byte-for-byte the pre-#336 path.
-	if p.Header != "" {
-		if err := pasteChunk(ctx, p.Pane, p.Header); err != nil {
-			return err
-		}
-	}
+	// 1+2. Paste the message into the pane as a SINGLE buffer (#446 demoted
+	// #336's header-first 3-part framing — the separate Header/Footer paste
+	// events added moving parts without proportional value and introduced the
+	// #389 standalone-Header-submit window). A large Body that collapses in
+	// the recipient TUI (codex `[Pasted Content]`) expands on submit; the
+	// resubmit loop (#401) + cursor-anchor verify (steps 3-4) handle it.
 	if err := pasteChunk(ctx, p.Pane, p.Body); err != nil {
 		return err
-	}
-	if p.Footer != "" {
-		if err := pasteChunk(ctx, p.Pane, p.Footer); err != nil {
-			return err
-		}
 	}
 	// 2.5. Settle. Let Claude Code's TUI finish ingesting the pasted
 	// characters before we ask it to submit. Without this, the Enter

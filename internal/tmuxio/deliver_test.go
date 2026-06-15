@@ -532,12 +532,18 @@ func TestSetSettleDelay_UpdatesPackageDelay(t *testing.T) {
 	}
 }
 
-// TestDeliver_FramedThreePartPaste pins the #336 header-first 3-part frame:
-// Header, Body, Footer each paste as their OWN buffer (load-buffer +
-// paste-buffer) in order, then a SINGLE send-keys Enter submits the
-// accumulated input. Verify then sees the cleared input (input-emptied).
-func TestDeliver_FramedThreePartPaste(t *testing.T) {
+// TestDeliver_LargeMessageSinglePaste is the #446 demotion regression pin
+// (inverts the old #336 framed-3-part test): a LARGE message delivers as ONE
+// load-buffer + ONE paste-buffer + ONE Enter — no separate Header/Footer paste
+// events. This structurally closes #389 (no standalone-Header-submit window,
+// because there is no separate Header paste) and confirms the moving-parts
+// removal. A collapsed large body on codex is still handled by the resubmit
+// loop + cursor-anchor verify (orthogonal, separately tested).
+func TestDeliver_LargeMessageSinglePaste(t *testing.T) {
 	shortRetries(t)
+	// A body well over the old byte-marker framing threshold — under #336 this
+	// would have framed into 3 paste events; under #446 it is a single paste.
+	bigBody := "[Bosun · 11:04:12 · id 7f3a · 2.3k]\n\n" + strings.Repeat("review text. ", 200) + "\n"
 	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
 		if args[0] == "capture-pane" {
 			// Claude sentinel, input cleared past it → input-emptied verifies.
@@ -551,17 +557,14 @@ func TestDeliver_FramedThreePartPaste(t *testing.T) {
 	})
 	err := Deliver(context.Background(), DeliverParams{
 		Pane:        "%3",
-		Header:      "[Bosun · id 7f3a]\n\n",
-		Body:        "big body",
-		Footer:      "\n\n[· id 7f3a]\n",
+		Body:        bigBody,
 		VerifyToken: "id 7f3a",
 	})
 	if err != nil {
-		t.Fatalf("framed deliver err: %v", err)
+		t.Fatalf("single-paste deliver err: %v", err)
 	}
 	var loads, pastes, sendKeys int
 	var loadStdins []string
-	sawEnterAfterPastes := false
 	for _, c := range *calls {
 		switch c.args[0] {
 		case "load-buffer":
@@ -571,22 +574,16 @@ func TestDeliver_FramedThreePartPaste(t *testing.T) {
 			pastes++
 		case "send-keys":
 			sendKeys++
-			if pastes == 3 {
-				sawEnterAfterPastes = true
-			}
 		}
 	}
-	if loads != 3 || pastes != 3 {
-		t.Fatalf("want 3 load-buffer + 3 paste-buffer (header/body/footer); got loads=%d pastes=%d", loads, pastes)
+	if loads != 1 || pastes != 1 {
+		t.Fatalf("want 1 load-buffer + 1 paste-buffer (single paste, no frame); got loads=%d pastes=%d", loads, pastes)
 	}
-	wantStdins := []string{"[Bosun · id 7f3a]\n\n", "big body", "\n\n[· id 7f3a]\n"}
-	for i, w := range wantStdins {
-		if i >= len(loadStdins) || loadStdins[i] != w {
-			t.Errorf("load-buffer %d stdin = %q, want %q", i, loadStdins[i], w)
-		}
+	if len(loadStdins) != 1 || loadStdins[0] != bigBody {
+		t.Errorf("the single load-buffer should carry the whole rendered message; got %q", loadStdins)
 	}
-	if sendKeys != 1 || !sawEnterAfterPastes {
-		t.Errorf("want a single send-keys Enter AFTER all 3 pastes; sendKeys=%d afterPastes=%v", sendKeys, sawEnterAfterPastes)
+	if sendKeys != 1 {
+		t.Errorf("want exactly one send-keys Enter for a submitted single paste; got %d", sendKeys)
 	}
 }
 

@@ -176,9 +176,8 @@ func Message(m store.Message, byteMarkerThreshold int, renderedAt time.Time) str
 
 // messageHeader builds the bracket-header line for a regular (non-quick)
 // message — `[Sender · 11:04:12 · id 7f3a · 2.3k]` or the reply form
-// `[Surveyor → Bosun · re 7f3a · id 9c1d]`. Single-sourced so both the
-// inline Message render and the framed MessageParts render (#336) emit
-// byte-identical headers.
+// `[Surveyor → Bosun · re 7f3a · id 9c1d]`. Single-sourced for the inline
+// Message render.
 func messageHeader(m store.Message, byteMarkerThreshold int, renderedAt time.Time) string {
 	var nrSuffix string
 	if m.NoReplyExpected {
@@ -204,46 +203,6 @@ func messageHeader(m store.Message, byteMarkerThreshold int, renderedAt time.Tim
 	}
 	return fmt.Sprintf("[%s · %s · id %s%s%s]",
 		titleCase(m.FromAgent), clockSeg, m.PublicID, nrSuffix, marker)
-}
-
-// messageFooter is the short tail marker the framed delivery (#336) pastes
-// as a SEPARATE buffer after the body: `[· id <id>]`. It carries the public
-// id so it (a) pairs visually with the header's id as the message's lower
-// bound — visible even when a large body collapses in the recipient TUI —
-// and (b) doubles as the collapse-resistant tail anchor for the token-match
-// verify fallback (a short paste that won't itself collapse).
-func messageFooter(m store.Message) string {
-	return fmt.Sprintf("[· id %s]", m.PublicID)
-}
-
-// MessageParts renders a message as the three framed delivery parts the
-// mailman pastes as SEPARATE buffers (#336 header-first 3-part frame):
-// header, body, footer. Pasting the short header/footer as their own
-// paste-buffer events keeps them literal even when a large body collapses
-// (codex `[Pasted Content]`), so the message bounds stay operator-visible.
-//
-// The frame is applied only when the body is large enough to be worth a
-// length marker (byteMarkerSuffix non-empty — the same #160 large-message
-// signal). A small or quick message is delivered as a SINGLE part (header
-// and footer empty, body = the full single-paste render), byte-identical to
-// the pre-#336 single-paste delivery — no footer noise on short acks. (This
-// couples framing to the byte-marker threshold: disabling the marker with a
-// negative threshold also disables framing.)
-//
-// header/footer carry their own inter-part blank-line spacing, so pasting
-// header then body then footer reproduces the framed layout
-// `header\n\n<body>\n\n[· id <id>]\n`.
-func MessageParts(m store.Message, byteMarkerThreshold int, renderedAt time.Time) (header, body, footer string) {
-	if m.Quick || byteMarkerSuffix(m.Body, byteMarkerThreshold) == "" {
-		return "", Message(m, byteMarkerThreshold, renderedAt), ""
-	}
-	header = messageHeader(m, byteMarkerThreshold, renderedAt)
-	if rm := replayMarker(m); rm != "" {
-		header += "\n" + rm
-	}
-	header += "\n\n"
-	footer = "\n\n" + messageFooter(m) + "\n"
-	return header, m.Body, footer
 }
 
 // messageQuickChrome renders the compact single-line form for a quick message
