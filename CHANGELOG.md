@@ -75,6 +75,24 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   and carries a stable `backlog_fenced` boolean on every JSON row for programmatic
   consumers. See `docs/reference.md` § Delivery modes › Flipping delivery_mode.
 
+### Fixed
+
+- **`release.yml` recognizes `<type>!:` breaking-change title shortcut (#407).**
+  Conventional Commits 1.0 allows two equivalent forms for breaking-change
+  signaling: the `BREAKING CHANGE:` body footer and the `<type>!:` title
+  shortcut. The parser already mapped the footer to a minor bump (pre-1.0
+  suppression per the CHANGELOG cadence convention); a `feat!: …` titled
+  commit **did not** match the existing `^feat(\(.*\))?:` regex (the `!` breaks
+  the literal-colon match), so a range with only `<type>!:` titled commits and
+  no other `feat:` commits would silently bump to **patch** instead of minor.
+  Smoke-witnessed on a synthetic `feat!:` commit against `v0.17.1..HEAD`:
+  old parser → `patch` + "no feat: commits since v0.17.1"; new parser →
+  `minor` + "BREAKING CHANGE title shortcut (<type>!:) detected (pre-v1.0
+  suppressed to minor)". The new check covers any lowercase `<type>!:` (feat,
+  fix, chore, etc.) per the spec, sits between the `BREAKING CHANGE:` footer
+  check and the `feat:` title check, and shares the pre-1.0-suppressed-to-minor
+  mapping. Closes Surveyor's #406 non-blocking follow-up.
+
 ## [0.17.1] — 2026-06-15
 
 Substrate-hygiene fast-follow after v0.17.0's cut-chain ship. The first

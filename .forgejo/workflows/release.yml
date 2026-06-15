@@ -104,7 +104,10 @@ jobs:
               BODIES=$(git log --format=%B "$LATEST..HEAD")
               if grep -qE "^BREAKING CHANGE:" <<<"$BODIES"; then
                   BUMP="minor"
-                  REASON="BREAKING CHANGE detected (pre-v1.0 suppressed to minor)"
+                  REASON="BREAKING CHANGE footer detected (pre-v1.0 suppressed to minor)"
+              elif grep -qE "^[a-z]+(\([^)]*\))?!:" <<<"$TITLES"; then
+                  BUMP="minor"
+                  REASON="BREAKING CHANGE title shortcut (<type>!:) detected (pre-v1.0 suppressed to minor)"
               elif grep -qE "^feat(\(.*\))?:" <<<"$TITLES"; then
                   BUMP="minor"
                   REASON="feat: commit(s) since $LATEST"
