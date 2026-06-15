@@ -1,12 +1,12 @@
 name: release
 
 # Release-prep workflow for tmux-msg cuts (#394). Mechanical CHANGELOG
-# transition + version determination + release-prep PR creation. The
-# post-merge tag + Forgejo-release + deploy.yml dispatch automation is
-# deferred to v0.17.1 follow-up (release-publish.yml) — for v0.17.0 MVP
-# the operator handles tag/release/deploy manually after merging the
-# release-prep PR. Conservative-then-soften per the first-deploy-lane
-# discipline pin.
+# transition + version determination + release-prep PR creation. Post-merge,
+# #418's four-workflow chain takes over automatically: release-draft.yml
+# creates a draft release, the operator clicks Publish (Forgejo creates the
+# tag), and release-publish.yml chains deploy.yml to install on alcatraz-host.
+# (The v0.17.0 MVP deferred this to a v0.17.1 follow-up; #418/#421/#422 landed
+# it — see #425.)
 #
 # Schema-compatibility notes (Forgejo Actions YAML schema, validated against
 # git.frankenbit.de's instance at 2026-06-14, alongside deploy.yml fix):
@@ -253,16 +253,12 @@ jobs:
 
           {notes}
 
-          ## Post-merge manual steps
+          ## Post-merge automation (via #418's four-workflow chain)
 
-          The post-merge tag + Forgejo-release + deploy automation is **deferred
-          to v0.17.1** (release-publish.yml follow-up). For this cut, operator:
-
-          1. Merge this PR (rebase) → main advances with the CHANGELOG move
-          2. Tag: \`git tag {os.environ['NEW']} <merge-sha> && git push origin {os.environ['NEW']}\`
-          3. Create Forgejo release from the CHANGELOG section above
-          4. Dispatch \`deploy.yml\` workflow_dispatch with \`ref={os.environ['NEW']}\`
-             (requires alcatraz-infra#392 Phase 1 runner-registration complete)
+          1. Merge this PR (rebase per repo default) → main advances with the CHANGELOG move
+          2. `release-draft.yml` fires automatically → creates a DRAFT Forgejo release pre-populated with the CHANGELOG section + merge-commit SHA pinned as `target_commitish`
+          3. Review the draft in the Forgejo UI, click **Publish** → Forgejo creates the tag from the draft
+          4. `release-publish.yml` fires on `release:published` → chains `deploy.yml` via `workflow_call` → install + bootstrap on alcatraz-host
 
           — release-bot (workflow #394)
           """

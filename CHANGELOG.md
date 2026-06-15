@@ -81,6 +81,13 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **`release.yml` PR-body template describes the four-workflow chain (#425).** The
+  release-prep PR body (and the matching file-header comment) still emitted the
+  v0.17.0-MVP "post-merge tag/release/deploy deferred to v0.17.1, operator handles
+  manually" prose; after #418 landed the chain in v0.17.0 it was stale on every cut
+  (witnessed on #424). Now describes the auto-chain: merge → `release-draft.yml`
+  draft → **Publish** → `release-publish.yml` → `deploy.yml`.
+
 - **Codex bootstrap is paste-aware (#438).** install.sh's full `--adapter=codex`
   bootstrap unconditionally ran `codex-install`, whose register step force-set
   `delivery_mode=hook-context` — flipping a paste-served codex chamber (Lookout,
