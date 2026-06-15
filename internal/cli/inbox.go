@@ -143,11 +143,30 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
 
+	// #390: a row is "backlog-fenced" — queued but below the agent's backlog
+	// floor and not a promoted-deferred row — when the mailman's ClaimNext will
+	// silently skip it (`state='queued' AND deliver_after IS NULL AND id <=
+	// backlog_epoch_id`). This is exactly the pre-delivery_mode-flip orphan case.
+	// Best-effort GetAgent: an unregistered listing target (messages addressed to
+	// a not-yet-registered name) leaves epoch=0 → nothing fenced, no false marks.
+	var epoch int64
+	if a, gerr := s.GetAgent(ctx, agent); gerr == nil && a.BacklogEpoch.Valid {
+		epoch = a.BacklogEpoch.Int64
+	}
+	fenced := func(m store.Message) bool {
+		return m.State == store.StateQueued && !m.DeliverAfter.Valid && epoch > 0 && m.ID <= epoch
+	}
+
 	switch format {
 	case "json":
 		out := make([]map[string]any, 0, len(msgs))
 		for _, m := range msgs {
-			out = append(out, messageToMap(m))
+			mm := messageToMap(m)
+			// Stable inbox surface (#390): programmatic consumers rely on
+			// backlog_fenced to detect the won't-auto-deliver state. Always
+			// emitted (true/false) on the inbox listing, not omitted.
+			mm["backlog_fenced"] = fenced(m)
+			out = append(out, mm)
 		}
 		_ = writeJSONResult(stdout, out)
 		return exitOK
@@ -156,11 +175,15 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 		header := []string{"ID", "FROM", "TO", "STATE", "AGE", "BODY"}
 		rows := make([][]string, 0, len(msgs))
 		for _, m := range msgs {
+			state := string(m.State)
+			if fenced(m) {
+				state = "queued (backlog-fenced)"
+			}
 			rows = append(rows, []string{
 				m.PublicID,
 				m.FromAgent,
 				m.ToAgent,
-				string(m.State),
+				state,
 				ageOf(m.CreatedAt),
 				shortBody(m.Body, 60),
 			})

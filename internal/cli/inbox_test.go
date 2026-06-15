@@ -31,6 +31,77 @@ func TestInbox_TextFormat(t *testing.T) {
 	}
 }
 
+// TestInbox_BacklogFencedAnnotation pins Fix A of #390: queued rows below the
+// agent's backlog floor (and not promoted-deferred) render `queued
+// (backlog-fenced)` in text + carry `backlog_fenced: true` on the stable JSON
+// surface, while above-floor rows and promoted-deferred rows do not.
+func TestInbox_BacklogFencedAnnotation(t *testing.T) {
+	s := newCmdTestStore(t, "bosun", "lookout")
+	ctx := context.Background()
+	// m1,m2,m3: normal queued (below the floor we set). promoted: queued WITH
+	// deliver_after (at/below floor but must NOT fence). m4: normal queued above
+	// the floor (must NOT fence).
+	for _, b := range []string{"m1", "m2", "m3"} {
+		_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "bosun", ToAgent: "lookout", Body: b})
+	}
+	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "bosun", ToAgent: "lookout", Body: "promoted", DeliverAfter: "resume"})
+	if _, err := s.PromoteDeferred(ctx, "lookout", "resume"); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "bosun", ToAgent: "lookout", Body: "m4"})
+
+	all, err := s.ListMessages(ctx, store.ListFilter{ToAgent: "lookout", State: store.StateQueued})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	// Floor at the promoted-deferred row's id: m1,m2,m3 are below it (→ fenced),
+	// the promoted row is AT it but deliver_after-excluded, m4 is above it.
+	var floor int64
+	for _, m := range all {
+		if m.DeliverAfter.Valid {
+			floor = m.ID
+		}
+	}
+	if floor == 0 {
+		t.Fatal("could not locate promoted-deferred row id")
+	}
+	if err := s.SetBacklogEpoch(ctx, "lookout", floor); err != nil {
+		t.Fatalf("set epoch: %v", err)
+	}
+
+	// Text: exactly 3 fenced rows (m1,m2,m3).
+	var stdout bytes.Buffer
+	if exit := runInboxWithStore(ctx, s, "lookout", store.StateQueued, 100, false, "text", &stdout, &bytes.Buffer{}); exit != exitOK {
+		t.Fatalf("text exit = %d", exit)
+	}
+	if got := strings.Count(stdout.String(), "queued (backlog-fenced)"); got != 3 {
+		t.Errorf("text backlog-fenced count = %d, want 3\n%s", got, stdout.String())
+	}
+
+	// JSON: every row carries backlog_fenced (stable surface); exactly 3 true.
+	var jb bytes.Buffer
+	if exit := runInboxWithStore(ctx, s, "lookout", store.StateQueued, 100, false, "json", &jb, &bytes.Buffer{}); exit != exitOK {
+		t.Fatalf("json exit = %d", exit)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(jb.Bytes()), &rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	trueCount := 0
+	for _, r := range rows {
+		v, ok := r["backlog_fenced"]
+		if !ok {
+			t.Errorf("row %v missing backlog_fenced (stable surface must always emit it)", r["id"])
+		}
+		if v == true {
+			trueCount++
+		}
+	}
+	if trueCount != 3 {
+		t.Errorf("json backlog_fenced=true count = %d, want 3", trueCount)
+	}
+}
+
 func TestInbox_JSONFormat(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
 	ctx := context.Background()

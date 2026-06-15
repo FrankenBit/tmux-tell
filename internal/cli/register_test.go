@@ -344,3 +344,122 @@ func TestStore_SetDeliveryMode_RejectsUnknownAgent(t *testing.T) {
 		t.Fatal("expected ErrNotFound for unknown agent")
 	}
 }
+
+// TestRegister_FlipStaleQueueDisposition pins Fix C of #390: flipping an
+// existing agent's delivery_mode with pre-flip queued rows requires an explicit
+// --purge-stale-queue / --keep-stale-queue disposition; the gate fires only on a
+// real mode change with orphans present.
+func TestRegister_FlipStaleQueueDisposition(t *testing.T) {
+	ctx := context.Background()
+
+	// freshDB returns a temp DB path seeded with lookout=hook-context + n queued.
+	freshDB := func(t *testing.T, mode string, n int) string {
+		t.Helper()
+		db := filepath.Join(t.TempDir(), "m.db")
+		s, err := store.Open(db)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer s.Close()
+		if err := s.UpsertAgent(ctx, "lookout", "%8"); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		if err := s.SetDeliveryMode(ctx, "lookout", mode); err != nil {
+			t.Fatalf("mode: %v", err)
+		}
+		for i := 0; i < n; i++ {
+			if _, err := s.InsertMessage(ctx, store.InsertParams{FromAgent: "bosun", ToAgent: "lookout", Body: "m"}); err != nil {
+				t.Fatalf("insert: %v", err)
+			}
+		}
+		return db
+	}
+	flip := func(db string, extra ...string) (int, string) {
+		var so, se bytes.Buffer
+		base := []string{"--db", db, "--name", "lookout", "--pane", "%8",
+			"--delivery-mode", "paste-and-enter", "--force", "--start-mailman=false"}
+		exit := runRegisterCLI(append(base, extra...), &so, &se)
+		return exit, so.String() + se.String()
+	}
+	// mustState asserts the delivery_mode + the disposition of the SEEDED rows
+	// (from "bosun"), filtered by sender so the register-time 📬 backlog nudge
+	// (a separate bus-inserted message) doesn't skew the count.
+	mustState := func(t *testing.T, db, wantMode string, wantState store.State, wantSeeded int) {
+		t.Helper()
+		s, err := store.Open(db)
+		if err != nil {
+			t.Fatalf("reopen: %v", err)
+		}
+		defer s.Close()
+		a, err := s.GetAgent(ctx, "lookout")
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if a.DeliveryMode != wantMode {
+			t.Errorf("delivery_mode = %q, want %q", a.DeliveryMode, wantMode)
+		}
+		msgs, err := s.ListMessages(ctx, store.ListFilter{ToAgent: "lookout", FromAgent: "bosun", State: wantState})
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		if len(msgs) != wantSeeded {
+			t.Errorf("seeded rows in state %q = %d, want %d", wantState, len(msgs), wantSeeded)
+		}
+	}
+
+	t.Run("flip with orphans + no disposition errors, mode unchanged", func(t *testing.T) {
+		db := freshDB(t, store.DeliveryModeHookContext, 2)
+		exit, out := flip(db)
+		if exit != exitDataErr {
+			t.Fatalf("exit = %d, want exitDataErr; out=%s", exit, out)
+		}
+		if !strings.Contains(out, "2 message") || !strings.Contains(out, "purge-stale-queue") {
+			t.Errorf("error should name the count + both flags; got: %s", out)
+		}
+		mustState(t, db, store.DeliveryModeHookContext, store.StateQueued, 2) // gate fired before the flip
+	})
+
+	t.Run("--purge-stale-queue acks the rows + flip proceeds", func(t *testing.T) {
+		db := freshDB(t, store.DeliveryModeHookContext, 2)
+		exit, out := flip(db, "--purge-stale-queue")
+		if exit != exitOK {
+			t.Fatalf("exit = %d; out=%s", exit, out)
+		}
+		mustState(t, db, store.DeliveryModePasteAndEnter, store.StateAcknowledged, 2) // acked
+	})
+
+	t.Run("--keep-stale-queue leaves the rows queued + flip proceeds", func(t *testing.T) {
+		db := freshDB(t, store.DeliveryModeHookContext, 2)
+		exit, out := flip(db, "--keep-stale-queue")
+		if exit != exitOK {
+			t.Fatalf("exit = %d; out=%s", exit, out)
+		}
+		mustState(t, db, store.DeliveryModePasteAndEnter, store.StateQueued, 2) // still queued (now fenced)
+	})
+
+	t.Run("flip with zero orphans needs no disposition", func(t *testing.T) {
+		db := freshDB(t, store.DeliveryModeHookContext, 0)
+		exit, out := flip(db)
+		if exit != exitOK {
+			t.Fatalf("exit = %d; out=%s", exit, out)
+		}
+		mustState(t, db, store.DeliveryModePasteAndEnter, store.StateQueued, 0)
+	})
+
+	t.Run("same-mode --force re-register never trips the gate", func(t *testing.T) {
+		db := freshDB(t, store.DeliveryModePasteAndEnter, 2) // already paste-and-enter
+		exit, out := flip(db)                                // flips to paste-and-enter == same
+		if exit != exitOK {
+			t.Fatalf("same-mode re-register exit = %d; out=%s", exit, out)
+		}
+		mustState(t, db, store.DeliveryModePasteAndEnter, store.StateQueued, 2)
+	})
+
+	t.Run("both disposition flags is a usage error", func(t *testing.T) {
+		db := freshDB(t, store.DeliveryModeHookContext, 2)
+		exit, _ := flip(db, "--purge-stale-queue", "--keep-stale-queue")
+		if exit != exitUsage {
+			t.Fatalf("both-flags exit = %d, want exitUsage", exit)
+		}
+	})
+}

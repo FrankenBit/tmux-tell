@@ -44,6 +44,27 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   line with #418's four-workflow auto-chain (no more manual `git tag && git push`).
   Part 3 of #391; the routing-principle ADR is tracked in #462.
 
+### Changed
+
+- **`register` requires an explicit disposition when a delivery_mode flip orphans
+  queued messages (#390).** Flipping an existing agent's `delivery_mode` (e.g.
+  `hook-context` → `paste-and-enter`) left its pre-flip queued messages silently
+  fenced below the new mailman's backlog floor — `queue=2`, `mailman_running=true`,
+  nothing delivered, reads as a bug; the operator had to find + run
+  `inbox --ack-all` by hand (witnessed on the Lookout flip after the #360 deploy).
+  Now a flip that would orphan `N > 0` messages **requires** one of two new
+  `register` flags: `--purge-stale-queue` (ack them — they were emitted under the
+  old delivery semantics) or `--keep-stale-queue` (leave them queued, visible as
+  backlog-fenced). Without a flag the flip errors and names the count; a zero-orphan
+  flip or a same-mode re-register (a chamber restart) proceeds untouched. `--force`
+  stays orthogonal (it authorizes overwriting the registration, not a queue
+  disposition). The substrate never unilaterally discards or re-routes
+  operator-addressed messages — the operator-explicit flip is the signal, the
+  disposition is the operator's call (auto-purge / auto-redeliver deliberately
+  rejected). `inbox` now annotates fenced rows as `queued (backlog-fenced)` in text
+  and carries a stable `backlog_fenced` boolean on every JSON row for programmatic
+  consumers. See `docs/reference.md` § Delivery modes › Flipping delivery_mode.
+
 ## [0.17.1] — 2026-06-15
 
 Substrate-hygiene fast-follow after v0.17.0's cut-chain ship. The first

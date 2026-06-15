@@ -159,6 +159,34 @@ it via MCP (`register … delivery_mode=mailbox-only`), CLI (`register --name yo
 **per-agent block > `[defaults]` > the DB column > compiled default (`paste-and-enter`)**.
 `tmux-msg-claude config show` prints the resolved value per agent.
 
+### Flipping delivery_mode (pre-flip queued messages, #390)
+
+Re-running `register --name <agent> --delivery-mode <new>` on an agent that already
+exists **flips** its mode (a flip also requires `--force`, since you're overwriting an
+existing registration). Messages that were queued under the *prior* mode are **orphaned**
+by the flip: they were emitted for the old delivery semantics and sit below the new
+mailman's backlog floor, so the mailman silently skips them (a `hook-context` chamber's
+queued rows, for instance, must not be pasted verbatim into a paste-served pane). To keep
+the substrate from silently fencing — or unilaterally discarding — operator-addressed
+messages, a flip with queued orphans requires an **explicit disposition**:
+
+| flag | effect |
+|---|---|
+| `--purge-stale-queue` | ack the orphaned rows (they were for the old mode; drop them) |
+| `--keep-stale-queue` | leave them queued — they stay **backlog-fenced** (not auto-delivered); clear later with `inbox --ack-all` |
+
+Without one of these flags, a flip that would orphan `N > 0` messages **errors** and names
+the count. A flip with zero orphans, or a re-register to the **same** mode (e.g. a chamber
+restart), proceeds without a flag. `--force` is orthogonal — it authorizes overwriting the
+registration, not a queue disposition.
+
+**Seeing fenced rows:** `inbox` annotates orphaned rows as `queued (backlog-fenced)` in the
+text table. On the JSON surface every inbox row carries a stable **`backlog_fenced`**
+boolean (always emitted, `true`/`false`) so downstream tooling can detect the
+won't-auto-deliver state programmatically. A row is fenced when it is `queued`, below the
+agent's `backlog_epoch_id`, and not a promoted-deferred row (#227 deferred rows bypass the
+floor and deliver regardless).
+
 ### Hook-context delivery (Claude Code)
 
 `hook-context` (#249, [ADR-0009](adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md))

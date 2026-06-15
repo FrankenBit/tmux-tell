@@ -709,6 +709,45 @@ func (s *Store) MarkAcknowledgedBatch(ctx context.Context, toAgent string, epoch
 	return res.RowsAffected()
 }
 
+// staleQueuedPredicate is the #390 "pre-flip orphan" set: queued rows that will
+// NOT auto-deliver once a delivery_mode flip fences them below the new backlog
+// floor. Promoted-deferred rows (deliver_after IS NOT NULL) are EXCLUDED — they
+// bypass the floor in ClaimNext (`deliver_after IS NOT NULL OR id > epoch`) and
+// deliver regardless of the flip, so they are not orphans. Single-sourced so the
+// count (CountStaleQueued) and the purge (AckStaleQueued) can never diverge.
+const staleQueuedPredicate = `to_agent = ? AND state = ? AND deliver_after IS NULL`
+
+// CountStaleQueued returns the number of queued, non-deferred messages addressed
+// to toAgent — the rows a delivery_mode flip would orphan (#390). The register
+// flip-gate uses this count to decide whether to require an explicit disposition.
+func (s *Store) CountStaleQueued(ctx context.Context, toAgent string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE `+staleQueuedPredicate,
+		toAgent, StateQueued).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("store: count stale queued: %w", err)
+	}
+	return n, nil
+}
+
+// AckStaleQueued transitions every queued, non-deferred message addressed to
+// toAgent to acknowledged — the `--purge-stale-queue` disposition for a
+// delivery_mode flip (#390). Returns the number of rows updated. Unlike
+// MarkAcknowledgedBatch (epoch-scoped, for announce-skipped residue), this is
+// scoped by the orphan predicate, not by an id floor: at flip time the new
+// floor isn't set yet, and every currently-queued non-deferred row predates the
+// flip by definition.
+func (s *Store) AckStaleQueued(ctx context.Context, toAgent string) (int64, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET state = ? WHERE `+staleQueuedPredicate,
+		StateAcknowledged, toAgent, StateQueued)
+	if err != nil {
+		return 0, fmt.Errorf("store: ack stale queued: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // FindDedupeMatch returns the most recent delivered+unverified message from
 // fromAgent to toAgent whose body matches exactly and whose created_at is
 // newer than cutoff. Returns nil (no error) when no match exists.

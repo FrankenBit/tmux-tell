@@ -42,6 +42,10 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		"overwrite an existing registration with the same name")
 	alias := fs.String("alias", "",
 		"optional alternative name the discover walker should accept for this canonical agent")
+	purgeStale := fs.Bool("purge-stale-queue", false,
+		"on a delivery_mode flip, ack the messages queued under the prior mode — they were emitted under the old delivery semantics and would not auto-deliver under the new one (#390)")
+	keepStale := fs.Bool("keep-stale-queue", false,
+		"on a delivery_mode flip, leave the prior-mode queued messages in place — they stay backlog-fenced (visible in `inbox`, not auto-delivered; clear later with `inbox --ack-all`) (#390)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -127,6 +131,46 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("agent %q already registered with pane %s; pass --force to overwrite",
 				*name, existing.PaneID), exitDataErr)
+	}
+
+	// #390: a delivery_mode flip orphans the agent's pre-flip queued messages —
+	// they were emitted under the old delivery semantics and sit below the new
+	// mailman's backlog floor, so ClaimNext silently skips them (reads as a bug).
+	// Force an explicit operator disposition rather than leaving them silently
+	// fenced. Fires only on an actual mode change with orphan rows present, so a
+	// same-mode --force re-register (a chamber restart) never trips it. `--force`
+	// is orthogonal — it authorizes overwriting the registration, not a queue
+	// disposition (ratified: no silent semantic coupling).
+	if existing != nil && existing.DeliveryMode != *deliveryMode {
+		if *purgeStale && *keepStale {
+			return writeJSONError(stdout, stderr,
+				"pass at most one of --purge-stale-queue / --keep-stale-queue", exitUsage)
+		}
+		stale, cerr := s.CountStaleQueued(ctx, *name)
+		if cerr != nil {
+			return writeJSONError(stdout, stderr,
+				fmt.Sprintf("count stale queue: %v", cerr), exitInternal)
+		}
+		switch {
+		case stale == 0:
+			// Nothing orphaned by the flip — no disposition needed.
+		case *purgeStale:
+			n, aerr := s.AckStaleQueued(ctx, *name)
+			if aerr != nil {
+				return writeJSONError(stdout, stderr,
+					fmt.Sprintf("purge stale queue: %v", aerr), exitInternal)
+			}
+			fmt.Fprintf(stderr, "register: purged %d message(s) queued under the prior delivery_mode (%s → %s)\n",
+				n, existing.DeliveryMode, *deliveryMode)
+		case *keepStale:
+			fmt.Fprintf(stderr, "register: kept %d message(s) queued under the prior delivery_mode (%s → %s); they will not auto-deliver — see them via `inbox` (backlog-fenced) or clear with `inbox --ack-all`\n",
+				stale, existing.DeliveryMode, *deliveryMode)
+		default:
+			return writeJSONError(stdout, stderr,
+				fmt.Sprintf("agent %q has %d message(s) queued under the prior delivery_mode (%s) that will NOT auto-deliver after the flip to %s — pass --purge-stale-queue to ack them, or --keep-stale-queue to leave them queued (visible as backlog-fenced in inbox)",
+					*name, stale, existing.DeliveryMode, *deliveryMode),
+				exitDataErr)
+		}
 	}
 
 	if err := s.UpsertAgent(ctx, *name, resolvedPane); err != nil {
