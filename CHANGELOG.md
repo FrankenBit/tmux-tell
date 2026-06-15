@@ -51,6 +51,74 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [0.17.0] — 2026-06-14
 
+The Release-engineering cluster: substrate-empirical first-deploy-lane
+work that built the tmux-msg cut + deploy chain end-to-end and
+hardened the substrate against the chamber-paste-substrate races that
+the v0.16.0 + v0.16.1 codex-adapter work surfaced once Lookout's codex
+chamber started carrying production traffic.
+
+Headlines:
+
+- **Four-workflow cut chain — `release-draft.yml` + `release-publish.yml`
+  alongside the existing `release.yml` + `deploy.yml` (#418).** Forgejo's
+  release UI becomes the canonical-publish-substrate: operator merges
+  the release-prep PR, reviews the auto-created draft, clicks **Publish**;
+  Forgejo creates the tag, fires `release: published`, and the deploy
+  chain auto-fires. No CLI `git tag && git push` — the manual step
+  evaporates at the tool-axis when the substrate routes through the
+  canonical surface.
+- **Phase 1 host-mode deploy runner (#392 / #393).** Dedicated
+  `forgejo-runner-alcatraz-host.service` systemd unit + the
+  `/srv/scripts/deploy-tmux-tell.sh` wrapper as a single NOPASSWD
+  surface (the wrapper validates the runner workspace + the
+  `install.sh` integrity before exec — narrowing the privileged-exec
+  blast radius vs. authorizing `install.sh` directly). `deploy.yml`
+  workflow_dispatch lands the binary + bootstraps in one operator
+  trigger; `doctor` runs at the smoke step (soft-fail per #415, the
+  first-deploy-lane substrate-empirical discipline pin's
+  conservative-then-soften half).
+- **Codex `/mcp` control-message session-break closed — `Profile.
+  SupportsMCPSlashCommand` (#419).** A `refresh-all-mcps` cascade
+  used to paste `/mcp disable tmux-msg` literally into Codex chambers'
+  prompts (Codex CLI has no `/mcp` slash command), polluting the input
+  + breaking the session. Per-adapter capability flag + sentinel +
+  `strings.Fields` first-token matcher gate this cleanly; codex chambers
+  log a structured WARN + mark the message delivered without pasting.
+  Broader per-(command, adapter) compat tracked in #420 for the v0.18.x
+  cycle.
+- **First-deploy-lane substrate-empirical learning surfaces, closed
+  in-cluster.** `bootstrap` now `enable` + `restart`s mailmen so deploy
+  cycles them off the deleted pre-install inode (#410); `doctor`
+  softens to advisory while #411 + #414 are open (#415); the
+  release-draft body extractor lifts the narrative-prelude from
+  CHANGELOG.md as the operator-facing curated surface, leaving per-PR
+  detail canonical in CHANGELOG.md @ tag (#426); the release workflows
+  swap to a `RELEASE_TOKEN` repo secret because Forgejo Actions' auto-
+  token doesn't propagate declared `pull-requests: write` /
+  release-create scopes (#422); `install.sh`'s top comment + the
+  `--no-bootstrap` next-steps echo align with the post-#410 substrate
+  truth (#429); BookStack page 193 "Release & Deploy Procedure"
+  captures the full cut + deploy substrate for future operators (#428,
+  via Herald).
+
+Plus the substrate-hygiene companions: #407 (`feat!:` / `fix!:`
+title-shortcut parser deferred from #394), #411 + #414 (codex
+MCP-restart-path + paste-prompt-readiness gates, blocking restoration
+of `doctor` hard-fail), #420 (broader per-(command, adapter)
+slash-control compat surface), #423 (dedicated least-privilege
+release-bot service-account to replace the master PAT in
+`RELEASE_TOKEN`), #425 (release.yml PR-body template prose
+cleanup), #427 (release-draft empty-narrative-prelude hard-fail,
+fast-followed in this cut's [Unreleased] section).
+
+**Deferred to v0.17.1 and beyond.** The framed-paste Header
+standalone-submit race operator surfaced during the cut session
+(#430 — backslash-escape on Header's trailing newlines) goes to
+the next cut alongside the broader codex slash-control compat
+work (#420) and the dedicated release-bot user (#423).
+
+The Release-engineering milestone closes with v0.17.0.
+
 ### Changed
 
 - **Codex is now `PasteCapable` — paste-and-enter delivery (#360).** The
