@@ -64,7 +64,9 @@ reads safe concurrent with mailman writes.
 
 - **CHANGELOG.** Every change-carrying PR adds an entry under `## [Unreleased]` in
   `CHANGELOG.md`, in the [Keep a Changelog](https://keepachangelog.com/) style. Docs
-  PRs included — a doc change is still a change.
+  PRs included — a doc change is still a change. Keep entries crisp (headline + refs,
+  detail in the PR body) — see [CHANGELOG entries](#changelog-entries) for the
+  density convention + the per-release prelude shape.
 - **ADRs.** Architectural decisions are recorded in [`docs/adr/`](docs/adr/) (see its
   `README.md` for the convention and `template.md` for the shape). File an ADR when a
   decision constrains future work, touches an architectural commitment, or has real
@@ -92,6 +94,41 @@ reads safe concurrent with mailman writes.
   re-dispatching. The convention is **forward-only**: historical issues without an
   assignee aren't backfilled; new work claims as it picks up.
 
+### CHANGELOG entries
+
+Two layers, one convention: the entry you write per PR, and the prelude the release
+cut adds per version. This is the as-applied codification of the #391 distillation
+pass (merged in #456) — it documents what held in practice; the worked exemplars
+are the `[0.16.1]` / `[0.17.0]` sections.
+
+**Per-entry (every change-carrying PR).** One crisp bolded headline naming the
+surface change with the issue/PR refs in brackets, then at most a line or two for a
+substrate-honest constraint or composition note. Operator-facing impact is the
+lens, not the engineering narrative — *detail belongs in the PR body* (the review
+surface); the entry announces the change and links the depth. One nuance: a recipe
+that is itself the doc-of-record stays (e.g. a deploy procedure the entry
+introduces), while a recipe that mirrors the PR body's step-by-step gets distilled
+to headline + link.
+
+**Per-release prelude (at cut time).** Each `## [X.Y.Z]` section opens with a short
+narrative paragraph naming the cluster, then a `Headlines:` digest of bolded bullets
+where the release has enough substance to digest (3+); a small cut can skip the
+digest but not the paragraph. This is not decoration: `release-draft.yml` extracts
+everything before the first `### ` subsection as the curated release body, so an
+empty prelude **hard-fails the draft by design** (#427).
+
+**Forward-living-comprehensive.** The `CHANGELOG.md` at a tag is the *comprehensive*
+record — the canonical surface a reader consults for "what exactly changed" — while
+the release body is the curated narrative. So recent release sections stay
+comprehensive; only long-ago sections that have aged into archaeology get distilled
+(the boundary #391 drew was v0.16.0). This routing principle (release UI = publish,
+`CHANGELOG.md`@tag = comprehensive, release body = curated) is recorded in #426 /
+#427 and tracked for a full ADR in #462.
+
+A one-time cleanup like #391 is distinct from ongoing drift: if later releases let
+PR-body-mirror prose creep back, file a sibling tracker rather than folding the fix
+into an unrelated change.
+
 ## Release cuts
 
 **Pre-flight.** If the cut driver works from a shared host checkout (on
@@ -115,6 +152,10 @@ The cut sequence (run from a clean main on the cut branch):
    origin/main`
 2. **CHANGELOG header.** Move `[Unreleased]` content under
    `## [<X.Y.Z>] — <YYYY-MM-DD>`; leave `## [Unreleased]` as the empty shell.
+   Confirm the new `[<X.Y.Z>]` section opens with a narrative prelude + `Headlines:`
+   per [CHANGELOG entries](#changelog-entries) — `release-draft.yml` extracts
+   everything before the first `### ` as the curated release body, so an empty
+   prelude **hard-fails the draft by design** (#427).
 3. **README version pin.** Update the `--version` example to v<X.Y.Z>.
 4. **Deprecation eligibility check.** Run `./scripts/deprecations.sh --for
    v<X.Y.Z>` and confirm the cleared-for-removal list matches intent. If a
@@ -124,11 +165,18 @@ The cut sequence (run from a clean main on the cut branch):
 5. **Pre-commit checks.** `gofmt -l .` clean; `go vet ./...` clean; `go test
    -race -count=1 ./...` green.
 6. **Cut PR.** Open the cut PR; reviewer approves; merge on green.
-7. **Tag + Forgejo release.** From the merged main: `git tag v<X.Y.Z> && git
-   push origin v<X.Y.Z>`. Forgejo release notes come from the `[<X.Y.Z>]`
-   CHANGELOG block.
-8. **Deploy.** `./install.sh` against the freshly-built binary; verify the
-   mailman lifecycle + a smoke round-trip on the target host.
+7. **Publish the auto-draft.** Merging the cut PR fires `release-draft.yml`,
+   which creates a **draft** Forgejo release whose body is the `[<X.Y.Z>]`
+   section's narrative prelude + `Headlines:` (the curated surface per #426), with
+   the merge-commit SHA pinned as `target_commitish`. Review the draft in the
+   releases UI and click **Publish** — Forgejo creates the `v<X.Y.Z>` tag from the
+   draft. No manual `git tag && git push`; the Publish click is the act of
+   shipping (#418).
+8. **Deploy fires automatically.** `release: published` triggers
+   `release-publish.yml`, which re-validates the tag and chains `deploy.yml` (via
+   `workflow_call`) to run `install.sh` + bootstrap on the alcatraz-host runner.
+   Watch the deploy job's smoke step; for a manual redeploy or rollback, dispatch
+   `deploy.yml` with `ref=<tag>`.
 
 Deprecation-policy hygiene per ADR-0008 (the two-minor floor + the structured
 `### Deprecated` format from §Amendment B) is enforced at step 4 — the

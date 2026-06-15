@@ -33,6 +33,17 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Documentation
+
+- **CHANGELOG entry convention codified + §Release cuts modernized (#454).** The
+  density convention from #391's distillation — per-entry crisp headline + refs
+  (detail in the PR body), the per-release narrative prelude + `Headlines:` (the
+  `release-draft.yml` extraction surface, #427), and forward-living-comprehensive
+  (#426) — is now contributor-discipline in CONTRIBUTING §How we work + a
+  §Release-cuts step-2 prelude check; and §Release-cuts steps 7–8 are brought in
+  line with #418's four-workflow auto-chain (no more manual `git tag && git push`).
+  Part 3 of #391; the routing-principle ADR is tracked in #462.
+
 ## [0.17.1] — 2026-06-15
 
 Substrate-hygiene fast-follow after v0.17.0's cut-chain ship. The first
