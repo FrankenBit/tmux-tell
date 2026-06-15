@@ -51,6 +51,7 @@ Subcommands:
   discover Re-derive agents.pane_id from current tmux state
   state   Probe a agent's current activity via read-only capture-pane (#71)
   refresh-all-mcps  Bulk-fire mcp-restart-tmux-msg to every registered agent (#62)
+  restart-mailmen  Restart this adapter's running mailman units so a freshly-installed binary takes effect (#436)
   db      DB-housekeeping verbs (#349). Subcommands: migrate
   bootstrap  Substrate-honest install hard-cut: discover + enable mailmen + orphan walk + refresh (#349)
   codex-install  Codex-adapter bootstrap: set hook-context delivery mode + write hook blocks + MCP env to ~/.codex/config.toml (#384)
@@ -178,6 +179,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runStateCLI(args[1:], stdout, stderr)
 	case "refresh-all-mcps":
 		return runRefreshAllMcpsCLI(args[1:], stdout, stderr)
+	case "restart-mailmen":
+		return runRestartMailmenCLI(args[1:], stdout, stderr)
 	case "db":
 		return runDBCLI(args[1:], stdout, stderr)
 	case "bootstrap":

@@ -73,6 +73,24 @@ jobs:
             --adapter=claude \
             --prune-orphans
 
+      - name: deploy via wrapper (codex adapter, binary + mailman restart)
+        # #436: the release builds BOTH adapter binaries, so the deploy must roll
+        # both — claude-only left the codex binary a version behind every cut
+        # (caught at v0.17.0). `--no-bootstrap`: no per-agent codex config + no
+        # second refresh-all-mcps wave (the claude step already fired one). No
+        # `--prune-orphans`: the claude step's fleet-wide orphan walk already ran.
+        # The codex install path now restarts running codex mailmen via the
+        # restart-mailmen primitive, so the new codex binary is EFFECTIVE (not
+        # just on disk) — the #393 effectiveness lesson applied to codex. The
+        # call omits --allow-stale-mailmen, so a restart failure is FATAL: the
+        # step fails loud rather than greening a stale-mailman state (Lookout
+        # #439 — the post-deploy smoke's `--version` only proves file-on-disk).
+        run: |
+          sudo /srv/scripts/deploy-tmux-tell.sh \
+            "$GITHUB_WORKSPACE" \
+            --adapter=codex \
+            --no-bootstrap
+
       - name: post-deploy smoke
         # Doctor was hard-fail (Lookout 732d advisory + Bosun b2e9 architect-
         # call). First-deploy-lane empirically surfaced the false-positive
@@ -103,8 +121,10 @@ jobs:
         # manual MCP refresh.
         run: |
           set -euo pipefail
-          echo "==> installed binary version"
+          echo "==> installed binary versions (#436: assert BOTH adapters — a"
+          echo "    silent per-adapter version lag is the gap this surfaces)"
           tmux-msg-claude --version
+          tmux-msg-codex --version
           echo "==> doctor (MCP / mailman DB-binding divergence check, #348)"
           if ! tmux-msg-claude doctor; then
               echo "::warning::doctor reported divergence — review log for stale chamber MCPs (#411) or non-ready codex chambers (#414); deploy itself was structurally successful"

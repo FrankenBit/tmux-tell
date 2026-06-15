@@ -35,6 +35,23 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **Deploy chain now rolls BOTH adapter binaries, effectively (#436).** The
+  release builds `tmux-msg-claude` and `tmux-msg-codex`, but `deploy.yml`
+  hardcoded `--adapter=claude` — so every cut shipped the codex binary a version
+  behind (caught at v0.17.0: claude → v0.17.0 while codex sat at the prior day's
+  build, silently lagging codex-side fixes like #419). The deploy now adds a
+  codex install step (`--adapter=codex --no-bootstrap` — no second
+  refresh-all-mcps wave, no re-prune) and the post-deploy smoke asserts BOTH
+  adapter versions so a future per-adapter lag is visible in the job log. Crucial
+  half: a freshly-installed binary does NOT take effect on an already-running
+  mailman (the daemon holds the replaced inode until restarted — the #393
+  lesson), and `--no-bootstrap` skips bootstrap's per-agent restart. New
+  `tmux-msg-<adapter> restart-mailmen` sub-primitive (enumerates the adapter's
+  running mailman units and restarts each via #410's `restartMailman`; idempotent)
+  closes that — install.sh's `--no-bootstrap` path now invokes it, so the codex
+  binary is *effective*, not just present. Also drops the stale pre-#360
+  install.sh comment claiming codex has no systemd mailmen. The codex bootstrap
+  branch still registers hook-context (a separate staleness) — tracked in #438.
 - **`release-draft.yml` honest-hard-fail on empty narrative prelude +
   `workflow_dispatch` recovery trigger (#427).** Witnessed during v0.17.0
   cut 2026-06-15: the auto-extractor returned the misleading "CHANGELOG

@@ -48,6 +48,10 @@ ADAPTER=${ADAPTER:-claude}
 # codex hook blocks + MCP env block for (#384).
 BOOTSTRAP=1
 PRUNE_ORPHANS=0
+# --allow-stale-mailmen (#436 / Lookout #439): demote a post-install
+# restart-mailmen failure from fatal to a warning. Default 0 = fatal, so the
+# deploy chain fails loud rather than greening a stale-mailman state.
+ALLOW_STALE_MAILMEN=0
 AGENT_NAME=${AGENT_NAME:-}
 for arg in "$@"; do
     case "$arg" in
@@ -55,7 +59,8 @@ for arg in "$@"; do
         --agent=*)   AGENT_NAME="${arg#--agent=}" ;;
         --no-bootstrap) BOOTSTRAP=0 ;;
         --prune-orphans) PRUNE_ORPHANS=1 ;;
-        *) echo "install.sh: unknown argument: $arg (expected --adapter=NAME | --agent=NAME | --no-bootstrap | --prune-orphans)" >&2; exit 1 ;;
+        --allow-stale-mailmen) ALLOW_STALE_MAILMEN=1 ;;
+        *) echo "install.sh: unknown argument: $arg (expected --adapter=NAME | --agent=NAME | --no-bootstrap | --prune-orphans | --allow-stale-mailmen)" >&2; exit 1 ;;
     esac
 done
 if [[ -z "$ADAPTER" || ! -d "$(dirname "$0")/cmd/tmux-msg-${ADAPTER}" ]]; then
@@ -205,6 +210,38 @@ echo "Install complete."
 # historical print-next-steps behavior available.
 if [[ "$BOOTSTRAP" -eq 0 ]]; then
     echo
+    # #436: a freshly-installed binary does NOT take effect on an already-
+    # running mailman — the daemon holds the replaced inode until restarted
+    # (the #393 lesson). The bootstrap path restarts mailmen per-agent; the
+    # --no-bootstrap path (which the release deploy chain uses for the codex
+    # adapter) must do the equivalent or the new binary stays inert. Restart
+    # the adapter's running mailmen via the standalone primitive; no-op when
+    # none run. Runs as the operator (systemctl --user needs their session bus).
+    OPERATOR_UID=$(id -u "$OPERATOR_USER")
+    echo "==> restarting running $ADAPTER mailmen onto the new binary (#436)"
+    # FATAL-BY-DEFAULT (Lookout #439 containment review): the substrate-claim
+    # of this path is "the new binary is EFFECTIVE." A restart failure breaks
+    # that — the binary is on disk but running mailmen hold the old inode. The
+    # deploy chain calls this WITHOUT --allow-stale-mailmen, so a restart
+    # failure must fail the deploy LOUD rather than green a stale-mailman state
+    # (the exact green-but-incomplete shape #436 exists to kill — the smoke's
+    # `--version` only proves file-on-disk, not running-process effectiveness).
+    # --allow-stale-mailmen is the explicit manual-operator opt-out for
+    # debug/transient-failure scenarios; it demotes the failure to a warning.
+    if ! sudo -u "$OPERATOR_USER" \
+        env \
+            HOME="$OPERATOR_HOME" \
+            XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+            "$PREFIX/bin/$BIN_NAME" restart-mailmen; then
+        if [[ "$ALLOW_STALE_MAILMEN" -eq 1 ]]; then
+            echo "install.sh: restart-mailmen failed; --allow-stale-mailmen set → continuing. The binary is installed but some mailmen may still run the old inode (rerun '$BIN_NAME restart-mailmen' as $OPERATOR_USER to converge)." >&2
+        else
+            echo "install.sh: restart-mailmen FAILED — the new binary is on disk but running mailmen still hold the OLD inode, so this install is NOT effective (#436). Fix the systemctl error above and rerun, or pass --allow-stale-mailmen to proceed anyway." >&2
+            exit 1
+        fi
+    fi
+    echo
     if [[ "$ADAPTER" == "codex" ]]; then
         echo "Next steps for codex (--no-bootstrap chosen; run as $OPERATOR_USER, NOT as root):"
         echo "  # register the codex chamber as hook-context:"
@@ -233,9 +270,12 @@ if [[ "$BOOTSTRAP" -eq 0 ]]; then
     exit 0
 fi
 
-# Bootstrap path. enable-linger is a root operation (claude adapter only;
-# codex uses hook-context delivery and has no systemd mailman daemons).
-# The rest runs as the operator with their tmux + D-Bus session.
+# Bootstrap path. enable-linger is a root operation (claude bootstrap only).
+# NOTE: codex IS paste-capable with systemd mailman daemons since #360 (e.g.
+# Lookout) — the pre-#360 "codex has no mailmen" assumption is gone. The codex
+# bootstrap branch below still registers hook-context (a separate staleness
+# tracked in #438); #436 only fixes binary-effectiveness via restart-mailmen on
+# the --no-bootstrap path above. The rest runs as the operator (tmux + D-Bus).
 OPERATOR_UID=$(id -u "$OPERATOR_USER")
 
 if [[ "$ADAPTER" == "codex" ]]; then
