@@ -1,21 +1,26 @@
 name: release-draft
 
-# Triggered when a `release-prep/v*` PR merges to main. Creates a DRAFT
-# Forgejo release with the CHANGELOG `## [vX.Y.Z]` section pre-populated
-# as the release body + the target tag name + the merge commit as target.
-# Operator visits the releases UI, reviews, optionally edits, clicks
-# Publish — Forgejo then creates the tag + fires `release: published`
-# which release-publish.yml picks up to chain the deploy.
+# Triggered when a `release-prep/v*` PR merges to main, OR by manual
+# `workflow_dispatch` for recovery / re-trigger when the auto-path
+# failed once and the operator wants to retry without re-merging the
+# release-prep PR (added 2026-06-15 after v0.17.0 cut's first
+# release-draft.yml failure surfaced #427's empty-narrative-prelude
+# disposition gap).
+#
+# Creates a DRAFT Forgejo release with the CHANGELOG `## [vX.Y.Z]`
+# narrative-prelude section pre-populated as the release body + the
+# target tag name + the merge commit (auto-path) or current main HEAD
+# (workflow_dispatch path) as target_commitish. Operator visits the
+# releases UI, reviews, optionally edits, clicks Publish — Forgejo then
+# creates the tag + fires `release: published` which release-publish.yml
+# picks up to chain the deploy.
 #
 # The split:
 # - release.yml: workflow_dispatch → release-prep PR creation
 # - release-draft.yml (this file): PR-merge → DRAFT release creation
+#                                  OR workflow_dispatch (manual retry)
 # - release-publish.yml: release-published → deploy chain
 # - deploy.yml: workflow_call invoked above OR workflow_dispatch direct
-#
-# The operator's manual step is `click Publish` in the Forgejo releases
-# UI with all content pre-populated — substrate-honestly cleaner than
-# CLI tag push (which would create the tag without a release artifact).
 #
 # Schema-compatibility per the cluster precedent: `github.*` not
 # `gitea.*` (Forgejo namespace alias); no top-level `run-name` /
@@ -26,13 +31,21 @@ on:
   pull_request:
     types: [closed]
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (vX.Y.Z) — used for both CHANGELOG extraction + draft release name'
+        required: true
+        # Explicit type required by Forgejo Actions dispatch UI per #417.
+        type: string
 
 jobs:
   draft:
     name: create draft release from merged release-prep PR
     # Only fires when the PR was actually merged AND came from a
     # release-prep/* branch (per release.yml's convention).
-    if: github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release-prep/')
+    # workflow_dispatch path always runs (operator-initiated retry).
+    if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.merged == true && startsWith(github.event.pull_request.head.ref, 'release-prep/'))
     runs-on: go
     permissions:
       contents: write
@@ -44,26 +57,43 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: extract version from release-prep branch name
-        id: version
+      - name: determine target tag + commit
+        id: target
         env:
+          EVENT_NAME: ${{ github.event_name }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
         run: |
           set -euo pipefail
-          # release.yml creates the branch as `release-prep/vX.Y.Z`; strip
-          # the prefix to get the tag name.
-          TAG="${HEAD_REF#release-prep/}"
+          # Auto-path: extract version from release-prep branch name +
+          # use the merge commit SHA as target_commitish (substrate-honest
+          # anchor — Surveyor 4b1d / QM 1054).
+          # Dispatch path: take tag from input, use current main HEAD as
+          # target_commitish (operator-initiated retry; main is canonical
+          # at the moment of retry).
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            TAG="$DISPATCH_TAG"
+            TARGET=$(git rev-parse HEAD)
+            echo "==> dispatch path: tag=$TAG target=$TARGET (current main HEAD)"
+          else
+            # release.yml creates the branch as `release-prep/vX.Y.Z`; strip
+            # the prefix to get the tag name.
+            TAG="${HEAD_REF#release-prep/}"
+            TARGET="$MERGE_SHA"
+            echo "==> auto path: tag=$TAG target=$TARGET (merge commit SHA)"
+          fi
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::head ref '$HEAD_REF' did not yield a valid vX.Y.Z tag (got '$TAG')"
+            echo "::error::tag '$TAG' did not match ^v[0-9]+\.[0-9]+\.[0-9]+\$"
             exit 1
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "==> target tag: $TAG"
+          echo "target=$TARGET" >> "$GITHUB_OUTPUT"
 
       - name: extract CHANGELOG section
         id: notes
         env:
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: ${{ steps.target.outputs.tag }}
           REPO: ${{ github.repository }}
           SERVER: ${{ github.server_url }}
         run: |
@@ -85,6 +115,15 @@ jobs:
           # Shape decided 2026-06-15 during v0.17.0 cut + v0.16.x backfill
           # (#425 sibling work). Tags both with and without `v` prefix
           # accepted for Keep-a-Changelog tolerance.
+          #
+          # Empty-prelude disposition (#427): when the CHANGELOG section
+          # exists but has no narrative prose before the first `### `
+          # subsection, hard-fail with a distinct, operator-actionable
+          # error message rather than the generic "section not found"
+          # (which would mislead — the section IS found, the prelude is
+          # missing). Substrate-claim from #426: narrative-prelude IS
+          # the release body shape. An empty prelude is a substrate-
+          # claim violation; the substrate refuses to silently degrade.
           python3 <<'PY' > /tmp/release-notes.md
           import os, re, sys
 
@@ -103,14 +142,31 @@ jobs:
               rf'^## \[{re.escape(version)}\][^\n]*\n(.*?)(?=^### |^## \[|\Z)',
           ]
           section = None
+          section_found = False
           for pat in patterns:
               m = re.search(pat, content, flags=re.DOTALL | re.MULTILINE)
               if m:
+                  section_found = True
                   section = m.group(1).strip()
-                  break
+                  if section:
+                      break
+
+          if not section_found:
+              sys.stderr.write(
+                  f"::error::CHANGELOG.md has no section matching `## [{tag}]` "
+                  f"or `## [{version}]` — verify the tag exists in CHANGELOG.md\n"
+              )
+              sys.exit(1)
 
           if not section:
-              sys.stderr.write(f'::error::CHANGELOG section not found for {tag} (or {version})\n')
+              sys.stderr.write(
+                  f"::error::CHANGELOG.md `## [{tag}]` section has no narrative "
+                  f"prelude before the first `### ` subsection — release-draft.yml "
+                  f"requires a narrative + headlines shape (canonical-substrate-vs-"
+                  f"curated-surface contract per #426). Add a paragraph + Headlines "
+                  f"bullets before `### Added` / `### Changed` / `### Fixed`. See "
+                  f"v0.16.0 / v0.16.1 sections for the convention.\n"
+              )
               sys.exit(1)
 
           # Link to CHANGELOG.md at the tag — no fragment anchor (Lookout
@@ -145,9 +201,9 @@ jobs:
 
       - name: create DRAFT Forgejo release
         env:
-          TAG: ${{ steps.version.outputs.tag }}
+          TAG: ${{ steps.target.outputs.tag }}
           BODY: ${{ steps.notes.outputs.body }}
-          TARGET: ${{ github.event.pull_request.merge_commit_sha }}
+          TARGET: ${{ steps.target.outputs.target }}
           # RELEASE_TOKEN (repo-scoped admin PAT, 2026-06-15) rather than
           # the auto-issued GITHUB_TOKEN. Same Forgejo gap as release.yml:
           # declared `contents: write` doesn't propagate to the release-

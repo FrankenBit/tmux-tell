@@ -33,6 +33,22 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`release-draft.yml` honest-hard-fail on empty narrative prelude +
+  `workflow_dispatch` recovery trigger (#427).** Witnessed during v0.17.0
+  cut 2026-06-15: the auto-extractor returned the misleading "CHANGELOG
+  section not found" error when the section was actually found but had no
+  narrative prose before the first `### ` subsection. Distinct now:
+  empty-prelude case emits a substrate-claim-naming error
+  ("`## [vX.Y.Z]` section has no narrative prelude before the first
+  `### ` subsection — release-draft.yml requires a narrative + headlines
+  shape per the canonical-substrate-vs-curated-surface contract per
+  #426") with pointer to v0.16.0 / v0.16.1 as the convention exemplars.
+  Adds a `workflow_dispatch` trigger with a `tag` input so the operator
+  can retry release-draft.yml after fixing the underlying issue, without
+  re-merging the release-prep PR. Closes #427's forward-watch.
+
 ## [0.17.0] — 2026-06-14
 
 ### Changed
