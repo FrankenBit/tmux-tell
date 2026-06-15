@@ -35,45 +35,37 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [0.17.2] — 2026-06-15
 
-Substrate-hygiene fast-follow #2 after v0.17.1, closing the residue the
-rapid-iteration window left behind: a `register` delivery_mode-flip footgun, a
-release-bump parser gap, the post-deploy rate verification, and the codification
-of the very CHANGELOG convention this prelude is the first applied instance of. A
-quiet thread runs through the cluster — **substrate-empirical honesty**, naming
-what the substrate actually did rather than what was assumed: Pilot quantified the
-warning-rate fix to its primary driver and declined to over-claim the rest, and
-QM's parser fix corrected the issue's own framing (the old parser silently
-downgraded a breaking change to *patch* — it wasn't minor-by-coincidence).
+v0.17.2 closes loose ends from v0.17.1's rapid cycle. Four fixes:
 
-Headlines:
+- **`register` no longer silently fences queued messages on delivery_mode flip
+  (#390).** If switching an agent from `hook-context` → `paste-and-enter` (or
+  back) would leave `N > 0` queued messages stuck below the new mailman's
+  backlog floor, `register` now errors and asks you to pick
+  `--purge-stale-queue` (ack them) or `--keep-stale-queue` (leave them
+  visible). `inbox` marks fenced rows `(backlog-fenced)` so you can see them;
+  a new `backlog_fenced` JSON field carries the same signal for scripts. The
+  substrate never auto-decides on your behalf — the disposition is your call.
+- **`delivered_in_input_box` warning rate dropped 97.6% (#387).** The
+  cursor-anchored input-emptied verify-signal that shipped in v0.16.1 (#369)
+  reduced the warning count from 84/24h (pre-fix baseline) to 2/24h on
+  alcatraz. The single-paste demote in v0.17.1 (#446) likely contributes too,
+  but the residuals both predate it, so attribution stays cleanly with
+  cursor-anchor as primary.
+- **`release.yml` now recognizes `feat!:` / `fix!:` breaking-change shortcuts
+  (#407).** Conventional Commits allows two forms — the `BREAKING CHANGE:`
+  body footer (already handled) and the `<type>!:` title shortcut (was
+  missed). A commit titled `feat!: foo` used to silently fall through to a
+  patch bump; it now correctly maps to minor (pre-1.0; will be major
+  post-1.0).
+- **CHANGELOG entry convention codified in `CONTRIBUTING.md` (#454).** The
+  style we've been using for entries — crisp headline + issue/PR links,
+  detail belongs in the PR body, every release gets a narrative prelude +
+  `Headlines` — is now documented contributor-discipline. The §Release cuts
+  section also got modernized for the four-workflow auto-cut chain from
+  v0.17.0.
 
-- **`register` requires an explicit disposition when a delivery_mode flip orphans
-  queued messages (#390).** A flip that fences `N > 0` pre-flip messages below the
-  new mailman's backlog floor now errors unless the operator passes
-  `--purge-stale-queue` or `--keep-stale-queue`; `inbox` annotates fenced rows
-  `(backlog-fenced)`. The substrate never unilaterally discards or re-routes
-  operator-addressed messages — the disposition is the operator's call.
-- **Post-deploy rate verification: `delivered_in_input_box` warnings down 97.6%
-  (#387).** 84 events/24h → 2/24h after #369's cursor-anchor verify-signal (the
-  primary driver) + #446's single-paste demote; the 2 residuals predate the #446
-  deploy. Rate floor confirmed, mechanism-attribution honest.
-- **`release.yml` recognizes the `<type>!:` breaking-change shortcut (#407).** A
-  `feat!:`-titled commit no longer slips past the `feat:` regex to silently bump
-  *patch*; the title shortcut now maps to minor (pre-1.0-suppressed) alongside the
-  `BREAKING CHANGE:` footer.
-- **CHANGELOG density convention codified + §Release cuts modernized (#454).** The
-  #391 convention (per-entry crisp headline + links; per-release narrative prelude
-  + `Headlines:`; forward-living-comprehensive) is now contributor-discipline in
-  CONTRIBUTING; §Release cuts steps 7–8 follow #418's four-workflow chain.
-- **First-worked-instances fire on this cut.** This prelude is the convention's
-  first applied instance after its own codification (#454); the release-prep PR
-  opens with #457's four-workflow-chain body prose (#425's first-worked-instance);
-  and the deploy rolls both adapter binaries (#436 cardinality at n=2, via #439).
-
-Substrate-empirical contributions worth pinning: #369's cursor-anchor → the 97.6%
-warning-rate floor; #390 → an operator-disposition-explicit gate on
-message-orphaning flips; #407 → a MINOR-with-break correctly attributed instead of
-a silent patch.
+Deploy notes: both adapter binaries (`tmux-msg-claude` and `tmux-msg-codex`)
+now roll in one deploy cycle (#436).
 
 ### Documentation
 
