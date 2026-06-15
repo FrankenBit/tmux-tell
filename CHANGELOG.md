@@ -33,6 +33,22 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Documentation
+
+- **ADR-0014: tmux-tell scope — IS / IS NOT / SSH-back-tunnel (#441).** Codifies
+  the project-scope-fence in operator-ratified form: an 8-item IS list (peer-style
+  TUI-paste bus, observe-gate, SQLite persistence, substrate-vs-adapter boundary,
+  hook-context delivery, MCP server surface, host-local trust, adapter-axis
+  extensibility), a 6-item IS NOT list (generic broker, real-time streaming,
+  multi-tenant, web UI, E2E encryption, non-LLM consumers), and SSH-back-tunnel
+  as the planned-but-distinct cross-host reach mechanism that composes with
+  host-locality rather than replicating the bus. **Decision-by-omission
+  discipline lands with the ADR**: "X is out-of-scope per ADR-0014" becomes
+  the default answer to "should we add X?" unless the proposer names a
+  load-bearing reason X falls within the IS list. Sibling discipline to the
+  issue-level scope-fence at the project level — burden of proof flips from
+  rejecter to proposer.
+
 ## [0.17.2] — 2026-06-15
 
 v0.17.2 closes loose ends from v0.17.1's rapid cycle. Four fixes:
