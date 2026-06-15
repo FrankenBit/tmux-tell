@@ -35,6 +35,54 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [0.17.1] — 2026-06-15
 
+Substrate-hygiene fast-follow after v0.17.0's cut-chain ship. The first
+deploy-lane exposed codex-adapter coverage gaps and delivery-substrate residues
+the cut-chain itself didn't carry; this cut closes them in-cluster — and,
+fittingly, exercises `release-draft.yml`'s own empty-prelude honest-fail (#427)
+as the recovery surface for its own draft.
+
+Headlines:
+
+- **Codex adapter substrate parity (#436 / #438 / #443 Obs1).** Deploy now rolls
+  BOTH adapter binaries — a new `restart-mailmen` sub-primitive makes a freshly
+  installed codex binary actually take effect on the running mailman (#436);
+  install.sh's codex bootstrap branches on the agent's CURRENT `delivery_mode`
+  instead of force-writing hook blocks (#438); and `doHookContext` reads
+  `delivery_mode` to no-op when the toml is stale (#443 Obs1) — closing Lookout's
+  witnessed double-arrival regardless of *why* the toml diverged.
+- **Single-paste delivery — demote #336's framed paste (#446, supersedes #336,
+  closes #389).** Every message now pastes as one buffer + Enter, like short
+  messages always did; the separate-Header paste event — and the #389
+  standalone-submit window it opened — is structurally gone, with regression
+  coverage for codex multi-block collapsed-paste submit pinned alongside
+  (#443 Obs2).
+- **`release-draft.yml` empty-prelude honest-fail + `workflow_dispatch` recovery
+  (#427).** Distinguishes section-not-found from section-has-no-prelude with a
+  substrate-claim-naming error, and adds a retry trigger so the operator can
+  re-run the draft after fixing the CHANGELOG without re-merging the release-prep
+  PR — the recovery surface this very prelude was authored against.
+- **`release.yml` PR-body template tells the real post-merge story (#425).** The
+  release-prep PR body + the file-header comment drop the stale "deferred to
+  v0.17.1 / operator handles manually" prose for #418's four-workflow auto-chain.
+- **CHANGELOG discipline cleanup (#391).** v0.1.0–v0.15.1 distilled to the
+  prelude + `Headlines:` + load-bearing-bullets exemplar (~217 KiB → ~130 KiB)
+  with release-tag footnotes wired for all 20 versions; v0.16.0 / v0.16.1 /
+  v0.17.0 left as the density exemplars + canonical-comprehensive surface
+  per #426.
+
+Plus the substrate-hygiene companions spun off while closing the cluster: the
+truthful-toml hook-block rewrite-on-flip (a #443 Obs1 cosmetic follow-up),
+MCP-env wiring for a fresh paste-served codex chamber (#453), and the
+release-prep derive-script's backtick over-escaping (#459).
+
+Deferred to v0.17.2 and beyond: #443's umbrella stays open for Observation 1's
+codex-config delivery (#384 / #438 territory), the Part-3 CHANGELOG-convention
+codification (#454), and the remaining open v0.17.1-milestone items (#450).
+
+A fast-follow that hardens the codex adapter toward parity with claude and pays
+down the cut-chain's own first-run residue — including, recursively, the draft
+that ships it.
+
 ### Added
 
 - **Regression coverage + characterization for codex multi-block collapsed-paste
