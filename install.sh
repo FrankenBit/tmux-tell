@@ -244,10 +244,14 @@ if [[ "$BOOTSTRAP" -eq 0 ]]; then
     echo
     if [[ "$ADAPTER" == "codex" ]]; then
         echo "Next steps for codex (--no-bootstrap chosen; run as $OPERATOR_USER, NOT as root):"
-        echo "  # register the codex chamber as hook-context:"
+        echo "  # PASTE-SERVED chamber (the #360 default — codex runs a mailman like claude):"
+        echo "  sudo loginctl enable-linger $OPERATOR_USER"
+        echo "  $BIN_NAME discover"
+        echo "  systemctl --user enable ${UNIT_NAME%@.service}@<agent>.service"
+        echo "  systemctl --user restart ${UNIT_NAME%@.service}@<agent>.service"
+        echo "  # OR a HOOK-CONTEXT chamber (no mailman; delivers via the UserPromptSubmit hook):"
         echo "  $BIN_NAME register --name <agent> --delivery-mode=hook-context"
-        echo "  # OR run the automated config writer:"
-        echo "  $BIN_NAME codex-install --agent=<agent>"
+        echo "  $BIN_NAME codex-install --agent=<agent>   # writes hook blocks + MCP env"
         echo "  # then manually approve hooks in Codex on next launch:"
         echo "  #   UserPromptSubmit: tmux-msg-codex hook-context"
         echo "  #   SessionStart:     tmux-msg-codex hook-context"
@@ -270,29 +274,91 @@ if [[ "$BOOTSTRAP" -eq 0 ]]; then
     exit 0
 fi
 
-# Bootstrap path. enable-linger is a root operation (claude bootstrap only).
-# NOTE: codex IS paste-capable with systemd mailman daemons since #360 (e.g.
-# Lookout) — the pre-#360 "codex has no mailmen" assumption is gone. The codex
-# bootstrap branch below still registers hook-context (a separate staleness
-# tracked in #438); #436 only fixes binary-effectiveness via restart-mailmen on
-# the --no-bootstrap path above. The rest runs as the operator (tmux + D-Bus).
+# Bootstrap path. enable-linger is a root operation needed by BOTH adapters:
+# since #360 codex IS paste-capable with systemd mailman daemons (e.g. Lookout),
+# so a paste-served codex chamber needs linger + a mailman exactly like claude.
+# Only a hook-context codex chamber delivers via the UserPromptSubmit hook and
+# runs no mailman. The codex branch below branches on the agent's CURRENT
+# delivery_mode and does NOT force hook-context (#438). The rest runs as the
+# operator (tmux + D-Bus).
 OPERATOR_UID=$(id -u "$OPERATOR_USER")
 
 if [[ "$ADAPTER" == "codex" ]]; then
-    # Codex bootstrap: register agent as hook-context + write codex config
-    # blocks. No mailmen, no MCP refresh against systemd. TMUX* preserved
-    # so the discover walker can find the codex pane (#384).
+    # Codex bootstrap is per-agent (#384) and paste-aware (#438): enable-linger
+    # so a paste-served codex mailman persists at boot (same as claude), then
+    # discover + branch on the agent's CURRENT delivery_mode. NEVER force-flip it
+    # — the pre-#438 path always ran codex-install, whose step 2 flipped a
+    # paste-served chamber (Lookout) back to hook-context, re-creating the
+    # #443 Obs1 stale-hook duplicate-delivery.
     echo
-    echo "==> running codex-install (register + hook config write) for agent '$AGENT_NAME'"
+    echo "==> enabling user-manager linger for $OPERATOR_USER"
+    loginctl enable-linger "$OPERATOR_USER" || {
+        echo "install.sh: loginctl enable-linger failed; bootstrap requires the operator's user manager to be reachable." >&2
+        echo "  Re-run with --no-bootstrap if you want to handle this manually." >&2
+        exit 1
+    }
+
+    # Discover (populates $AGENT_NAME; a fresh agent defaults to paste-and-enter
+    # per #360) + read its delivery_mode via whoami's MODE line (no jq). Runs as
+    # the operator: discover needs TMUX*, whoami reads the same DB via HOME.
+    echo "==> discovering codex panes + resolving delivery_mode for '$AGENT_NAME'"
     sudo -u "$OPERATOR_USER" \
         --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR \
-        env \
-            HOME="$OPERATOR_HOME" \
-            "$PREFIX/bin/$BIN_NAME" codex-install \
-                --agent="$AGENT_NAME"
+        env HOME="$OPERATOR_HOME" \
+            "$PREFIX/bin/$BIN_NAME" discover >/dev/null
+    CODEX_MODE=$(sudo -u "$OPERATOR_USER" \
+        env HOME="$OPERATOR_HOME" \
+            "$PREFIX/bin/$BIN_NAME" whoami --as "$AGENT_NAME" --format=text \
+        | awk -F'\t' '$1 == "MODE" { print $2 }')
+
+    if [[ -z "$CODEX_MODE" ]]; then
+        echo "install.sh: agent '$AGENT_NAME' not found after discover — ensure the codex pane is in the current tmux session with TMUX_AGENT_NAME=$AGENT_NAME set, or run '$BIN_NAME register --name $AGENT_NAME --delivery-mode=...' first." >&2
+        exit 1
+    fi
+
+    case "$CODEX_MODE" in
+    hook-context)
+        # Deliberate hook-context chamber: write hook blocks + MCP env. The mode
+        # is already hook-context so codex-install's step 2 is a no-op (no flip).
+        # No mailman — hook-context delivers via the UserPromptSubmit hook.
+        echo "==> '$AGENT_NAME' is hook-context → codex-install (hook config + MCP env)"
+        sudo -u "$OPERATOR_USER" \
+            --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR \
+            env HOME="$OPERATOR_HOME" \
+                "$PREFIX/bin/$BIN_NAME" codex-install \
+                    --agent="$AGENT_NAME"
+        ;;
+    paste-and-enter)
+        # Paste-served chamber (the #360 default): enable + restart its mailman,
+        # exactly like claude (#410's enable-then-restart so an already-running
+        # mailman picks up the freshly-installed inode). delivery_mode preserved;
+        # no hook blocks written (writing them would re-create the #443 Obs1
+        # stale-hook condition). MCP-env wiring for a fresh paste-served codex
+        # chamber is tracked separately (#453).
+        MAILMAN_UNIT="${UNIT_NAME%@.service}@${AGENT_NAME}.service"
+        echo "==> '$AGENT_NAME' is paste-and-enter → enable + restart $MAILMAN_UNIT (mode preserved)"
+        sudo -u "$OPERATOR_USER" \
+            env HOME="$OPERATOR_HOME" \
+                XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+                systemctl --user enable "$MAILMAN_UNIT"
+        sudo -u "$OPERATOR_USER" \
+            env HOME="$OPERATOR_HOME" \
+                XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+                systemctl --user restart "$MAILMAN_UNIT"
+        ;;
+    *)
+        # mailbox-only (operator polls the inbox; register defaults start_mailman
+        # =false) or any future mode: NO mailman + NO hooks. Enabling a mailman
+        # here would contradict the mailbox-only contract (Surveyor #455 nit).
+        # The agent is registered (discover ran); nothing else to wire.
+        echo "==> '$AGENT_NAME' is $CODEX_MODE → no mailman / no hooks (operator-polled); nothing to wire"
+        ;;
+    esac
 
     echo
-    echo "Codex install complete."
+    echo "Codex bootstrap complete."
 else
     echo
     echo "==> enabling user-manager linger for $OPERATOR_USER"

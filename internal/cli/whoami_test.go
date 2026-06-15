@@ -63,10 +63,42 @@ func TestWhoami_TextFormat(t *testing.T) {
 		t.Fatalf("exit = %d", exit)
 	}
 	out := stdout.String()
-	for _, want := range []string{"NAME\tbosun", "PANE\t%1 (live)", "PAUSED\tno", "INBOX\t1 queued"} {
+	for _, want := range []string{"NAME\tbosun", "PANE\t%1 (live)", "PAUSED\tno", "INBOX\t1 queued", "MODE\tpaste-and-enter"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+// TestWhoami_ReportsDeliveryMode pins the MODE line (text) + delivery_mode field
+// (JSON) for BOTH delivery modes — install.sh's codex bootstrap reads this to
+// route paste-served vs hook-context agents without a JSON parser (#438).
+func TestWhoami_ReportsDeliveryMode(t *testing.T) {
+	for _, mode := range []string{store.DeliveryModePasteAndEnter, store.DeliveryModeHookContext} {
+		t.Run(mode, func(t *testing.T) {
+			s, _ := store.Open(":memory:")
+			t.Cleanup(func() { _ = s.Close() })
+			ctx := context.Background()
+			_ = s.UpsertAgent(ctx, "lookout", "%8")
+			if err := s.SetDeliveryMode(ctx, "lookout", mode); err != nil {
+				t.Fatalf("set mode: %v", err)
+			}
+
+			var textOut, jsonOut bytes.Buffer
+			_ = runWhoamiWithStore(ctx, s, map[string]bool{"%8": true}, "lookout", "explicit", "text", &textOut, &bytes.Buffer{})
+			if want := "MODE\t" + mode; !strings.Contains(textOut.String(), want) {
+				t.Errorf("text missing %q in:\n%s", want, textOut.String())
+			}
+
+			_ = runWhoamiWithStore(ctx, s, map[string]bool{"%8": true}, "lookout", "explicit", "json", &jsonOut, &bytes.Buffer{})
+			var got map[string]any
+			if err := json.Unmarshal(bytes.TrimSpace(jsonOut.Bytes()), &got); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if got["delivery_mode"] != mode {
+				t.Errorf("json delivery_mode = %v, want %s", got["delivery_mode"], mode)
+			}
+		})
 	}
 }
 

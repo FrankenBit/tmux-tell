@@ -79,6 +79,21 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **Codex bootstrap is paste-aware (#438).** install.sh's full `--adapter=codex`
+  bootstrap unconditionally ran `codex-install`, whose register step force-set
+  `delivery_mode=hook-context` — flipping a paste-served codex chamber (Lookout,
+  paste-capable since #360) back to hook-context and writing the hook blocks that
+  cause the #443 Obs1 duplicate delivery. The bootstrap now branches on the
+  agent's CURRENT delivery_mode (read via `whoami`'s new `MODE` line): a
+  hook-context chamber still gets `codex-install` (hook config + MCP env), while a
+  paste-served chamber gets its systemd mailman enabled + restarted (the claude
+  sibling-shape, #410) with its mode preserved and no hook blocks written.
+  `enable-linger` now runs on the codex bootstrap path too (a paste-served codex
+  mailman needs it to persist at boot, same as claude). `whoami` now reports
+  `delivery_mode` (a text `MODE` line + JSON field). Existing delivery_mode is
+  preserved across bootstrap (`discover`'s `UpsertAgent` only updates the pane).
+  MCP-env wiring for a *fresh* paste-served codex chamber is tracked separately
+  (#453).
 - **Codex hook-context path no longer double-delivers for a paste-served agent
   (#443 Obs1).** When a codex agent's `delivery_mode` is flipped DB-side to
   `paste-and-enter` but its `~/.codex/config.toml` still carries the

@@ -88,14 +88,15 @@ func runWhoamiWithStore(ctx context.Context, s *store.Store,
 	switch format {
 	case "json":
 		_ = writeJSONResult(stdout, map[string]any{
-			"ok":          true,
-			"name":        a.Name,
-			"registered":  true,
-			"pane":        a.PaneID,
-			"pane_status": paneStatus,
-			"paused":      a.Paused,
-			"queued":      depth,
-			"source":      source,
+			"ok":            true,
+			"name":          a.Name,
+			"registered":    true,
+			"pane":          a.PaneID,
+			"pane_status":   paneStatus,
+			"paused":        a.Paused,
+			"queued":        depth,
+			"source":        source,
+			"delivery_mode": a.DeliveryMode,
 		})
 		return exitOK
 	case "text", "":
@@ -107,6 +108,10 @@ func runWhoamiWithStore(ctx context.Context, s *store.Store,
 		fmt.Fprintf(stdout, "PANE\t%s (%s)\n", pane, paneStatus)
 		fmt.Fprintf(stdout, "PAUSED\t%s\n", yesNo(a.Paused))
 		fmt.Fprintf(stdout, "INBOX\t%d queued\n", depth)
+		// MODE exposes delivery_mode as a stable greppable line — install.sh's
+		// codex bootstrap reads it (`whoami --as <agent> --format=text`) to route
+		// paste-served vs hook-context without a JSON parser / jq dependency (#438).
+		fmt.Fprintf(stdout, "MODE\t%s\n", a.DeliveryMode)
 		return exitOK
 	default:
 		return writeJSONError(stdout, stderr,
