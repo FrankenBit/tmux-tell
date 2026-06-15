@@ -33,6 +33,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.17.1] — 2026-06-15
+
 ### Added
 
 - **Regression coverage + characterization for codex multi-block collapsed-paste
