@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // OperatorRecipient is the reserved sender-facing name for operator-presence

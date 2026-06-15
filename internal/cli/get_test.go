@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // seedTwoMessages inserts two messages addressed alice→bob and

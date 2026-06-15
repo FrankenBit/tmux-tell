@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // TestMailmanIdleHuman pins the agents-listing MAILMAN-column humanizer (#348).

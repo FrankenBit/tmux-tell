@@ -7,13 +7,13 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/healthscan"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/healthscan"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runHealthCLI parses health-subcommand flags and dispatches (#42).
 //
-// Usage: tmux-msg-claude health [--since DURATION] [--format text|json] [AGENT...]
+// Usage: tmux-tell-claude health [--since DURATION] [--format text|json] [AGENT...]
 //
 // Scans journalctl + systemd for the configured window and reports
 // per-agent operational health: delivery counts, soft-failure WARN

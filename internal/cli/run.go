@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/version"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/version"
 )
 
 // usageText renders the top-level usage string for the active adapter. The
@@ -58,7 +58,7 @@ Subcommands:
   mcp     Speak MCP over stdio (%s tools)
   hook-context  Present pending messages as additionalContext for a hook-context agent — invoked by a %s SessionStart/UserPromptSubmit hook (#249)
 
-See https://git.frankenbit.de/frankenbit/tmux-msg for the design notes.
+See https://git.frankenbit.de/frankenbit/tmux-tell for the design notes.
 `, active.BinaryName, active.DisplayLabel, active.DisplayLabel)
 }
 
@@ -79,7 +79,7 @@ func warnIfDeprecatedName(argv0 string, stderr io.Writer) {
 }
 
 // Run is the shared, adapter-agnostic CLI entrypoint. Each adapter binary
-// (cmd/tmux-msg-claude, cmd/tmux-msg-codex) is a thin wrapper that builds its
+// (cmd/tmux-tell-claude, cmd/tmux-tell-codex) is a thin wrapper that builds its
 // Profile and calls Run; the subcommand dispatch + every handler live here in
 // internal/cli — the #248 substrate-vs-adapter boundary (ADR-0009).
 //

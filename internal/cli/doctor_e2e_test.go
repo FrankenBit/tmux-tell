@@ -27,10 +27,10 @@ func TestDoctor_E2E_FlagsOrphanedMCP(t *testing.T) {
 		t.Skip("builds a binary + starts a subprocess")
 	}
 
-	bin := filepath.Join(t.TempDir(), "tmux-msg-claude") // basename must match active.BinaryName
-	build := exec.Command("go", "build", "-o", bin, "git.frankenbit.de/frankenbit/tmux-msg/cmd/tmux-msg-claude")
+	bin := filepath.Join(t.TempDir(), "tmux-tell-claude") // basename must match active.BinaryName
+	build := exec.Command("go", "build", "-o", bin, "git.frankenbit.de/frankenbit/tmux-tell/cmd/tmux-tell-claude")
 	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build tmux-msg-claude: %v\n%s", err, out)
+		t.Fatalf("go build tmux-tell-claude: %v\n%s", err, out)
 	}
 
 	xdg := t.TempDir()

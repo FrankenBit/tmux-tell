@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // seedMessage inserts a message from→to and drives it to the requested terminal

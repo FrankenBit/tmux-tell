@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runResetCLI parses reset flags and dispatches.
 //
-// Usage: tmux-msg-claude reset --confirm [--hard] [--agent NAME] [--format json]
+// Usage: tmux-tell-claude reset --confirm [--hard] [--agent NAME] [--format json]
 func runResetCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("reset", flag.ContinueOnError)
 	fs.SetOutput(stderr)

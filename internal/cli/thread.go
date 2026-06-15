@@ -8,7 +8,7 @@ import (
 	"io"
 	"strings"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // thread renders a reply-chain as a structural tree (#141). It is a thin
@@ -179,7 +179,7 @@ func renderThreadChildren(w io.Writer, children []*threadNode, prefix string) {
 // runThreadCLI parses thread-subcommand flags, opens the store, and
 // dispatches to runThreadWithStore.
 //
-// Usage: tmux-msg-claude thread <id> [--format tree|json]
+// Usage: tmux-tell-claude thread <id> [--format tree|json]
 func runThreadCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("thread", flag.ContinueOnError)
 	fs.SetOutput(stderr)

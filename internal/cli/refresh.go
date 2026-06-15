@@ -8,8 +8,8 @@ import (
 	"os"
 	"sort"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // refreshResult is the structured return shape for the
@@ -44,9 +44,9 @@ type refreshAgentEntry struct {
 
 // runRefreshAllMcpsCLI parses the refresh-all-mcps flags and dispatches.
 //
-// Usage: tmux-msg-claude refresh-all-mcps [--format text|json]
+// Usage: tmux-tell-claude refresh-all-mcps [--format text|json]
 //
-// Convenience surface for the bulk version of `tmux-msg-claude control
+// Convenience surface for the bulk version of `tmux-tell-claude control
 // --to <agent> --command mcp-restart-tmux-msg`. Iterates the
 // registered agents table and fires the macro per agent, then
 // reports per-agent success/failure + a summary line.

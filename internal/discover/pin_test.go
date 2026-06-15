@@ -10,7 +10,7 @@ import (
 	"context"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/testpin"
 )
 
 // PIN: never silently guess between canonical-or-alias exact matches.

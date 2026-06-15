@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // beforeFixtures is a render-time earlier than every fixture's send time, so

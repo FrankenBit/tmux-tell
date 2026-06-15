@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // backlogPolicyResult describes what applyBacklogPolicy did, for surfacing

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/render"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/render"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 func seedThread(t *testing.T, s *store.Store) (root, mid, leaf string) {

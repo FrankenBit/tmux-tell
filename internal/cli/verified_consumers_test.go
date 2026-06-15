@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // seedDelivered drives a message to `delivered` with a specific #169 verified

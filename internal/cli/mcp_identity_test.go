@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 func TestResolveMCPIdentity_PrefersExplicitEnv(t *testing.T) {

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // withWarnCapture redirects the deprecation WARN to a buffer and resets the

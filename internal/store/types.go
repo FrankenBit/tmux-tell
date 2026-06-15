@@ -177,10 +177,10 @@ const (
 	// UserPromptSubmit) that injects them as `additionalContext`, instead of the
 	// mailman pasting into the pane. Like mailbox-only, the mailman does NOT
 	// paste (it short-circuits at startup); UNLIKE mailbox-only, an adapter-side
-	// hook-helper (`tmux-msg-claude hook-context`) actively presents the queued
+	// hook-helper (`tmux-tell-claude hook-context`) actively presents the queued
 	// messages on the recipient's next turn and marks them delivered. The
 	// substrate stays delivery-method-agnostic — "deliver via Claude hooks"
-	// lives entirely in the adapter (cmd/tmux-msg-claude), per ADR-0009's (b).
+	// lives entirely in the adapter (cmd/tmux-tell-claude), per ADR-0009's (b).
 	DeliveryModeHookContext = "hook-context"
 )
 

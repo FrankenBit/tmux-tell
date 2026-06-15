@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // withReachability installs test doubles for the pane-liveness + systemctl

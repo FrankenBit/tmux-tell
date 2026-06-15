@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runControlCLI uses store.Open(":memory:") via --db, so each test gets

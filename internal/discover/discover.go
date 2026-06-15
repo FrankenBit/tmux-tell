@@ -17,7 +17,7 @@ import (
 	"strings"
 	"unicode"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // Source describes which strategy produced an agent name. Used for tests

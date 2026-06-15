@@ -7,13 +7,13 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/healthscan"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/healthscan"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runStatusCLI parses status-subcommand flags and dispatches.
 //
-// Usage: tmux-msg-claude status [--format text|json] [--today]
+// Usage: tmux-tell-claude status [--format text|json] [--today]
 func runStatusCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)

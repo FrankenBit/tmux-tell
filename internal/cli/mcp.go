@@ -10,16 +10,16 @@ import (
 	"os"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/mcp"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/mcp"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // runMCPCLI parses MCP-mode flags, opens the store, and serves on stdio.
 //
-// Usage: tmux-msg-claude mcp [--db PATH]
+// Usage: tmux-tell-claude mcp [--db PATH]
 //
 // Identity is resolved from $TMUX_AGENT_NAME (explicit override) or
 // from $TMUX_PANE looked up in the agents registry. The latter means a
@@ -53,7 +53,7 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 // registerToolSchema builds the tmux-msg.register input schema. The mailman
 // systemd unit name and the inbox / hook-context command references name the
 // ACTIVE adapter binary (#314) — so a codex agent registering through the MCP
-// surface sees tmux-msg-codex, not the claude literal — and the delivery-mode
+// surface sees tmux-tell-codex, not the claude literal — and the delivery-mode
 // prose is adapter-neutral ("the recipient agent's session"), because the
 // register tool describes substrate-general mechanism, not Claude-specific
 // behavior (ADR-0009 substrate-vs-adapter boundary). The codex chamber consumes
@@ -308,7 +308,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 
 // mcpPingHandler returns the handler for the tmux-msg.ping MCP tool.
 // Resolves the caller's identity (the ping's sender) and runs the shared
-// pingProbe core — the same code path as the `tmux-msg-claude ping` CLI
+// pingProbe core — the same code path as the `tmux-tell-claude ping` CLI
 // subcommand — so both surfaces emit the identical pingResult shape.
 func mcpPingHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
@@ -345,7 +345,7 @@ func mcpPingHandler(s *store.Store) mcp.ToolHandler {
 
 // mcpAgentStateHandler returns the handler for the
 // tmux-msg.agent_state MCP tool. Wraps resolveAgentState (shared
-// with the CLI subcommand `tmux-msg-claude state`) so both surfaces emit
+// with the CLI subcommand `tmux-tell-claude state`) so both surfaces emit
 // the same JSON schema — durable shape that Binnacle's M6b can
 // consume verbatim per #74's carry-forward spec.
 func mcpAgentStateHandler(s *store.Store) mcp.ToolHandler {

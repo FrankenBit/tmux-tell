@@ -7,13 +7,13 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // runAgentsCLI parses agents-subcommand flags and dispatches.
 //
-// Usage: tmux-msg-claude agents [--available] [--format text|json]
+// Usage: tmux-tell-claude agents [--available] [--format text|json]
 func runAgentsCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("agents", flag.ContinueOnError)
 	fs.SetOutput(stderr)

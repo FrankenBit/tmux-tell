@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/testpin"
 )
 
 // PIN: linkP2ToP1 callers don't pass explicit reply_to — the

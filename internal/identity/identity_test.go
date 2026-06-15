@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 func openTestStore(t *testing.T, agents map[string]string) *store.Store {

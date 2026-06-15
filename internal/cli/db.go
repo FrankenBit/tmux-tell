@@ -11,14 +11,14 @@ import (
 	"strings"
 	"syscall"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runDBCLI is the umbrella for the `db` subcommand family. Today there's
 // one verb (`migrate`); future verbs (`vacuum`, `dump`, `restore`) layer
 // in here.
 //
-// Usage: tmux-msg-claude db <verb> [args]
+// Usage: tmux-tell-claude db <verb> [args]
 func runDBCLI(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintf(stderr, "usage: %s db <verb> [args]\n", active.BinaryName)
@@ -52,17 +52,17 @@ type dbMigrateResult struct {
 	Warnings      []string `json:"warnings,omitempty"`
 }
 
-// runDBMigrateCLI implements `tmux-msg-claude db migrate <new-path>`.
+// runDBMigrateCLI implements `tmux-tell-claude db migrate <new-path>`.
 //
 // The 8-step atomic migration helper (#349 Fix 3):
 //
 //  1. Validate destination parent dir exists + writable
-//  2. systemctl --user stop 'tmux-msg-*-mailman@*.service' (per-agent)
+//  2. systemctl --user stop 'tmux-tell-*-mailman@*.service' (per-agent)
 //  3. PRAGMA wal_checkpoint(TRUNCATE) on the source DB
 //  4. mv source → destination
 //  5. Delete source -wal and -shm sidecars
-//  6. systemctl --user start 'tmux-msg-*-mailman@*.service' (per-agent)
-//  7. tmux-msg-claude refresh-all-mcps (against the dest DB)
+//  6. systemctl --user start 'tmux-tell-*-mailman@*.service' (per-agent)
+//  7. tmux-tell-claude refresh-all-mcps (against the dest DB)
 //  8. Self-verify: open destination DB, count rows
 //
 // With --dry-run the command prints the plan it would execute and exits 0

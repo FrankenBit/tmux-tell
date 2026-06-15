@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 func TestFindCanonicalForAlias_WhitespaceBoundedMatch(t *testing.T) {

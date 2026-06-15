@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/metrics"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/metrics"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // startMetricsServer brings up the Prometheus /metrics endpoint for a mailman

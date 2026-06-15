@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/testpin"
 )
 
 // TestTriage_Smoke verifies the helper calls t.Cleanup without

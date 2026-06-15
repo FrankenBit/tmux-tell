@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // sendParams is the resolved input to runSendWithStore, post-flag-parsing.

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestServeCLI_LogsDBPathOnStartup verifies that `tmux-msg-claude serve`
+// TestServeCLI_LogsDBPathOnStartup verifies that `tmux-tell-claude serve`
 // emits the claude_msg_db startup log on stderr with the correct source label
 // for each DB-resolution path (#290). The log fires before store.Open so it
 // is visible even when the open would fail (e.g. the default path doesn't
@@ -38,7 +38,7 @@ func TestServeCLI_LogsDBPathOnStartup(t *testing.T) {
 	})
 }
 
-// TestMCPCLI_LogsDBPathOnStartup verifies that `tmux-msg-claude mcp` emits
+// TestMCPCLI_LogsDBPathOnStartup verifies that `tmux-tell-claude mcp` emits
 // the claude_msg_db startup log on stderr (#290). runMCPCLI serves until EOF;
 // an empty reader returns immediately after the log fires.
 func TestMCPCLI_LogsDBPathOnStartup(t *testing.T) {

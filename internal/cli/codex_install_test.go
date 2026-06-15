@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // seedCodexAgent registers agentName in the store with hook-context delivery
@@ -90,7 +90,7 @@ func TestCodexInstall_FreshInstall(t *testing.T) {
 	for _, want := range []string{
 		"[hooks.UserPromptSubmit]",
 		"[hooks.SessionStart]",
-		"command = \"tmux-msg-codex hook-context\"",
+		"command = \"tmux-tell-codex hook-context\"",
 		"[mcp_servers.tmux-msg.env]",
 		"TMUX_AGENT_NAME = \"lookout\"",
 	} {
@@ -116,10 +116,10 @@ func TestCodexInstall_Idempotent(t *testing.T) {
 
 	// Pre-populate with the exact expected content.
 	existing := `[hooks.UserPromptSubmit]
-command = "tmux-msg-codex hook-context"
+command = "tmux-tell-codex hook-context"
 
 [hooks.SessionStart]
-command = "tmux-msg-codex hook-context"
+command = "tmux-tell-codex hook-context"
 
 [mcp_servers.tmux-msg.env]
 TMUX_AGENT_NAME = "lookout"
@@ -169,10 +169,10 @@ func TestCodexInstall_PartialConfig(t *testing.T) {
 	s.Close()
 
 	partial := `[hooks.UserPromptSubmit]
-command = "tmux-msg-codex hook-context"
+command = "tmux-tell-codex hook-context"
 
 [hooks.SessionStart]
-command = "tmux-msg-codex hook-context"
+command = "tmux-tell-codex hook-context"
 `
 	if err := os.WriteFile(cfg, []byte(partial), 0o600); err != nil {
 		t.Fatalf("write partial config: %v", err)
@@ -216,10 +216,10 @@ func TestCodexInstall_WrongAgentName(t *testing.T) {
 	s.Close()
 
 	existing := `[hooks.UserPromptSubmit]
-command = "tmux-msg-codex hook-context"
+command = "tmux-tell-codex hook-context"
 
 [hooks.SessionStart]
-command = "tmux-msg-codex hook-context"
+command = "tmux-tell-codex hook-context"
 
 [mcp_servers.tmux-msg.env]
 TMUX_AGENT_NAME = "old-lookout"

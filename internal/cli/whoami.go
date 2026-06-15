@@ -7,14 +7,14 @@ import (
 	"fmt"
 	"io"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // runWhoamiCLI parses whoami-subcommand flags and dispatches.
 //
-// Usage: tmux-msg-claude whoami [--as NAME] [--format text|json]
+// Usage: tmux-tell-claude whoami [--as NAME] [--format text|json]
 func runWhoamiCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("whoami", flag.ContinueOnError)
 	fs.SetOutput(stderr)

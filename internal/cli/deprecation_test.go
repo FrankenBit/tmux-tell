@@ -50,8 +50,8 @@ func TestWarnIfDeprecatedName(t *testing.T) {
 	}{
 		{"legacy alias full path", "/usr/local/bin/claude-msg", true},
 		{"legacy alias bare", "claude-msg", true},
-		{"canonical full path", "/usr/local/bin/tmux-msg-claude", false},
-		{"canonical bare", "tmux-msg-claude", false},
+		{"canonical full path", "/usr/local/bin/tmux-tell-claude", false},
+		{"canonical bare", "tmux-tell-claude", false},
 		{"unrelated", "/usr/bin/grep", false},
 	}
 	for _, tc := range cases {
@@ -66,7 +66,7 @@ func TestWarnIfDeprecatedName(t *testing.T) {
 			if tc.wantWarn {
 				// The removal version + the migration pointer must be present so
 				// the WARN is actionable + greppable (ADR-0008 worked example).
-				for _, want := range []string{"removal=v1.0", "tmux-msg-claude"} {
+				for _, want := range []string{"removal=v1.0", "tmux-tell-claude"} {
 					if !strings.Contains(got, want) {
 						t.Errorf("warn missing %q; got %q", want, got)
 					}

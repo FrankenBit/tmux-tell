@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // TestRunTrackWatch_ExitsOnTerminalState verifies the polling loop

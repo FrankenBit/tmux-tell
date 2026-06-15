@@ -13,10 +13,10 @@ import (
 	"syscall"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
-// tmux-msg-claude tail — live diagnostic firehose (#148).
+// tmux-tell-claude tail — live diagnostic firehose (#148).
 //
 // The cross-chamber read-only view the per-mailman journals + single-message
 // `track` couldn't give: all bus traffic, live, filtered to what you care
@@ -47,7 +47,7 @@ type tailOpts struct {
 
 // runTailCLI parses tail-subcommand flags and starts the watch loop.
 //
-// Usage: tmux-msg-claude tail [--from X] [--to Y] [--kind K] [--state S]
+// Usage: tmux-tell-claude tail [--from X] [--to Y] [--kind K] [--state S]
 //
 //	[--since now|5m|today|all] [--interval 300ms] [--format text|json]
 func runTailCLI(args []string, stdout, stderr io.Writer) int {

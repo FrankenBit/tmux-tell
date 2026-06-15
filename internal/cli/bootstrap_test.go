@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // TestFindOrphanMailmanUnits_HappyPath verifies the orphan walk
@@ -100,10 +100,10 @@ func TestFindOrphanMailmanUnits_SkipsTemplate(t *testing.T) {
 
 func TestOrphanInstanceName(t *testing.T) {
 	cases := map[string]string{
-		"tmux-msg-claude-mailman@alpha.service": "alpha",
-		"tmux-msg-codex-mailman@bravo.service":  "bravo",
-		"tmux-msg-claude-mailman@.service":      "",
-		"unrelated.service":                     "",
+		"tmux-tell-claude-mailman@alpha.service": "alpha",
+		"tmux-tell-codex-mailman@bravo.service":  "bravo",
+		"tmux-tell-claude-mailman@.service":      "",
+		"unrelated.service":                      "",
 	}
 	for in, want := range cases {
 		if got := orphanInstanceName(in); got != want {

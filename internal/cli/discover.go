@@ -7,13 +7,13 @@ import (
 	"io"
 	"strings"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/discover"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/discover"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runDiscoverCLI parses discover flags and dispatches.
 //
-// Usage: tmux-msg-claude discover [--dry-run] [--apply-aliases] [--format text|json]
+// Usage: tmux-tell-claude discover [--dry-run] [--apply-aliases] [--format text|json]
 func runDiscoverCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
 	fs.SetOutput(stderr)

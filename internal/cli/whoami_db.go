@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/mcp"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/mcp"
 )
 
 // processStart records when this process entered cli.Run — the substrate-honest

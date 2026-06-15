@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // Stranded-draft bookmark recovery (#142).
@@ -127,7 +127,7 @@ func listStrandedBookmarks(ctx context.Context, s *store.Store, agent string) ([
 
 // runStrandedCLI dispatches the stranded subcommands.
 //
-// Usage: tmux-msg-claude stranded <list|show|prune> [args]
+// Usage: tmux-tell-claude stranded <list|show|prune> [args]
 func runStrandedCLI(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintf(stderr, "usage: %s stranded <list|show|prune> [args]\n", active.BinaryName)

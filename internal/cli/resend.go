@@ -8,7 +8,7 @@ import (
 	"io"
 	"sync/atomic"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // resendParams is the resolved input to runResendWithStore.
@@ -21,7 +21,7 @@ type resendParams struct {
 // runResendCLI parses the resend-subcommand flags, opens the store, and
 // dispatches to runResendWithStore. The message id is positional:
 //
-//	tmux-msg-claude resend <id> [--force] [--format json|text]
+//	tmux-tell-claude resend <id> [--force] [--format json|text]
 //
 // resend replays an existing message to its ORIGINAL recipient with a
 // "Replayed: original sent at <ts>" chrome marker (#157 PR1) — the explicit

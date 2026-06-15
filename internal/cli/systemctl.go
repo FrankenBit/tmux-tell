@@ -23,7 +23,7 @@ func setSystemctlRunner(r func(ctx context.Context, args ...string) ([]byte, err
 	return prev
 }
 
-// startMailman runs `systemctl --user enable --now tmux-msg-claude-mailman@NAME.service`.
+// startMailman runs `systemctl --user enable --now tmux-tell-claude-mailman@NAME.service`.
 // Returns nil on success; the output is included in the error on failure so
 // the operator sees the systemd reason.
 func startMailman(ctx context.Context, agent string) error {
@@ -113,7 +113,7 @@ func startMailmanEnvError(agentName string, missing []string) string {
 		active.BinaryName, agentName, active.BinaryName, agentName)
 }
 
-// restartMailman runs `systemctl --user restart tmux-msg-<adapter>-mailman@NAME.service`.
+// restartMailman runs `systemctl --user restart tmux-tell-<adapter>-mailman@NAME.service`.
 //
 // Used by `bootstrap` (step 4) after `enable`: an already-active mailman left
 // from a prior install does NOT pick up a freshly-installed binary (the
@@ -136,7 +136,7 @@ func restartMailman(ctx context.Context, agent string) error {
 	return nil
 }
 
-// stopMailman runs `systemctl --user disable --now tmux-msg-claude-mailman@NAME.service`.
+// stopMailman runs `systemctl --user disable --now tmux-tell-claude-mailman@NAME.service`.
 // Treats "not-loaded" output as success so the call is idempotent.
 func stopMailman(ctx context.Context, agent string) error {
 	out, err := systemctlRun(ctx, "disable", "--now", mailmanUnit(agent))
@@ -170,12 +170,12 @@ func mailmanActive(ctx context.Context, agent string) bool {
 }
 
 // mailmanUnit is the per-adapter systemd template instance for an agent (#177).
-// The template renamed from claude-mailman@ to tmux-msg-claude-mailman@ when the
-// binary became tmux-msg-claude; install.sh drops a claude-mailman@ → this
+// The template renamed from claude-mailman@ to tmux-tell-claude-mailman@ when the
+// binary became tmux-tell-claude; install.sh drops a claude-mailman@ → this
 // symlink for the deprecation cycle, so a pre-rename `systemctl … claude-mailman@X`
 // still resolves, but new invocations target the canonical name. The prefix is
-// the adapter's binary name (#248): tmux-msg-codex installs a parallel
-// tmux-msg-codex-mailman@ template, so each adapter targets its own daemon.
+// the adapter's binary name (#248): tmux-tell-codex installs a parallel
+// tmux-tell-codex-mailman@ template, so each adapter targets its own daemon.
 func mailmanUnit(agent string) string {
 	return active.BinaryName + "-mailman@" + agent + ".service"
 }

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // seedQueued inserts n queued messages to `to` and returns the highest

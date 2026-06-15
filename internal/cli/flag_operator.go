@@ -10,7 +10,7 @@ import (
 	"os"
 	"strings"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // operatorAttentionRecipient is the reserved agent-name a `flag_operator`
@@ -25,7 +25,7 @@ import (
 // regular send-to-unregistered-recipient fail-loud principle from #152).
 const operatorAttentionRecipient = "operator-attention"
 
-// runFlagOperatorCLI is the CLI surface for `tmux-msg-claude flag-operator
+// runFlagOperatorCLI is the CLI surface for `tmux-tell-claude flag-operator
 // "<body>"` (#224). Posts the body to the reserved operator-attention
 // recipient AND marks the calling agent's attention_state as
 // "awaiting_operator". The flag clears implicitly on the chamber's next
@@ -71,7 +71,7 @@ func runFlagOperatorCLI(args []string, stdout, stderr io.Writer) int {
 	return emitFlagOperatorResult(stdout, stderr, out, code, *format)
 }
 
-// runClearOperatorFlagCLI is the CLI surface for `tmux-msg-claude
+// runClearOperatorFlagCLI is the CLI surface for `tmux-tell-claude
 // clear-operator-flag` (#224). Sets the calling agent's attention_state
 // back to "idle". Used when a chamber's question gets answered out of band
 // (operator wrote in the pane directly) and the chamber wants to clear the

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // titleCase returns "Bosun" given "bosun" — for the header, since the

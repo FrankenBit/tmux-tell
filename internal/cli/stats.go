@@ -7,12 +7,12 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runStatsCLI parses stats-subcommand flags and dispatches.
 //
-// Usage: tmux-msg-claude stats [--window all|<N>d|1h|24h] [--agent NAME]
+// Usage: tmux-tell-claude stats [--window all|<N>d|1h|24h] [--agent NAME]
 //
 //	[--pair [--top N]] [--format text|json]
 //

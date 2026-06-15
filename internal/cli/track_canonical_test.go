@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // TestTrack_CanonicalOpensXDGDefault proves `track --canonical` reads the

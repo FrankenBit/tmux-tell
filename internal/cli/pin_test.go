@@ -1,4 +1,4 @@
-// Discipline pins for the cmd/tmux-msg-claude package. Per ADR-0001,
+// Discipline pins for the cmd/tmux-tell-claude package. Per ADR-0001,
 // these tests guard architectural commitments rather than behavioral
 // contracts. On failure, triage per ADR-0001 §Triage before changing
 // the assertion. The pin_test.go file location, the TestPin_ prefix,
@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/testpin"
 )
 
 // PIN: wire shape is single source-of-truth — JSON-tag-driven, no

@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"io"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
-// runUnregisterCLI implements `tmux-msg-claude unregister`.
+// runUnregisterCLI implements `tmux-tell-claude unregister`.
 //
-// Usage: tmux-msg-claude unregister --name <agent>
+// Usage: tmux-tell-claude unregister --name <agent>
 //
 //	[--purge-queue] [--force] [--db <path>]
 //

@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // withActiveProfile swaps the process-global adapter Profile for the duration
 // of a test and restores it on cleanup. The serve loop's paste-capability gate
 // (#323) keys on active.PasteCapable, which production sets from the launching
-// binary (tmux-msg-claude vs tmux-msg-codex); in-package tests simulate a
+// binary (tmux-tell-claude vs tmux-tell-codex); in-package tests simulate a
 // non-Claude adapter by swapping active here.
 func withActiveProfile(t *testing.T, p Profile) {
 	t.Helper()
@@ -25,9 +25,9 @@ func withActiveProfile(t *testing.T, p Profile) {
 }
 
 // codexLikeProfile is a paste-INcapable adapter profile mirroring
-// cmd/tmux-msg-codex/main.go's Profile — the case #323 protects against.
+// cmd/tmux-tell-codex/main.go's Profile — the case #323 protects against.
 var codexLikeProfile = Profile{
-	BinaryName:   "tmux-msg-codex",
+	BinaryName:   "tmux-tell-codex",
 	DisplayLabel: "Codex",
 	PasteCapable: false,
 }

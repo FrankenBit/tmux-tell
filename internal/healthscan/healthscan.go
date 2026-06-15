@@ -110,7 +110,7 @@ func (s *Scanner) Scan(ctx context.Context, agents []string, window ScanWindow) 
 
 func (s *Scanner) scanOne(ctx context.Context, name string, window ScanWindow) (AgentHealth, error) {
 	ah := AgentHealth{Name: name}
-	unit := fmt.Sprintf("tmux-msg-claude-mailman@%s.service", name)
+	unit := fmt.Sprintf("tmux-tell-claude-mailman@%s.service", name)
 
 	// systemd: NRestarts.
 	props, err := s.Systemctl.ShowUnit(ctx, unit, "NRestarts")

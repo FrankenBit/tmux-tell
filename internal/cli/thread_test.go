@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 func ns(s string) sql.NullString { return sql.NullString{String: s, Valid: s != ""} }

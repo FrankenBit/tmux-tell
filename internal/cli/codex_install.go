@@ -9,13 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/discover"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/discover"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 	"github.com/BurntSushi/toml"
 )
 
 // codexHookCommand is the command string written to both hook blocks.
-const codexHookCommand = "tmux-msg-codex hook-context"
+const codexHookCommand = "tmux-tell-codex hook-context"
 
 // codexMCPServerProbe captures the fields of a single mcp_servers entry
 // that codex-install cares about (other fields pass through untouched).
@@ -49,7 +49,7 @@ type codexInstallResult struct {
 	Warnings     []string `json:"warnings,omitempty"`
 }
 
-// runCodexInstallCLI implements `tmux-msg-codex codex-install` — the
+// runCodexInstallCLI implements `tmux-tell-codex codex-install` — the
 // codex-adapter bootstrap called by install.sh after binary + systemd
 // template land (#384).
 //

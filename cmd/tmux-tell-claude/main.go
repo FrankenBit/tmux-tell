@@ -1,11 +1,11 @@
-// Package main is the tmux-msg-claude binary — the Claude Code adapter for the
+// Package main is the tmux-tell-claude binary — the Claude Code adapter for the
 // tmux-msg substrate. All subcommand dispatch + handlers live in internal/cli
 // (the adapter-agnostic shared CLI); this wrapper only supplies the Claude
 // adapter Profile and hands off to cli.Run. The substrate-vs-adapter boundary is
-// ADR-0009; the second adapter (tmux-msg-codex) is a sibling wrapper over the
+// ADR-0009; the second adapter (tmux-tell-codex) is a sibling wrapper over the
 // same internal/cli (#248).
 //
-// The binary renamed claude-msg → tmux-msg-claude per #174 Option 2 / #177;
+// The binary renamed claude-msg → tmux-tell-claude per #174 Option 2 / #177;
 // claude-msg survives as a deprecated alias through v1.0 (operator decision
 // 2026-06-08, ADR-0008 §Discretion clause). install.sh keeps the alias symlink;
 // cli.Run emits the ADR-0008 deprecation WARN when invoked through it. Each
@@ -17,13 +17,13 @@ package main
 import (
 	"os"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/cli"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/cli"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 func main() {
 	p := cli.Profile{
-		BinaryName:        "tmux-msg-claude",
+		BinaryName:        "tmux-tell-claude",
 		DisplayLabel:      "Claude Code",
 		DeprecatedAlias:   "claude-msg",
 		DeprecatedRemoval: "v1.0",

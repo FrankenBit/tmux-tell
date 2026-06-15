@@ -15,7 +15,7 @@ import (
 	"os"
 	"sync"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // Agent-name environment variables (#177 PR2). The substrate reads the

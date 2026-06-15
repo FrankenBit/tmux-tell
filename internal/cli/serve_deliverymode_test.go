@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // TestServe_ConfigDeliveryMode_OverridesDB pins the #132 invariant:

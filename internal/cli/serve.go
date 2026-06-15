@@ -12,13 +12,13 @@ import (
 	"syscall"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/discover"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/metrics"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/render"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/sdnotify"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/discover"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/metrics"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/render"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/sdnotify"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // flagWasSet reports whether a flag was set via the CLI (vs. left at
@@ -222,7 +222,7 @@ type serveOpts struct {
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
 // drives the mailman loop.
 //
-// Usage: tmux-msg-claude serve --agent NAME [tuning flags]
+// Usage: tmux-tell-claude serve --agent NAME [tuning flags]
 func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1363,7 +1363,7 @@ func handlePing(ctx context.Context, s *store.Store, logger *log.Logger, agent, 
 // pingHealthy reports whether the recipient's registered pane is live —
 // the load-bearing substrate-health signal for a ping (#144). An empty
 // pane id means the agent is registered but has no pane (operator should
-// run `tmux-msg-claude discover`); a non-live pane means the agent's session
+// run `tmux-tell-claude discover`); a non-live pane means the agent's session
 // is gone. Both are reachability failures. A LivePanes probe error is
 // itself treated as a failure with the underlying reason surfaced: we
 // can't substantiate reachability, so we don't claim it (sibling to the

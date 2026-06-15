@@ -16,8 +16,8 @@ import (
 
 	"github.com/cucumber/godog"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // timeFormat matches the store's created_at layout (ISO8601 with millis, UTC).
@@ -90,7 +90,7 @@ func (s *sc) messageIsInState(want string) error {
 
 // mailmanClaimsAndDelivers simulates one mailman cycle: ClaimNext + MarkDelivered
 // (verified=1). The actual mailman's IO (tmux paste/Enter/capture) is exercised by
-// the cmd/tmux-msg-claude serve tests; here we test the state-machine contract.
+// the cmd/tmux-tell-claude serve tests; here we test the state-machine contract.
 func (s *sc) mailmanClaimsAndDelivers(recipient string) error {
 	ctx := context.Background()
 	m, err := s.st.ClaimNext(ctx, recipient)

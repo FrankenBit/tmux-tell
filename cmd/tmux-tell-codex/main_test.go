@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // TestCodexProfile_PasteCapable pins the #360 headline flip: the Codex adapter
@@ -17,8 +17,8 @@ func TestCodexProfile_PasteCapable(t *testing.T) {
 	if !p.PasteCapable {
 		t.Errorf("codex Profile.PasteCapable = false, want true (#360 flip regressed)")
 	}
-	if p.BinaryName != "tmux-msg-codex" {
-		t.Errorf("BinaryName = %q, want tmux-msg-codex", p.BinaryName)
+	if p.BinaryName != "tmux-tell-codex" {
+		t.Errorf("BinaryName = %q, want tmux-tell-codex", p.BinaryName)
 	}
 	if p.DeprecatedAlias != "" {
 		t.Errorf("DeprecatedAlias = %q, want empty (Codex has no legacy name)", p.DeprecatedAlias)

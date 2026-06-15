@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/testpin"
 )
 
 // The pins in this file are the *cross-process* counterparts to

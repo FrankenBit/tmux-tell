@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 func TestReset_DefaultWipesQueuedAndDelivering(t *testing.T) {

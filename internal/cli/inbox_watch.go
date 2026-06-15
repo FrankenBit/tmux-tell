@@ -14,10 +14,10 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
-// tmux-msg-claude inbox --watch — interactive TUI consumer for mailbox-only
+// tmux-tell-claude inbox --watch — interactive TUI consumer for mailbox-only
 // agents (#149).
 //
 // mailbox-only agents (#116) don't get paste-and-Enter delivery — the mailman

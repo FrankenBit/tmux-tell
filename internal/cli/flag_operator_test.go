@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // TestFlagOperator_HappyPath pins the load-bearing invariant: a successful

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/testpin"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/testpin"
 )
 
 // PIN: external-source-on-demand scan completes in <100ms for the
@@ -67,16 +67,16 @@ func TestPin_HealthScanLatencyCeiling_Under100ms(t *testing.T) {
 	byUnit := make(map[string][]string, mailmenCount)
 	agents := []string{"admin", "bosun", "pilot", "surveyor"}
 	for _, name := range agents {
-		unit := "tmux-msg-claude-mailman@" + name + ".service"
+		unit := "tmux-tell-claude-mailman@" + name + ".service"
 		byUnit[unit] = syntheticJournalLines(name, linesPerAgent)
 	}
 
 	sc := &Scanner{
 		Systemctl: &fakeSystemctl{byUnit: map[string]map[string]string{
-			"tmux-msg-claude-mailman@admin.service":    {"NRestarts": "0"},
-			"tmux-msg-claude-mailman@bosun.service":    {"NRestarts": "0"},
-			"tmux-msg-claude-mailman@pilot.service":    {"NRestarts": "0"},
-			"tmux-msg-claude-mailman@surveyor.service": {"NRestarts": "0"},
+			"tmux-tell-claude-mailman@admin.service":    {"NRestarts": "0"},
+			"tmux-tell-claude-mailman@bosun.service":    {"NRestarts": "0"},
+			"tmux-tell-claude-mailman@pilot.service":    {"NRestarts": "0"},
+			"tmux-tell-claude-mailman@surveyor.service": {"NRestarts": "0"},
 		}},
 		Journal: &fakeJournal{byUnit: byUnit},
 	}
@@ -138,10 +138,10 @@ func TestPin_HealthScanLatencyCeiling_SlowScanCaught(t *testing.T) {
 
 	sc := &Scanner{
 		Systemctl: &fakeSystemctl{byUnit: map[string]map[string]string{
-			"tmux-msg-claude-mailman@admin.service":    {"NRestarts": "0"},
-			"tmux-msg-claude-mailman@bosun.service":    {"NRestarts": "0"},
-			"tmux-msg-claude-mailman@pilot.service":    {"NRestarts": "0"},
-			"tmux-msg-claude-mailman@surveyor.service": {"NRestarts": "0"},
+			"tmux-tell-claude-mailman@admin.service":    {"NRestarts": "0"},
+			"tmux-tell-claude-mailman@bosun.service":    {"NRestarts": "0"},
+			"tmux-tell-claude-mailman@pilot.service":    {"NRestarts": "0"},
+			"tmux-tell-claude-mailman@surveyor.service": {"NRestarts": "0"},
 		}},
 		Journal: &slowFakeJournal{delay: delayPer},
 	}

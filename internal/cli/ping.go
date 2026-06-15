@@ -8,9 +8,9 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // pingBody is the placeholder body carried by a kind=ping row. It is
@@ -36,7 +36,7 @@ const pingPollInterval = 100 * time.Millisecond
 // (daemon down, paused, or backlogged).
 const pingStateTimeout = "timeout"
 
-// pingResult is the structured response shared by the `tmux-msg-claude ping`
+// pingResult is the structured response shared by the `tmux-tell-claude ping`
 // CLI subcommand and the `tmux-msg.ping` MCP tool (#144). OK is true only
 // when the probe reached `delivered` (recipient reachable). State is one
 // of "delivered", "failed", or "timeout".
@@ -409,7 +409,7 @@ func (r pingReason) describe() string {
 // runPingCLI parses ping-subcommand flags, opens the store, resolves the
 // sender identity, and dispatches to runPingWithStore.
 //
-// Usage: tmux-msg-claude ping <agent> [--timeout D] [--format text|json] [--from NAME]
+// Usage: tmux-tell-claude ping <agent> [--timeout D] [--format text|json] [--from NAME]
 func runPingCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ping", flag.ContinueOnError)
 	fs.SetOutput(stderr)

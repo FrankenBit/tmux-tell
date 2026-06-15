@@ -1,9 +1,9 @@
 package cli
 
-import "git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+import "git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 
 // Profile carries the per-adapter identity that distinguishes one CLI adapter
-// binary (tmux-msg-claude, tmux-msg-codex, …) from another while the shared
+// binary (tmux-tell-claude, tmux-tell-codex, …) from another while the shared
 // dispatch + handlers in this package stay adapter-agnostic. Per ADR-0009 the
 // substrate is delivery-method-agnostic; this struct is the thin adapter seam
 // #248 introduces so a second binary is a wrapper, not a fork.
@@ -77,7 +77,7 @@ type Profile struct {
 // exercise handlers directly without going through Run, observe the historical
 // behavior unchanged.
 var active = Profile{
-	BinaryName:              "tmux-msg-claude",
+	BinaryName:              "tmux-tell-claude",
 	DisplayLabel:            "Claude Code",
 	DeprecatedAlias:         "claude-msg",
 	DeprecatedRemoval:       "v1.0",

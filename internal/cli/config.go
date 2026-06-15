@@ -6,14 +6,14 @@ import (
 	"io"
 	"os"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
 )
 
 // runConfigCLI is the umbrella for the `config` subcommand family.
 // Today there's one verb (`show`); future verbs (`edit`, `validate`,
 // `migrate`) layer in here.
 //
-// Usage: tmux-msg-claude config <verb> [args]
+// Usage: tmux-tell-claude config <verb> [args]
 func runConfigCLI(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintf(stderr, "usage: %s config <verb> [args]\n", active.BinaryName)
@@ -30,7 +30,7 @@ func runConfigCLI(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-// runConfigShowCLI implements `tmux-msg-claude config show --agent NAME`
+// runConfigShowCLI implements `tmux-tell-claude config show --agent NAME`
 // — prints the fully-resolved config for the given agent so the
 // operator can debug precedence without tracing through TOML manually.
 //

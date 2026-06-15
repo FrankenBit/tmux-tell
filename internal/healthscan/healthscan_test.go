@@ -37,10 +37,10 @@ func (f *fakeJournal) ReadLines(_ context.Context, unit string, _ time.Time) ([]
 func TestScan_HappyPath(t *testing.T) {
 	sc := &Scanner{
 		Systemctl: &fakeSystemctl{byUnit: map[string]map[string]string{
-			"tmux-msg-claude-mailman@bosun.service": {"NRestarts": "3"},
+			"tmux-tell-claude-mailman@bosun.service": {"NRestarts": "3"},
 		}},
 		Journal: &fakeJournal{byUnit: map[string][]string{
-			"tmux-msg-claude-mailman@bosun.service": {
+			"tmux-tell-claude-mailman@bosun.service": {
 				"[mailman/bosun] 2026/05/31 12:00:00.000000 delivering id=abc kind=message",
 				"[mailman/bosun] 2026/05/31 12:00:00.500000 delivered id=abc",
 				"[mailman/bosun] 2026/05/31 12:01:00.000000 WARN delivered_in_input_box id=def",
@@ -112,7 +112,7 @@ func TestScan_NoDeliveriesNoPercentiles(t *testing.T) {
 	sc := &Scanner{
 		Systemctl: &fakeSystemctl{},
 		Journal: &fakeJournal{byUnit: map[string][]string{
-			"tmux-msg-claude-mailman@quiet.service": {
+			"tmux-tell-claude-mailman@quiet.service": {
 				"[mailman/quiet] 2026/05/31 12:00:00 starting pane=%1",
 			},
 		}},

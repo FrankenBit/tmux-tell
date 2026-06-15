@@ -1,4 +1,4 @@
-module git.frankenbit.de/frankenbit/tmux-msg
+module git.frankenbit.de/frankenbit/tmux-tell
 
 go 1.25.0
 

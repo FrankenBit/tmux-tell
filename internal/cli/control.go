@@ -8,9 +8,9 @@ import (
 	"io"
 	"strings"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/control"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/control"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // controlParams is the resolved input to doControl. Mirrors the MCP
@@ -42,7 +42,7 @@ type controlResult struct {
 }
 
 // doControl is the shared validate+insert pipeline behind both the MCP
-// tmux-msg.control tool and the new `tmux-msg-claude control` CLI. Returns
+// tmux-msg.control tool and the new `tmux-tell-claude control` CLI. Returns
 // a structured result the caller renders into its preferred shape.
 //
 // Three execution paths:
@@ -171,7 +171,7 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 // runControlCLI parses control-subcommand flags and dispatches to
 // doControl, writing the result as JSON to stdout.
 //
-// Usage: tmux-msg-claude control --to AGENT --command NAME [--resume-with TEXT]
+// Usage: tmux-tell-claude control --to AGENT --command NAME [--resume-with TEXT]
 func runControlCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("control", flag.ContinueOnError)
 	fs.SetOutput(stderr)

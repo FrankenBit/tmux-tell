@@ -11,8 +11,8 @@ import (
 	"sort"
 	"strings"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/discover"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/discover"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // legacyDBPath is the pre-#308 system-global DB location. Used by the
@@ -37,7 +37,7 @@ type bootstrapResult struct {
 	Warnings       []string `json:"warnings,omitempty"`
 }
 
-// runBootstrapCLI implements `tmux-msg-<adapter> bootstrap` — the
+// runBootstrapCLI implements `tmux-tell-<adapter> bootstrap` — the
 // substrate-honest hard-cut bootstrap path called by install.sh after
 // the binary + systemd template land (#349 Fix 2).
 //
@@ -244,10 +244,10 @@ func resolveSystemdDir(override string) string {
 
 // findOrphanMailmanUnits returns the basenames of mailman instance units
 // under dir whose instance-name isn't in agents. Only matches the
-// currently-active adapter's prefix (e.g., tmux-msg-claude-mailman@) —
+// currently-active adapter's prefix (e.g., tmux-tell-claude-mailman@) —
 // cross-adapter walking is out of scope for v1.
 //
-// Skips the template unit itself (tmux-msg-claude-mailman@.service) and
+// Skips the template unit itself (tmux-tell-claude-mailman@.service) and
 // non-symlinks (template files), since instance enablement plants a
 // symlink under default.target.wants and the operator-facing units
 // directory holds the actual template file. The combination of
@@ -304,7 +304,7 @@ func findOrphanMailmanUnits(dir string, agents []store.Agent) ([]string, error) 
 }
 
 // orphanInstanceName extracts the agent name from a mailman instance
-// unit filename: "tmux-msg-claude-mailman@alpha.service" → "alpha".
+// unit filename: "tmux-tell-claude-mailman@alpha.service" → "alpha".
 func orphanInstanceName(unitFile string) string {
 	at := strings.Index(unitFile, "@")
 	if at == -1 {

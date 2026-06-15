@@ -170,12 +170,12 @@ func renderDoctorReport(stdout io.Writer, rep doctorReport) {
 	}
 }
 
-// runDoctorCLI implements `tmux-msg-claude doctor` (#348): walk live tmux-msg
+// runDoctorCLI implements `tmux-tell-claude doctor` (#348): walk live tmux-msg
 // processes, compare each one's open DB binding against the canonical DB, emit
 // a substrate-honest report, and exit non-zero on any divergence so the command
 // is usable as a runbook gate. Touches no DB — pure /proc introspection.
 //
-// Usage: tmux-msg-claude doctor [--format text|json]
+// Usage: tmux-tell-claude doctor [--format text|json]
 func runDoctorCLI(args []string, stdout, stderr io.Writer) int {
 	format := "text"
 	for i := 0; i < len(args); i++ {

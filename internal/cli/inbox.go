@@ -7,8 +7,8 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // ackResult is the JSON response shape for --ack and --ack-all.
@@ -20,10 +20,10 @@ type ackResult struct {
 
 // runInboxCLI parses inbox-subcommand flags and dispatches.
 //
-// Usage: tmux-msg-claude inbox [AGENT] [--state STATE] [--limit N] [--format text|json]
+// Usage: tmux-tell-claude inbox [AGENT] [--state STATE] [--limit N] [--format text|json]
 //
-//	tmux-msg-claude inbox [AGENT] --ack <id>
-//	tmux-msg-claude inbox [AGENT] --ack-all
+//	tmux-tell-claude inbox [AGENT] --ack <id>
+//	tmux-tell-claude inbox [AGENT] --ack-all
 //
 // AGENT defaults to the calling pane's identity (via the same
 // resolution rules as tmux-msg.whoami).

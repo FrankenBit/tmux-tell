@@ -8,8 +8,8 @@ import (
 	"io"
 	"os"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runRegisterCLI parses register-subcommand flags and dispatches to the
@@ -18,7 +18,7 @@ import (
 // an MCP client (load-bearing for the operator-as-bus-participant use
 // case per #116).
 //
-// Usage: tmux-msg-claude register --name <name> [--pane <pane>]
+// Usage: tmux-tell-claude register --name <name> [--pane <pane>]
 //
 //	[--delivery-mode paste-and-enter|mailbox-only]
 //	[--start-mailman=true|false] [--force]

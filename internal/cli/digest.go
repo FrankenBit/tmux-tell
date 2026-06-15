@@ -8,12 +8,12 @@ import (
 	"sort"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runDigestCLI parses digest-subcommand flags and dispatches.
 //
-// Usage: tmux-msg-claude digest [--since 24h|7d|today|yesterday|week|all]
+// Usage: tmux-tell-claude digest [--since 24h|7d|today|yesterday|week|all]
 //
 //	[--counterparty NAME] [--format text|json]
 //

@@ -12,7 +12,7 @@ import (
 )
 
 // TestNoClaudeLiteralInCLISource guards that no non-test source file in
-// internal/cli contains a hardcoded "tmux-msg-claude" string literal outside
+// internal/cli contains a hardcoded "tmux-tell-claude" string literal outside
 // profile.go. Contributors adding new usage hints or error messages must route
 // through active.BinaryName so the codex adapter (and future adapters) name
 // themselves correctly (#280, #315, #324).
@@ -35,7 +35,7 @@ func TestNoClaudeLiteralInCLISource(t *testing.T) {
 		t.Fatal("no .go files found — pkgDir may be wrong")
 	}
 
-	const target = "tmux-msg-claude"
+	const target = "tmux-tell-claude"
 	const allowFile = "profile.go"
 
 	fset := token.NewFileSet()

@@ -4,7 +4,7 @@
 // write, queue-depth, loop, and paste-unsafe boundaries.
 //
 // Layering: this is a leaf package — it imports only client_golang, never
-// internal/store or internal/tmuxio. The mailman (cmd/tmux-msg-claude) owns
+// internal/store or internal/tmuxio. The mailman (cmd/tmux-tell-claude) owns
 // the wiring (which boundary increments which collector); tmuxio reports
 // verify timing back through a callback rather than importing this package,
 // so the low-level paste layer stays metrics-agnostic.

@@ -22,7 +22,7 @@ func TestStartMailman_Success(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("calls = %d, want 1", len(calls))
 	}
-	want := []string{"enable", "--now", "tmux-msg-claude-mailman@newpane.service"}
+	want := []string{"enable", "--now", "tmux-tell-claude-mailman@newpane.service"}
 	for i, a := range want {
 		if calls[0][i] != a {
 			t.Errorf("call[0][%d] = %q, want %q", i, calls[0][i], a)
@@ -158,8 +158,8 @@ func TestStartMailmanEnvError_Actionable(t *testing.T) {
 
 func TestStopMailman_IdempotentOnNotLoaded(t *testing.T) {
 	cases := []string{
-		"Failed to disable unit: Unit file tmux-msg-claude-mailman@.service does not exist.",
-		"Unit tmux-msg-claude-mailman@ghost.service not loaded.",
+		"Failed to disable unit: Unit file tmux-tell-claude-mailman@.service does not exist.",
+		"Unit tmux-tell-claude-mailman@ghost.service not loaded.",
 		"No such file or directory",
 	}
 	for _, msg := range cases {

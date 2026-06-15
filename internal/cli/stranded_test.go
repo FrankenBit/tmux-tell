@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // TestStrandedRenderParseRoundTrip is the drift-resistant invariant:
@@ -43,7 +43,7 @@ func TestStrandedRenderParseRoundTrip(t *testing.T) {
 				t.Errorf("content = %q, want %q", content, c.content)
 			}
 			// The recovery hint must be present (AC5) but not leak into content.
-			if !strings.Contains(body, "tmux-msg-claude stranded show <id>") {
+			if !strings.Contains(body, "tmux-tell-claude stranded show <id>") {
 				t.Errorf("recovery hint missing from body:\n%s", body)
 			}
 			if strings.Contains(content, "stranded show <id>") {

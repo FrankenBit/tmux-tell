@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // Request-reply surface (#250): ask / wait_for_reply / check_replies. `ask` is
@@ -95,7 +95,7 @@ func doCheckReplies(ctx context.Context, s *store.Store, caller, askID string, s
 
 // runAskCLI parses ask-subcommand flags and sends a reply-expecting message.
 //
-// Usage: tmux-msg-claude ask --to <agent> [--reply-to <id>] "question"
+// Usage: tmux-tell-claude ask --to <agent> [--reply-to <id>] "question"
 //
 // `ask` is a single-recipient `send` that sets the expects_reply marker (#250
 // Q1) and returns the message id as the `ask_id` to pass to wait-for-reply /
@@ -149,7 +149,7 @@ func runAskCLI(args []string, stdout, stderr io.Writer) int {
 
 // runWaitForReplyCLI parses wait-for-reply-subcommand flags and blocks.
 //
-// Usage: tmux-msg-claude wait-for-reply <ask_id> [--timeout <duration>]
+// Usage: tmux-tell-claude wait-for-reply <ask_id> [--timeout <duration>]
 func runWaitForReplyCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wait-for-reply", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -191,7 +191,7 @@ func runWaitForReplyCLI(args []string, stdout, stderr io.Writer) int {
 
 // runCheckRepliesCLI parses check-replies-subcommand flags (non-blocking poll).
 //
-// Usage: tmux-msg-claude check-replies <ask_id> [--since <id>]
+// Usage: tmux-tell-claude check-replies <ask_id> [--since <id>]
 func runCheckRepliesCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check-replies", flag.ContinueOnError)
 	fs.SetOutput(stderr)

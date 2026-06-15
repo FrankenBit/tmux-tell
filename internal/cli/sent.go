@@ -7,13 +7,13 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runSentCLI parses sent-subcommand flags and dispatches.
 //
-// Usage: tmux-msg-claude sent [--since DUR] [--state STATE] [--to AGENT]
+// Usage: tmux-tell-claude sent [--since DUR] [--state STATE] [--to AGENT]
 //
 //	[--limit N] [--format text|json]
 //

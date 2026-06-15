@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runPauseCLI parses pause/resume flags and dispatches. The same handler
@@ -15,8 +15,8 @@ import (
 //
 // Usage:
 //
-//	tmux-msg-claude pause  AGENT | --all
-//	tmux-msg-claude resume AGENT | --all
+//	tmux-tell-claude pause  AGENT | --all
+//	tmux-tell-claude resume AGENT | --all
 func runPauseCLI(args []string, paused bool, stdout, stderr io.Writer) int {
 	verb := "pause"
 	if !paused {

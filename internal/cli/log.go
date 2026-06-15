@@ -8,14 +8,14 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/render"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/render"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // runLogCLI parses log-subcommand flags and dispatches.
 //
-// Usage: tmux-msg-claude log --thread <id> [--format text|json]
+// Usage: tmux-tell-claude log --thread <id> [--format text|json]
 func runLogCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("log", flag.ContinueOnError)
 	fs.SetOutput(stderr)

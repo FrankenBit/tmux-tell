@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // parseWindow converts a `--window`/`--since` spec into a store.StatsWindow

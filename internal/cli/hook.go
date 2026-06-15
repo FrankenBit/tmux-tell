@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/render"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/render"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // Hook-context delivery (#249, ADR-0009). This is the **adapter-side**
 // hook-helper: the substrate (internal/) stays delivery-method-agnostic; "deliver
 // via Claude Code hooks" lives entirely here. The operator wires a SessionStart /
-// UserPromptSubmit hook in ~/.claude/settings.json to run `tmux-msg-claude
+// UserPromptSubmit hook in ~/.claude/settings.json to run `tmux-tell-claude
 // hook-context`; on each fire this claims the agent's pending messages, renders
 // them, marks them delivered (ADR-0009 Q3/3b: delivered = presented), and emits
 // them as `hookSpecificOutput.additionalContext` for Claude to inject.
@@ -150,7 +150,7 @@ func renderHookContext(msgs []store.Message) string {
 	return b.String()
 }
 
-// runHookContextCLI is the `tmux-msg-claude hook-context` subcommand — the
+// runHookContextCLI is the `tmux-tell-claude hook-context` subcommand — the
 // entrypoint a Claude Code SessionStart / UserPromptSubmit hook invokes. It
 // reads the hook payload from stdin (for the event name), resolves the calling
 // agent's identity, presents pending messages, and writes the hook JSON to
@@ -167,7 +167,7 @@ func runHookContextCLI(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	// documents whether (or under what key) it sends the event name on stdin.
 	// Pinning it in the hook command itself makes the output deterministic
 	// regardless of the CLI's stdin schema:
-	//   command = "tmux-msg-codex hook-context --from bob --event-name UserPromptSubmit"
+	//   command = "tmux-tell-codex hook-context --from bob --event-name UserPromptSubmit"
 	eventNameOverride := fs.String("event-name", "",
 		"override the echoed hookEventName (default: read from stdin hook_event_name, else "+defaultHookEventName+")")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {

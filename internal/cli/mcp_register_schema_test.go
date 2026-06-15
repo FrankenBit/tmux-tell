@@ -32,17 +32,17 @@ func TestRegisterToolSchema_AdapterNamedAndNeutral(t *testing.T) {
 		withProfile(t, codexProfile)
 		got := string(registerToolSchema())
 		for _, want := range []string{
-			"tmux-msg-codex-mailman@NAME",
-			"tmux-msg-codex inbox",
-			"tmux-msg-codex hook-context",
+			"tmux-tell-codex-mailman@NAME",
+			"tmux-tell-codex inbox",
+			"tmux-tell-codex hook-context",
 			"the recipient agent's session", // adapter-neutral framing
 		} {
 			if !strings.Contains(got, want) {
 				t.Errorf("register schema missing %q under codex profile", want)
 			}
 		}
-		if strings.Contains(got, "tmux-msg-claude") {
-			t.Errorf("register schema still carries a tmux-msg-claude literal under codex profile:\n%s", got)
+		if strings.Contains(got, "tmux-tell-claude") {
+			t.Errorf("register schema still carries a tmux-tell-claude literal under codex profile:\n%s", got)
 		}
 		if strings.Contains(got, "Claude session") {
 			t.Errorf("register schema still carries 'Claude session' framing under codex profile")
@@ -53,9 +53,9 @@ func TestRegisterToolSchema_AdapterNamedAndNeutral(t *testing.T) {
 		got := string(registerToolSchema())
 		// Behavior-preserving on the binary name for the claude adapter.
 		for _, want := range []string{
-			"tmux-msg-claude-mailman@NAME",
-			"tmux-msg-claude inbox",
-			"tmux-msg-claude hook-context",
+			"tmux-tell-claude-mailman@NAME",
+			"tmux-tell-claude inbox",
+			"tmux-tell-claude hook-context",
 		} {
 			if !strings.Contains(got, want) {
 				t.Errorf("register schema dropped historical claude binary literal %q", want)

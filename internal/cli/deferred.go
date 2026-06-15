@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // Deferred-delivery triggers (#227). A `send --deliver-after=<trigger>` stores
@@ -92,7 +92,7 @@ func doFlushDeferred(ctx context.Context, s *store.Store, agent, trigger string)
 // runFlushCLI parses the flush-subcommand flags and promotes the calling
 // agent's deferred messages for the given trigger.
 //
-// Usage: tmux-msg-claude flush --trigger=resume
+// Usage: tmux-tell-claude flush --trigger=resume
 //
 // The convenience wrapper for the post-compaction case: a chamber calls it as
 // part of its resume routine to deliver the orientation it staged before

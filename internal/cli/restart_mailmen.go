@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// runRestartMailmenCLI implements `tmux-msg-<adapter> restart-mailmen`: restart
+// runRestartMailmenCLI implements `tmux-tell-<adapter> restart-mailmen`: restart
 // every RUNNING mailman unit for the active adapter so a freshly-installed
 // binary actually takes effect (#436).
 //
@@ -23,7 +23,7 @@ import (
 // codex binary effective on Lookout's (and any) running codex mailman.
 //
 // Adapter-scoped by the unit-name glob (`<BinaryName>-mailman@*.service`), so
-// `tmux-msg-codex restart-mailmen` only touches codex mailmen and vice versa.
+// `tmux-tell-codex restart-mailmen` only touches codex mailmen and vice versa.
 // Source of truth is systemd's running-unit set, not the agents table: we
 // restart what is actually alive, regardless of registry drift.
 func runRestartMailmenCLI(args []string, stdout, stderr io.Writer) int {

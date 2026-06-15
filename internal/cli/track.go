@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // errTrackNotFound wraps store.ErrNotFound with a precise "no such
@@ -20,7 +20,7 @@ import (
 var errTrackNotFound = errors.New("no such message")
 
 // trackResult is the structured response from both the
-// `tmux-msg-claude track` CLI subcommand and the `tmux-msg.message_status`
+// `tmux-tell-claude track` CLI subcommand and the `tmux-msg.message_status`
 // MCP tool. JSON tags with omitempty on the optional state-dependent
 // fields (delivered_at, error, reply_to) keep the wire shape clean.
 //
@@ -76,7 +76,7 @@ func doTrack(ctx context.Context, s *store.Store, id string) (*trackResult, erro
 
 // runTrackCLI parses the track-subcommand flags and dispatches.
 //
-// Usage: tmux-msg-claude track <id> [--format text|json] [--watch [--watch-interval D] [--watch-timeout D]]
+// Usage: tmux-tell-claude track <id> [--format text|json] [--watch [--watch-interval D] [--watch-timeout D]]
 func runTrackCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("track", flag.ContinueOnError)
 	fs.SetOutput(stderr)

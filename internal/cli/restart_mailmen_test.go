@@ -16,10 +16,10 @@ var errExitStub = errors.New("systemctl: exit status 1")
 // yields "".
 func TestMailmanUnitAgent(t *testing.T) {
 	// active defaults to the claude profile.
-	if got := mailmanUnitAgent("tmux-msg-claude-mailman@bob.service"); got != "bob" {
+	if got := mailmanUnitAgent("tmux-tell-claude-mailman@bob.service"); got != "bob" {
 		t.Errorf("claude unit → %q, want bob", got)
 	}
-	if got := mailmanUnitAgent("tmux-msg-codex-mailman@lookout.service"); got != "" {
+	if got := mailmanUnitAgent("tmux-tell-codex-mailman@lookout.service"); got != "" {
 		t.Errorf("codex unit under claude profile → %q, want \"\" (wrong adapter)", got)
 	}
 	if got := mailmanUnitAgent("some-other.service"); got != "" {
@@ -27,7 +27,7 @@ func TestMailmanUnitAgent(t *testing.T) {
 	}
 
 	withActiveProfile(t, codexPasteCapableProfile)
-	if got := mailmanUnitAgent("tmux-msg-codex-mailman@lookout.service"); got != "lookout" {
+	if got := mailmanUnitAgent("tmux-tell-codex-mailman@lookout.service"); got != "lookout" {
 		t.Errorf("codex unit under codex profile → %q, want lookout", got)
 	}
 }
@@ -42,8 +42,8 @@ func TestRunningMailmanAgents(t *testing.T) {
 		listArgs = args
 		// realistic --plain --no-legend list-units output (UNIT LOAD ACTIVE SUB DESC)
 		return []byte(
-			"tmux-msg-codex-mailman@lookout.service loaded active running tmux-msg mailman for lookout\n" +
-				"tmux-msg-codex-mailman@scout.service   loaded active running tmux-msg mailman for scout\n"), nil
+			"tmux-tell-codex-mailman@lookout.service loaded active running tmux-msg mailman for lookout\n" +
+				"tmux-tell-codex-mailman@scout.service   loaded active running tmux-msg mailman for scout\n"), nil
 	})
 	t.Cleanup(func() { setSystemctlRunner(prev) })
 
@@ -56,7 +56,7 @@ func TestRunningMailmanAgents(t *testing.T) {
 	}
 	// adapter-scoped glob
 	joined := strings.Join(listArgs, " ")
-	if !strings.Contains(joined, "tmux-msg-codex-mailman@*.service") {
+	if !strings.Contains(joined, "tmux-tell-codex-mailman@*.service") {
 		t.Errorf("list-units not scoped to codex glob; args=%v", listArgs)
 	}
 	if !strings.Contains(joined, "--state=active") {
@@ -72,8 +72,8 @@ func TestRunRestartMailmen_RestartsEach(t *testing.T) {
 	prev := setSystemctlRunner(func(_ context.Context, args ...string) ([]byte, error) {
 		switch args[0] {
 		case "list-units":
-			return []byte("tmux-msg-codex-mailman@lookout.service loaded active running x\n" +
-				"tmux-msg-codex-mailman@scout.service loaded active running x\n"), nil
+			return []byte("tmux-tell-codex-mailman@lookout.service loaded active running x\n" +
+				"tmux-tell-codex-mailman@scout.service loaded active running x\n"), nil
 		case "restart":
 			restarted = append(restarted, args[1])
 		}
@@ -87,8 +87,8 @@ func TestRunRestartMailmen_RestartsEach(t *testing.T) {
 		t.Fatalf("exit = %d, want exitOK; out=%s err=%s", code, out.String(), errb.String())
 	}
 	if len(restarted) != 2 ||
-		restarted[0] != "tmux-msg-codex-mailman@lookout.service" ||
-		restarted[1] != "tmux-msg-codex-mailman@scout.service" {
+		restarted[0] != "tmux-tell-codex-mailman@lookout.service" ||
+		restarted[1] != "tmux-tell-codex-mailman@scout.service" {
 		t.Errorf("restarted units = %v, want both codex mailman units", restarted)
 	}
 	if !strings.Contains(out.String(), "2 restarted") {
@@ -121,7 +121,7 @@ func TestRunRestartMailmen_RestartFailureSurfaces(t *testing.T) {
 	prev := setSystemctlRunner(func(_ context.Context, args ...string) ([]byte, error) {
 		switch args[0] {
 		case "list-units":
-			return []byte("tmux-msg-codex-mailman@lookout.service loaded active running x\n"), nil
+			return []byte("tmux-tell-codex-mailman@lookout.service loaded active running x\n"), nil
 		case "restart":
 			return []byte("Job for ... failed"), errExitStub
 		}

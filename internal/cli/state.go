@@ -8,8 +8,8 @@ import (
 	"io"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // agentStateResult is the wire-format shape that both the CLI and
@@ -31,7 +31,7 @@ type agentStateResult struct {
 }
 
 // resolveAgentState looks up the agent's pane and probes the agent
-// state. Shared between the CLI subcommand (`tmux-msg-claude state`) and
+// state. Shared between the CLI subcommand (`tmux-tell-claude state`) and
 // the MCP tool (`tmux-msg.agent_state`) so both surfaces produce
 // byte-identical JSON. Returns the result + any error from agent
 // resolution or tmux capture.
@@ -93,12 +93,12 @@ func nowRFC3339() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
-// runStateCLI implements `tmux-msg-claude state --agent NAME` — the
+// runStateCLI implements `tmux-tell-claude state --agent NAME` — the
 // operator-facing CLI sibling to the MCP `tmux-msg.agent_state`
 // tool. Both surfaces consume resolveAgentState so the JSON schema
 // is identical across them.
 //
-// Usage: tmux-msg-claude state --agent NAME [--format text|json] [--db PATH]
+// Usage: tmux-tell-claude state --agent NAME [--format text|json] [--db PATH]
 func runStateCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("state", flag.ContinueOnError)
 	fs.SetOutput(stderr)

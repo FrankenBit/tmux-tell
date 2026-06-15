@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // TestMCP_Unregister_FullLifecycle is the acceptance-criteria test for #289:

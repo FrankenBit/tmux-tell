@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/tmuxio"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // codexPasteCapableProfile mirrors the post-#360 codex Profile: paste-capable
@@ -18,7 +18,7 @@ import (
 // slash command — the #419 case. Distinct from serve_paste_capability_test.go's
 // codexLikeProfile, which is PasteCapable=false (the #323 force-defer case).
 var codexPasteCapableProfile = Profile{
-	BinaryName:              "tmux-msg-codex",
+	BinaryName:              "tmux-tell-codex",
 	DisplayLabel:            "Codex",
 	PasteCapable:            true,
 	SupportsMCPSlashCommand: false,

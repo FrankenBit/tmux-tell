@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/config"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/identity"
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // errGetNotFound covers BOTH the "no message with that ID exists" and
@@ -116,7 +116,7 @@ func doGet(ctx context.Context, s *store.Store, cfg *config.File,
 
 // runGetCLI parses the get-subcommand flags and dispatches.
 //
-// Usage: tmux-msg-claude get <id> [--from <name>] [--format text|json]
+// Usage: tmux-tell-claude get <id> [--from <name>] [--format text|json]
 func runGetCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
 	fs.SetOutput(stderr)

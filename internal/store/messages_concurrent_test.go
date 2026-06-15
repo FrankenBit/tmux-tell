@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // The thread-structure-precondition pin

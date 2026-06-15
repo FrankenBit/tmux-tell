@@ -11,27 +11,27 @@ import (
 	"strings"
 	"testing"
 
-	"git.frankenbit.de/frankenbit/tmux-msg/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
-// buildCodexBinary builds the tmux-msg-codex binary to the test's temp dir and
+// buildCodexBinary builds the tmux-tell-codex binary to the test's temp dir and
 // returns its path. Mirrors internal/store's cross-process probe pattern: the
 // only way to exercise the *native CLI invocation* axis (AC#4) is to build and
 // exec the real binary.
 func buildCodexBinary(t *testing.T) string {
 	t.Helper()
-	out := filepath.Join(t.TempDir(), "tmux-msg-codex")
+	out := filepath.Join(t.TempDir(), "tmux-tell-codex")
 	if runtime.GOOS == "windows" {
 		out += ".exe"
 	}
 	cmd := exec.Command("go", "build", "-o", out, ".")
 	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("go build tmux-msg-codex: %v\n%s", err, b)
+		t.Fatalf("go build tmux-tell-codex: %v\n%s", err, b)
 	}
 	return out
 }
 
-// TestCodexAdapter_EndToEnd exercises the tmux-msg-codex binary (the #248 second
+// TestCodexAdapter_EndToEnd exercises the tmux-tell-codex binary (the #248 second
 // adapter) through its native CLI: seed two agents, send alice→bob, list bob's
 // inbox, then present the queued message via the hook-context helper and confirm
 // the additionalContext carries it with Codex's hook schema.
