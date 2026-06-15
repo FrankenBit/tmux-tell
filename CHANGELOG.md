@@ -35,6 +35,16 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Documentation
 
+- **Post-deploy rate verification: cursor-anchor verify-signal reduces
+  `delivered_in_input_box` warnings 97.6% (#387).** Sampled alcatraz mailman
+  journal 24h post-deploy (Jun 14 22:18 → Jun 15 23:05): **2 WARN events**
+  against the pre-fix baseline of **84 events / 24h** (2026-06-12 probe). Both
+  fixes contribute: #369's cursor-anchor input-emptied signal (deployed Jun 14)
+  eliminated the dominant mid-turn false-negative class; #446's single-paste
+  demote (v0.17.1, deployed Jun 15 22:00) addressed the standalone-Header-submit
+  race. The 2 residual events occurred before the #446 deploy (targets: lookout,
+  engineer; adapter: claude). Rate floor confirmed; issue closed as verified.
+
 - **CHANGELOG entry convention codified + §Release cuts modernized (#454).** The
   density convention from #391's distillation — per-entry crisp headline + refs
   (detail in the PR body), the per-release narrative prelude + `Headlines:` (the
