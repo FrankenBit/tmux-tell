@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,51 @@ func TestValidDeliveryMode_HookContext(t *testing.T) {
 	}
 }
 
+// mustHookContext flips an agent to hook-context delivery mode, the mode under
+// which doHookContext actually delivers. Production hook-context fires ONLY for
+// such agents (a paste-served agent's hook no-ops, #443 Obs1); these fixtures set
+// the mode explicitly so they model that real scenario rather than relying on the
+// migration's paste-and-enter default.
+func mustHookContext(t *testing.T, s *store.Store, agent string) {
+	t.Helper()
+	if err := s.SetDeliveryMode(context.Background(), agent, store.DeliveryModeHookContext); err != nil {
+		t.Fatalf("set hook-context mode for %q: %v", agent, err)
+	}
+}
+
+// TestDoHookContext_PasteServedAgent_NoOp pins #443 Obs1: when a codex agent's
+// delivery_mode was flipped to paste-and-enter (the mailman pastes) but a stale
+// ~/.codex/config.toml hook block still fires hook-context, the hook MUST NOT
+// claim or deliver the message — the mailman's paste is the single delivery.
+// Otherwise both paths consume the same queued message → duplicate arrival at the
+// chamber (invisible to the bus DB, which records one clean delivered_at). The
+// load-bearing assertion is that the message stays QUEUED (unconsumed by the hook)
+// plus a greppable WARN surfaces the stale-toml condition to the substrate.
+func TestDoHookContext_PasteServedAgent_NoOp(t *testing.T) {
+	s := newCmdTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "bob", "%3") // default delivery_mode = paste-and-enter
+	r, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "should stay queued"})
+
+	var stderr bytes.Buffer
+	out, presented, err := doHookContext(ctx, s, "bob", "UserPromptSubmit", &stderr)
+	if err != nil {
+		t.Fatalf("hook: %v", err)
+	}
+	if presented != 0 || out.HookSpecificOutput != nil {
+		t.Errorf("paste-served agent = presented %d / out %+v, want 0 + no hookSpecificOutput (no-op)", presented, out)
+	}
+	// The message must remain unconsumed by the hook so the paste path delivers it.
+	m, _ := s.GetMessage(ctx, r.PublicID)
+	if m.State != store.StateQueued {
+		t.Errorf("message state = %s, want %s (hook must not consume a paste-served agent's message)", m.State, store.StateQueued)
+	}
+	// Substrate-observable WARN (user-silent, journal-greppable).
+	if !strings.Contains(stderr.String(), "hook_context_skipped_paste_mode") {
+		t.Errorf("expected WARN hook_context_skipped_paste_mode; got stderr:\n%s", stderr.String())
+	}
+}
+
 // TestDoHookContext_PresentsAndMarksDelivered is the #249 round-trip core: a
 // hook-context agent's pending messages are presented as additionalContext and
 // marked delivered (= presented, ADR-0009 3b).
@@ -26,10 +72,11 @@ func TestDoHookContext_PresentsAndMarksDelivered(t *testing.T) {
 	s := newCmdTestStore(t)
 	ctx := context.Background()
 	_ = s.UpsertAgent(ctx, "bob", "%3")
+	mustHookContext(t, s, "bob")
 	r1, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "first question"})
 	r2, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "carol", ToAgent: "bob", Body: "second question"})
 
-	out, presented, err := doHookContext(ctx, s, "bob", "UserPromptSubmit")
+	out, presented, err := doHookContext(ctx, s, "bob", "UserPromptSubmit", io.Discard)
 	if err != nil {
 		t.Fatalf("hook: %v", err)
 	}
@@ -64,8 +111,9 @@ func TestDoHookContext_NoMessages_NoOp(t *testing.T) {
 	s := newCmdTestStore(t)
 	ctx := context.Background()
 	_ = s.UpsertAgent(ctx, "bob", "%3")
+	mustHookContext(t, s, "bob")
 
-	out, presented, err := doHookContext(ctx, s, "bob", "SessionStart")
+	out, presented, err := doHookContext(ctx, s, "bob", "SessionStart", io.Discard)
 	if err != nil {
 		t.Fatalf("hook: %v", err)
 	}
@@ -80,13 +128,14 @@ func TestDoHookContext_RecoversStuckDelivering(t *testing.T) {
 	s := newCmdTestStore(t)
 	ctx := context.Background()
 	_ = s.UpsertAgent(ctx, "bob", "%3")
+	mustHookContext(t, s, "bob")
 	r, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "stuck"})
 	// Simulate a crashed hook: claim (→ delivering) but never mark.
 	if _, err := s.ClaimNext(ctx, "bob"); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 
-	out, presented, err := doHookContext(ctx, s, "bob", "UserPromptSubmit")
+	out, presented, err := doHookContext(ctx, s, "bob", "UserPromptSubmit", io.Discard)
 	if err != nil {
 		t.Fatalf("hook: %v", err)
 	}
@@ -107,9 +156,10 @@ func TestDoHookContext_HonorsDeferred(t *testing.T) {
 	s := newCmdTestStore(t)
 	ctx := context.Background()
 	_ = s.UpsertAgent(ctx, "bob", "%3")
+	mustHookContext(t, s, "bob")
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "bob", ToAgent: "bob", Body: "staged", DeliverAfter: "resume"})
 
-	_, presented, err := doHookContext(ctx, s, "bob", "UserPromptSubmit")
+	_, presented, err := doHookContext(ctx, s, "bob", "UserPromptSubmit", io.Discard)
 	if err != nil {
 		t.Fatalf("hook: %v", err)
 	}
@@ -183,6 +233,7 @@ func TestRunHookContextCLI_EventNameOverride(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	_ = s.UpsertAgent(ctx, "bob", "%3")
+	mustHookContext(t, s, "bob")
 	if _, err := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "ping"}); err != nil {
 		t.Fatalf("seed message: %v", err)
 	}

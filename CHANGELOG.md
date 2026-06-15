@@ -79,6 +79,26 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Fixed
 
+- **Codex hook-context path no longer double-delivers for a paste-served agent
+  (#443 Obs1).** When a codex agent's `delivery_mode` is flipped DB-side to
+  `paste-and-enter` but its `~/.codex/config.toml` still carries the
+  `UserPromptSubmit`/`SessionStart` hook blocks (stale from a prior hook-context
+  mode — #438's bootstrap registers them unconditionally), both delivery paths
+  fired for the same queued message: the hook claimed+presented it AND the
+  mailman pasted it, double-arriving at the chamber surface (the bus DB shows one
+  clean `delivered_at`, so the duplicate was invisible bus-side and visible only
+  to the chamber — operator-witnessed on Lookout). `doHookContext` now reads the
+  agent's `delivery_mode` and no-ops when it is not `hook-context`: the DB mode is
+  the single source of truth and the toml hook block is demoted to a trigger that
+  defers to it, so the mailman paste is the single delivery regardless of *why* the
+  toml is stale (missed rewrite, manual edit, bootstrap staleness, restart drift).
+  The skip is user-silent (the operator deliberately flipped the mode) but emits a
+  greppable `WARN hook_context_skipped_paste_mode` so a stale toml is discoverable
+  from the journal (same silent-to-chamber / observable-to-substrate shape as
+  `WARN control_command_unsupported`, #419). Keeping the toml itself truthful on
+  every flip (rewriting the hook blocks) is cosmetic once this guard lands and is
+  tracked as a follow-up. Obs2 (multi-collapse Enter semantics) closed separately
+  in #444.
 - **Deploy chain now rolls BOTH adapter binaries, effectively (#436).** The
   release builds `tmux-msg-claude` and `tmux-msg-codex`, but `deploy.yml`
   hardcoded `--adapter=claude` — so every cut shipped the codex binary a version

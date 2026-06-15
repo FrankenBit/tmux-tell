@@ -49,7 +49,33 @@ const defaultHookEventName = "UserPromptSubmit"
 // It runs RecoverDelivering first: a hook-context agent has NO mailman running
 // (serve short-circuits), so nothing else resets a row left in `delivering` by
 // a crashed prior hook invocation — this helper owns that recovery itself.
-func doHookContext(ctx context.Context, s *store.Store, agent, eventName string) (out hookOutput, presented int, err error) {
+func doHookContext(ctx context.Context, s *store.Store, agent, eventName string, stderr io.Writer) (out hookOutput, presented int, err error) {
+	// #443 Obs1: the hook-context path is the canonical delivery for a
+	// hook-context agent ONLY. If this agent's delivery_mode was flipped to
+	// paste-and-enter (or mailbox-only) but a stale codex hook block still fires
+	// this command, deliver nothing — the mailman's paste is the single delivery.
+	// Reading delivery_mode here makes the DB the single source of truth and
+	// demotes the toml hook block to a trigger that defers to it; without this
+	// guard both paths claim the same message in the race window before the first
+	// marks it delivered, double-arriving at the chamber surface (the bus DB shows
+	// one clean delivered_at, so the duplicate is visible only at the chamber).
+	// The structural alternative (rewrite the toml on every flip) is a follow-up:
+	// after this guard a stale toml block is harmless, so it is cosmetic hygiene.
+	a, gerr := s.GetAgent(ctx, agent)
+	if gerr != nil {
+		return hookOutput{}, 0, fmt.Errorf("get agent %q: %w", agent, gerr)
+	}
+	if a.DeliveryMode != store.DeliveryModeHookContext {
+		// User-silent (the operator deliberately flipped delivery_mode and doesn't
+		// want hook noise in their session) but substrate-observable: a greppable
+		// WARN lets them discover a stale toml block from the journal. Same shape as
+		// serve.go's WARN control_command_unsupported (#419) — silent to the chamber,
+		// observable to the substrate (#443 Obs1, greenlit).
+		fmt.Fprintf(stderr, "WARN hook_context_skipped_paste_mode agent=%s delivery_mode=%s — "+
+			"stale codex hook block fired for a non-hook-context agent; the mailman paste is the "+
+			"single delivery (toml may need cleanup) (#443 Obs1 / #438)\n", agent, a.DeliveryMode)
+		return hookOutput{}, 0, nil
+	}
 	if _, rerr := s.RecoverDelivering(ctx, agent); rerr != nil {
 		return hookOutput{}, 0, fmt.Errorf("recover: %w", rerr)
 	}
@@ -195,7 +221,7 @@ func runHookContextCLI(args []string, stdin io.Reader, stdout, stderr io.Writer)
 		}
 	}
 
-	out, _, err := doHookContext(ctx, s, agent, eventName)
+	out, _, err := doHookContext(ctx, s, agent, eventName, stderr)
 	if err != nil {
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
