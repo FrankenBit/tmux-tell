@@ -187,8 +187,12 @@ jobs:
           # Random delimiter (Lookout 67564 robustness nit). A fixed string
           # like `EOF_NOTES` would collide if the CHANGELOG section ever
           # contained that literal token; a 16-byte hex delimiter makes the
-          # collision-probability vanishingly small.
-          DELIM="EOF_$(head -c 16 /dev/urandom | xxd -p)"
+          # collision-probability vanishingly small. Uses python3 (already
+          # required for the CHANGELOG extractor above) rather than xxd —
+          # which isn't installed in forgejo-ci-go:latest, witnessed on
+          # the v0.17.0 cut's release-draft.yml workflow_dispatch retry
+          # 2026-06-15 ~10:48Z (run 11804, `xxd: command not found`).
+          DELIM="EOF_$(python3 -c 'import secrets; print(secrets.token_hex(16))')"
           {
             echo "body<<$DELIM"
             cat /tmp/release-notes.md
