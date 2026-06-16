@@ -80,7 +80,7 @@ func doTrack(ctx context.Context, s *store.Store, id string) (*trackResult, erro
 func runTrackCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("track", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	canonical := fs.Bool("canonical", false,
 		"open the canonical XDG-default DB by name (ignores --db / $CLAUDE_MSG_DB) — the operator's ground-truth \"is id X actually in the canonical DB?\" query when an MCP view might be bound to a stale inode (#348)")
 	format := fs.String("format", "text", "text|json")

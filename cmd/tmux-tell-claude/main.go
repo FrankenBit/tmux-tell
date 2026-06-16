@@ -25,7 +25,7 @@ func main() {
 	p := cli.Profile{
 		BinaryName:        "tmux-tell-claude",
 		DisplayLabel:      "Claude Code",
-		DeprecatedAlias:   "claude-msg",
+		DeprecatedAliases: []string{"claude-msg", "tmux-msg-claude"},
 		DeprecatedRemoval: "v1.0",
 		// Claude's TUI paints the ❯ prompt sentinel the observe-gate reads to
 		// defer paste-and-enter during operator-typing (internal/tmuxio), so

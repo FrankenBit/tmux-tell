@@ -17,7 +17,7 @@ import (
 func runAgentsCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("agents", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	available := fs.Bool("available", false,
 		"only agents whose pane is live and aren't paused")
 	format := fs.String("format", "text", "text|json")

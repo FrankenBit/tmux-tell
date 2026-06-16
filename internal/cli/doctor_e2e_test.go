@@ -34,9 +34,9 @@ func TestDoctor_E2E_FlagsOrphanedMCP(t *testing.T) {
 	}
 
 	xdg := t.TempDir()
-	canon := filepath.Join(xdg, "tmux-msg", "messages.db")
-	// Force the XDG default (CLAUDE_MSG_DB= clears any inherited override).
-	env := append(os.Environ(), "XDG_DATA_HOME="+xdg, "CLAUDE_MSG_DB=")
+	canon := filepath.Join(xdg, "tmux-tell", "messages.db")
+	// Force the XDG default (clear any inherited DB-path env overrides, new + legacy).
+	env := append(os.Environ(), "XDG_DATA_HOME="+xdg, "TMUX_TELL_DB=", "CLAUDE_MSG_DB=")
 
 	// Start `mcp`, which opens the canonical DB at startup and then blocks
 	// reading stdin — keeping the file handle (and thus the inode) open.
@@ -78,7 +78,11 @@ func TestDoctor_E2E_FlagsOrphanedMCP(t *testing.T) {
 	// doctor (fresh process, same XDG) must flag the divergence.
 	doctor := exec.Command(bin, "doctor", "--format", "json")
 	doctor.Env = env
-	out, derr := doctor.CombinedOutput()
+	// Output() (not CombinedOutput) so the JSON parse sees stdout only — Run emits
+	// the #440 Phase-3 deprecation WARNs (legacy DB/config path) to stderr, which
+	// would otherwise corrupt the machine-readable stream. Parse stdout, WARNs on
+	// stderr is the correct consumer contract.
+	out, derr := doctor.Output()
 	exit := 0
 	if ee, ok := derr.(*exec.ExitError); ok {
 		exit = ee.ExitCode()

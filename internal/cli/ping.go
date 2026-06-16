@@ -413,7 +413,7 @@ func (r pingReason) describe() string {
 func runPingCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ping", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "sender agent name (env: TMUX_AGENT_NAME)")
 	timeout := fs.Duration("timeout", defaultPingTimeout,
 		"bound the wait for a terminal delivery state")

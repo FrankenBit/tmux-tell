@@ -26,7 +26,7 @@ import (
 func runDigestCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("digest", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	format := fs.String("format", "text", "text|json")
 	since := fs.String("since", "24h", "time window: today|yesterday|week | all | <N>d | a duration like 4h")
 	counterparty := fs.String("counterparty", "", "scope to conversations involving one agent")

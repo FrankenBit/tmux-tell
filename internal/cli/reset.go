@@ -17,7 +17,7 @@ import (
 func runResetCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("reset", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	confirm := fs.Bool("confirm", false, "mandatory acknowledgement that this is destructive")
 	hard := fs.Bool("hard", false, "also wipe delivered + failed audit history")
 	agent := fs.String("agent", "", "scope to one recipient (default: all)")

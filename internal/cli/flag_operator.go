@@ -37,7 +37,7 @@ const operatorAttentionRecipient = "operator-attention"
 func runFlagOperatorCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("flag-operator", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "sender name (default: $TMUX_AGENT_NAME or $TMUX_PANE→registry)")
 	format := fs.String("format", "text", "output format: text|json")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
@@ -79,7 +79,7 @@ func runFlagOperatorCLI(args []string, stdout, stderr io.Writer) int {
 func runClearOperatorFlagCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("clear-operator-flag", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "sender name (default: $TMUX_AGENT_NAME or $TMUX_PANE→registry)")
 	format := fs.String("format", "text", "output format: text|json")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {

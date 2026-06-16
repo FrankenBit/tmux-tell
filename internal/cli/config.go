@@ -43,7 +43,7 @@ func runConfigShowCLI(args []string, stdout, stderr io.Writer) int {
 	agent := fs.String("agent", "", "agent name to resolve config for (required)")
 	format := fs.String("format", "text", "text|json")
 	configPath := fs.String("config", "",
-		"override config path (else $CLAUDE_MSG_CONFIG, else /etc/tmux-msg/config.toml)")
+		"override config path (else $TMUX_TELL_CONFIG, then deprecated $CLAUDE_MSG_CONFIG, else /etc/tmux-tell/config.toml)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -53,10 +53,7 @@ func runConfigShowCLI(args []string, stdout, stderr io.Writer) int {
 
 	path := *configPath
 	if path == "" {
-		path = os.Getenv("CLAUDE_MSG_CONFIG")
-		if path == "" {
-			path = config.DefaultPath
-		}
+		path, _ = config.ResolvePath()
 	}
 	cfg, err := config.LoadFrom(path)
 	if err != nil {

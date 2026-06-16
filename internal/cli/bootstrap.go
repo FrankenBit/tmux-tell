@@ -73,7 +73,7 @@ type bootstrapResult struct {
 func runBootstrapCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	pruneOrphans := fs.Bool("prune-orphans", false,
 		"actively `systemctl --user disable --now` orphan mailman units (default: print only)")
 	systemdDir := fs.String("systemd-dir", "",

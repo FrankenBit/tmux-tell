@@ -17,7 +17,7 @@ import (
 func runDiscoverCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("discover", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	dryRun := fs.Bool("dry-run", false, "print proposed updates without writing")
 	applyAliases := fs.Bool("apply-aliases", false,
 		"detect long --resume values that overlap with existing canonicals and ADD them as aliases instead of creating new rows (#46). Without this flag, propose-only — output a 'PROPOSED ALIAS' note but make no changes.")

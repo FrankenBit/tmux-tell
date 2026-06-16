@@ -82,7 +82,7 @@ type dbMigrateResult struct {
 func runDBMigrateCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("db migrate", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "source DB path (env: CLAUDE_MSG_DB; default: user-home XDG path)")
+	dbPath := fs.String("db", "", "source DB path (env: TMUX_TELL_DB; default: user-home XDG path)")
 	dryRun := fs.Bool("dry-run", false, "print the migration plan and exit without executing")
 	format := fs.String("format", "text", "text|json")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {

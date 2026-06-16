@@ -20,8 +20,8 @@ func TestCodexProfile_PasteCapable(t *testing.T) {
 	if p.BinaryName != "tmux-tell-codex" {
 		t.Errorf("BinaryName = %q, want tmux-tell-codex", p.BinaryName)
 	}
-	if p.DeprecatedAlias != "" {
-		t.Errorf("DeprecatedAlias = %q, want empty (Codex has no legacy name)", p.DeprecatedAlias)
+	if len(p.DeprecatedAliases) != 1 || p.DeprecatedAliases[0] != "tmux-msg-codex" {
+		t.Errorf("DeprecatedAliases = %v, want [tmux-msg-codex] (the #440 Phase 3 rename leg)", p.DeprecatedAliases)
 	}
 }
 

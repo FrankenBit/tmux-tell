@@ -63,18 +63,22 @@ See https://git.frankenbit.de/frankenbit/tmux-tell for the design notes.
 }
 
 // warnIfDeprecatedName emits the ADR-0008 deprecation WARN when the binary is
-// invoked through the active adapter's legacy alias (the symlink install.sh
-// keeps for the deprecation cycle). The string matches ADR-0008's worked-example
-// format verbatim so it's greppable across the fleet. Canonical invocations —
-// and adapters with no legacy alias (DeprecatedAlias == "") — are silent.
+// invoked through any of the active adapter's legacy aliases (the symlinks
+// install.sh keeps for the deprecation cycle). The string matches ADR-0008's
+// worked-example format verbatim so it's greppable across the fleet. Canonical
+// invocations — and adapters with no legacy aliases (empty list) — are silent.
+// The list shape (#440 Phase 3) carries a chain: claude is reachable as both
+// `claude-msg` (#177) and `tmux-msg-claude` (the substrate rename), both → the
+// canonical `tmux-tell-claude`.
 func warnIfDeprecatedName(argv0 string, stderr io.Writer) {
-	if active.DeprecatedAlias == "" {
-		return
-	}
-	if filepath.Base(argv0) == active.DeprecatedAlias {
-		fmt.Fprintf(stderr,
-			"WARN deprecated_surface_used name=%s removal=%s — invoke %s instead (ADR-0008)\n",
-			active.DeprecatedAlias, active.DeprecatedRemoval, active.BinaryName)
+	base := filepath.Base(argv0)
+	for _, alias := range active.DeprecatedAliases {
+		if base == alias {
+			fmt.Fprintf(stderr,
+				"WARN deprecated_surface_used name=%s removal=%s — invoke %s instead (ADR-0008)\n",
+				alias, active.DeprecatedRemoval, active.BinaryName)
+			return
+		}
 	}
 }
 
@@ -100,6 +104,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 	// `active` Profile global above.
 	tmuxio.SetActivePaneProfile(p.Pane)
 	warnIfDeprecatedName(argv0, stderr)
+	warnIfDeprecatedEnv(stderr)
+	warnIfLegacyDataPath(stderr)
 
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usageText())

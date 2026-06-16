@@ -183,7 +183,7 @@ func renderThreadChildren(w io.Writer, children []*threadNode, prefix string) {
 func runThreadCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("thread", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	format := fs.String("format", "tree", "tree|json (tree is the default human view)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage

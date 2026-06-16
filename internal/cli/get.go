@@ -120,7 +120,7 @@ func doGet(ctx context.Context, s *store.Store, cfg *config.File,
 func runGetCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("get", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "requesting agent name (env: TMUX_AGENT_NAME)")
 	format := fs.String("format", "text", "text|json")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {

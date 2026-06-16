@@ -18,10 +18,11 @@ import "git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 //     "Codex"). Distinct from BinaryName: BinaryName is the literal command a
 //     reader would type; DisplayLabel is the product it adapts. Used by the
 //     run.go usageText "mcp" / "hook-context" descriptions (#280).
-//   - DeprecatedAlias / DeprecatedRemoval: the legacy binary name an adapter
-//     carries through a deprecation cycle (Claude: claude-msg → removed v1.0,
-//     ADR-0008). DeprecatedAlias is empty when the adapter never had a prior
-//     name (e.g. a brand-new Codex adapter) — warnIfDeprecatedName then no-ops.
+//   - DeprecatedAliases / DeprecatedRemoval: the legacy binary names an adapter
+//     carries through a deprecation cycle (Claude: claude-msg AND tmux-msg-claude
+//     → removed v1.0, ADR-0008; #440 Phase 3 added the tmux-msg-* rename leg).
+//     Empty when the adapter never had a prior name — warnIfDeprecatedName then
+//     no-ops. A list so successive renames append without re-shaping the seam.
 //   - PasteCapable: whether the mailman may deliver to this adapter's pane via
 //     the internal/tmuxio paste-and-enter path. True for Claude (the observe-gate
 //     reads its ❯ prompt sentinel + cursor position to defer during operator-
@@ -41,7 +42,7 @@ import "git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 type Profile struct {
 	BinaryName        string
 	DisplayLabel      string
-	DeprecatedAlias   string
+	DeprecatedAliases []string
 	DeprecatedRemoval string
 	// PasteCapable gates the internal/tmuxio paste-and-enter delivery path.
 	// Zero value (false) is the safe default: an adapter that doesn't
@@ -79,7 +80,7 @@ type Profile struct {
 var active = Profile{
 	BinaryName:              "tmux-tell-claude",
 	DisplayLabel:            "Claude Code",
-	DeprecatedAlias:         "claude-msg",
+	DeprecatedAliases:       []string{"claude-msg", "tmux-msg-claude"},
 	DeprecatedRemoval:       "v1.0",
 	PasteCapable:            true,
 	SupportsMCPSlashCommand: true,

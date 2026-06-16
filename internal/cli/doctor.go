@@ -96,8 +96,8 @@ func gatherDoctorProcs() []dbBinding {
 		return nil
 	}
 	wantBins := map[string]bool{active.BinaryName: true}
-	if active.DeprecatedAlias != "" {
-		wantBins[active.DeprecatedAlias] = true // pre-rename processes still count
+	for _, alias := range active.DeprecatedAliases {
+		wantBins[alias] = true // pre-rename processes (any legacy alias) still count
 	}
 	var pids []int
 	for _, e := range entries {

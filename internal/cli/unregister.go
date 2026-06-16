@@ -27,7 +27,7 @@ import (
 func runUnregisterCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("unregister", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	name := fs.String("name", "", "agent name to remove from the registry; required")
 	purgeQueue := fs.Bool("purge-queue", false,
 		"drop queued messages addressed to this agent (default: preserve for re-registration)")

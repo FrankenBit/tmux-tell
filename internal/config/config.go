@@ -11,7 +11,7 @@
 // tuning), and strings (paths) without per-type plumbing.
 //
 // Missing-file behavior: silent fallback to hardcoded defaults. A
-// fresh-from-install setup with no /etc/tmux-msg/config.toml just
+// fresh-from-install setup with no /etc/tmux-tell/config.toml just
 // gets the CLI-flag defaults.
 //
 // Malformed-file behavior: error returned to the caller, which can
@@ -29,10 +29,50 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// DefaultPath is where Load looks by default. Override via the
-// CLAUDE_MSG_CONFIG env var or by passing an explicit path to
+// DefaultPath is where Load looks by default. Override via $TMUX_TELL_CONFIG
+// (or the deprecated $CLAUDE_MSG_CONFIG) or by passing an explicit path to
 // LoadFrom.
-const DefaultPath = "/etc/tmux-msg/config.toml"
+const DefaultPath = "/etc/tmux-tell/config.toml"
+
+// LegacyPath is the deprecated tmux-msg config location, honored as a lazy
+// fallback through v1.0 per ADR-0008 (#440 Phase 3): when DefaultPath does not
+// exist but LegacyPath does, an in-place operator keeps their existing config.
+const LegacyPath = "/etc/tmux-msg/config.toml"
+
+// fileExists reports whether path names an existing filesystem entry.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// ResolvePath returns the config path Load uses + whether it fell back to the
+// legacy tmux-msg location. Precedence: $TMUX_TELL_CONFIG, then the deprecated
+// $CLAUDE_MSG_CONFIG, then DefaultPath — falling back to LegacyPath only when
+// DefaultPath is absent but the legacy file exists (#440 Phase 3 lazy migration).
+// An explicit env var is the operator's chosen path, so legacy=false there;
+// legacy is reported only for the default-path fallback, which is what the
+// migration WARN keys on.
+func ResolvePath() (path string, legacy bool) {
+	return resolveConfigPath(
+		os.Getenv("TMUX_TELL_CONFIG"), os.Getenv("CLAUDE_MSG_CONFIG"),
+		DefaultPath, LegacyPath)
+}
+
+// resolveConfigPath is the path-injectable core of ResolvePath — the /etc
+// consts are not test-overridable, so the precedence + lazy-fallback logic
+// lives here where a test can pass temp paths.
+func resolveConfigPath(envNew, envOld, defaultPath, legacyPath string) (path string, legacy bool) {
+	if envNew != "" {
+		return envNew, false
+	}
+	if envOld != "" {
+		return envOld, false
+	}
+	if !fileExists(defaultPath) && fileExists(legacyPath) {
+		return legacyPath, true
+	}
+	return defaultPath, false
+}
 
 // File mirrors the TOML schema. Sections in the file map to the
 // fields here; missing sections + missing keys decode as zero values.
@@ -217,10 +257,7 @@ type Block struct {
 // Missing file → empty File + nil error (operational default).
 // Malformed file → empty File + the toml decode error.
 func Load() (*File, error) {
-	path := os.Getenv("CLAUDE_MSG_CONFIG")
-	if path == "" {
-		path = DefaultPath
-	}
+	path, _ := ResolvePath()
 	return LoadFrom(path)
 }
 

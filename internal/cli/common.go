@@ -8,37 +8,77 @@ import (
 	"path/filepath"
 )
 
-// defaultDBLocation resolves the default DB path under user-home, honoring the
-// XDG Base Directory spec (#308): `$XDG_DATA_HOME/tmux-msg/messages.db` when
-// $XDG_DATA_HOME is set, else `$HOME/.local/share/tmux-msg/messages.db`.
-// Override with --db or $CLAUDE_MSG_DB. Tests use a temp file or :memory:.
-//
-// Moved from the system-global `/var/lib/tmux-msg/messages.db` (#308): tmux is
-// per-user by design (sockets, panes, identity all run under the operator's
-// UID), so the bus's trust boundary belongs under user-home — congruent with
-// tmux's per-user model, no install-time shared-space chown, and writable by
-// sandbox-by-default adapters (codex) without per-write escalation.
-//
-// Resolution is a pure function of the environment so a process and its
-// systemd-managed mailman — both running under the same UID — resolve the same
-// path. Caveat (#308): if the operator's interactive shell exports
-// $XDG_DATA_HOME but the `systemctl --user` manager does not inherit it, the
-// CLI and the mailman could diverge; in the common case (XDG_DATA_HOME unset,
-// $HOME set everywhere) both land on `~/.local/share/tmux-msg/messages.db`.
-//
-// Degenerate fallback: if neither $XDG_DATA_HOME nor $HOME is set, returns a
-// relative `.local/share/tmux-msg/messages.db` rather than erroring — store.Open
-// surfaces a real failure if that path is unwritable, which is the honest signal.
-func defaultDBLocation() string {
-	dataHome := os.Getenv("XDG_DATA_HOME")
-	if dataHome == "" {
-		if home := os.Getenv("HOME"); home != "" {
-			dataHome = filepath.Join(home, ".local", "share")
-		} else {
-			dataHome = filepath.Join(".local", "share")
-		}
+// Substrate data-dir names (#440 Phase 3 rename). dataSubdir is the canonical
+// tmux-tell name; legacyDataSubdir is the deprecated tmux-msg name kept as a
+// lazy-migration fallback through v1.0 per ADR-0008.
+const (
+	dataSubdir       = "tmux-tell"
+	legacyDataSubdir = "tmux-msg"
+
+	// Env-var names (#440 Phase 3). The TMUX_TELL_* form is canonical; the
+	// CLAUDE_MSG_* form is the deprecated alias honored through v1.0.
+	envDB           = "TMUX_TELL_DB"
+	legacyEnvDB     = "CLAUDE_MSG_DB"
+	envConfig       = "TMUX_TELL_CONFIG"
+	legacyEnvConfig = "CLAUDE_MSG_CONFIG"
+
+	// deprecatedRemovalVersion is the ADR-0008 §Discretion removal boundary for
+	// every Phase-3 legacy surface (env vars, paths, binary aliases).
+	deprecatedRemovalVersion = "v1.0"
+)
+
+// fileExists reports whether path names an existing filesystem entry.
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// xdgDataHome resolves $XDG_DATA_HOME (else $HOME/.local/share, else a relative
+// fallback) — the per-user data root the bus DB lives under (#308).
+func xdgDataHome() string {
+	if dataHome := os.Getenv("XDG_DATA_HOME"); dataHome != "" {
+		return dataHome
 	}
-	return filepath.Join(dataHome, "tmux-msg", "messages.db")
+	if home := os.Getenv("HOME"); home != "" {
+		return filepath.Join(home, ".local", "share")
+	}
+	return filepath.Join(".local", "share")
+}
+
+// defaultDataDir / legacyDataDir name the canonical + deprecated per-user data
+// directories — surfaced verbatim in the migration WARN's `mv` recipe (#440).
+func defaultDataDir() string { return filepath.Join(xdgDataHome(), dataSubdir) }
+func legacyDataDir() string  { return filepath.Join(xdgDataHome(), legacyDataSubdir) }
+
+// defaultDBLocationResolved resolves the default DB path under user-home,
+// honoring the XDG Base Directory spec (#308): `$XDG_DATA_HOME/tmux-tell/
+// messages.db` when $XDG_DATA_HOME is set, else `$HOME/.local/share/tmux-tell/
+// messages.db`. Override with --db, $TMUX_TELL_DB, or (deprecated) $CLAUDE_MSG_DB.
+//
+// Lazy migration (#440 Phase 3): an in-place operator who upgraded but hasn't
+// moved their data keeps working on the legacy `…/tmux-msg/messages.db` path —
+// returned (with legacy=true) only when the tmux-tell path does NOT yet exist
+// AND the legacy one does. A fresh install lands on tmux-tell; the operator
+// migrates with `mv` (the WARN names it). Hard-cut to new-only at v1.0.
+//
+// Resolution is a pure function of the filesystem + environment so a process and
+// its systemd-managed mailman — both under the same UID — resolve the same path.
+// Degenerate fallback (neither $XDG_DATA_HOME nor $HOME set): a relative
+// `.local/share/tmux-tell/messages.db` rather than erroring — store.Open
+// surfaces a real failure if unwritable, the honest signal.
+func defaultDBLocationResolved() (path string, legacy bool) {
+	newPath := filepath.Join(defaultDataDir(), "messages.db")
+	legacyPath := filepath.Join(legacyDataDir(), "messages.db")
+	if !fileExists(newPath) && fileExists(legacyPath) {
+		return legacyPath, true
+	}
+	return newPath, false
+}
+
+// defaultDBLocation is the path-only view of defaultDBLocationResolved.
+func defaultDBLocation() string {
+	p, _ := defaultDBLocationResolved()
+	return p
 }
 
 // Caps — operator-chosen 2026-05-29 (see roadmap epic #1).
@@ -78,13 +118,20 @@ const (
 // resolveDBPath returns the path to use for store.Open, honouring:
 //
 //  1. The explicit flag value if non-empty.
-//  2. The CLAUDE_MSG_DB env var.
-//  3. The hard-coded default.
+//  2. $TMUX_TELL_DB, then the deprecated $CLAUDE_MSG_DB (#440 Phase 3).
+//  3. The default location (with lazy legacy fallback).
+//
+// Pure (no WARN): the deprecation-comm surface for $CLAUDE_MSG_DB + the legacy
+// data path lives in Run's warnIf* cluster (deprecation.go), so this stays a
+// pure path resolver its ~many store-open callers can use without stderr.
 func resolveDBPath(flagValue string) string {
 	if flagValue != "" {
 		return flagValue
 	}
-	if env := os.Getenv("CLAUDE_MSG_DB"); env != "" {
+	if env := os.Getenv(envDB); env != "" {
+		return env
+	}
+	if env := os.Getenv(legacyEnvDB); env != "" {
 		return env
 	}
 	return defaultDBLocation()
@@ -97,8 +144,11 @@ func dbPathSource(flagValue string) string {
 	if flagValue != "" {
 		return "flag(--db)"
 	}
-	if os.Getenv("CLAUDE_MSG_DB") != "" {
-		return "env(CLAUDE_MSG_DB)"
+	if os.Getenv(envDB) != "" {
+		return "env(" + envDB + ")"
+	}
+	if os.Getenv(legacyEnvDB) != "" {
+		return "env(" + legacyEnvDB + ")"
 	}
 	return "default(env unset)"
 }

@@ -23,7 +23,7 @@ import (
 func runStatsCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	format := fs.String("format", "text", "text|json")
 	window := fs.String("window", "24h", "time window: all | <N>d | a duration like 1h/24h")
 	agent := fs.String("agent", "", "scope the per-agent + pairs view to one agent (sender or recipient)")

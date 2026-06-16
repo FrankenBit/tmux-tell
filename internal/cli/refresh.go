@@ -66,7 +66,7 @@ type refreshAgentEntry struct {
 func runRefreshAllMcpsCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("refresh-all-mcps", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "sender agent name (env: TMUX_AGENT_NAME; auto-resolved from $TMUX_PANE if registered)")
 	format := fs.String("format", "text", "text|json")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {

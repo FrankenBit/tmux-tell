@@ -159,7 +159,7 @@ func renderHookContext(msgs []store.Message) string {
 func runHookContextCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("hook-context", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "agent whose pending messages to present (env: TMUX_AGENT_NAME; default: this pane)")
 	// --event-name pins the hookEventName echoed in the output, overriding the
 	// stdin-derived value. The output's hookEventName must match the firing

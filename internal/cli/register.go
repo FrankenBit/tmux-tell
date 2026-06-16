@@ -31,13 +31,13 @@ import (
 func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("register", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	name := fs.String("name", "", "agent name (the new identity); required")
 	pane := fs.String("pane", "", "pane id like %5 (default: $TMUX_PANE)")
 	deliveryMode := fs.String("delivery-mode", store.DeliveryModePasteAndEnter,
 		"how the mailman delivers to this agent: 'paste-and-enter' (default), 'mailbox-only' (operator-as-bus-participant per #116; messages stay queued, operator polls via inbox), or 'hook-context' (#249; the recipient agent's session pulls pending messages as additionalContext via a SessionStart/UserPromptSubmit hook — no pane paste)")
 	startMailmanFlag := fs.String("start-mailman", "",
-		"true|false — start the mailman daemon for this agent. Default: true (mailbox-only defaults to false; explicit true overrides). Note: --start-mailman=true combined with --delivery-mode=mailbox-only is allowed but vestigial — the daemon will start, observe the mailbox-only mode at startup, log the no-work condition, and exit cleanly with Result=success. The 'mailman: active' field in the response is momentary in this case. Note (#293): --start-mailman=true is REJECTED when CLAUDE_MSG_DB / --db points at a non-default DB path — the systemd-managed mailman launches from the unit-file Environment=, not the caller's env, so it would silently poll the default DB instead. For sandbox-DB callers, use --start-mailman=false and run `<binary> serve --agent <name>` as a foreground subprocess.")
+		"true|false — start the mailman daemon for this agent. Default: true (mailbox-only defaults to false; explicit true overrides). Note: --start-mailman=true combined with --delivery-mode=mailbox-only is allowed but vestigial — the daemon will start, observe the mailbox-only mode at startup, log the no-work condition, and exit cleanly with Result=success. The 'mailman: active' field in the response is momentary in this case. Note (#293): --start-mailman=true is REJECTED when TMUX_TELL_DB / --db points at a non-default DB path — the systemd-managed mailman launches from the unit-file Environment=, not the caller's env, so it would silently poll the default DB instead. For sandbox-DB callers, use --start-mailman=false and run `<binary> serve --agent <name>` as a foreground subprocess.")
 	force := fs.Bool("force", false,
 		"overwrite an existing registration with the same name")
 	alias := fs.String("alias", "",

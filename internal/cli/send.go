@@ -54,7 +54,7 @@ type sendParams struct {
 func runSendCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "sender agent name (env: TMUX_AGENT_NAME)")
 	to := fs.String("to", "", "recipient agent name (required)")
 	replyTo := fs.String("reply-to", "", "public_id of the message being replied to")

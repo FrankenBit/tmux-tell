@@ -30,7 +30,7 @@ type ackResult struct {
 func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	stateFlag := fs.String("state", "queued",
 		"queued|delivering|delivered|failed|acknowledged (empty = all)")
 	limit := fs.Int("limit", 50, "maximum rows to return")

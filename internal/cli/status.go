@@ -17,7 +17,7 @@ import (
 func runStatusCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	format := fs.String("format", "text", "text|json")
 	today := fs.Bool("today", false,
 		"include a per-agent today-block (deliveries / unverified / pre-marker / failed / crashes / cap-exceeded counts since 00:00 local). Verified split is sourced from the #169 `verified` column (#230); failed / crashes / cap-exceeded + latency stay journalctl + systemd-sourced (#45)")

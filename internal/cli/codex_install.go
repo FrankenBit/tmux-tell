@@ -70,7 +70,7 @@ func runCodexInstallCLI(args []string, stdout, stderr io.Writer) int {
 	codexConfigPath := fs.String("codex-config", "",
 		"path to codex config file (default: $HOME/.codex/config.toml)")
 	dryRun := fs.Bool("dry-run", false, "print what would change without writing")
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	format := fs.String("format", "text", "text|json")
 	skipDiscover := fs.Bool("skip-discover", false,
 		"skip the tmux discover step (for tests that pre-seed the agents table)")

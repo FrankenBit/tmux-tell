@@ -18,7 +18,7 @@ import (
 func runWhoamiCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("whoami", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	asName := fs.String("as", "",
 		"explicit identity (overrides $TMUX_AGENT_NAME)")
 	format := fs.String("format", "text", "text|json")

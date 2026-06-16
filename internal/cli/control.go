@@ -175,7 +175,7 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 func runControlCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("control", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "sender agent name (default: identity-resolved)")
 	to := fs.String("to", "", "recipient agent name (required)")
 	command := fs.String("command", "",

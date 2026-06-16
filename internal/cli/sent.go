@@ -23,7 +23,7 @@ import (
 func runSentCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("sent", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	since := fs.String("since", "24h",
 		"time window: 24h (default) | 1h | today | all | any duration")
 	stateFlag := fs.String("state", "",

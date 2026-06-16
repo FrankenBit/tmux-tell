@@ -53,7 +53,7 @@ type tailOpts struct {
 func runTailCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("tail", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "only messages from this agent")
 	to := fs.String("to", "", "only messages to this agent")
 	kind := fs.String("kind", "", "only this kind (message, delivery_failure_notice, ping, …)")

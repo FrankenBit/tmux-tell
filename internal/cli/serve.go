@@ -226,7 +226,7 @@ type serveOpts struct {
 func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	agent := fs.String("agent", "", "agent name to serve (required)")
 	interMsg := fs.Duration("inter-message-delay", 200*time.Millisecond,
 		"pause between successive deliveries")
@@ -512,7 +512,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	//
 	// Validation: invalid mode values from config are logged + the DB
 	// column wins (fail-loud rather than fail-stop). This keeps a typo
-	// in /etc/tmux-msg/config.toml from silently breaking the mailman.
+	// in /etc/tmux-tell/config.toml from silently breaking the mailman.
 	if opts.ConfigDeliveryMode != "" && opts.ConfigDeliveryMode != a.DeliveryMode {
 		if store.ValidDeliveryMode(opts.ConfigDeliveryMode) {
 			logger.Printf("delivery_mode overridden by config: db=%s → config=%s",

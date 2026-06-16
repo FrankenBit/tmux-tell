@@ -100,7 +100,7 @@ func doFlushDeferred(ctx context.Context, s *store.Store, agent, trigger string)
 func runFlushCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("flush", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "agent whose deferred messages to flush (env: TMUX_AGENT_NAME; default: this pane)")
 	trigger := fs.String("trigger", deferTriggerResume,
 		"the deferred-delivery trigger to fire (#227). `resume` (post-compaction self-handoff); `register` auto-fires on (re)register (#258a) so rarely needs an explicit flush.")

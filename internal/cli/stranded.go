@@ -151,7 +151,7 @@ func runStrandedCLI(args []string, stdout, stderr io.Writer) int {
 func runStrandedListCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("stranded list", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	agent := fs.String("agent", "", "agent whose bookmarks to list (default: this session's identity)")
 	format := fs.String("format", "text", "text|json")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
@@ -216,7 +216,7 @@ func runStrandedListWithStore(ctx context.Context, s *store.Store, agent, format
 func runStrandedShowCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("stranded show", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	outFile := fs.String("o", "", "write the recovered content to this file instead of stdout")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
@@ -273,7 +273,7 @@ func runStrandedShowWithStore(ctx context.Context, s *store.Store, id, outFile s
 func runStrandedPruneCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("stranded prune", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	agent := fs.String("agent", "", "agent whose bookmarks to prune (default: this session's identity)")
 	olderThan := fs.String("older-than", "", "remove bookmarks older than this (e.g. 7d, 24h, 90m) — required")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {

@@ -24,7 +24,7 @@ import (
 func runHealthCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("health", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	format := fs.String("format", "text", "text|json")
 	since := fs.Duration("since", 24*time.Hour,
 		"scan the journal over this duration (e.g., 1h, 6h, 24h). Default 24h.")

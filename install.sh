@@ -83,13 +83,15 @@ fi
 BIN_NAME="tmux-tell-${ADAPTER}"
 UNIT_NAME="tmux-tell-${ADAPTER}-mailman@.service"
 
-# Deprecation-cycle aliases (#177 / ADR-0008). Only the claude adapter carries
-# the legacy claude-msg / claude-mailman names; other adapters never had them.
-# Empty → no alias installed.
-LEGACY_BIN=""
+# Deprecation-cycle binary aliases (#177 / #440 Phase 3 / ADR-0008, removed at
+# the v1.0 boundary). EVERY adapter now carries a tmux-msg-<adapter> alias from
+# the substrate rename (so scripts / muscle-memory on the old name survive);
+# claude additionally carries the older claude-msg name (#177). LEGACY_UNIT (the
+# systemd template alias) stays claude-only — the unit rename is Phase 2's domain.
+LEGACY_BINS=("tmux-msg-${ADAPTER}")
 LEGACY_UNIT=""
 if [[ "$ADAPTER" == "claude" ]]; then
-    LEGACY_BIN="claude-msg"
+    LEGACY_BINS+=("claude-msg")
     LEGACY_UNIT="claude-mailman@.service"
 fi
 
@@ -169,12 +171,14 @@ sudo -u "$OPERATOR_USER" make "bin/$BIN_NAME" GO="$GO"
 echo "==> installing $PREFIX/bin/$BIN_NAME"
 install -m 0755 -o root -g root "bin/$BIN_NAME" "$PREFIX/bin/$BIN_NAME"
 
-# 2b. Deprecation-cycle binary alias: claude-msg → tmux-msg-claude. A relative
-# symlink target keeps it valid regardless of $PREFIX. Removed at v1.0 boundary per ADR-0008 §Discretion clause extension (#177).
-if [[ -n "$LEGACY_BIN" ]]; then
-    echo "==> deprecation alias $PREFIX/bin/$LEGACY_BIN → $BIN_NAME (removed at v1.0 boundary)"
-    ln -sfn "$BIN_NAME" "$PREFIX/bin/$LEGACY_BIN"
-fi
+# 2b. Deprecation-cycle binary aliases: tmux-msg-<adapter> (+ claude-msg for the
+# claude adapter) → the canonical tmux-tell-<adapter>. A relative symlink target
+# keeps each valid regardless of $PREFIX. Removed at the v1.0 boundary per
+# ADR-0008 §Discretion clause extension (#177 / #440 Phase 3).
+for legacy_bin in "${LEGACY_BINS[@]}"; do
+    echo "==> deprecation alias $PREFIX/bin/$legacy_bin → $BIN_NAME (removed at v1.0 boundary)"
+    ln -sfn "$BIN_NAME" "$PREFIX/bin/$legacy_bin"
+done
 
 # 3. (No data-directory step.) The DB lives under the operator's user-home
 # ($XDG_DATA_HOME/tmux-msg or ~/.local/share/tmux-msg/messages.db, #308) and is

@@ -104,7 +104,7 @@ func doCheckReplies(ctx context.Context, s *store.Store, caller, askID string, s
 func runAskCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "sender agent name (env: TMUX_AGENT_NAME)")
 	to := fs.String("to", "", "recipient agent name (required); single recipient only")
 	replyTo := fs.String("reply-to", "", "public_id of the message being replied to (threads the ask)")
@@ -153,7 +153,7 @@ func runAskCLI(args []string, stdout, stderr io.Writer) int {
 func runWaitForReplyCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("wait-for-reply", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "the asking agent (env: TMUX_AGENT_NAME; default: this pane)")
 	timeout := fs.Duration("timeout", 30*time.Second, "how long to block for a reply before timing out")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
@@ -195,7 +195,7 @@ func runWaitForReplyCLI(args []string, stdout, stderr io.Writer) int {
 func runCheckRepliesCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("check-replies", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "the asking agent (env: TMUX_AGENT_NAME; default: this pane)")
 	since := fs.Int64("since", 0, "only return replies with numeric id greater than this (accumulation; 0 = all)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {

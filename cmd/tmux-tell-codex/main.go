@@ -36,7 +36,11 @@ func codexProfile() cli.Profile {
 	return cli.Profile{
 		BinaryName:   "tmux-tell-codex",
 		DisplayLabel: "Codex",
-		// No DeprecatedAlias: Codex is a new adapter with no legacy name.
+		// Codex never had the claude-msg leg, but the #440 substrate rename gave
+		// it a tmux-msg-codex → tmux-tell-codex deprecation alias (Phase 3, removed
+		// v1.0 per ADR-0008) so any script / muscle-memory on the old name survives.
+		DeprecatedAliases: []string{"tmux-msg-codex"},
+		DeprecatedRemoval: "v1.0",
 		// PasteCapable=true (#360): #322 taught the observe-gate to READ Codex's
 		// `› ` input area, so it classifies idle / working / awaiting-operator and
 		// defers paste-and-enter while a Codex operator is typing — the #323

@@ -31,7 +31,7 @@ type resendParams struct {
 func runResendCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("resend", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	dbPath := fs.String("db", "", "path to messages.db (env: CLAUDE_MSG_DB)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	force := fs.Bool("force", false,
 		"replay even an already-delivered or in-flight message (may duplicate). Not needed for a delivered_in_input_box message — the verified column (#169) recognizes the soft-fail and replays it directly; passing --force there is deprecated (#230)")
 	format := fs.String("format", "json", "json|text")
