@@ -115,10 +115,20 @@ func TestGet_DoGet_PrivilegedAgentCanFetch(t *testing.T) {
 
 func TestGet_DoGet_ShortPrefixHappyPath(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
-	id, _ := seedGetFixture(t, s)
+	id, other := seedGetFixture(t, s)
 
-	// Use the first 2 chars of the ID as the prefix.
-	prefix := id[:2]
+	// Use the SHORTEST prefix of `id` that the only other seeded message does
+	// not share — a genuinely-unique short prefix, so this still exercises
+	// prefix-matching but is deterministic. The prior fixed 2-char prefix flaked
+	// when the two random 4-hex public IDs happened to share their first 2 chars
+	// (#479: "ambiguous prefix: N messages match …").
+	prefix := id
+	for n := 1; n <= len(id); n++ {
+		if id[:n] != other[:n] {
+			prefix = id[:n]
+			break
+		}
+	}
 	res, err := doGet(context.Background(), s, nil, "alice", prefix)
 	if err != nil {
 		t.Fatalf("prefix lookup: %v", err)
