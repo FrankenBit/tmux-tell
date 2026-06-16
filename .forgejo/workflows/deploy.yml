@@ -95,7 +95,7 @@ jobs:
         # Doctor was hard-fail (Lookout 732d advisory + Bosun b2e9 architect-
         # call). First-deploy-lane empirically surfaced the false-positive
         # surface the inline comment named: every deploy replaces the
-        # `tmux-msg-claude` inode, so chamber-side MCP servers that were
+        # `tmux-tell-claude` inode, so chamber-side MCP servers that were
         # canonical before the deploy become stale immediately after.
         # `refresh-all-mcps` queues an MCP restart but only fires when the
         # chamber processes it (claude `/mcp` slash command on next prompt;
@@ -123,9 +123,9 @@ jobs:
           set -euo pipefail
           echo "==> installed binary versions (#436: assert BOTH adapters — a"
           echo "    silent per-adapter version lag is the gap this surfaces)"
-          tmux-msg-claude --version
-          tmux-msg-codex --version
+          tmux-tell-claude --version
+          tmux-tell-codex --version
           echo "==> doctor (MCP / mailman DB-binding divergence check, #348)"
-          if ! tmux-msg-claude doctor; then
+          if ! tmux-tell-claude doctor; then
               echo "::warning::doctor reported divergence — review log for stale chamber MCPs (#411) or non-ready codex chambers (#414); deploy itself was structurally successful"
           fi

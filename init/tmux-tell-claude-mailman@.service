@@ -1,18 +1,18 @@
-# systemd user template unit for the tmux-msg-claude mailman daemon (the Claude
+# systemd user template unit for the tmux-tell-claude mailman daemon (the Claude
 # Code adapter). Renamed from claude-mailman@ per #177; install.sh keeps a
 # claude-mailman@ → this symlink for the deprecation cycle (removed v0.11.0).
 #
 # Install:
-#   cp init/tmux-msg-claude-mailman@.service ~/.config/systemd/user/
+#   cp init/tmux-tell-claude-mailman@.service ~/.config/systemd/user/
 #   loginctl enable-linger alex            # so the user manager runs at boot
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now tmux-msg-claude-mailman@surveyor.service
+#   systemctl --user enable --now tmux-tell-claude-mailman@surveyor.service
 #
 # One instance per recipient agent. The instance name ("%i") is the agent
-# name, and is passed through to `tmux-msg-claude serve --agent`.
+# name, and is passed through to `tmux-tell-claude serve --agent`.
 #
 # Logs go to the user journal:
-#   journalctl --user -u tmux-msg-claude-mailman@surveyor.service -f
+#   journalctl --user -u tmux-tell-claude-mailman@surveyor.service -f
 
 [Unit]
 Description=tmux-msg mailman for %i
@@ -34,13 +34,13 @@ StartLimitInterval=60s
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/tmux-msg-claude serve --agent %i
+ExecStart=/usr/local/bin/tmux-tell-claude serve --agent %i
 
 # Restart on crash, but back off so a stuck mailman doesn't hot-loop.
 Restart=on-failure
 RestartSec=2s
 
-# Watchdog: tmux-msg-claude serve pings WATCHDOG=1 every loop iteration when
+# Watchdog: tmux-tell-claude serve pings WATCHDOG=1 every loop iteration when
 # WATCHDOG_USEC is exported. systemd kills + restarts the unit if no ping
 # arrives within WatchdogSec — covers the case where the loop is wedged
 # but the process is still nominally alive (e.g. tmux hung).
@@ -59,7 +59,7 @@ Type=notify
 # Journal capture with per-instance tag so journalctl filtering is clean.
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=tmux-msg-claude-mailman-%i
+SyslogIdentifier=tmux-tell-claude-mailman-%i
 
 # WatchdogSec is not used yet — would require sd_notify(WATCHDOG=1) pings
 # from the mailman loop. Restart=on-failure covers the crash case.

@@ -1,26 +1,26 @@
-# systemd user template unit for the tmux-msg-codex mailman daemon (the OpenAI
-# Codex CLI adapter, #248). Sibling of tmux-msg-claude-mailman@; each adapter
+# systemd user template unit for the tmux-tell-codex mailman daemon (the OpenAI
+# Codex CLI adapter, #248). Sibling of tmux-tell-claude-mailman@; each adapter
 # targets its own daemon (the unit prefix is the binary name). Codex is a new
 # adapter with no deprecation alias.
 #
 # A Codex agent uses hook-context delivery (#248 (B), ADR-0009): its messages are
-# presented by `tmux-msg-codex hook-context` from the agent's own session, so the
+# presented by `tmux-tell-codex hook-context` from the agent's own session, so the
 # mailman `serve` short-circuits at startup (notifies ready, exits cleanly — it
 # does not paste). The unit is still installed so `register --start-mailman` and
 # the health/systemctl surfaces have a real unit to target, and so a future
 # paste-capable Codex configuration has somewhere to land.
 #
 # Install:
-#   cp init/tmux-msg-codex-mailman@.service ~/.config/systemd/user/
+#   cp init/tmux-tell-codex-mailman@.service ~/.config/systemd/user/
 #   loginctl enable-linger alex            # so the user manager runs at boot
 #   systemctl --user daemon-reload
-#   systemctl --user enable --now tmux-msg-codex-mailman@surveyor.service
+#   systemctl --user enable --now tmux-tell-codex-mailman@surveyor.service
 #
 # One instance per recipient agent. The instance name ("%i") is the agent
-# name, and is passed through to `tmux-msg-codex serve --agent`.
+# name, and is passed through to `tmux-tell-codex serve --agent`.
 #
 # Logs go to the user journal:
-#   journalctl --user -u tmux-msg-codex-mailman@surveyor.service -f
+#   journalctl --user -u tmux-tell-codex-mailman@surveyor.service -f
 
 [Unit]
 Description=tmux-msg mailman for %i (codex adapter)
@@ -42,13 +42,13 @@ StartLimitInterval=60s
 
 [Service]
 Type=notify
-ExecStart=/usr/local/bin/tmux-msg-codex serve --agent %i
+ExecStart=/usr/local/bin/tmux-tell-codex serve --agent %i
 
 # Restart on crash, but back off so a stuck mailman doesn't hot-loop.
 Restart=on-failure
 RestartSec=2s
 
-# Watchdog: tmux-msg-codex serve pings WATCHDOG=1 every loop iteration when
+# Watchdog: tmux-tell-codex serve pings WATCHDOG=1 every loop iteration when
 # WATCHDOG_USEC is exported. systemd kills + restarts the unit if no ping
 # arrives within WatchdogSec — covers the case where the loop is wedged
 # but the process is still nominally alive (e.g. tmux hung).
@@ -67,7 +67,7 @@ NotifyAccess=main
 # Journal capture with per-instance tag so journalctl filtering is clean.
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=tmux-msg-codex-mailman-%i
+SyslogIdentifier=tmux-tell-codex-mailman-%i
 
 [Install]
 WantedBy=default.target

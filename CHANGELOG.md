@@ -49,6 +49,30 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   issue-level scope-fence at the project level — burden of proof flips from
   rejecter to proposer.
 
+### Changed
+
+- **Phase 2 operator-surface rename `tmux-msg` → `tmux-tell` (#440).** Engineer's
+  Phase 1 (#474) made the Go binaries self-name `tmux-tell-claude` /
+  `tmux-tell-codex` and generate `tmux-tell-<adapter>-mailman@` unit names;
+  this lands the matching operator-surface: systemd unit template FILES
+  renamed to `init/tmux-tell-<adapter>-mailman@.service`; `install.sh`'s
+  binary, unit-template, and `cmd/` references on the new name (with a
+  Phase-2 migration block that stops + disables any active legacy
+  `tmux-msg-<adapter>-mailman@<agent>.service` instances and re-enables
+  the `tmux-tell-<adapter>-mailman@<agent>.service` equivalents during
+  install — closing the dual-delivery hazard that would otherwise arise
+  from two mailmen polling the same DB, sibling shape to #443 Obs1); and
+  `deploy.yml`'s smoke + doctor invocations on the new binary names. The
+  `docs/reference.md` operational command examples flip to the new names;
+  bare project-prose ("tmux-msg is a substrate", title, MCP wire-surface
+  tool names like `tmux-msg.send`) is held for Phase 4 (Herald). The
+  Forgejo repo rename `frankenbit/tmux-msg` → `frankenbit/tmux-tell`
+  follows this merge as a separate operator-surface step (Forgejo
+  auto-308-redirects old URLs); `~/.claude.json` MCP server name update
+  follows that. Phase 3 (Engineer — `CLAUDE_MSG_DB` env-var, DB path
+  migration, DeprecatedAlias chain entries) and Phase 4 (Herald —
+  README + bare-prose sweep + BookStack) remain on the roadmap.
+
 ## [0.17.2] — 2026-06-15
 
 v0.17.2 closes loose ends from v0.17.1's rapid cycle. Four fixes:

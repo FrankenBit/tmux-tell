@@ -2,7 +2,7 @@
 # Idempotent installer for tmux-msg on alcatraz-like Linux hosts.
 #
 # Run as root (sudo -A ./install.sh [--adapter=claude]). The script:
-#   - installs the tmux-msg-<adapter> binary to ${PREFIX}/bin/
+#   - installs the tmux-tell-<adapter> binary to ${PREFIX}/bin/
 #   - drops the systemd user template into the operator's
 #     ~/.config/systemd/user/
 #
@@ -15,8 +15,8 @@
 #     (#177 / ADR-0008; removed at v1.0 boundary per ADR-0008 §Discretion clause extension)
 #
 # The actual mailman enablement (`systemctl --user enable
-# tmux-msg-claude-mailman@AGENT.service` followed by `systemctl --user
-# restart tmux-msg-claude-mailman@AGENT.service`) is the operator's job —
+# tmux-tell-claude-mailman@AGENT.service` followed by `systemctl --user
+# restart tmux-tell-claude-mailman@AGENT.service`) is the operator's job —
 # the install script makes no assumptions about which agents you want
 # serviced. The `bootstrap` subcommand (#349 Fix 2, run automatically
 # unless `--no-bootstrap` is passed) handles this for every registered
@@ -31,7 +31,7 @@ set -euo pipefail
 PREFIX=${PREFIX:-/usr/local}
 
 # Which adapter to install. The binary name encodes substrate+adapter
-# (tmux-msg-<adapter>); `claude` is the only adapter today, but a future
+# (tmux-tell-<adapter>); `claude` is the only adapter today, but a future
 # operator picks another once codex/copilot adapters exist (#177). Accept both
 # --adapter=X and an ADAPTER=X env override.
 ADAPTER=${ADAPTER:-claude}
@@ -63,8 +63,8 @@ for arg in "$@"; do
         *) echo "install.sh: unknown argument: $arg (expected --adapter=NAME | --agent=NAME | --no-bootstrap | --prune-orphans | --allow-stale-mailmen)" >&2; exit 1 ;;
     esac
 done
-if [[ -z "$ADAPTER" || ! -d "$(dirname "$0")/cmd/tmux-msg-${ADAPTER}" ]]; then
-    echo "install.sh: no adapter 'cmd/tmux-msg-${ADAPTER}/' in this repo." >&2
+if [[ -z "$ADAPTER" || ! -d "$(dirname "$0")/cmd/tmux-tell-${ADAPTER}" ]]; then
+    echo "install.sh: no adapter 'cmd/tmux-tell-${ADAPTER}/' in this repo." >&2
     exit 1
 fi
 # For codex adapter: resolve --agent from TMUX_AGENT_NAME if not passed
@@ -80,8 +80,8 @@ if [[ "$ADAPTER" == "codex" && "$BOOTSTRAP" -eq 1 && -z "$AGENT_NAME" ]]; then
     echo "  or skip automatic config with --no-bootstrap." >&2
     exit 1
 fi
-BIN_NAME="tmux-msg-${ADAPTER}"
-UNIT_NAME="tmux-msg-${ADAPTER}-mailman@.service"
+BIN_NAME="tmux-tell-${ADAPTER}"
+UNIT_NAME="tmux-tell-${ADAPTER}-mailman@.service"
 
 # Deprecation-cycle aliases (#177 / ADR-0008). Only the claude adapter carries
 # the legacy claude-msg / claude-mailman names; other adapters never had them.
@@ -197,6 +197,59 @@ if [[ -n "$LEGACY_UNIT" ]]; then
     sudo -u "$OPERATOR_USER" ln -sfn "$UNIT_NAME" "$USER_SYSTEMD/$LEGACY_UNIT"
 fi
 
+# 4c. Phase-2 rename migration (#440): if the legacy tmux-msg-<adapter>-mailman@
+# template + active instances still exist on this host, stop+disable each active
+# instance and re-enable+restart the equivalent tmux-tell-<adapter>-mailman@
+# instance, then remove the legacy template. Without this step both mailmen
+# would poll the same DB → #443 Obs1 dual-delivery shape. The migration is a
+# one-shot: on a host with no legacy mailmen this whole block is a no-op.
+OPERATOR_UID=$(id -u "$OPERATOR_USER")
+LEGACY_RENAME_PREFIX="tmux-msg-${ADAPTER}-mailman@"
+LEGACY_RENAME_TEMPLATE="${LEGACY_RENAME_PREFIX}.service"
+LEGACY_RENAME_TEMPLATE_PATH="${USER_SYSTEMD}/${LEGACY_RENAME_TEMPLATE}"
+LEGACY_RENAME_ACTIVE=$(sudo -u "$OPERATOR_USER" env \
+    XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+    systemctl --user list-units --type=service --state=active --plain --no-legend \
+    "${LEGACY_RENAME_PREFIX}*.service" 2>/dev/null \
+    | awk -v p="$LEGACY_RENAME_PREFIX" '{ n=$1; sub(p,"",n); sub(/\.service$/,"",n); print n }')
+
+if [[ -n "$LEGACY_RENAME_ACTIVE" || -f "$LEGACY_RENAME_TEMPLATE_PATH" ]]; then
+    echo "==> Phase 2 rename migration: tmux-msg-${ADAPTER}-* → ${BIN_NAME}-* (#440)"
+    for AGENT in $LEGACY_RENAME_ACTIVE; do
+        LEGACY_FOR_AGENT="${LEGACY_RENAME_PREFIX}${AGENT}.service"
+        NEW_FOR_AGENT="${BIN_NAME}-mailman@${AGENT}.service"
+        echo "   - $AGENT: stop+disable $LEGACY_FOR_AGENT, enable+restart $NEW_FOR_AGENT"
+        # Stop the legacy unit first so it releases the tmux pane + DB pollers
+        # BEFORE the new mailman binds them. `|| true` keeps an already-stopped
+        # unit from breaking the migration.
+        sudo -u "$OPERATOR_USER" env \
+            XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+            systemctl --user stop "$LEGACY_FOR_AGENT" 2>/dev/null || true
+        sudo -u "$OPERATOR_USER" env \
+            XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+            systemctl --user disable "$LEGACY_FOR_AGENT" 2>/dev/null || true
+        sudo -u "$OPERATOR_USER" env \
+            XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+            systemctl --user enable "$NEW_FOR_AGENT"
+        sudo -u "$OPERATOR_USER" env \
+            XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+            systemctl --user restart "$NEW_FOR_AGENT"
+    done
+    if [[ -f "$LEGACY_RENAME_TEMPLATE_PATH" ]]; then
+        echo "   - removing legacy template $LEGACY_RENAME_TEMPLATE_PATH"
+        sudo -u "$OPERATOR_USER" rm -f "$LEGACY_RENAME_TEMPLATE_PATH"
+        sudo -u "$OPERATOR_USER" env \
+            XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+            systemctl --user daemon-reload
+    fi
+fi
+
 echo
 echo "Install complete."
 
@@ -217,7 +270,7 @@ if [[ "$BOOTSTRAP" -eq 0 ]]; then
     # adapter) must do the equivalent or the new binary stays inert. Restart
     # the adapter's running mailmen via the standalone primitive; no-op when
     # none run. Runs as the operator (systemctl --user needs their session bus).
-    OPERATOR_UID=$(id -u "$OPERATOR_USER")
+    # (OPERATOR_UID was computed during the Phase-2 migration block above.)
     echo "==> restarting running $ADAPTER mailmen onto the new binary (#436)"
     # FATAL-BY-DEFAULT (Lookout #439 containment review): the substrate-claim
     # of this path is "the new binary is EFFECTIVE." A restart failure breaks
@@ -253,8 +306,8 @@ if [[ "$BOOTSTRAP" -eq 0 ]]; then
         echo "  $BIN_NAME register --name <agent> --delivery-mode=hook-context"
         echo "  $BIN_NAME codex-install --agent=<agent>   # writes hook blocks + MCP env"
         echo "  # then manually approve hooks in Codex on next launch:"
-        echo "  #   UserPromptSubmit: tmux-msg-codex hook-context"
-        echo "  #   SessionStart:     tmux-msg-codex hook-context"
+        echo "  #   UserPromptSubmit: tmux-tell-codex hook-context"
+        echo "  #   SessionStart:     tmux-tell-codex hook-context"
     else
         echo "Next steps (--no-bootstrap chosen; run as $OPERATOR_USER, NOT as root):"
         echo "  systemctl --user daemon-reload"
@@ -280,8 +333,7 @@ fi
 # Only a hook-context codex chamber delivers via the UserPromptSubmit hook and
 # runs no mailman. The codex branch below branches on the agent's CURRENT
 # delivery_mode and does NOT force hook-context (#438). The rest runs as the
-# operator (tmux + D-Bus).
-OPERATOR_UID=$(id -u "$OPERATOR_USER")
+# operator (tmux + D-Bus). (OPERATOR_UID computed in the Phase-2 migration block above.)
 
 if [[ "$ADAPTER" == "codex" ]]; then
     # Codex bootstrap is per-agent (#384) and paste-aware (#438): enable-linger
