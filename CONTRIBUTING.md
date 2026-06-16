@@ -1,6 +1,6 @@
-# Contributing to tmux-msg
+# Contributing to tmux-tell
 
-Thanks for your interest. tmux-msg is a small, MIT-licensed message bus for CLI
+Thanks for your interest. tmux-tell is a small, MIT-licensed message bus for CLI
 agents running in tmux — see the [README](README.md) for what it is and the
 [`docs/`](docs/) guides for how it works. Issues and pull requests are welcome.
 
@@ -50,7 +50,7 @@ go test -count=1 ./...
 
 The scenario tier documents the *substrate contract*, not the mailman IO. Delivery
 timing, tmux paste mechanics, and mailman loop behaviour are tested in
-`cmd/tmux-msg-claude/serve*_test.go`; the gherkin layer sits above and focuses on
+`cmd/tmux-tell-claude/serve*_test.go`; the gherkin layer sits above and focuses on
 the store state-machine transitions each documented loop produces.
 
 **`tail` watch mechanism — rowid-polling, not `update_hook`.** The mailmen that write
@@ -185,8 +185,8 @@ two cycles ago, and is this the cut where they come off?".
 
 ## The external contract (downstream consumers)
 
-tmux-msg is consumed as a standalone module by downstream projects — notably
-**Binnacle** (GPL-3.0-only), which composes with tmux-msg as an external Go module
+tmux-tell is consumed as a standalone module by downstream projects — notably
+**Binnacle** (GPL-3.0-only), which composes with tmux-tell as an external Go module
 rather than absorbing it ([ADR-0007](docs/adr/0007-binnacle-coexist-external-contract.md)).
 That makes two surfaces a **stability contract**, not just internal detail:
 
@@ -216,14 +216,14 @@ Governed by the project's deprecation policy
   (the Go API + DB schema) are the **external-contract subset** a downstream module
   like Binnacle pins; the deprecation grace applies to the broader public-surface set.
 
-If you're building on tmux-msg, pin a version and watch the CHANGELOG; the contract
+If you're building on tmux-tell, pin a version and watch the CHANGELOG; the contract
 above is what you can rely on between pins.
 
 ### License
 
-tmux-msg is **MIT** and stays MIT. Combining it into a copyleft downstream is clean:
+tmux-tell is **MIT** and stays MIT. Combining it into a copyleft downstream is clean:
 a GPL-3.0-only consumer (Binnacle) may link and redistribute it — the *combined*
-binary distributes under GPL-3.0-only, while the tmux-msg module itself remains MIT
+binary distributes under GPL-3.0-only, while the tmux-tell module itself remains MIT
 for every other consumer (per the FSF compatibility list; see ADR-0007). By
 contributing, you agree your contributions are released under the MIT license.
 

@@ -1,4 +1,4 @@
-# The operator's manual: running tmux-msg, day 0 to day N
+# The operator's manual: running tmux-tell, day 0 to day N
 
 You've cloned the repo. This is the walkthrough that takes you from there to a
 bus you trust — install, first agent, first message, the first time something
@@ -10,10 +10,13 @@ procedure. This manual is the *arc*: what to do, in what order, and **why that
 order**. Where you need the exact WHAT, you'll find a link. Read this once
 front-to-back; reach for the others when a link sends you.
 
-> **A note on names.** Today the binary is `tmux-msg-claude` and the repo is
-> `tmux-msg`. The tool is being renamed to **`tmux-tell`** in v0.17.0 (#307);
-> when that lands, `tmux-msg-claude` becomes `tmux-tell-claude` and the commands
-> below carry forward unchanged in shape. This manual uses today's names.
+> **A note on names.** The tool is **`tmux-tell`** (binary `tmux-tell-claude`),
+> renamed from `tmux-msg` (#440). The legacy `tmux-msg-claude` / `tmux-msg-codex`
+> binary names — plus the `CLAUDE_MSG_DB` / `CLAUDE_MSG_CONFIG` env vars and the
+> old `tmux-msg` data/config paths — keep working as deprecated aliases (each
+> emits a WARN) through the v1.0 boundary per
+> [ADR-0008](adr/0008-deprecation-policy.md). This manual uses the canonical
+> `tmux-tell` names; see [reference.md → Migrating from tmux-msg](reference.md#migrating-from-tmux-msg).
 
 ---
 
@@ -22,22 +25,22 @@ front-to-back; reach for the others when a link sends you.
 From inside a tmux session:
 
 ```bash
-git clone https://github.com/FrankenBit/tmux-msg && cd tmux-msg
-make build && sudo ./install.sh     # builds tmux-msg-claude + installs the systemd user unit
+git clone https://github.com/FrankenBit/tmux-tell && cd tmux-tell
+make build && sudo ./install.sh     # builds tmux-tell-claude + installs the systemd user unit
 systemctl --user daemon-reload      # so the mailman unit becomes visible
 ```
 
 Three things now exist, and it's worth knowing what each is — they're the whole
 system:
 
-- **`tmux-msg-claude`** — one binary. It's the CLI you'll run, the MCP server an
+- **`tmux-tell-claude`** — one binary. It's the CLI you'll run, the MCP server an
   agent talks to, and the mailman daemon, depending on how it's invoked. No
   service mesh, no broker.
 - **A SQLite database** — your mailbox store, at
-  `~/.local/share/tmux-msg/messages.db`. Every message is a row. You can read
+  `~/.local/share/tmux-tell/messages.db`. Every message is a row. You can read
   the entire bus with `sqlite3`; there is nothing else holding state.
 - **A systemd *user* unit** — the mailman template
-  (`tmux-msg-claude-mailman@.service`). One instance per registered agent
+  (`tmux-tell-claude-mailman@.service`). One instance per registered agent
   watches that agent's pane and delivers to it. **User**, not system — it runs
   as you, needs no root, and dies with your login session unless lingering is on.
 
@@ -47,8 +50,8 @@ it is. On startup, the mailman logs the **resolved DB path and where that path
 came from** (#290) — the env var, the XDG default, or a flag. Read it:
 
 ```bash
-journalctl --user -u 'tmux-msg-claude-mailman@*' -n 50 | grep claude_msg_db
-# → serve: claude_msg_db=/home/you/.local/share/tmux-msg/messages.db source=default(env unset)
+journalctl --user -u 'tmux-tell-claude-mailman@*' -n 50 | grep claude_msg_db
+# → serve: claude_msg_db=/home/you/.local/share/tmux-tell/messages.db source=default(env unset)
 ```
 
 If that path isn't the one you expect, *stop here and fix it* — almost every
@@ -64,7 +67,7 @@ resolution order and the override knobs are in
 A pane isn't on the bus until you register it:
 
 ```bash
-tmux-msg-claude register --name alice    # run this *in* the pane you mean
+tmux-tell-claude register --name alice    # run this *in* the pane you mean
 ```
 
 Registration does two things. It writes a row binding the **name** `alice` to
@@ -88,7 +91,7 @@ in [`security.md`](security.md); the agent's-eye view of drift is in the
 ## Your first message — send it, watch it land, read the row
 
 ```bash
-tmux-msg-claude send --to bob "first message across the bus"
+tmux-tell-claude send --to bob "first message across the bus"
 ```
 
 Switch to `bob`'s pane. If `bob` is idle, the line appears almost at once, headed
@@ -111,7 +114,7 @@ Now read the row. The message wasn't fired-and-forgotten — it's a record that
 moved through states:
 
 ```bash
-sqlite3 ~/.local/share/tmux-msg/messages.db \
+sqlite3 ~/.local/share/tmux-tell/messages.db \
   "SELECT from_agent, to_agent, state FROM messages ORDER BY id DESC LIMIT 5;"
 ```
 
@@ -145,7 +148,7 @@ don't reinvent it. What this manual gives you is the **reflex**: *sender-outbox
 first, escalate to the bus last.* Most "lost message" reports die at step 1 or 2.
 
 When the *recipient* is the suspect, there's a cheaper probe than any of those:
-`tmux-msg-claude ping AGENT` checks reachability without sending anything, and
+`tmux-tell-claude ping AGENT` checks reachability without sending anything, and
 reports one of three classes — **`REACHABLE`**, **`PENDING`** (*retry or wait,
 the mailman is working* — reachable, but a draining backlog or a held delivery
 means the probe couldn't confirm yet; transient), or **`UNREACHABLE`** (*won't
@@ -179,7 +182,7 @@ safely, on one machine. The full "it is / it isn't" — and the honest compariso
 to raw `send-keys` and to single-session subagents — is [`why.md`](why.md). If
 you're deciding whether you even need it, read that one.
 
-**The trust model is small and explicit, so know it.** tmux-msg assumes a
+**The trust model is small and explicit, so know it.** tmux-tell assumes a
 **single-operator homelab**: anyone with shell access on the host is trusted,
 identity is `$TMUX_PANE`-based (spoofable by someone who already has your shell —
 which the model accepts), and there is no authentication, authorization, or
@@ -218,7 +221,7 @@ the canonical file, reported `queue_depth: 0`. **Both were telling the truth abo
 their own world.** Messages vanished into the orphaned inode, and nothing flagged
 the divergence — it took `/proc` archaeology to even see it.
 
-The recovery is one command — `tmux-msg-claude refresh-all-mcps`, which restarts
+The recovery is one command — `tmux-tell-claude refresh-all-mcps`, which restarts
 every agent's MCP server against the current binary and DB — and it had existed
 for ages (#62). The gap wasn't the fix; it was that nobody knew to *reach* for it,
 because the deploy recipe didn't say to. The lessons, which are now yours for
@@ -250,7 +253,7 @@ mailmen come back on their own; the MCP servers need the nudge.
 
 The reassurance that should make adopting this easy: leaving is trivial and
 visible. It's a binary, a systemd user unit, and a SQLite file. Stop and remove
-the units, delete the binary, and `~/.local/share/tmux-msg/messages.db` is a
+the units, delete the binary, and `~/.local/share/tmux-tell/messages.db` is a
 plain file you can archive or `rm`. There's no cloud account to close, no state
 stranded somewhere you can't see. You can read the whole system's memory with
 `sqlite3` and you can remove it in an afternoon — which is the same property that

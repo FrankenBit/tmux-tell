@@ -35,6 +35,22 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Documentation
 
+- **Phase 4 docs-prose rebrand `tmux-msg` → `tmux-tell` (#440).** The
+  operator-facing documentation is swept to the canonical name across ~15 files
+  (README, `docs/reference.md`, the operator + agent manuals,
+  why/observe-gate/security/diagnostic-playbook/operator-ux/…, CONTRIBUTING, the
+  two `cmd/*/README.md`): bare project prose, binary-command examples, default
+  paths, and repo URLs flip to `tmux-tell`. New `docs/reference.md` § *Migrating
+  from `tmux-msg`* documents the env-var / path / binary-alias mapping + the `mv`
+  recipes + the WARN names (`deprecated_env_var_used` / `legacy_data_path_in_use` /
+  `deprecated_surface_used`) + the v1.0 hard-cut. The MCP server + tool-name doc
+  refs are flipped to `tmux-tell` to match #481 (Phase 2.5's MCP rename), so a
+  fresh-install operator reading the docs hits the live tool names; the
+  `mcp-*-tmux-msg` control-macro identifiers are left as-is pending #480. ADRs stay
+  frozen as point-in-time records (with a one-line historicity note added to
+  `docs/adr/README.md`). The operator-facing complement to Phases 1–3's
+  code/systemd/env/path substrate.
+
 - **ADR-0014: tmux-tell scope — IS / IS NOT / SSH-back-tunnel (#441).** Codifies
   the project-scope-fence in operator-ratified form: an 8-item IS list (peer-style
   TUI-paste bus, observe-gate, SQLite persistence, substrate-vs-adapter boundary,
@@ -72,6 +88,15 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   follows that. Phase 3 (Engineer — `CLAUDE_MSG_DB` env-var, DB path
   migration, DeprecatedAlias chain entries) and Phase 4 (Herald —
   README + bare-prose sweep + BookStack) remain on the roadmap.
+
+### Fixed
+
+- **`uninstall.sh` MCP-removal hint + path refs are rename-aware (#476).** The
+  `claude mcp remove` hint now names `tmux-tell` with the legacy `tmux-msg`
+  fallback, and the `--purge` datadir resolves whichever of
+  `~/.local/share/{tmux-tell,tmux-msg}` actually exists — so uninstall stays
+  correct on both pre- and post-rename chambers (Phase-4 fast-follow to #475's
+  review).
 
 ## [0.17.2] — 2026-06-15
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Idempotent uninstaller for tmux-msg.
+# Idempotent uninstaller for tmux-tell.
 #
 # Run as root (sudo -A ./uninstall.sh). The script:
 #   - stops + disables every running claude-mailman@*.service user unit
@@ -40,17 +40,20 @@ Usage: sudo -A ./uninstall.sh [--purge] [--prefix DIR] [--datadir DIR]
                     needs an interactive confirmation when stdin is a TTY).
   --prefix DIR      Where the binary lives (default: /usr/local).
   --datadir DIR     Where the SQLite DB lives (default:
-                    ~/.local/share/tmux-msg under the operator's home, #308).
+                    ~/.local/share/tmux-tell under the operator's home, #308;
+                    a pre-rename install may still hold ~/.local/share/tmux-msg).
   -h, --help        Show this message.
 
-The script leaves /etc/tmux-msg/ alone (operator may have hand-
+The script leaves /etc/tmux-tell/ alone (operator may have hand-
 edited config there per #54). Remove that directory manually if you
 also want to wipe the host config.
 
 What --purge does NOT touch:
-  - /etc/tmux-msg/        (operator-edited config; remove by hand)
-  - tmux-msg MCP entry in ~/.claude.json (remove with claude mcp
-    remove tmux-msg -s user)
+  - /etc/tmux-tell/       (operator-edited config; remove by hand; a
+    pre-rename install may also have /etc/tmux-msg/)
+  - the MCP entry in ~/.claude.json — remove with: claude mcp remove
+    tmux-tell -s user  (or: claude mcp remove tmux-msg -s user on a
+    pre-rename / legacy chamber)
   - loginctl enable-linger     (other services on the host may rely on it)
 EOF
 }
@@ -89,7 +92,12 @@ USER_SYSTEMD="$OPERATOR_HOME/.config/systemd/user"
 # --datadir explicitly (the operator's shell env isn't visible to this
 # root-run script).
 if [[ -z "$DATADIR" ]]; then
-    DATADIR="$OPERATOR_HOME/.local/share/tmux-msg"
+    DATADIR="$OPERATOR_HOME/.local/share/tmux-tell"
+    # Lazy-rename fallback (#440): a pre-rename install keeps its data at the
+    # legacy tmux-msg path until migrated — purge whichever actually exists.
+    if [[ ! -d "$DATADIR" && -d "$OPERATOR_HOME/.local/share/tmux-msg" ]]; then
+        DATADIR="$OPERATOR_HOME/.local/share/tmux-msg"
+    fi
 fi
 
 # Foot-gun guard: refuse to run from inside the data directory itself.
@@ -181,9 +189,10 @@ echo
 echo "Uninstall complete."
 echo
 echo "Not touched (remove by hand if you also want them gone):"
-echo "  /etc/tmux-msg/             — host-level config (#54)"
-echo "  ~/.claude.json                  — tmux-msg MCP entry; remove with:"
-echo "                                    claude mcp remove tmux-msg -s user"
+echo "  /etc/tmux-tell/            — host-level config (#54; pre-rename: /etc/tmux-msg/)"
+echo "  ~/.claude.json                  — MCP entry; remove with:"
+echo "                                    claude mcp remove tmux-tell -s user"
+echo "                                    (or 'tmux-msg' on a pre-rename / legacy chamber)"
 echo "  loginctl enable-linger          — other services may need it"
 if ! $PURGE_DATA && [[ -d "$DATADIR" ]]; then
     echo "  ${DATADIR}    — SQLite message history (re-run with --purge to wipe)"

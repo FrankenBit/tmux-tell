@@ -3,7 +3,7 @@
 This is a coordination convention for **multi-agent deployments** where several
 agents (here, the alcatraz "chambers" — one Claude instance per tmux pane) draw
 work from a shared issue tracker, and more than one party can hand out that work.
-It is not a tmux-msg feature; it is a discipline that sits *next to* the bus and
+It is not a tmux-tell feature; it is a discipline that sits *next to* the bus and
 covers a gap the bus deliberately doesn't fill.
 
 If you run one agent, or never dispatch the same tracker from two directions, you

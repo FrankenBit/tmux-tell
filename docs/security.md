@@ -13,7 +13,7 @@
 
 ## TL;DR — the trust model in one paragraph
 
-tmux-msg is designed for a **single-operator homelab** trust
+tmux-tell is designed for a **single-operator homelab** trust
 model: one human (the operator) has shell access to one host
 (alcatraz). Anything that has shell access is fully trusted. The
 bus enforces caps, scope rules, and atomicity for the operator's
@@ -34,7 +34,7 @@ Mapped against the code as of v0.2.1.
 │ Operator  │ ───────────────────────────────────────► │     Bus      │
 │           │                                          │ (mailmen +   │
 │           │ ◄─────────────────────────────────────── │  store +     │
-└───────────┘  journalctl, sqlite3, tmux-msg-claude CLI     │  MCP server) │
+└───────────┘  journalctl, sqlite3, tmux-tell-claude CLI     │  MCP server) │
                                                        └──────────────┘
 ```
 
@@ -51,7 +51,7 @@ Mapped against the code as of v0.2.1.
 ### 1.2 Bus ↔ Agents (Claude Code sessions in tmux panes)
 
 ```
-┌──────────────┐  MCP stdio / tmux-msg-claude CLI  ┌────────────────────┐
+┌──────────────┐  MCP stdio / tmux-tell-claude CLI  ┌────────────────────┐
 │   Bus        │ ───────────────────────────► │  Agent (Claude     │
 │              │                              │  Code session)     │
 │              │ ◄─────────────────────────── │  in tmux pane      │
@@ -79,9 +79,9 @@ Mapped against the code as of v0.2.1.
 
 ```
 ┌──────────┐                 Bus                  ┌──────────┐
-│ Sender   │ ───► tmux-msg.send ─► mailman ─────► │ Receiver │
+│ Sender   │ ───► tmux-tell.send ─► mailman ─────► │ Receiver │
 │ Agent    │                                      │ Agent    │
-│          │ ───► tmux-msg.control (peer-scope) ─►│          │
+│          │ ───► tmux-tell.control (peer-scope) ─►│          │
 └──────────┘                                      └──────────┘
 ```
 
@@ -166,7 +166,7 @@ single-operator homelab deployment on alcatraz.
 
 - **`$TMUX_PANE` spoofing.** Anyone with shell access can fake any
   agent identity by setting `$TMUX_PANE` to a registered pane's id
-  before calling `tmux-msg-claude send`. Accepted under the trust
+  before calling `tmux-tell-claude send`. Accepted under the trust
   model; this is the **single largest item** a future operator
   considering wider deployment must revisit.
 - **No body content scanning.** A compromised agent CAN send
@@ -231,8 +231,8 @@ in one place.
   pluggable backend would fit cleanly, but the semantics of
   "who's the sender" change qualitatively.
 - **Storage trust-boundary congruence (#308)**: the DB now lives
-  under the operator's user-home (`$XDG_DATA_HOME/tmux-msg` or
-  `~/.local/share/tmux-msg/messages.db`), not the former system-global
+  under the operator's user-home (`$XDG_DATA_HOME/tmux-tell` or
+  `~/.local/share/tmux-tell/messages.db`), not the former system-global
   `/var/lib/tmux-msg/`. This makes the substrate's *storage* trust
   boundary exactly congruent with the *identity* model above: both are
   scoped to the operator's UID. tmux is per-user by design, and the bus
@@ -272,7 +272,7 @@ in one place.
 
 ### 3.5 Mailman-as-single-writer-per-recipient
 
-- **Code**: systemd template `tmux-msg-claude-mailman@.service`; one
+- **Code**: systemd template `tmux-tell-claude-mailman@.service`; one
   instance per agent.
 - **Trusted**: systemd ensures exactly-one-instance; the bus
   doesn't enforce single-writer at the store level.
@@ -307,7 +307,7 @@ without them.
 |----------------------------|-----------------------------------------------------------------------|------------------------------------------------------------------------------------|-------------|
 | Authentication             | `$TMUX_PANE` → registry                                               | Per-agent identity token (secret, mTLS, or signed JWT)                             | Substantial |
 | Sender identity guarantee  | `$TMUX_PANE` (trivially spoofable with shell)                         | Cryptographic binding between Claude session and identity token                    | Large       |
-| Authorization              | Binary self/peer scope on whitelist                                   | Per-tool capability ACLs ("agent X may call tmux-msg.control on agent Y")         | Substantial |
+| Authorization              | Binary self/peer scope on whitelist                                   | Per-tool capability ACLs ("agent X may call tmux-tell.control on agent Y")         | Substantial |
 
 ### 4.2 Independent (can land separately)
 

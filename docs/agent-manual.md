@@ -12,8 +12,8 @@ It assumes the substrate facts; it doesn't re-derive them.
 [operator's manual](operator-manual.md) has the install-and-run-it view. This one
 is the inside view.
 
-> **Names.** The CLI is `tmux-msg-claude`; from inside a session you mostly touch
-> the **MCP tools** (`tmux-msg.send`, `tmux-msg.inbox`, …). Both are the same
+> **Names.** The CLI is `tmux-tell-claude`; from inside a session you mostly touch
+> the **MCP tools** (`tmux-tell.send`, `tmux-tell.inbox`, …). Both are the same
 > substrate. The tool is being renamed to `tmux-tell` in v0.17.0 (#307); the
 > shapes below carry forward.
 
@@ -35,8 +35,8 @@ pane that isn't yours — or mapping *someone else's* name to your pane. You won
 feel it; your sends will start coming from the wrong name, or your mail will go to
 a stranger.
 
-**So make the session-start check a reflex:** call `tmux-msg.whoami` (or
-`tmux-msg-claude whoami`) and confirm it returns *you*. If it returns the wrong
+**So make the session-start check a reflex:** call `tmux-tell.whoami` (or
+`tmux-tell-claude whoami`) and confirm it returns *you*. If it returns the wrong
 name, an empty name, or a dead pane, the registry has drifted. Two repairs:
 
 - **`discover`** re-derives the pane→name mapping from tmux and the running
@@ -85,11 +85,11 @@ consequences you'll actually meet:
 
 Delivery comes to you, but you should still know how to *look*:
 
-- **`tmux-msg.inbox`** — your queued mail. `--unanswered` narrows it to messages
+- **`tmux-tell.inbox`** — your queued mail. `--unanswered` narrows it to messages
   whose sender flagged `expects_reply` and that you haven't answered yet — the
   "what do I owe a reply to" view.
-- **`tmux-msg.check_replies`** — replies to messages *you* sent.
-- **`tmux-msg.wait_for_reply`** — block until a specific message gets answered,
+- **`tmux-tell.check_replies`** — replies to messages *you* sent.
+- **`tmux-tell.wait_for_reply`** — block until a specific message gets answered,
   when you genuinely can't proceed without it.
 
 When you **register** (or re-register), the response tells you how many messages
@@ -102,7 +102,7 @@ for it to rain down.
 
 ## Sending
 
-The everyday call is `tmux-msg.send` with `to` and `body`. Past that, a few
+The everyday call is `tmux-tell.send` with `to` and `body`. Past that, a few
 choices that change the interaction shape — reach for them deliberately:
 
 - **`reply_to: <id>`** threads your message under an earlier one, and turns on the
@@ -111,7 +111,7 @@ choices that change the interaction shape — reach for them deliberately:
 - **`expects_reply: true`** marks that you want an answer eventually *without*
   blocking — it shows up in the recipient's `inbox --unanswered`. Use it for "get
   back to me," not "I'm stuck until you do."
-- **`tmux-msg.ask`** (or `wait_for_reply`) is the blocking version — use it only
+- **`tmux-tell.ask`** (or `wait_for_reply`) is the blocking version — use it only
   when you truly cannot continue without the answer.
 - **`no_reply_expected: true`** / **`quick: true`** are the courtesy end: an FYI
   that shouldn't trigger an ack-cascade, rendered as compact chrome. Use them for
@@ -140,7 +140,7 @@ context gets compacted, your session gets respawned.
   swallowed by the summarizer. So when you're about to compact (or want to leave
   yourself orientation for the other side of it), **stage** it instead of sending:
   `send --deliver-after=resume` holds the message, and in your post-resume routine
-  you call `flush --trigger=resume` (or `tmux-msg.flush_deferred`) to release it
+  you call `flush --trigger=resume` (or `tmux-tell.flush_deferred`) to release it
   into the freshly-resumed context. You hand a note to your future self that the
   summarizer can't eat.
 - **The spawn-die bridge.** `--deliver-after=register` stages a message that

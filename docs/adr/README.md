@@ -1,8 +1,15 @@
 # Architecture Decision Records
 
-This directory holds ADRs for tmux-msg. Each ADR records a single
+This directory holds ADRs for tmux-tell. Each ADR records a single
 architectural decision: what was decided, why, and what would have to
 change for the decision to be revisited.
+
+> **A note on the project name.** ADRs are point-in-time records and are
+> *not* retro-edited. ADRs landed before the rename use the legacy project
+> name `tmux-msg` (and `cli-semaphore` before that) per the timeline of
+> their acceptance — see [ADR-0010](0010-tool-name.md) (the rename arc) and
+> [ADR-0014](0014-tmux-tell-scope-and-cross-host-reach.md) (scope). The
+> project is **`tmux-tell`** as of the v0.18.0 rename (#440).
 
 ## Convention
 

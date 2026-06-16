@@ -1,14 +1,14 @@
-# tmux-msg-claude — the Claude Code adapter
+# tmux-tell-claude — the Claude Code adapter
 
-`tmux-msg-claude` is the **adapter binary** for the **tmux-msg substrate**: the
+`tmux-tell-claude` is the **adapter binary** for the **tmux-tell substrate**: the
 CLI tool that a Claude Code session inside a tmux pane uses to send, receive, and
 diagnose messages on the bus. The binary name encodes both halves —
-`tmux-msg` (the substrate) + `claude` (the adapter) — per the #174 Option 2
+`tmux-tell` (the substrate) + `claude` (the adapter) — per the #174 Option 2
 naming decision (see ADR-0003 for the substrate-vs-flavor framing this realizes
 structurally).
 
 This note draws the **substrate ↔ adapter boundary** so a future
-`tmux-msg-codex` / `tmux-msg-copilot` adapter knows what to reuse and what to
+`tmux-tell-codex` / `tmux-tell-copilot` adapter knows what to reuse and what to
 re-implement.
 
 ## What is substrate (lives in `internal/`, reused by every adapter)
@@ -32,25 +32,25 @@ exact same code:
 The mailbox schema and the `discover` / `store` / `tmuxio` Go API are an
 **external contract** (ADR-0007) governed by the deprecation policy (ADR-0008).
 
-## What is adapter (lives here, in `cmd/tmux-msg-claude/`)
+## What is adapter (lives here, in `cmd/tmux-tell-claude/`)
 
 This directory is the Claude-Code-specific composition of the substrate:
 
 - **Subcommand dispatch** (`main.go` + the per-subcommand `run*CLI` files) — the
-  `tmux-msg-claude send|serve|ping|…` surface.
+  `tmux-tell-claude send|serve|ping|…` surface.
 - **The mailman daemon** (`serve.go`) — composes the substrate's delivery loop,
   observe-gate, and store into the per-agent daemon. *This is substrate-shaped
   code that currently lives adapter-side* — see "Deferred" below.
-- **MCP handler wiring** (`mcp.go`) — registers the `tmux-msg.*` tools onto the
+- **MCP handler wiring** (`mcp.go`) — registers the `tmux-tell.*` tools onto the
   substrate's MCP server and binds them to the subcommand cores.
 - **Claude-specific identity** — reads `$CLAUDE_AGENT_NAME` (the env-var rename
   to `$TMUX_AGENT_NAME` is #177 PR2).
-- **systemd integration** (`systemctl.go`) — the `tmux-msg-claude-mailman@`
+- **systemd integration** (`systemctl.go`) — the `tmux-tell-claude-mailman@`
   template instance names.
 - **Send-response schema** (`sendstatus.go`) — `SendResponse` + its named blocks
   (`recipient`/`delivery`/`thread_freshness`/`replay`).
 
-A future adapter would mirror this directory: its own `cmd/tmux-msg-codex/` with
+A future adapter would mirror this directory: its own `cmd/tmux-tell-codex/` with
 codex-specific identity (`$CODEX_AGENT_NAME`), its own subcommand surface, and
 its own daemon composition — reusing every `internal/` package above unchanged.
 
@@ -77,10 +77,10 @@ currently hardcodes the *claude* adapter's names — a second adapter must
 parameterize them, not copy them):
 
 - `internal/healthscan/healthscan.go` — builds the journald unit query as
-  `tmux-msg-claude-mailman@<agent>.service`. A codex adapter's mailman runs under
-  `tmux-msg-codex-mailman@`, so the unit-name pattern needs to come from the
+  `tmux-tell-claude-mailman@<agent>.service`. A codex adapter's mailman runs under
+  `tmux-tell-codex-mailman@`, so the unit-name pattern needs to come from the
   adapter, not a constant.
-- `cmd/tmux-msg-claude/systemctl.go` (`mailmanUnit`) — the adapter side of the
+- `cmd/tmux-tell-claude/systemctl.go` (`mailmanUnit`) — the adapter side of the
   same unit name; correct to live here, but the substrate-side consumer
   (healthscan) must learn the pattern from the adapter once there are two.
 

@@ -1,7 +1,7 @@
 # The observe-gate: operator's guide
 
 When you send a bus message to an agent that's mid-turn, mid-`/compact`, or
-mid-typing, tmux-msg doesn't just paste it in and hope. Before each delivery the
+mid-typing, tmux-tell doesn't just paste it in and hope. Before each delivery the
 mailman runs the **observe-gate** — a near-read-only check (one optional `📫`
 nudge when you're typing, opt-out via `notify-emoji-disabled`; see §"When
 you're typing" below) that watches the recipient's pane and waits for a safe
@@ -104,7 +104,7 @@ If you start typing in an agent's pane and then walk away, a queued bus message
 can't wait forever. After your input row sits **unchanged for `input-stale-threshold`
 (default 2 minutes)**, the gate decides the draft is abandoned and proceeds — but it
 will **not** silently destroy what you typed. The flush is a three-path decision
-(`cmd/tmux-msg-claude/serve.go`, `internal/tmuxio/observe_gate.go`):
+(`cmd/tmux-tell-claude/serve.go`, `internal/tmuxio/observe_gate.go`):
 
 1. **(c) Clear-paste-archive — the primary path.** The gate snapshots your input-row
    content into the bus as a `kind=stranded_draft` row, **self-addressed to the same
@@ -136,13 +136,13 @@ To find it again in the store *after* that self-delivery (the row has moved past
 `queued`), use the SQLite inbox:
 
 ```bash
-tmux-msg-claude inbox <agent> --state delivered   # the self-delivered snapshot
-tmux-msg-claude inbox <agent> --state ""          # all states, if you're unsure
+tmux-tell-claude inbox <agent> --state delivered   # the self-delivered snapshot
+tmux-tell-claude inbox <agent> --state ""          # all states, if you're unsure
 ```
 
 ## Tuning knobs
 
-All six are **CLI flags** on `tmux-msg-claude serve` *and* **TOML knobs** (per-agent or
+All six are **CLI flags** on `tmux-tell-claude serve` *and* **TOML knobs** (per-agent or
 `[defaults]`), resolved through the standard precedence chain — most specific wins:
 
 > **CLI flag > `[agent.<name>]` block > `[defaults]` block > compiled-in default**
@@ -160,7 +160,7 @@ The two delivery-failure toggles (`--notify-on-failed`,
 `--notify-on-delivered-in-input-box`) are **independent of the gate** — they govern the
 sender-side failure notices, not delivery timing.
 
-Run `tmux-msg-claude config show --agent <name>` to see the resolved values for an agent
+Run `tmux-tell-claude config show --agent <name>` to see the resolved values for an agent
 and trace where each one came from.
 
 ## Checking an agent's state yourself
@@ -169,11 +169,11 @@ The same `AgentState` classification the gate uses is available on demand — ha
 before dispatching to a busy agent, or when debugging delivery timing:
 
 ```bash
-tmux-msg-claude state --agent <name>              # text
-tmux-msg-claude state --agent <name> --format json
+tmux-tell-claude state --agent <name>              # text
+tmux-tell-claude state --agent <name> --format json
 ```
 
-From a Claude session, the MCP tool is **`tmux-msg.agent_state`** (input
+From a Claude session, the MCP tool is **`tmux-tell.agent_state`** (input
 `{agent}`, output `{agent, state, evidence, captured_at}`). The `evidence.reason`
 field explains *why* a state was chosen — useful when a classification surprises
 you. Treat `unknown` as advisory: it means "couldn't substantiate," not "idle."
@@ -193,7 +193,7 @@ prompt-sentinel-gate = true
 will stop the mailman from starting:
 
 ```
-config: parse /etc/tmux-msg/config.toml: unknown key(s): agent.bosun.prompt-sentinel-gate
+config: parse /etc/tmux-tell/config.toml: unknown key(s): agent.bosun.prompt-sentinel-gate
 ```
 
 **Delete** the legacy keys to fix it — `quiet-disabled`, `prompt-sentinel-gate`,
@@ -202,12 +202,12 @@ config: parse /etc/tmux-msg/config.toml: unknown key(s): agent.bosun.prompt-sent
 observe-gate is on by default with no per-agent config. (This strict-fail behavior
 supersedes the older "no-op + startup WARN" note still in the README's migration
 paragraph — that described v0.3.0; v0.4.0 made it fail-loud. README correction
-tracked in [#124](https://git.frankenbit.de/frankenbit/tmux-msg/issues/124).)
+tracked in [#124](https://git.frankenbit.de/frankenbit/tmux-tell/issues/124).)
 
 ## See also
 
 - README [§Delivery semantics: the observe-gate](../README.md#delivery-semantics-the-observe-gate) — the concise reference
 - [`diagnostic-playbook.md`](diagnostic-playbook.md) — when an agent says "I missed a message" (sender-side vs bus-side triage)
 - `CHANGELOG.md` `[0.3.0]` (#92/#93 gate), `[0.4.0]` (#94 sweep + strict TOML, #95 📫, #96 multi-line)
-- Source: `internal/tmuxio/observe_gate.go`, `internal/tmuxio/state.go`, `cmd/tmux-msg-claude/serve.go`
-- Releases: [v0.3.0](https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.3.0) · [v0.4.0](https://git.frankenbit.de/frankenbit/tmux-msg/releases/tag/v0.4.0)
+- Source: `internal/tmuxio/observe_gate.go`, `internal/tmuxio/state.go`, `cmd/tmux-tell-claude/serve.go`
+- Releases: [v0.3.0](https://git.frankenbit.de/frankenbit/tmux-tell/releases/tag/v0.3.0) · [v0.4.0](https://git.frankenbit.de/frankenbit/tmux-tell/releases/tag/v0.4.0)

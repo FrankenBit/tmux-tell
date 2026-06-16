@@ -12,7 +12,7 @@ file the README hooks at. The recording shows the substrate's
 **motion-dependent** differentiator — a message arriving in a pane **holds**
 while you type, then **delivers** the moment you pause. The static text can't
 carry it; the asciinema can. See
-[#216](https://git.frankenbit.de/frankenbit/tmux-msg/issues/216) for the issue
+[#216](https://git.frankenbit.de/frankenbit/tmux-tell/issues/216) for the issue
 framing.
 
 This recipe runs on a sandbox tmux server + sandbox messages.db so it doesn't
@@ -23,7 +23,7 @@ is the artifact.
 ## Prerequisites
 
 - `asciinema` ≥ 2.4 (`apt install asciinema`)
-- `tmux-msg-claude` ≥ v0.13.0 on `PATH` (the binary that does paste-and-Enter delivery via the observe-gate)
+- `tmux-tell-claude` ≥ v0.13.0 on `PATH` (the binary that does paste-and-Enter delivery via the observe-gate)
 - A terminal sized at least 120 × 30 for legibility in the README embed
 - `agg` (the asciinema→GIF/SVG renderer) for the static fallback — `cargo install agg` or the release binary
 
@@ -116,7 +116,7 @@ pattern doesn't work cleanly).
 # size the terminal explicitly (asciinema captures the dimensions at start)
 export COLUMNS=120 LINES=30
 
-# sandbox DB so the demo doesn't write into the real ~/.local/share/tmux-msg/messages.db
+# sandbox DB so the demo doesn't write into the real ~/.local/share/tmux-tell/messages.db
 export CLAUDE_MSG_DB=/tmp/observe-gate-demo.db
 rm -f "$CLAUDE_MSG_DB"  # fresh state per recording
 ```
@@ -124,7 +124,7 @@ rm -f "$CLAUDE_MSG_DB"  # fresh state per recording
 ### Step 2 — fresh tmux session for the demo
 
 A new tmux **session** on the **default socket** — distinct from any session
-the operator's crew is in. Why default-socket-not-`-L demo`: `tmux-msg-claude`
+the operator's crew is in. Why default-socket-not-`-L demo`: `tmux-tell-claude`
 always calls `tmux` without `-L` (verified at `internal/tmuxio/{panes,deliver,
 clients}.go`), so panes on a `-L demo` socket are invisible to the substrate's
 discover walker and the pane-status probe. The crew session on the same socket
@@ -173,11 +173,11 @@ prompt walker (the demo shells don't carry the production agent-identity marker)
 ```bash
 # register both agents WITHOUT auto-starting mailmen (we'll start bob's manually
 # with the demo-tuned flags below)
-tmux-msg-claude register --name alice --pane "$ALICE_PANE" --start-mailman=false
-tmux-msg-claude register --name bob   --pane "$BOB_PANE"   --start-mailman=false
+tmux-tell-claude register --name alice --pane "$ALICE_PANE" --start-mailman=false
+tmux-tell-claude register --name bob   --pane "$BOB_PANE"   --start-mailman=false
 
 # start bob's mailman in the background with demo-tuned cadence + soft-fail
-nohup tmux-msg-claude serve --agent bob \
+nohup tmux-tell-claude serve --agent bob \
   --drift-soft-fail \
   --input-stale-threshold 3s \
   --poll-interval-min 500ms \
@@ -206,7 +206,7 @@ mkdir -p "$(dirname "$CAST")"
 
 # -t = title shown in players; --idle-time-limit caps frozen-frame gaps so the
 # file stays small while still showing the meaningful pauses
-asciinema rec --title "tmux-msg observe-gate" --idle-time-limit=2 "$CAST"
+asciinema rec --title "tmux-tell observe-gate" --idle-time-limit=2 "$CAST"
 
 # inside the recording shell (note: NO -L flag; we're on the default socket):
 tmux attach -t observe-gate-demo
@@ -230,7 +230,7 @@ the left, bob (recipient) on the right.
    ```bash
    # from alice's pane (visible), or a third shell outside the recording:
    CLAUDE_MSG_DB=/tmp/observe-gate-demo.db \
-     tmux-msg-claude send --from alice --to bob "the API changed, look at what I just pushed"
+     tmux-tell-claude send --from alice --to bob "the API changed, look at what I just pushed"
    ```
 3. **In bob's pane:** the 📫 indicator appears alongside the half-typed prompt
    — the gate classifies bob as **StateAwaitingOperator** (cursor past the `❯`
@@ -244,7 +244,7 @@ the left, bob (recipient) on the right.
    is 2min — see Step 3's flag rationale), the gate decides the draft is
    abandoned and the mailman fires the archive-then-clear-then-paste sequence:
    the typed half-prompt + 📫 gets archived as a `kind=stranded_draft` substrate
-   row (silent — operator can recover it later via `tmux-msg-claude stranded
+   row (silent — operator can recover it later via `tmux-tell-claude stranded
    show`), then Ctrl+U clears the input row (visible — the half-typed question
    vanishes), then the rendered message lands at the `❯` prompt as a paste +
    Enter:
@@ -318,7 +318,7 @@ local clone — useless for the public-launch hook. asciinema.org's **SVG-thumbn
 that links to the player** is the one form GitHub *does* render:
 
 ```markdown
-[![tmux-msg observe-gate demo](https://asciinema.org/a/<ID>.svg)](https://asciinema.org/a/<ID>)
+[![tmux-tell observe-gate demo](https://asciinema.org/a/<ID>.svg)](https://asciinema.org/a/<ID>)
 ```
 
 The external dependency is accepted because (a) it's the only thing that renders
@@ -333,7 +333,7 @@ asciinema upload docs/asciinema/observe-gate.cast   # returns https://asciinema.
 ```
 
 **README placement (post-capture follow-up):** under the hook, right after the
-`→ Why tmux-msg?` pointer (landing README ~line 20). The embed block above, then
+`→ Why tmux-tell?` pointer (landing README ~line 20). The embed block above, then
 the C caption directly under it:
 
 > A message arrives while you're typing — the 📫 holds it, and it lands the

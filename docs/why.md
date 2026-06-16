@@ -1,4 +1,4 @@
-# Why tmux-msg?
+# Why tmux-tell?
 
 ## You're already running a message bus. It's you.
 
@@ -17,7 +17,7 @@ slowest, most forgettable part of your own setup.
 
 ## What if they could just tell each other?
 
-tmux-msg is a small message bus for CLI agents running in tmux. Each pane gets a
+tmux-tell is a small message bus for CLI agents running in tmux. Each pane gets a
 mailbox. An agent — or you — sends a message, and it lands in the target pane as
 if it were typed there:
 
@@ -33,7 +33,7 @@ and let the agents keep each other current.
 
 ## It won't paste over your sentence
 
-Here's the part that makes it usable instead of infuriating: tmux-msg watches the
+Here's the part that makes it usable instead of infuriating: tmux-tell watches the
 target pane and **waits when you're in the middle of something**. If you're typing,
 it holds — and drops a single 📫 in your input row so you know something's queued —
 then delivers once you've stopped. It won't clobber a half-written thought, won't
@@ -70,7 +70,7 @@ of them racing into the same pane interleave into garbage. And once it's sent it
 gone — no record of whether it arrived, no way to ask "did the reviewer actually get
 that?"
 
-tmux-msg is `send-keys` with the sharp edges filed off:
+tmux-tell is `send-keys` with the sharp edges filed off:
 
 - **It waits for a safe moment** — the [observe-gate](observe-gate.md) holds the paste
   until you've stopped typing, instead of landing on top of your sentence.
@@ -80,12 +80,12 @@ tmux-msg is `send-keys` with the sharp edges filed off:
   knows it landed, the recipient can grep the history.
 - **You address by name, not pane.** Panes get renumbered; `bob` stays `bob`.
 
-`send-keys` is the primitive. tmux-msg is the bus you'd end up building on top of it
+`send-keys` is the primitive. tmux-tell is the bus you'd end up building on top of it
 anyway — the waiting, the serialization, the delivery record, the names.
 
 ### …a single session with subagents?
 
-Also fair — and not always in tmux-msg's favor. If you have one task and want a couple
+Also fair — and not always in tmux-tell's favor. If you have one task and want a couple
 of short-lived helpers, having a single session spin up subagents is simpler and
 cheaper. Do that.
 
@@ -111,27 +111,27 @@ usually is.
 
 And none of it works without addressable messaging between the sessions — without it,
 *you* are back to being the relay, alt-tabbing between panes. Which is the whole
-problem tmux-msg exists to take off your hands.
+problem tmux-tell exists to take off your hands.
 
 ## Try it in about two minutes
 
 ```bash
 # from inside a tmux session:
-git clone https://github.com/FrankenBit/tmux-msg && cd tmux-msg
-make build && sudo ./install.sh          # builds + installs tmux-msg-claude and the systemd user unit
+git clone https://github.com/FrankenBit/tmux-tell && cd tmux-tell
+make build && sudo ./install.sh          # builds + installs tmux-tell-claude and the systemd user unit
 systemctl --user daemon-reload           # so the mailman unit is visible
 
 # register two panes (one command in each), then send across the bus
-tmux-msg-claude register --name alice         # in pane A
-tmux-msg-claude register --name bob           # in pane B
-tmux-msg-claude send --to bob "first message across the bus"
+tmux-tell-claude register --name alice         # in pane A
+tmux-tell-claude register --name bob           # in pane B
+tmux-tell-claude send --to bob "first message across the bus"
 ```
 
 That's the whole pitch: stop hand-carrying status between your agents. Let them talk.
 
 ## See also
 
-tmux-msg isn't the only honest take on this. [`Aldenysq/agents-connector`](https://github.com/Aldenysq/agents-connector)
+tmux-tell isn't the only honest take on this. [`Aldenysq/agents-connector`](https://github.com/Aldenysq/agents-connector)
 (Rust, MIT) solves the same local-inter-agent-messaging-in-tmux problem from the
 **cross-vendor** angle: it connects Claude Code, Codex, and Gemini CLI in one tmux
 session and delivers messages through each CLI's **native hooks**, injecting them into
@@ -144,7 +144,7 @@ shape, not just one author's taste.
 
 Where they diverge is the bet. agents-connector goes wide — many model families in one
 session, delivery riding each vendor's hooks (which sidestep the paste-over-your-input
-problem by injecting at turn boundaries instead of typing into a live pane). tmux-msg
+problem by injecting at turn boundaries instead of typing into a live pane). tmux-tell
 goes deep on one — persistent, role-calibrated Claude chambers across many panes and
 sessions, delivery by paste-and-Enter through the [observe-gate](observe-gate.md), the
 safe-moment machinery that approach needs. Want three model families reviewing each

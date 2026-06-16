@@ -1,4 +1,4 @@
-# tmux-msg — operator reference
+# tmux-tell — operator reference
 
 The full operator manual: every command, flag, and edge-case semantic. The
 [README](../README.md) is the landing page (pitch → install → first message); this
@@ -38,7 +38,7 @@ not be attended-to. By default `stale`
 is informational and the send still succeeds; `--block-on-stale` turns it into a hard
 refusal so you can re-read before replying.
 
-The same fields are available over MCP (`tmux-msg.send` with `strict` /
+The same fields are available over MCP (`tmux-tell.send` with `strict` /
 `wait_for_delivered` / `timeout` / `block_on_stale`). The response schema is a named
 struct contract that later disposition features extend.
 
@@ -85,7 +85,7 @@ message rendered before delivery completes (the paste itself, or a still-queued 
 `log`), so a pending message reads as "has been waiting ⇢X". A sub-second span is
 **omitted** (its absence reads as "instant"; a `⇢0s` would be noise). Header value is
 operational signal, not audit precision — the exact `delivered_at` is in
-`tmux-msg.message_status`.
+`tmux-tell.message_status`.
 
 **No-reply marker** — either shape can carry a trailing `· 🔕` when the sender sets
 `--no-reply-expected` (CLI) or `no_reply_expected=true` (MCP); a discipline aid for
@@ -149,7 +149,7 @@ Each registered agent has a `delivery_mode`:
 | mode | what the mailman does | the recipient's view |
 |---|---|---|
 | **`paste-and-enter`** *(default)* | pastes into the agent's pane through the observe-gate | messages **appear in the pane** — no inbox polling needed; the substrate pushes |
-| **`mailbox-only`** | does not paste (no pane to push into); messages stay queued | the recipient **polls** `tmux-tell-claude inbox` / `tmux-msg.inbox` to read them |
+| **`mailbox-only`** | does not paste (no pane to push into); messages stay queued | the recipient **polls** `tmux-tell-claude inbox` / `tmux-tell.inbox` to read them |
 | **`hook-context`** | does not paste; messages stay queued for the recipient's own hook to pull | the recipient's Claude session **injects** pending messages as `additionalContext` on its next turn, via a SessionStart/UserPromptSubmit hook (#249) |
 
 `mailbox-only` makes a plain shell a bus *destination* without an always-on agent
@@ -272,8 +272,8 @@ decision-record).
 
 ## Adapter integration
 
-tmux-msg is a substrate with **per-CLI adapter binaries**. The binary name encodes
-`tmux-msg` (substrate) + the CLI tool it adapts: `tmux-tell-claude`, `tmux-tell-codex`.
+tmux-tell is a substrate with **per-CLI adapter binaries**. The binary name encodes
+`tmux-tell` (substrate) + the CLI tool it adapts: `tmux-tell-claude`, `tmux-tell-codex`.
 Every adapter is a thin wrapper over the same adapter-agnostic core (`internal/cli`):
 message storage, queueing, identity, delivery-state, and the whole subcommand surface are
 shared and identical. What differs per adapter is narrow — the binary/unit name and the
@@ -438,16 +438,16 @@ Pinned by `TestPasteStillInInput`, `TestDeliver_Codex_ResubmitsStuckCollapsedPas
 spawned by the Codex CLI and does **not** automatically inherit the calling
 shell's full environment. Two env-completeness requirements apply:
 
-1. **Identity resolution** — `tmux-msg.send`, `tmux-msg.inbox`, and most
+1. **Identity resolution** — `tmux-tell.send`, `tmux-tell.inbox`, and most
    other MCP tools resolve the caller's identity from `$TMUX_AGENT_NAME`
    (preferred) or `$TMUX_PANE` → registry lookup. Because `$TMUX_PANE` is
    set by tmux for every pane but is **not** propagated to the Codex MCP
    child, the `$TMUX_PANE` path silently fails. Set `TMUX_AGENT_NAME=<name>`
    explicitly in the MCP wrapper so the child has a fixed identity — see
-   [#320](https://git.frankenbit.de/frankenbit/tmux-msg/issues/320) for the
+   [#320](https://git.frankenbit.de/frankenbit/tmux-tell/issues/320) for the
    recommended `~/.codex/config.toml` MCP wrapper block.
 
-2. **Mailman daemon start** — `tmux-msg.register` calls `systemctl --user`
+2. **Mailman daemon start** — `tmux-tell.register` calls `systemctl --user`
    to start the mailman daemon. `systemctl --user` requires
    `DBUS_SESSION_BUS_ADDRESS` and `XDG_RUNTIME_DIR`; these are set by
    `pam_systemd` at login and inherited by shell processes, but **not**
@@ -482,7 +482,7 @@ across hosts would dissolve the auditability simplicity the project commits to
 (read every message with `sqlite3`, uninstall is one script, no replication
 state machine to reason about). Cross-host messaging is a substantively
 different problem with substantively different tradeoffs; if a future
-deployment ships under a "cross-host tmux-msg" label, it'll be an explicit
+deployment ships under a "cross-host tmux-tell" label, it'll be an explicit
 deviation from this scope, not the default behavior.
 
 ### Default tmux socket only
@@ -515,7 +515,7 @@ might assume the substrate offers cross-host messaging, expect a reply path,
 and wonder if the substrate is broken when none appears. It's not broken;
 it's substrate-scope. The substrate did one-way carriage (local → SSH →
 remote) cleanly; bidirectional participation needs the Remote MCP mode opt-in
-([#310](https://git.frankenbit.de/frankenbit/tmux-msg/issues/310) for the
+([#310](https://git.frankenbit.de/frankenbit/tmux-tell/issues/310) for the
 design discussion).
 
 ### Three patterns for SSH'd panes
@@ -537,7 +537,7 @@ human-in-the-loop translator between local-bus and remote-terminal.
 **Pattern C — Register `paste-and-enter`.** Local mailman pastes bytes
 through the SSH session; one-way carriage to the remote chamber's input
 stream. The remote-end can't participate in the local bus by default — for
-that, see [#310](https://git.frankenbit.de/frankenbit/tmux-msg/issues/310)
+that, see [#310](https://git.frankenbit.de/frankenbit/tmux-tell/issues/310)
 (Remote MCP mode, opt-in).
 
 The 2026-06-11 Caymans-Admin substrate-witness experiment used pattern C — a
@@ -554,7 +554,7 @@ that locked in this section's framing:
 
 A separate opt-in mode where the remote-end's MCP routes its tool calls back
 to the bus via reverse-SSH tunnel is tracked at
-[#310](https://git.frankenbit.de/frankenbit/tmux-msg/issues/310).
+[#310](https://git.frankenbit.de/frankenbit/tmux-tell/issues/310).
 **Explicitly not "cross-host bus"** — the bus stays host-local; the MCP
 becomes a remote-router via operator-configured tunnel. Remote MCP mode is
 *not* default substrate behavior — it requires explicit operator configuration
@@ -639,7 +639,7 @@ fires. Single-recipient only. Two triggers exist:
 
 - **`resume`** (#227) — post-compaction self-handoff. Before `/compact`, send
   *yourself* orientation with `--deliver-after=resume`; in your resume routine
-  call `flush --trigger=resume` (or `tmux-msg.flush_deferred`) so the staged
+  call `flush --trigger=resume` (or `tmux-tell.flush_deferred`) so the staged
   text lands in the freshly-resumed context instead of being absorbed by the
   summarizer. You can only flush messages addressed to yourself.
 - **`register`** (#258a) — spawn-die session bridge. Send *another* agent a
@@ -669,7 +669,7 @@ each registered agent: `idle` (default; no operator action pending), `busy`
 
 **Chamber side.** When a chamber presents a choice it wants the operator to
 weigh in on, it calls `flag_operator(body)` — either as the MCP tool
-`tmux-msg.flag_operator` or via `tmux-tell-claude flag-operator "<body>"`. The
+`tmux-tell.flag_operator` or via `tmux-tell-claude flag-operator "<body>"`. The
 body is the question / choice text. Two substrate mutations land in sequence
 (best-effort):
 
@@ -685,7 +685,7 @@ treating it as a silent failure.
 
 The flag clears implicitly on the chamber's next `register` call (back from
 `/compact`, a restart, or a spawn-die cycle) or explicitly via
-`tmux-tell-claude clear-operator-flag` / `tmux-msg.clear_operator_flag`. The
+`tmux-tell-claude clear-operator-flag` / `tmux-tell.clear_operator_flag`. The
 auto-clear-on-register matches the substrate-honest semantic: a chamber that
 re-registered is alive and ready, so whatever it was waiting on is presumed
 resolved.
@@ -742,7 +742,7 @@ stuck state and the mailman resumes on its next loop:
 tmux-tell-claude register --name bob --pane %7 --force
 ```
 
-The clear also fires on the MCP `tmux-msg.register` tool (`force: true`), so a
+The clear also fires on the MCP `tmux-tell.register` tool (`force: true`), so a
 chamber that re-registers itself after a respawn un-parks automatically.
 
 Both knobs are per-agent TOML-configurable (`stuck-threshold`,
@@ -794,14 +794,14 @@ naming the resolved DB path and how it was resolved:
 
 ```
 mcp: claude_msg_db=/tmp/crew-demo.db source=env(CLAUDE_MSG_DB)
-serve: claude_msg_db=/home/alex/.local/share/tmux-msg/messages.db source=default(env unset)
+serve: claude_msg_db=/home/alex/.local/share/tmux-tell/messages.db source=default(env unset)
 ```
 
 The `source` label is one of:
 - `env(CLAUDE_MSG_DB)` — the `CLAUDE_MSG_DB` environment variable was set.
 - `flag(--db)` — the `--db <path>` CLI flag was passed.
 - `default(env unset)` — neither was set; the user-home default (#308) is in use
-  (`$XDG_DATA_HOME/tmux-msg/messages.db`, or `~/.local/share/tmux-msg/messages.db`
+  (`$XDG_DATA_HOME/tmux-tell/messages.db`, or `~/.local/share/tmux-tell/messages.db`
   when `$XDG_DATA_HOME` is unset).
 
 This line is the **canonical way to confirm which DB a process is actually
@@ -818,7 +818,7 @@ propagation failure immediately visible.
 
 ## Moving the DB safely (#343)
 
-The bus DB at `~/.local/share/tmux-msg/messages.db` (or wherever `CLAUDE_MSG_DB`
+The bus DB at `~/.local/share/tmux-tell/messages.db` (or wherever `CLAUDE_MSG_DB`
 points) is a SQLite database in **WAL mode**. The on-disk representation is
 actually three files:
 
@@ -832,7 +832,7 @@ A plain `mv messages.db /new/location/` **leaves the `-wal` and `-shm`
 sidecars at the old path**. Mailmen restarted against `/new/location/messages.db`
 read the pre-checkpoint state, losing every write since the last automatic
 checkpoint (typically minutes-to-hours of bus history). This actually happened
-during the v0.16.0 alcatraz deploy ([#343](https://git.frankenbit.de/frankenbit/tmux-msg/issues/343)
+during the v0.16.0 alcatraz deploy ([#343](https://git.frankenbit.de/frankenbit/tmux-tell/issues/343)
 provenance) — ~14 hours of bus messages stranded in an orphaned WAL.
 
 **The substrate-honest deploy recipe** is checkpoint-then-move, with all
@@ -846,13 +846,13 @@ pkill -f 'tmux-tell-claude mcp' || true
 # 2. Consolidate the WAL into messages.db. After TRUNCATE the .db-wal file
 #    exists but is zero bytes — every committed transaction is now in
 #    messages.db proper, safe to move alone.
-sqlite3 ~/.local/share/tmux-msg/messages.db 'PRAGMA wal_checkpoint(TRUNCATE);'
+sqlite3 ~/.local/share/tmux-tell/messages.db 'PRAGMA wal_checkpoint(TRUNCATE);'
 
 # 3. Move the file. The sidecars at the source can be deleted; SQLite will
 #    recreate them at the destination on first open.
-mv ~/.local/share/tmux-msg/messages.db /new/location/messages.db
-rm -f ~/.local/share/tmux-msg/messages.db-wal \
-      ~/.local/share/tmux-msg/messages.db-shm
+mv ~/.local/share/tmux-tell/messages.db /new/location/messages.db
+rm -f ~/.local/share/tmux-tell/messages.db-wal \
+      ~/.local/share/tmux-tell/messages.db-shm
 
 # 4. Update $CLAUDE_MSG_DB (or the unit-file Environment=) to the new path,
 #    restart mailmen.
@@ -866,7 +866,7 @@ systemctl --user start 'tmux-tell-claude-mailman@*.service'
 #    the rename), so writes from that chamber's MCP land in a ghost-inode DB
 #    invisible to the new path. refresh-all-mcps fires the mcp-restart-tmux-msg
 #    macro per registered agent → each chamber's Claude Code re-initializes its
-#    tmux-msg MCP stdio against the current binary + canonical DB.
+#    tmux-tell MCP stdio against the current binary + canonical DB.
 tmux-tell-claude refresh-all-mcps
 ```
 
@@ -876,7 +876,7 @@ in a single atomic snapshot:
 
 ```bash
 systemctl --user stop 'tmux-tell-claude-mailman@*.service'
-sqlite3 ~/.local/share/tmux-msg/messages.db ".backup /new/location/messages.db"
+sqlite3 ~/.local/share/tmux-tell/messages.db ".backup /new/location/messages.db"
 # Update $CLAUDE_MSG_DB; restart mailmen. No -wal/-shm cleanup needed.
 systemctl --user start 'tmux-tell-claude-mailman@*.service'
 tmux-tell-claude refresh-all-mcps  # same MCP-rebind reason as above
@@ -898,7 +898,7 @@ recipe touches *two* sets of `tmux-tell-claude` processes, not one:
 Without `refresh-all-mcps`, the substrate ends up in **two-DB split-brain**:
 chamber MCPs write to the ghost inode, mailmen read from the canonical path,
 neither side surfaces the divergence. This actually happened during the
-v0.16.0 alcatraz deploy ([#349](https://git.frankenbit.de/frankenbit/tmux-msg/issues/349)
+v0.16.0 alcatraz deploy ([#349](https://git.frankenbit.de/frankenbit/tmux-tell/issues/349)
 provenance) — 2+ hours of bus messages from one chamber stranded on a ghost
 inode until the post-deploy investigation surfaced it.
 
@@ -914,7 +914,7 @@ the MCPs too.**
 
 **Substrate-vs-adapter note: codex chambers.** `refresh-all-mcps` fires the
 `mcp-restart-tmux-msg` macro per registered agent, but the macro is
-claude-only per [#248](https://git.frankenbit.de/frankenbit/tmux-msg/issues/248)
+claude-only per [#248](https://git.frankenbit.de/frankenbit/tmux-tell/issues/248)
 (B)'s substrate-vs-adapter decision: the paste-and-enter control surface that
 delivers slash-commands is genuinely Claude-bound. For codex chambers,
 `refresh-all-mcps` walks the registry row but the macro lands as a no-op at
@@ -981,7 +981,7 @@ duration (e.g. `7d`, `24h`) — a one-off manual flush.
 
 **Automatic retention (TOML).** The mailman runs a background sweep when
 `retention` is configured. Default is `"infinite"` (no sweep, zero behavior change).
-Set a per-agent or fleet-wide window in `/etc/tmux-msg/config.toml`:
+Set a per-agent or fleet-wide window in `/etc/tmux-tell/config.toml`:
 
 ```toml
 [defaults]
@@ -1007,13 +1007,13 @@ clean "is this chamber wired up?" check for new-agent setup and post-restart san
 States (and exit codes): `delivered` reachable (`0`), `failed` registered-but-
 unreachable (`69`), `timeout` no answer in `--timeout` — daemon down/paused/
 backlogged (`75`). Pinging a non-registered agent fails loud. From MCP, call
-`tmux-msg.ping {"agent": "surveyor"}`. (A `mailbox-only` agent has no mailman, so a
+`tmux-tell.ping {"agent": "surveyor"}`. (A `mailbox-only` agent has no mailman, so a
 ping to it reports `timeout`.)
 
 **Tracking delivery.** `tmux-tell-claude track <id>` shows where a message is
 (`queued → delivering → delivered`, or `failed` with the reason in `error`);
 `--watch` re-renders on each state change until terminal. From MCP, call
-`tmux-msg.message_status {"id": "9c1d"}`.
+`tmux-tell.message_status {"id": "9c1d"}`.
 
 **Diagnosing a failed or unverified message — `resend`.** When a message
 lands `failed`, or lands `delivered` but you can't tell whether it actually
@@ -1023,7 +1023,7 @@ verify-token never came back in budget), the recovery path is `tmux-tell-claude 
 byte-identical to the original, carrying a `↻ Replayed: original sent at <ts>`
 chrome marker so the recipient sees it's a re-send, not fresh content. The
 response adds a `replay` block (`original_id`, `original_sent_at`,
-`original_state`, `forced`). From MCP: `tmux-msg.resend {"id": "9c1d"}`.
+`original_state`, `forced`). From MCP: `tmux-tell.resend {"id": "9c1d"}`.
 
 The duplicate guard keeps an accidental re-run from spamming:
 
@@ -1116,8 +1116,8 @@ tmux-tell-claude wait-for-reply "$ask_id" --timeout 60s   # blocks until bob rep
   other work, periodically check). Complements `wait-for-reply` when you'd rather not
   block.
 
-The same three are MCP tools (`tmux-msg.ask` / `wait_for_reply` / `check_replies`).
-Implementation note: in tmux-msg's multi-process bus the reply is written by a
+The same three are MCP tools (`tmux-tell.ask` / `wait_for_reply` / `check_replies`).
+Implementation note: in tmux-tell's multi-process bus the reply is written by a
 *different* process than the one waiting, so `wait_for_reply` is a substrate-side
 **poll-backed** blocking seam (a literal sqlite `update_hook` only fires
 intra-connection); the blocking-call shape is the contract, the poll is an
@@ -1138,8 +1138,8 @@ metadata marker. The two complementary filter surfaces close the loop:
   they haven't replied to yet. Scoped by `--state` as usual (default `queued`).
 - **`sent --awaiting-reply`** — shows the sender the expects_reply=1 messages where
   the recipient hasn't replied. Overrides `--state` (the filter is meaningful
-  regardless of delivery state). Also available as `tmux-msg.inbox` `unanswered`
-  and `tmux-msg.send` `expects_reply` MCP parameters.
+  regardless of delivery state). Also available as `tmux-tell.inbox` `unanswered`
+  and `tmux-tell.send` `expects_reply` MCP parameters.
 
 Note: `ask` also sets `expects_reply=1` — the column is shared. `send --expects-reply`
 is the non-blocking form; `ask` is the blocking form that additionally waits for the
@@ -1227,7 +1227,7 @@ When the CLI tool in a pane spawns the MCP server, the child inherits `$TMUX_PAN
 > See the [Codex adapter section](#codex----tmux-tell-codex) for the full env
 > contract.
 
-> *call `tmux-msg.register name=myname`*
+> *call `tmux-tell.register name=myname`*
 
 The pane is auto-detected, the row inserted, and the mailman started in the same step.
 Equivalent CLI: `tmux-tell-claude register --name myname`.
@@ -1235,8 +1235,8 @@ Equivalent CLI: `tmux-tell-claude register --name myname`.
 The register response includes a **`queued`** count — the number of messages already
 waiting for this agent at register time. A fresh or post-restart session (e.g.
 the spawn-per-task pattern, or a chamber that lost its pane and re-registers) learns it
-has backlog without a separate `tmux-msg.inbox` poll: if `queued > 0`, run
-`tmux-msg.inbox` to read it. The count is informational and never blocks registration;
+has backlog without a separate `tmux-tell.inbox` poll: if `queued > 0`, run
+`tmux-tell.inbox` to read it. The count is informational and never blocks registration;
 on the rare event the count can't be read, the response carries `queued_error` instead
 and registration still succeeds.
 
@@ -1266,12 +1266,12 @@ agent (re)registers with `queued > 0`, the register handler stamps a per-agent
 
 | `on-register-backlog` | what the mailman does |
 |---|---|
-| **`announce`** *(default)* | leaves the whole backlog queued and delivers one `📬 N queued — run tmux-msg.inbox` nudge |
+| **`announce`** *(default)* | leaves the whole backlog queued and delivers one `📬 N queued — run tmux-tell.inbox` nudge |
 | **`auto-deliver`** | pastes the newest `on-register-backlog-cap` messages (default 3) and announces the older remainder; if the backlog fits the cap, all of it delivers and no nudge is sent |
 
 The register response surfaces what happened: `backlog_policy`, `backlog_skipped` (how
 many were left queued), and `backlog_nudge` (the nudge's id). The skipped backlog stays
-in state `queued` — you still read it with `tmux-msg.inbox`; the nudge just makes sure a
+in state `queued` — you still read it with `tmux-tell.inbox`; the nudge just makes sure a
 freshly-resumed session *knows* it's there. An unrecognized policy value falls back to
 `announce`. Mailbox-only agents are unaffected (they never get a paste). Precedence is
 the usual **per-`[agent.<name>]` block > `[defaults]` > compiled default**; an
@@ -1292,7 +1292,7 @@ tmux-tell-claude inbox --ack <id>
 Acknowledged messages move to state `acknowledged` (a substrate-honest terminal state:
 they were never pasted, so they do not carry `delivered`). They are excluded from the
 default inbox view (`--state queued`) but remain retrievable by ID via `tmux-tell-claude
-get` / `tmux-msg.get` (audit-preserving). The MCP surface is `tmux-msg.inbox` with
+get` / `tmux-tell.get` (audit-preserving). The MCP surface is `tmux-tell.inbox` with
 `ack_all: true` or `ack_ids: ["id1", "id2"]`.
 
 ### Canonical name mapping
@@ -1302,12 +1302,12 @@ a glance when writing runbooks or invoking tools from a shell:
 
 | Layer | Example name |
 |---|---|
-| Wire protocol (`tools/list` JSON-RPC) | `tmux-msg.register` |
-| Source (`srv.RegisterTool(...)`) | `tmux-msg.register` |
-| Claude Code tool-call slug | `mcp__tmux-msg__tmux-msg_register` |
-| Documentation / prose | `tmux-msg.register` *(preferred)* |
+| Wire protocol (`tools/list` JSON-RPC) | `tmux-tell.register` |
+| Source (`srv.RegisterTool(...)`) | `tmux-tell.register` |
+| Claude Code tool-call slug | `mcp__tmux-tell__tmux-tell_register` |
+| Documentation / prose | `tmux-tell.register` *(preferred)* |
 
-Prefer the wire-protocol name (`tmux-msg.register`) in prose; use the slug when
+Prefer the wire-protocol name (`tmux-tell.register`) in prose; use the slug when
 invoking from Claude Code's tool surface. The Claude Code sanitization rule: dots →
 underscores, dashes preserved, server-name prefix repeated as
 `mcp__<server>__<server>_<tool>`. You can read the live wire names directly:
@@ -1323,7 +1323,7 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | tmux-tell-claude mcp
 
 ### Whitelisted control commands
 
-`tmux-msg.control` types a vetted slash-command into a pane — the caller's own (most
+`tmux-tell.control` types a vetted slash-command into a pane — the caller's own (most
 commonly an agent asking itself to `/compact` at a quiescent point) or, for benign
 peer nudges, another's. The string is typed directly (no chat header) so the CLI tool
 parses it as if you'd typed it.
@@ -1339,7 +1339,7 @@ allowlist of specific (sender, recipient) pairs.
 | `cost`    | ✓ | ✗ | self-only — output goes to the recipient |
 | `help`    | ✓ | ✓ | harmless either way |
 | `clear`   | ✗ | ✗ | **edge-only** rescue path when `/compact` can't recover from token exhaustion; loses in-flight work |
-| `mcp-enable-tmux-msg`  | ✓ | ✓ | refresh the tool surface after deploying a new `tmux-msg.*` tool — no context loss |
+| `mcp-enable-tmux-msg`  | ✓ | ✓ | refresh the tool surface after deploying a new `tmux-tell.*` tool — no context loss |
 | `mcp-disable-tmux-msg` | ✓ | ✗ | self-only: raw peer-disable is a DoS surface; use the restart macro |
 | `mcp-restart-tmux-msg` | ✓ | ✓ | macro: `disable` + `enable` as two rows for a peer-safe reconnect |
 
@@ -1356,7 +1356,7 @@ lands after the CLI tool has settled, not into the slash-command parser mid-comp
 
 ### Removing a pane (#289)
 
-`tmux-msg.unregister name=oldname` (or `tmux-tell-claude unregister --name oldname`) is the
+`tmux-tell.unregister name=oldname` (or `tmux-tell-claude unregister --name oldname`) is the
 reciprocal of `register`. It stops the agent's mailman, then drops the agent row from the
 registry.
 
@@ -1398,7 +1398,7 @@ tmux-tell-claude unregister --name alcatraz --force --purge-queue
   `from_agent`) stay in the `messages` table — `from_agent` doesn't reference a live
   agents row. The bus history is forensic record, not live state.
 
-**MCP:** `tmux-msg.unregister({name, purge_queue?, force?})`
+**MCP:** `tmux-tell.unregister({name, purge_queue?, force?})`
 
 **Response fields:** `{ok, name, removed, mailman: "stopped" | "warn", deleted: N, mailman_error?: string}`
 
@@ -1431,7 +1431,7 @@ tree — so a session launched as `--resume "My Long Session Name"` produces a r
 name that won't match a short canonical. Register an alias to bridge it:
 
 ```text
-tmux-msg.register name=alice alias='My Long Session Name'
+tmux-tell.register name=alice alias='My Long Session Name'
 ```
 
 After that, `discover` and the mailman's drift-check resolve the long name back to
@@ -1442,8 +1442,8 @@ than guess — add an explicit alias on the one you meant.
 ## Storage schema
 
 SQLite (WAL mode), three tables. The DB lives under the operator's user-home
-(#308): `$XDG_DATA_HOME/tmux-msg/messages.db` when `$XDG_DATA_HOME` is set, else
-`~/.local/share/tmux-msg/messages.db`. Override with `--db` or `$CLAUDE_MSG_DB`.
+(#308): `$XDG_DATA_HOME/tmux-tell/messages.db` when `$XDG_DATA_HOME` is set, else
+`~/.local/share/tmux-tell/messages.db`. Override with `--db` or `$CLAUDE_MSG_DB`.
 The binary creates the directory lazily on first open. This keeps the bus's
 trust boundary congruent with tmux's per-user model (no shared-space path, no
 install-time chown) and lets sandbox-by-default adapters (codex) write the DB
@@ -1545,7 +1545,43 @@ function through v1.0. Per
 ADR-0008's [Reading B amendment](docs/adr/0008-deprecation-policy.md#amendment-a--2026-06-08-k-counter-interaction):
 deprecation-with-functioning-alias preserves K-counter progress; only removal
 resets it. The live per-release record lives in the tracker at
-[#163](https://git.frankenbit.de/frankenbit/tmux-msg/issues/163).
+[#163](https://git.frankenbit.de/frankenbit/tmux-tell/issues/163).
+
+## Migrating from `tmux-msg`
+
+The project was renamed `tmux-msg` → **`tmux-tell`** in v0.18.0 (#440) — the
+second half of the `cli-semaphore → tmux-msg → tmux-tell` arc. A fresh install
+lands on `tmux-tell` everywhere with nothing to migrate; an in-place operator
+keeps working untouched. Every legacy surface is honored as a deprecated alias
+(each emits a `WARN`) through the **v1.0** stability boundary per
+[ADR-0008](docs/adr/0008-deprecation-policy.md) §Discretion, then hard-cuts.
+
+| Surface | Canonical (`tmux-tell`) | Legacy (honored → v1.0) | WARN on use |
+|---|---|---|---|
+| Binary | `tmux-tell-claude` / `tmux-tell-codex` | `tmux-msg-claude` / `tmux-msg-codex` (+ `claude-msg`) | `deprecated_surface_used` |
+| DB env var | `$TMUX_TELL_DB` | `$CLAUDE_MSG_DB` | `deprecated_env_var_used` |
+| Config env var | `$TMUX_TELL_CONFIG` | `$CLAUDE_MSG_CONFIG` | `deprecated_env_var_used` |
+| Default DB path | `~/.local/share/tmux-tell/messages.db` | `~/.local/share/tmux-msg/messages.db` | `legacy_data_path_in_use` |
+| Default config path | `/etc/tmux-tell/config.toml` | `/etc/tmux-msg/config.toml` | `legacy_data_path_in_use` |
+
+**Binaries + env vars** need no action — `install.sh` keeps the `tmux-msg-*`
+symlinks and the resolver reads the legacy env vars as fallbacks; each emits its
+WARN naming the successor.
+
+**Data + config paths are lazy-migrated**: the binary uses the new `tmux-tell`
+path if it exists, else falls back to the legacy `tmux-msg` path if *that* exists
+(so nothing moves under you), emitting `WARN legacy_data_path_in_use` with the
+move recipe. To migrate explicitly:
+
+```bash
+mv ~/.local/share/tmux-msg ~/.local/share/tmux-tell      # the DB + its WAL sidecars
+sudo mv /etc/tmux-msg /etc/tmux-tell                      # or just config.toml
+```
+
+Move the DB with the mailmen stopped — see *Moving the DB safely* above for the
+WAL-safe checkpoint-then-`mv` recipe. Everything resolves to `tmux-tell`
+afterward and the WARNs go quiet. **At v1.0 every legacy surface above is
+removed** — migrate before then.
 
 ## Migrating from `claude-msg`
 

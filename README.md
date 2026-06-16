@@ -1,4 +1,4 @@
-# tmux-msg
+# tmux-tell
 
 **A message bus for CLI agents running in tmux.** Each pane gets a mailbox; an agent
 (or you) sends a message and it lands in the target pane as if typed there — gated so
@@ -13,11 +13,11 @@ the panes trying to remember which one is blocked on which. Right now the coordi
 layer between your agents is **you** — the slowest, most forgettable part of your own
 setup.
 
-tmux-msg lets them tell each other instead. The reviewer finishes and notifies the
+tmux-tell lets them tell each other instead. The reviewer finishes and notifies the
 implementer; the implementer warns the tester the moment the contract moves. You set
 the work up and let the agents keep each other current.
 
-→ **[Why tmux-msg? — the longer pitch](docs/why.md)**
+→ **[Why tmux-tell? — the longer pitch](docs/why.md)**
 
 No cloud, no daemon phoning home: it's a SQLite file and a tmux paste. You can read
 every message with `sqlite3`, and uninstall is one script.
@@ -31,9 +31,9 @@ every message with `sqlite3`, and uninstall is one script.
   scheduler. It moves a message from one pane into another, safely, while a human
   might also be using that pane.
 
-> **Why the name has two parts.** `tmux-msg` is the substrate — the tmux pane
+> **Why the name has two parts.** `tmux-tell` is the substrate — the tmux pane
 > registry, the paste-and-Enter delivery, the per-pane state detection. The
-> `tmux-msg-claude` binary is that substrate plus the adapter for the CLI tool in the
+> `tmux-tell-claude` binary is that substrate plus the adapter for the CLI tool in the
 > pane (Claude Code today). The repo name reflects what the substrate *is*, not which
 > tool runs on top.
 
@@ -43,10 +43,10 @@ every message with `sqlite3`, and uninstall is one script.
    agent-a ──►┌─────────────────────────────────────┐──► mailman@agent-c
    agent-b ──►│  SQLite mailbox (messages, agents)  │    (single writer to its pane)
               └─────────────────────────────────────┘
-   reply ──►  tmux-msg-claude send --reply-to <id> --to agent-a "…"
+   reply ──►  tmux-tell-claude send --reply-to <id> --to agent-a "…"
 ```
 
-**Senders** never touch tmux — `tmux-msg-claude send` validates the message, checks the
+**Senders** never touch tmux — `tmux-tell-claude send` validates the message, checks the
 caps, and inserts a row. **Mailmen** are per-agent daemons (systemd user services)
 that loop on their inbox, paste the formatted message into the target pane through the
 [observe-gate](#delivery-semantics-the-observe-gate), and mark it delivered. Because
@@ -55,7 +55,7 @@ races, idle-check TOCTOU, turn concatenation) collapse to a single-writer invari
 
 Not every recipient has a pane to push into. An agent registered `mailbox-only` (e.g.
 your own shell) is a bus *destination* without an always-on session — the mailman never
-pastes; its queue is drained on demand with `tmux-msg-claude inbox`, `inbox --ack`, or
+pastes; its queue is drained on demand with `tmux-tell-claude inbox`, `inbox --ack`, or
 the interactive `inbox --watch` TUI (live list + cursor-nav + one-key ack). A third mode,
 `hook-context`, delivers via Claude Code's lifecycle hooks — the recipient's session pulls
 pending messages as `additionalContext` on its next turn instead of being pasted into
@@ -67,15 +67,15 @@ On a Linux host with tmux, sqlite3, and Go (≥ 1.24):
 
 ```bash
 # from inside a tmux session:
-git clone https://github.com/FrankenBit/tmux-msg && cd tmux-msg
+git clone https://github.com/FrankenBit/tmux-tell && cd tmux-tell
 make build
 sudo ./install.sh        # installs the binary + the systemd user template
 ```
 
-`install.sh` builds `bin/tmux-msg-claude`, installs it to `/usr/local/bin/tmux-msg-claude`,
-and drops the systemd user template (`tmux-msg-claude-mailman@.service`) into
+`install.sh` builds `bin/tmux-tell-claude`, installs it to `/usr/local/bin/tmux-tell-claude`,
+and drops the systemd user template (`tmux-tell-claude-mailman@.service`) into
 `~/.config/systemd/user/`. The DB (`messages.db`) lives under your user-home
-(`$XDG_DATA_HOME/tmux-msg` or `~/.local/share/tmux-msg/`) and is created lazily on
+(`$XDG_DATA_HOME/tmux-tell` or `~/.local/share/tmux-tell/`) and is created lazily on
 first use — no install-time data dir to create or chown. Pick a specific adapter with
 `--adapter=claude` (the default). Then, **as your user (not root)**:
 
@@ -88,7 +88,7 @@ systemctl --user daemon-reload        # so the mailman unit is visible
 
 `sudo ./install.sh` asks for root, but root's reach is deliberately narrow: **as root**
 it does exactly one privileged thing — installs the binary to
-`/usr/local/bin/tmux-msg-claude`. Everything else (`go build`, the systemd template, the
+`/usr/local/bin/tmux-tell-claude`. Everything else (`go build`, the systemd template, the
 mailman daemons) runs as your user, never as root — and the DB lives under your user-home,
 created lazily by the binary with no privileged step at all. That's the whole point of
 shipping the installer as a readable shell script: you can confirm exactly which operation
@@ -102,9 +102,9 @@ no-hardcoded-fallback rule: [operator reference → Install internals](docs/refe
 From two panes in the same tmux session:
 
 ```bash
-tmux-msg-claude register --name alice     # in pane A — registers + starts alice's mailman
-tmux-msg-claude register --name bob       # in pane B
-tmux-msg-claude send --to bob "first message across the bus"
+tmux-tell-claude register --name alice     # in pane A — registers + starts alice's mailman
+tmux-tell-claude register --name bob       # in pane B
+tmux-tell-claude send --to bob "first message across the bus"
 ```
 
 `bob`'s pane shows:
@@ -123,7 +123,7 @@ on success (or `{"ok":false,"error":"…"}` with a sysexits-style exit code on f
 > **[operator reference](docs/reference.md)**.
 
 To confirm an agent is reachable *without* sending it a message,
-`tmux-msg-claude ping <name>` probes daemon-up + pane-live (no pane paste).
+`tmux-tell-claude ping <name>` probes daemon-up + pane-live (no pane paste).
 
 ## Caps
 
@@ -163,7 +163,7 @@ heatmap). It's **off by default** — pass `--metrics-addr` (or set `metrics-add
 config) to turn it on, with no behavior change for deploys that don't scrape:
 
 ```bash
-tmux-msg-claude serve --agent bob --metrics-addr :9099   # exposes http://…:9099/metrics
+tmux-tell-claude serve --agent bob --metrics-addr :9099   # exposes http://…:9099/metrics
 ```
 
 Each per-agent mailman is its own process, so give each agent a distinct port — the
@@ -197,18 +197,18 @@ once you've resumed:
 
 ```bash
 # before /compact — stage orientation for your next self
-tmux-msg-claude send --to me --deliver-after=resume "remember: PR #256 is mid-review, ping Surveyor"
+tmux-tell-claude send --to me --deliver-after=resume "remember: PR #256 is mid-review, ping Surveyor"
 
 # as part of your post-/compact resume routine — release it into the fresh context
-tmux-msg-claude flush --trigger=resume
+tmux-tell-claude flush --trigger=resume
 ```
 
 A staged message sits in a `deferred` state: invisible to `inbox`, never picked up by the
 mailman, not counted against queue caps. `flush --trigger=resume` (or the
-`tmux-msg.flush_deferred` MCP tool) promotes your matching staged messages to the live
+`tmux-tell.flush_deferred` MCP tool) promotes your matching staged messages to the live
 queue, where the mailman delivers them normally. `flush` is idempotent — calling it with
 nothing staged is a harmless no-op, so it's safe to put in a resume routine
-unconditionally. `tmux-msg-claude sent --deferred` shows what you've got staged.
+unconditionally. `tmux-tell-claude sent --deferred` shows what you've got staged.
 
 You can only flush messages addressed to **you**, and a promoted message **jumps the
 backlog floor** (§don't-flood) so re-registering between staging and flushing never skips
@@ -221,8 +221,8 @@ The reply-to chain is asynchronous — you send, they answer whenever. When you 
 **pause until answered**, request-reply bundles the wait:
 
 ```bash
-ask_id=$(tmux-msg-claude ask --to bob "is CI green on main?" | jq -r .id)
-tmux-msg-claude wait-for-reply "$ask_id" --timeout 60s   # blocks until bob replies / times out
+ask_id=$(tmux-tell-claude ask --to bob "is CI green on main?" | jq -r .id)
+tmux-tell-claude wait-for-reply "$ask_id" --timeout 60s   # blocks until bob replies / times out
 ```
 
 `ask` is a `send` that returns an `ask_id`; `wait-for-reply` blocks until a reply lands
@@ -235,7 +235,7 @@ Request-reply](docs/reference.md#reading-a-reply-thread).
 blocking wait machinery, pass `--expects-reply` to `send`:
 
 ```bash
-tmux-msg-claude send --to bob --expects-reply "please confirm deploy"
+tmux-tell-claude send --to bob --expects-reply "please confirm deploy"
 ```
 
 The message carries the marker; bob's queue and delivery are unchanged. Recipients can
@@ -244,16 +244,16 @@ find unanswered asks with `inbox --unanswered`; senders can track open asks with
 
 ## Use from Claude Code (MCP)
 
-The same binary speaks MCP over stdio under `tmux-msg-claude mcp`, exposing
-`tmux-msg.send / control / agents / whoami / inbox / status / register / unregister /
+The same binary speaks MCP over stdio under `tmux-tell-claude mcp`, exposing
+`tmux-tell.send / control / agents / whoami / inbox / status / register / unregister /
 message_status / agent_state` as native tools. **One user-level config; identity is
 auto-resolved per pane.** Add the server once in `~/.claude.json`:
 
 ```json
 {
   "mcpServers": {
-    "tmux-msg": {
-      "command": "/usr/local/bin/tmux-msg-claude",
+    "tmux-tell": {
+      "command": "/usr/local/bin/tmux-tell-claude",
       "args": ["mcp"]
     }
   }
@@ -265,13 +265,13 @@ session-restart semantics: [operator reference → Use from Claude Code](docs/re
 
 ## Versioning
 
-tmux-msg follows [Semantic Versioning](https://semver.org/) at the `0.x.y` cadence;
+tmux-tell follows [Semantic Versioning](https://semver.org/) at the `0.x.y` cadence;
 minor bumps may break compatibility while the shape settles, patch bumps stay
 backward-compatible within a minor. See `CHANGELOG.md` for what shipped per release, and [ADR-0008](docs/adr/0008-deprecation-policy.md) for the post-1.0 deprecation policy (two-minor-cycle floor).
 
 ```bash
-$ tmux-msg-claude --version
-tmux-msg-claude v0.16.1
+$ tmux-tell-claude --version
+tmux-tell-claude v0.16.1
 ```
 
 A binary built via `make build` stamps the version from `git describe`; a bare
@@ -304,20 +304,20 @@ Operator guides live in [`docs/`](docs/), architecture decisions in [`docs/adr/`
 
 ```bash
 sudo ./uninstall.sh            # stops mailmen, removes the binary, leaves the DB
-sudo ./uninstall.sh --purge    # also wipes ~/.local/share/tmux-msg/ (interactive confirm)
+sudo ./uninstall.sh --purge    # also wipes ~/.local/share/tmux-tell/ (interactive confirm)
 ```
 
 `uninstall.sh` is idempotent. It leaves alone (remove by hand if you want them gone):
-`/etc/tmux-msg/` (host config), the MCP entry in `~/.claude.json` (`claude mcp remove
-tmux-msg -s user`), `loginctl enable-linger`, and the user-home DB dir
-(`~/.local/share/tmux-msg/`, history, default-preserved; `--purge` wipes it).
+`/etc/tmux-tell/` (host config), the MCP entry in `~/.claude.json` (`claude mcp remove
+tmux-tell -s user`), `loginctl enable-linger`, and the user-home DB dir
+(`~/.local/share/tmux-tell/`, history, default-preserved; `--purge` wipes it).
 
 ## Where to go next
 
 - **[Operator reference](docs/reference.md)** — every command, flag, and edge-case
   semantic: send/reply flags, message-rendering chrome, the full command set, MCP
   details, the storage schema, and migrating from `claude-msg`.
-- **[Why tmux-msg?](docs/why.md)** — the longer pitch, and why this over raw
+- **[Why tmux-tell?](docs/why.md)** — the longer pitch, and why this over raw
   `tmux send-keys` or a single session with subagents.
 - **[The observe-gate](docs/observe-gate.md)** — how safe-moment delivery decides.
 - **[Diagnostic playbook](docs/diagnostic-playbook.md)** — when a message seems to go missing.
