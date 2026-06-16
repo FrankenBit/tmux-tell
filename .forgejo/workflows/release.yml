@@ -284,6 +284,17 @@ jobs:
           3. Review the draft in the Forgejo UI, click **Publish** → Forgejo creates the tag from the draft
           4. `release-publish.yml` fires on `release:published` → chains `deploy.yml` via `workflow_call` → install + bootstrap on alcatraz-host
 
+          ## Docs-coherence checklist
+
+          Operator-facing surfaces span different review nets — only in-repo docs are caught in this diff. Tick each (N/A if unchanged); verify-commands + rationale in [docs/release-cut-checklist.md](docs/release-cut-checklist.md):
+
+          - [ ] **In-repo docs** (README / `docs/*.md` / CONTRIBUTING / `cmd/*/README.md`) swept for any renamed/retired identifier — ADRs frozen, excluded
+          - [ ] **BookStack** — Service Inventory (p88) + Release & Deploy (p193) + the tmux-tell book (API; not in this diff)
+          - [ ] **alcatraz-infra** — `/srv/CLAUDE.md` (separate repo; separate commit if it drifted)
+          - [ ] **Sister chamber `CLAUDE.md`** — flag/ping the chamber if it drifted (don't edit; each owns its own)
+
+          Salience, not enforcement — see the checklist doc for verify steps.
+
           — release-bot (workflow #394)
           """
           print(json.dumps({

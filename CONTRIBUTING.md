@@ -188,15 +188,23 @@ The cut sequence (run from a clean main on the cut branch):
    ([ADR-0008](docs/adr/0008-deprecation-policy.md) §Discretion clause).
 5. **Pre-commit checks.** `gofmt -l .` clean; `go vet ./...` clean; `go test
    -race -count=1 ./...` green.
-6. **Cut PR.** Open the cut PR; reviewer approves; merge on green.
-7. **Publish the auto-draft.** Merging the cut PR fires `release-draft.yml`,
+6. **Docs-coherence check.** Verify the operator-facing surfaces *beyond* this
+   diff per [docs/release-cut-checklist.md](docs/release-cut-checklist.md):
+   BookStack (Service Inventory p88, Release & Deploy p193, the *tmux-tell* book),
+   `/srv/CLAUDE.md` (alcatraz-infra — a separate repo/commit), and any sister
+   chamber `CLAUDE.md` (flag the chamber; don't edit). The release-prep PR body
+   carries the compact checkbox version. Items are N/A-able — a no-doc-impact cut
+   ticks them fast — but don't skip it for "small" cuts; that's the drift vector.
+   Salience, not machine-enforcement (#495).
+7. **Cut PR.** Open the cut PR; reviewer approves; merge on green.
+8. **Publish the auto-draft.** Merging the cut PR fires `release-draft.yml`,
    which creates a **draft** Forgejo release whose body is the `[<X.Y.Z>]`
    section's narrative prelude + `Headlines:` (the curated surface per #426), with
    the merge-commit SHA pinned as `target_commitish`. Review the draft in the
    releases UI and click **Publish** — Forgejo creates the `v<X.Y.Z>` tag from the
    draft. No manual `git tag && git push`; the Publish click is the act of
    shipping (#418).
-8. **Deploy fires automatically.** `release: published` triggers
+9. **Deploy fires automatically.** `release: published` triggers
    `release-publish.yml`, which re-validates the tag and chains `deploy.yml` (via
    `workflow_call`) to run `install.sh` + bootstrap on the alcatraz-host runner.
    Watch the deploy job's smoke step; for a manual redeploy or rollback, dispatch

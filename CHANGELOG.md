@@ -33,6 +33,18 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Added
+
+- **Cross-surface docs-coherence gate at release cuts (#495).** A new
+  `docs/release-cut-checklist.md` + a compact checklist in the release-prep PR body
+  (`release.yml`) + a §Release-cuts step enumerate the operator-facing surfaces a
+  cut must keep coherent, grouped by **review-net**: in-repo docs (PR-caught),
+  BookStack (API), `/srv/CLAUDE.md` (alcatraz-infra repo), and sister chamber
+  `CLAUDE.md` (flag-don't-edit) — the off-PR-net surfaces that drifted during the
+  rename. A salience mechanism (visible at cut time), not machine enforcement (an
+  audit tool is a deferred follow-up). Codifies the surface-sweep Phase 4 (#440)
+  did by hand.
+
 ## [0.18.1] — 2026-06-16
 
 Substrate-hygiene fast-follow after v0.18.0's rename. Three small cleanups that
