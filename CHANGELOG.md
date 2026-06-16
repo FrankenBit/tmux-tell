@@ -33,6 +33,53 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+The rename release — **`tmux-msg` is now `tmux-tell`**. This completes the second
+half of the naming arc (`cli-semaphore` → `tmux-msg` → `tmux-tell`): the binaries,
+Go module, systemd units, environment variables, data/config paths, the MCP server
+and its tools, the repository, and every operator-facing doc now use the canonical
+`tmux-tell` name. **Nothing breaks on upgrade** — every legacy name keeps working
+as a deprecated alias (with a one-time warning) through the v1.0 boundary. This is
+the v1.0-anchor release: the name is settled, the project's scope is codified
+(ADR-0014), and the through-line is substrate honesty — calling each surface what
+it actually is, and saying plainly what the tool is and isn't.
+
+Headlines:
+
+- **`tmux-msg` → `tmux-tell`, end to end (#440).** Binaries `tmux-tell-claude` /
+  `tmux-tell-codex`, the Go module + systemd unit templates, the Forgejo repo, the
+  `$TMUX_TELL_DB` / `$TMUX_TELL_CONFIG` env vars, the `~/.local/share/tmux-tell` and
+  `/etc/tmux-tell` paths, the `tmux-tell` MCP server + its `tmux-tell.*` tools, and
+  the docs all carry the canonical name now (a four-phase substrate-then-surface
+  arc).
+- **Upgrades are seamless — legacy names work through v1.0.** The old `tmux-msg-*` /
+  `claude-msg` binaries, the `$CLAUDE_MSG_DB` / `$CLAUDE_MSG_CONFIG` env vars, and
+  the old `tmux-msg` data/config paths all keep working as deprecated aliases (each
+  emits a `WARN` naming its successor) until the v1.0 hard-cut. Data + config paths
+  are lazily auto-detected, so an un-migrated install just keeps running; migrate at
+  your leisure with `mv ~/.local/share/tmux-msg ~/.local/share/tmux-tell` +
+  `sudo mv /etc/tmux-msg /etc/tmux-tell`. See *Migrating from `tmux-msg`* in
+  `docs/reference.md`.
+- **Project scope codified — ADR-0014 (#441).** An operator-ratified scope-fence:
+  what tmux-tell **is** (a peer-style TUI-paste bus with the observe-gate, SQLite
+  persistence, the substrate-vs-adapter boundary, hook-context delivery, an MCP
+  surface, host-local trust), what it **is not** (a generic broker, real-time
+  streaming, multi-tenant, a web UI, end-to-end encryption, non-LLM consumers), and
+  SSH-back-tunnel as the planned cross-host reach. "Out of scope per ADR-0014" is
+  now the default answer to scope-creep — the burden of proof flips to the proposer.
+- **A leaner, rename-clean docs surface (#440 Phase 4).** The operator-facing docs
+  were swept to the canonical name (the name-churn surface dropped 428 → 222
+  references, −48%) with a new *Migrating from `tmux-msg`* guide; the in-repo docs
+  and the BookStack operator pages (Service Inventory, Release & Deploy) are in
+  sync.
+
+Deferred to v1.0 and beyond: the legacy-alias **hard-cut** (every `tmux-msg` /
+`claude-msg` surface removed at v1.0 — #440 stays open until then); the
+`mcp-*-tmux-msg` control-macro identifier rename (#480); and the public GitHub
+mirror, which stays private until the v1.0 launch.
+
+The name is settled, the scope is drawn, and the substrate says what it is — the
+road to v1.0 starts from a coherent baseline.
+
 ### Documentation
 
 - **Phase 4 docs-prose rebrand `tmux-msg` → `tmux-tell` (#440).** The
