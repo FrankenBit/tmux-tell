@@ -43,6 +43,7 @@ change for the decision to be revisited.
 | 0012 | [Session rename on bus-mediated clear (application of ADR-0011)](0012-session-rename-on-bus-mediated-clear.md) | Accepted | 2026-06-11 |
 | 0013 | [Plan-first workflow for size/M+ work](0013-plan-first-workflow.md) | Proposed | 2026-06-14 |
 | 0014 | [tmux-tell scope — IS / IS NOT / SSH-back-tunnel](0014-tmux-tell-scope-and-cross-host-reach.md) | Accepted | 2026-06-16 |
+| 0015 | [Adopt Arc42 as the architecture-doc spine](0015-adopt-arc42-architecture-spine.md) | Accepted | 2026-06-16 |
 
 > **Note on ADR length.** ADRs 0001-0005 predate the length-cap
 > convention codified in ADR-0006 and run 276-440 lines each. ADR-0006+
