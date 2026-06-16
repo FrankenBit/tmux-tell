@@ -37,7 +37,7 @@ const pingPollInterval = 100 * time.Millisecond
 const pingStateTimeout = "timeout"
 
 // pingResult is the structured response shared by the `tmux-tell-claude ping`
-// CLI subcommand and the `tmux-msg.ping` MCP tool (#144). OK is true only
+// CLI subcommand and the `tmux-tell.ping` MCP tool (#144). OK is true only
 // when the probe reached `delivered` (recipient reachable). State is one
 // of "delivered", "failed", or "timeout".
 //

@@ -28,7 +28,7 @@ func TestMCP_Unregister_FullLifecycle(t *testing.T) {
 	}
 
 	// Unregister bob with force + purge_queue.
-	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.unregister", map[string]any{
 		"name":        "bob",
 		"purge_queue": true,
 		"force":       true,
@@ -81,7 +81,7 @@ func TestMCP_Unregister_DefaultPreservesQueue(t *testing.T) {
 	}
 
 	// Unregister without purge_queue — force is needed because there is a queued message.
-	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.unregister", map[string]any{
 		"name":  "bob",
 		"force": true,
 	})
@@ -119,7 +119,7 @@ func TestMCP_Unregister_Idempotent(t *testing.T) {
 	fs.install(t)
 
 	s := newCmdTestStore(t)
-	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.unregister", map[string]any{
 		"name": "ghost",
 	})
 	if got["ok"] != true {
@@ -146,7 +146,7 @@ func TestMCP_Unregister_QueueGuard(t *testing.T) {
 	}
 
 	// Without force — should fail.
-	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.unregister", map[string]any{
 		"name": "bob",
 	})
 	if got["ok"] == true {
@@ -167,7 +167,7 @@ func TestMCP_Unregister_QueueGuard(t *testing.T) {
 	}
 
 	// With force — should succeed.
-	got = callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+	got = callMCPTool(t, s, "tmux-tell.unregister", map[string]any{
 		"name":  "bob",
 		"force": true,
 	})
@@ -202,7 +202,7 @@ func TestMCP_Unregister_PreservesHistory(t *testing.T) {
 	}
 
 	// Unregister with purge_queue.
-	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.unregister", map[string]any{
 		"name":        "bob",
 		"purge_queue": true,
 		"force":       true,
@@ -377,7 +377,7 @@ func TestMCP_Unregister_SoftFailsSystemctlError(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
 	ctx := context.Background()
 
-	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.unregister", map[string]any{
 		"name": "bob",
 	})
 	if got["ok"] != true {

@@ -27,7 +27,7 @@ func (f *fakeSystemctl) install(t *testing.T) {
 
 // TestMCP_Register_SkipsMailmanWithNonDefaultDB pins #293 on the MCP path.
 // When the MCP process is running against a non-default $CLAUDE_MSG_DB,
-// `tmux-msg.register` with start_mailman defaulted (true) returns ok:true
+// `tmux-tell.register` with start_mailman defaulted (true) returns ok:true
 // with the agent row written, but `mailman` is `skipped` and `mailman_error`
 // names the divergence — the operator sees that they need to start `serve`
 // as a foreground subprocess to deliver against the sandbox DB. The actual
@@ -39,7 +39,7 @@ func TestMCP_Register_SkipsMailmanWithNonDefaultDB(t *testing.T) {
 	fs := &fakeSystemctl{}
 	fs.install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name": "sandboxed",
 	})
 	if got["ok"] != true {
@@ -67,7 +67,7 @@ func TestMCP_Register_SkipsMailmanWithNonDefaultDB(t *testing.T) {
 
 // TestMCP_Register_SkipsMailmanWithMissingEnv pins #356 on the MCP path.
 // When the MCP child's env lacks DBUS_SESSION_BUS_ADDRESS or XDG_RUNTIME_DIR,
-// `tmux-msg.register` returns ok:true (the agent row is written), but
+// `tmux-tell.register` returns ok:true (the agent row is written), but
 // `mailman` is `skipped` and `mailman_error` names the missing vars and the
 // recovery path. The actual systemctl runner must never be reached.
 func TestMCP_Register_SkipsMailmanWithMissingEnv(t *testing.T) {
@@ -78,7 +78,7 @@ func TestMCP_Register_SkipsMailmanWithMissingEnv(t *testing.T) {
 	fs := &fakeSystemctl{}
 	fs.install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name": "codex-agent",
 	})
 	if got["ok"] != true {
@@ -113,7 +113,7 @@ func TestMCP_Register_HappyPath(t *testing.T) {
 	fs := &fakeSystemctl{}
 	fs.install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name": "newone",
 	})
 	if got["ok"] != true {
@@ -144,7 +144,7 @@ func TestMCP_Register_ExplicitPaneArg(t *testing.T) {
 	s := newCmdTestStore(t)
 	(&fakeSystemctl{}).install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name":          "explicit",
 		"pane":          "%42",
 		"start_mailman": false,
@@ -162,7 +162,7 @@ func TestMCP_Register_CollisionWithoutForce(t *testing.T) {
 	s := newCmdTestStore(t, "existing")
 	(&fakeSystemctl{}).install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name": "existing",
 	})
 	if got["_isError"] != true {
@@ -180,7 +180,7 @@ func TestMCP_Register_CollisionWithForceOverwrites(t *testing.T) {
 	s := newCmdTestStore(t, "existing")
 	(&fakeSystemctl{}).install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name":  "existing",
 		"force": true,
 	})
@@ -206,7 +206,7 @@ func TestMCP_Register_ClearsStuckState(t *testing.T) {
 		t.Fatalf("seed stuck: %v", err)
 	}
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name":  "existing",
 		"force": true,
 	})
@@ -234,7 +234,7 @@ func TestMCP_Register_ClearsAttentionState(t *testing.T) {
 		t.Fatalf("seed attention_state: %v", err)
 	}
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name":  "existing",
 		"force": true,
 	})
@@ -272,7 +272,7 @@ func TestMCP_Register_PromotesRegisterDeferred(t *testing.T) {
 		t.Fatalf("seed resume-deferred: %v", err)
 	}
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name":          "pilot",
 		"force":         true,
 		"start_mailman": false,
@@ -299,7 +299,7 @@ func TestMCP_Register_NoPaneAvailable(t *testing.T) {
 	s := newCmdTestStore(t)
 	(&fakeSystemctl{}).install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name": "noenv",
 	})
 	if got["_isError"] != true {
@@ -312,7 +312,7 @@ func TestMCP_Register_SystemctlFailureStillReportsRegistration(t *testing.T) {
 	s := newCmdTestStore(t)
 	(&fakeSystemctl{err: errors.New("exit 1"), out: []byte("nope")}).install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name": "registered-but-mailman-broken",
 	})
 	if got["ok"] != true {
@@ -342,7 +342,7 @@ func TestMCP_Register_SurfacesQueuedBacklog(t *testing.T) {
 		}
 	}
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name":  "backlogged",
 		"force": true,
 	})
@@ -366,7 +366,7 @@ func TestMCP_Register_ZeroQueuedWhenNoBacklog(t *testing.T) {
 	s := newCmdTestStore(t) // empty registry, no queued mail
 	(&fakeSystemctl{}).install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name": "fresh",
 	})
 	if got["ok"] != true {
@@ -386,7 +386,7 @@ func TestMCP_Unregister_HappyPath(t *testing.T) {
 	fs := &fakeSystemctl{}
 	fs.install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.unregister", map[string]any{
 		"name": "doomed",
 	})
 	if got["ok"] != true {
@@ -420,7 +420,7 @@ func TestMCP_Unregister_PurgeQueueAlso(t *testing.T) {
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "doomed", Body: "1"})
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "doomed", Body: "2"})
 
-	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.unregister", map[string]any{
 		"name":        "doomed",
 		"purge_queue": true,
 		"force":       true,
@@ -440,7 +440,7 @@ func TestMCP_Unregister_IdempotentOnMissingMailman(t *testing.T) {
 		out: []byte("Unit tmux-tell-claude-mailman@doomed.service not loaded."),
 	}).install(t)
 
-	got := callMCPTool(t, s, "tmux-msg.unregister", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.unregister", map[string]any{
 		"name": "doomed",
 	})
 	if got["ok"] != true {

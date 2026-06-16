@@ -81,7 +81,7 @@ type File struct {
 	Agent    map[string]Block `toml:"agent"`
 	// PrivilegedAgents is the operator-defined allowlist for the
 	// get-by-id surface (#111): agents listed here can fetch any
-	// message via `claude-msg get <id>` / `tmux-msg.get`, bypassing
+	// message via `claude-msg get <id>` / `tmux-tell.get`, bypassing
 	// the default sender-OR-recipient access rule. Empty (the default)
 	// means no privileged agents — every requester is bound by the
 	// default access rule. TOML:

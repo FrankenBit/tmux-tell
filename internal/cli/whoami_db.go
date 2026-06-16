@@ -107,7 +107,7 @@ func collectBinding(pid int, withStart bool) dbBinding {
 	return b
 }
 
-// mcpWhoamiDBHandler returns the handler for the tmux-msg.whoami_db MCP tool
+// mcpWhoamiDBHandler returns the handler for the tmux-tell.whoami_db MCP tool
 // (#348): the live MCP server reports its own DB binding so an operator can ask
 // "where are you actually writing?" without /proc archeology. Read-only — no DB
 // access at all, just /proc on self — so it's safe to expose to peers and can't

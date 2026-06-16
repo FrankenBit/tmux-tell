@@ -76,7 +76,7 @@ func TestApplyBacklogPolicy_AnnounceDefault(t *testing.T) {
 	if len(ann) != 1 {
 		t.Fatalf("announces = %d, want 1", len(ann))
 	}
-	if ann[0].Body != "📬 3 queued — run tmux-msg.inbox" {
+	if ann[0].Body != "📬 3 queued — run tmux-tell.inbox" {
 		t.Errorf("nudge body = %q", ann[0].Body)
 	}
 	if ann[0].FromAgent != "bob" || ann[0].ToAgent != "bob" {
@@ -132,7 +132,7 @@ func TestApplyBacklogPolicy_AutoDeliverExceedsCap(t *testing.T) {
 		t.Errorf("epoch not stamped")
 	}
 	ann := backlogAnnounces(t, s, "bob")
-	if len(ann) != 1 || ann[0].Body != "📬 3 queued — run tmux-msg.inbox" {
+	if len(ann) != 1 || ann[0].Body != "📬 3 queued — run tmux-tell.inbox" {
 		t.Errorf("nudge = %+v, want one body '📬 3 queued …'", ann)
 	}
 }
@@ -212,7 +212,7 @@ func TestApplyBacklogPolicy_ReRegisterAdvancesFloor(t *testing.T) {
 // the announce fields alongside the #151 queued count.
 func TestMCP_Register_AnnouncesBacklog(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%9")
-	t.Setenv("CLAUDE_MSG_CONFIG", "/nonexistent/tmux-msg.toml") // force default policy
+	t.Setenv("CLAUDE_MSG_CONFIG", "/nonexistent/tmux-tell.toml") // force default policy
 	s := newCmdTestStore(t, "sender", "backlogged")
 	(&fakeSystemctl{}).install(t)
 	ctx := context.Background()
@@ -224,7 +224,7 @@ func TestMCP_Register_AnnouncesBacklog(t *testing.T) {
 		}
 	}
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name": "backlogged", "force": true,
 	})
 	if got["ok"] != true {
@@ -249,7 +249,7 @@ func TestMCP_Register_AnnouncesBacklog(t *testing.T) {
 // mailbox-only agents even with a backlog present.
 func TestMCP_Register_MailboxOnlyNoBacklogFields(t *testing.T) {
 	t.Setenv("TMUX_PANE", "%9")
-	t.Setenv("CLAUDE_MSG_CONFIG", "/nonexistent/tmux-msg.toml")
+	t.Setenv("CLAUDE_MSG_CONFIG", "/nonexistent/tmux-tell.toml")
 	s := newCmdTestStore(t, "sender", "mbox")
 	(&fakeSystemctl{}).install(t)
 	ctx := context.Background()
@@ -257,7 +257,7 @@ func TestMCP_Register_MailboxOnlyNoBacklogFields(t *testing.T) {
 		_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "sender", ToAgent: "mbox", Body: "q"})
 	}
 
-	got := callMCPTool(t, s, "tmux-msg.register", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name": "mbox", "force": true, "delivery_mode": "mailbox-only",
 	})
 	if got["ok"] != true {

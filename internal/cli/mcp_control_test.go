@@ -14,7 +14,7 @@ func TestMCP_Control_SelfInvocation_SelfOnlyCommand(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "alice",
 		"command": "compact",
 	})
@@ -48,7 +48,7 @@ func TestMCP_Control_PeerInvocation_PeerAllowedCommand(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "bob",
 		"command": "rename",
 	})
@@ -66,7 +66,7 @@ func TestMCP_Control_PeerInvocation_BlockedForSelfOnlyCommand(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "bob",
 		"command": "compact",
 	})
@@ -91,7 +91,7 @@ func TestMCP_Control_RejectsUnknownCommand(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "bob",
 		"command": "clear",
 	})
@@ -104,7 +104,7 @@ func TestMCP_Control_RejectsUnknownRecipient(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "ghost",
 		"command": "compact",
 	})
@@ -120,7 +120,7 @@ func TestMCP_Control_CompactWithResume_QueuesBothRows(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":          "alice",
 		"command":     "compact",
 		"resume_with": "continue the bus work; specifically finish #25 follow-ups",
@@ -160,7 +160,7 @@ func TestMCP_Control_ResumeWith_RejectedOnNonCompact(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":          "alice",
 		"command":     "help",
 		"resume_with": "anything",
@@ -177,7 +177,7 @@ func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":          "bob",
 		"command":     "compact",
 		"resume_with": "irrelevant",
@@ -188,13 +188,13 @@ func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
 }
 
 // mcp-restart-tmux-msg is a peer-allowed macro that the handler
-// expands into two control rows: /mcp disable tmux-msg, then
-// /mcp enable tmux-msg (reply_to-threaded for audit).
+// expands into two control rows: /mcp disable tmux-tell, then
+// /mcp enable tmux-tell (reply_to-threaded for audit).
 func TestMCP_Control_RestartMacro_SelfInvocation_QueuesBothRows(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "alice",
 		"command": "mcp-restart-tmux-msg",
 	})
@@ -216,10 +216,10 @@ func TestMCP_Control_RestartMacro_SelfInvocation_QueuesBothRows(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("queued = %d, want 2", len(msgs))
 	}
-	if msgs[0].Kind != store.KindControl || msgs[0].Body != "/mcp disable tmux-msg" {
+	if msgs[0].Kind != store.KindControl || msgs[0].Body != "/mcp disable tmux-tell" {
 		t.Errorf("row[0] should be disable control; got %+v", msgs[0])
 	}
-	if msgs[1].Kind != store.KindControl || msgs[1].Body != "/mcp enable tmux-msg" {
+	if msgs[1].Kind != store.KindControl || msgs[1].Body != "/mcp enable tmux-tell" {
 		t.Errorf("row[1] should be enable control; got %+v", msgs[1])
 	}
 	if msgs[1].ReplyTo.String != disableID {
@@ -235,7 +235,7 @@ func TestMCP_Control_RestartMacro_PeerInvocation_QueuesBothRows(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "bob",
 		"command": "mcp-restart-tmux-msg",
 	})
@@ -252,7 +252,7 @@ func TestMCP_Control_RestartMacro_PeerInvocation_QueuesBothRows(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("queued = %d, want 2", len(msgs))
 	}
-	for i, want := range []string{"/mcp disable tmux-msg", "/mcp enable tmux-msg"} {
+	for i, want := range []string{"/mcp disable tmux-tell", "/mcp enable tmux-tell"} {
 		if msgs[i].Body != want || msgs[i].Kind != store.KindControl {
 			t.Errorf("row[%d] = %+v; want body=%q kind=control", i, msgs[i], want)
 		}
@@ -270,7 +270,7 @@ func TestMCP_Control_RawDisable_RejectedOnPeer(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "bob",
 		"command": "mcp-disable-tmux-msg",
 	})
@@ -301,9 +301,9 @@ func TestMCP_Control_RestartMacro_DispatchesOnName(t *testing.T) {
 	s := newCmdTestStore(t, "alice")
 
 	// `help` is a plain command that resolves to "/help", never to
-	// "/mcp restart tmux-msg". This is a sanity-pin that the macro
+	// "/mcp restart tmux-tell". This is a sanity-pin that the macro
 	// dispatch isn't accidentally string-matching on something else.
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "alice",
 		"command": "help",
 	})
@@ -328,7 +328,7 @@ func TestMCP_Control_RequiresIdentity(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")
 
-	got := callMCPTool(t, s, "tmux-msg.control", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "bob",
 		"command": "compact",
 	})

@@ -161,7 +161,7 @@ func TestMCP_AgentState(t *testing.T) {
 	installFakeAgentState(t, "history\n❯\u00a0\n  status\n")
 	s := newCmdTestStore(t, "bosun")
 
-	got := callMCPTool(t, s, "tmux-msg.agent_state", map[string]any{"agent": "bosun"})
+	got := callMCPTool(t, s, "tmux-tell.agent_state", map[string]any{"agent": "bosun"})
 	if got["agent"] != "bosun" {
 		t.Errorf("agent = %v, want bosun", got["agent"])
 	}
@@ -181,7 +181,7 @@ func TestMCP_AgentState(t *testing.T) {
 // `_isError` field so consumers can branch on it.
 func TestMCP_AgentState_RequiresAgent(t *testing.T) {
 	s := newCmdTestStore(t, "bosun")
-	got := callMCPTool(t, s, "tmux-msg.agent_state", map[string]any{})
+	got := callMCPTool(t, s, "tmux-tell.agent_state", map[string]any{})
 	if got["_isError"] != true {
 		t.Errorf("expected isError=true for missing agent; got %v", got)
 	}

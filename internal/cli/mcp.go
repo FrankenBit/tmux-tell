@@ -50,7 +50,7 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return exitOK
 }
 
-// registerToolSchema builds the tmux-msg.register input schema. The mailman
+// registerToolSchema builds the tmux-tell.register input schema. The mailman
 // systemd unit name and the inbox / hook-context command references name the
 // ACTIVE adapter binary (#314) — so a codex agent registering through the MCP
 // surface sees tmux-tell-codex, not the claude literal — and the delivery-mode
@@ -79,15 +79,15 @@ func registerToolSchema() json.RawMessage {
 	}`)
 }
 
-// newMCPServer wires the tmux-msg.* tools onto an mcp.Server.
+// newMCPServer wires the tmux-tell.* tools onto an mcp.Server.
 // Tools registered: send / resend / ping / agents / whoami / inbox /
 // message_status / status / register / control / unregister /
 // agent_state.
 func newMCPServer(s *store.Store) *mcp.Server {
-	srv := mcp.NewServer("tmux-msg", "0.1.0")
+	srv := mcp.NewServer("tmux-tell", "0.1.0")
 
-	srv.RegisterTool("tmux-msg.send",
-		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-msg.message_status. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155). Set quick=true to render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block — for routine acks where typing-overhead-to-signal ratio is high (#154). Multi-recipient: pass to as an array (e.g. [\"bosun\",\"surveyor\"]) to fan the message to multiple recipients in a single call — each recipient gets its own message id; the response shape changes to {ok,messages:[{to,id,queued,recipient,...},...]} (#158).",
+	srv.RegisterTool("tmux-tell.send",
+		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-tell.message_status. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155). Set quick=true to render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block — for routine acks where typing-overhead-to-signal ratio is high (#154). Multi-recipient: pass to as an array (e.g. [\"bosun\",\"surveyor\"]) to fan the message to multiple recipients in a single call — each recipient gets its own message id; the response shape changes to {ok,messages:[{to,id,queued,recipient,...},...]} (#158).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -106,14 +106,14 @@ func newMCPServer(s *store.Store) *mcp.Server {
 				"wait_for_delivered": {"type": "boolean", "description": "Block until the message reaches a terminal delivery state (delivered/failed) or timeout, returning a \"delivery\" block with state + verify_ms. Default false (#152)."},
 				"timeout":           {"type": "string", "description": "Bound for wait_for_delivered as a Go duration (e.g. \"10s\"). Default 10s."},
 				"block_on_stale":    {"type": "boolean", "description": "With reply_to: fail (ok:false) instead of queueing when the thread_freshness check finds the thread moved since you last spoke (newer messages addressed to you arrived after your last message in the chain). Default false — staleness is reported but the send still succeeds (#155)."},
-				"deliver_after":     {"type": "string", "description": "Defer delivery until a trigger fires (#227): the message is STAGED (not queued) and delivers only after the trigger. Accepts \"resume\" — post-compaction self-handoff: stage orientation text with deliver_after=\"resume\", then call tmux-msg.flush_deferred{trigger:\"resume\"} in your post-/compact resume routine so it lands in the freshly-resumed context instead of being absorbed by the summarizer — or \"register\" (#258a): a spawn-die session bridge addressed to another agent (\"remember this for its next dispatch\"); it auto-promotes when that agent next (re)registers, no explicit flush needed. Single-recipient only. The response carries deliver_after to confirm staging."},
+				"deliver_after":     {"type": "string", "description": "Defer delivery until a trigger fires (#227): the message is STAGED (not queued) and delivers only after the trigger. Accepts \"resume\" — post-compaction self-handoff: stage orientation text with deliver_after=\"resume\", then call tmux-tell.flush_deferred{trigger:\"resume\"} in your post-/compact resume routine so it lands in the freshly-resumed context instead of being absorbed by the summarizer — or \"register\" (#258a): a spawn-die session bridge addressed to another agent (\"remember this for its next dispatch\"); it auto-promotes when that agent next (re)registers, no explicit flush needed. Single-recipient only. The response carries deliver_after to confirm staging."},
 				"expects_reply":     {"type": "boolean", "description": "Signal that you'd like a reply — lightweight intent-marker WITHOUT the blocking wait of ask/wait_for_reply (#270). Use when you want an answer eventually but aren't blocking on it. Your unanswered sends appear under sent --awaiting-reply; the recipient's owed replies appear under inbox --unanswered. Default false."}
 			},
 			"required": ["to", "body"]
 		}`),
 		mcpSendHandler(s))
 
-	srv.RegisterTool("tmux-msg.resend",
+	srv.RegisterTool("tmux-tell.resend",
 		"Replay an existing message to its original recipient — the explicit recovery path for a message that landed `delivered_in_input_box` or `failed` (#157). The replay carries a \"Replayed: original sent at <ts>\" chrome marker so the recipient knows it's a re-send, and the response adds a \"replay\" block {original_id, original_sent_at, original_state, forced}. A `failed` or `delivered_in_input_box` (delivered-but-unverified, #169) message replays directly — no force needed. Refuses to replay a confirmed-`delivered` (verified) or pre-#169 delivered (unknown) or still in-flight message unless force=true, to avoid duplicate-spam. The replayed body is byte-identical to the original.",
 		json.RawMessage(`{
 			"type": "object",
@@ -125,7 +125,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpResendHandler(s))
 
-	srv.RegisterTool("tmux-msg.flush_deferred",
+	srv.RegisterTool("tmux-tell.flush_deferred",
 		"Promote your own deferred messages for a trigger to delivery (#227). A deferred message (sent with deliver_after) is STAGED — invisible to inbox/mailman — until you flush its trigger. Primary use: POST-COMPACTION SELF-HANDOFF. Before /compact, send yourself orientation with deliver_after=\"resume\"; then call this with trigger=\"resume\" as part of your resume routine, so the staged message lands in your freshly-resumed context instead of being absorbed by the summarizer. Idempotent — calling with no matching deferred messages is a no-op (promoted:0), so it's safe to call unconditionally on resume. You can only flush messages addressed to yourself. Returns {ok, trigger, promoted}. Triggers: \"resume\"; \"register\" also exists but auto-fires on (re)register (#258a) so rarely needs an explicit flush.",
 		json.RawMessage(`{
 			"type": "object",
@@ -135,7 +135,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpFlushDeferredHandler(s))
 
-	srv.RegisterTool("tmux-msg.ask",
+	srv.RegisterTool("tmux-tell.ask",
 		"Send a question and signal you intend to wait for a reply (#250). Like send, but returns an ask_id (the message id) you pass to wait_for_reply / check_replies, and marks the message so the substrate knows a reply is expected. Single-recipient. The recipient answers by replying to the ask_id (send/ask with reply_to=<ask_id>). Use ask + wait_for_reply for synchronous Q&A (pause until answered); ask + check_replies to poll while doing other work.",
 		json.RawMessage(`{
 			"type": "object",
@@ -148,7 +148,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpAskHandler(s))
 
-	srv.RegisterTool("tmux-msg.wait_for_reply",
+	srv.RegisterTool("tmux-tell.wait_for_reply",
 		"Block until a reply to your ask_id arrives, or timeout_ms elapses (#250). Returns {ok, ask_id, reply, timed_out}. `reply` (when present) is {id, from, body, state, unverified, created_at}: `unverified:true` means the reply landed but its delivery wasn't verify-confirmed (#169) — it's returned anyway, you decide whether to trust it. Does NOT auto-acknowledge the reply (ack stays explicit). Use after ask to pause your turn until the recipient answers.",
 		json.RawMessage(`{
 			"type": "object",
@@ -160,7 +160,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpWaitForReplyHandler(s))
 
-	srv.RegisterTool("tmux-msg.check_replies",
+	srv.RegisterTool("tmux-tell.check_replies",
 		"Non-blocking: list the replies to your ask_id that have arrived (#250). Returns {ok, ask_id, replies:[{id, from, body, state, unverified, created_at}]}. Pass `since` (a numeric id) to get only replies newer than one you've already seen — the accumulation pattern: do other work, periodically check_replies(ask_id, since=<highest id seen>). Complements wait_for_reply (block) when you'd rather poll.",
 		json.RawMessage(`{
 			"type": "object",
@@ -172,7 +172,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpCheckRepliesHandler(s))
 
-	srv.RegisterTool("tmux-msg.agents",
+	srv.RegisterTool("tmux-tell.agents",
 		"List registered agents with pane liveness. Each row carries pane_status / paused / queued / attention_state / stuck, plus mailman_last_delivered_at (#348) — the RFC3339 time of the most recent delivery to that agent, derived from the delivery rows (omitted when none in retained history). A non-zero queued + an empty/old mailman_last_delivered_at is the \"queued but mailman silent\" divergence smell.",
 		json.RawMessage(`{
 			"type": "object",
@@ -182,13 +182,13 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpAgentsHandler(s))
 
-	srv.RegisterTool("tmux-msg.whoami",
+	srv.RegisterTool("tmux-tell.whoami",
 		"Return this session's registration. Identity from $TMUX_AGENT_NAME or $TMUX_PANE→registry.",
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpWhoamiHandler(s))
 
-	srv.RegisterTool("tmux-msg.inbox",
-		"List the caller's own queued messages, or acknowledge announce-skipped backlog residue (#221). Pass ack_ids to mark specific messages acknowledged; pass ack_all=true to acknowledge all messages ≤ the backlog_epoch (drains the announce-skipped residue left by the don't-flood policy). Acknowledged messages are excluded from the default queued view but remain retrievable via tmux-msg.get. Pass unanswered=true to see only messages where the sender signaled expects_reply AND you haven't replied yet (#270).",
+	srv.RegisterTool("tmux-tell.inbox",
+		"List the caller's own queued messages, or acknowledge announce-skipped backlog residue (#221). Pass ack_ids to mark specific messages acknowledged; pass ack_all=true to acknowledge all messages ≤ the backlog_epoch (drains the announce-skipped residue left by the don't-flood policy). Acknowledged messages are excluded from the default queued view but remain retrievable via tmux-tell.get. Pass unanswered=true to see only messages where the sender signaled expects_reply AND you haven't replied yet (#270).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -201,7 +201,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpInboxHandler(s))
 
-	srv.RegisterTool("tmux-msg.message_status",
+	srv.RegisterTool("tmux-tell.message_status",
 		"Look up the delivery state of a sent message by its public_id. Returns created_at + delivered_at + error so the sender can see whether the bus has handed off the row yet.",
 		json.RawMessage(`{
 			"type": "object",
@@ -212,8 +212,8 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpMessageStatusHandler(s))
 
-	srv.RegisterTool("tmux-msg.get",
-		"Fetch a processed message by ID — recovery path for swallowed deliveries (#111). The bus stores message bodies; if the paste landed in a state that obscured the visible delivery (mid-AskUserQuestion, popup open, recipient mid-compaction), retrieving by ID returns the full body + metadata. Accepts full public_id or short prefix (4-char IDs from delivery headers work). Access: sender OR recipient OR allowlisted agent (`privileged-agents` in /etc/tmux-msg/config.toml). Not-found and not-authorized return the same error class to prevent existence leaks.",
+	srv.RegisterTool("tmux-tell.get",
+		"Fetch a processed message by ID — recovery path for swallowed deliveries (#111). The bus stores message bodies; if the paste landed in a state that obscured the visible delivery (mid-AskUserQuestion, popup open, recipient mid-compaction), retrieving by ID returns the full body + metadata. Accepts full public_id or short prefix (4-char IDs from delivery headers work). Access: sender OR recipient OR allowlisted agent (`privileged-agents` in /etc/tmux-tell/config.toml). Not-found and not-authorized return the same error class to prevent existence leaks.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -223,13 +223,13 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpGetHandler(s))
 
-	srv.RegisterTool("tmux-msg.status",
+	srv.RegisterTool("tmux-tell.status",
 		"Return registry overview: paused state + queue depths per agent.",
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpStatusHandler(s))
 
-	srv.RegisterTool("tmux-msg.flag_operator",
-		"Signal that this chamber needs operator attention (#224). Posts the body to the reserved \"operator-attention\" recipient AND marks this chamber's attention_state as \"awaiting_operator\". The flag clears implicitly on the chamber's next register call (after the operator answered + chamber resumed) or explicitly via tmux-msg.clear_operator_flag. Body is required — it is the question or choice the chamber wants the operator to weigh in on. The recipient \"operator-attention\" MUST be pre-registered by the operator (as a mailbox-only agent) — chambers cannot register it themselves.",
+	srv.RegisterTool("tmux-tell.flag_operator",
+		"Signal that this chamber needs operator attention (#224). Posts the body to the reserved \"operator-attention\" recipient AND marks this chamber's attention_state as \"awaiting_operator\". The flag clears implicitly on the chamber's next register call (after the operator answered + chamber resumed) or explicitly via tmux-tell.clear_operator_flag. Body is required — it is the question or choice the chamber wants the operator to weigh in on. The recipient \"operator-attention\" MUST be pre-registered by the operator (as a mailbox-only agent) — chambers cannot register it themselves.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -239,17 +239,17 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpFlagOperatorHandler(s))
 
-	srv.RegisterTool("tmux-msg.clear_operator_flag",
+	srv.RegisterTool("tmux-tell.clear_operator_flag",
 		"Clear this chamber's awaiting_operator attention signal (#224). Sets attention_state back to \"idle\". Used when the operator answered the chamber's question out of band (typed directly in the pane) and the chamber wants to clear the flag without going through register.",
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpClearOperatorFlagHandler(s))
 
-	srv.RegisterTool("tmux-msg.register",
-		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-bus-participant scenario). The response includes `queued`: the number of messages already waiting for this agent at register time (#151) — a fresh or post-restart session learns it has backlog without a separate inbox poll; check it and run tmux-msg.inbox if >0. When that backlog exists, the don't-flood policy (#204) keeps the mailman from pasting the whole queue at once: by default it leaves the backlog queued and delivers a single `📬 N queued` nudge (the `on-register-backlog` TOML knob can switch to auto-delivering the newest N). The response then also carries `backlog_policy`, `backlog_skipped`, and `backlog_nudge`.",
+	srv.RegisterTool("tmux-tell.register",
+		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-bus-participant scenario). The response includes `queued`: the number of messages already waiting for this agent at register time (#151) — a fresh or post-restart session learns it has backlog without a separate inbox poll; check it and run tmux-tell.inbox if >0. When that backlog exists, the don't-flood policy (#204) keeps the mailman from pasting the whole queue at once: by default it leaves the backlog queued and delivers a single `📬 N queued` nudge (the `on-register-backlog` TOML knob can switch to auto-delivering the newest N). The response then also carries `backlog_policy`, `backlog_skipped`, and `backlog_nudge`.",
 		registerToolSchema(),
 		mcpRegisterHandler(s))
 
-	srv.RegisterTool("tmux-msg.control",
+	srv.RegisterTool("tmux-tell.control",
 		"Send a whitelisted Claude Code slash-command directly to a pane. Scope-gated: when to==self, the self-whitelist applies; when to is a peer, the peer-whitelist applies — with a third tier of per-edge exceptions for destructive commands. Specifically, /clear is globally denied but Bosun→Pilot and Quartermaster→Pilot are permitted (routine clear-before-each-task dispatch + rescue path when Pilot can't /compact out of token exhaustion). Bypasses the chat-message renderer. Optional resume_with (only with command=compact, only on self) queues a follow-up message that the mailman delivers AFTER /compact has settled — pre-write your continuation instead of going silent post-compact.",
 		json.RawMessage(`{
 			"type": "object",
@@ -262,7 +262,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpControlHandler(s))
 
-	srv.RegisterTool("tmux-msg.unregister",
+	srv.RegisterTool("tmux-tell.unregister",
 		"Remove an agent from the registry (#289). Stops the mailman, drops the agent row. Idempotent: absent agent returns removed:false. Force overrides the queued-message guard.",
 		json.RawMessage(`{
 			"type": "object",
@@ -275,7 +275,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpUnregisterHandler(s))
 
-	srv.RegisterTool("tmux-msg.agent_state",
+	srv.RegisterTool("tmux-tell.agent_state",
 		"Probe an agent's agent-state via read-only capture-pane (#71). Returns one of five states: idle / working / at-rest-in-compaction / awaiting-operator / unknown. 'Knock at the door without waking the inhabitant' — exactly two capture-pane calls, zero pane mutation, ~200ms latency. Consumers should treat 'unknown' as advisory-not-authoritative per #65's substrate-class-of-claim convention (don't silently roll up an unknown classification to a known state). v1 detects idle/working/unknown reliably; at-rest-in-compaction and awaiting-operator land when #70's empirical capture populates the marker constants.",
 		json.RawMessage(`{
 			"type": "object",
@@ -286,7 +286,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpAgentStateHandler(s))
 
-	srv.RegisterTool("tmux-msg.ping",
+	srv.RegisterTool("tmux-tell.ping",
 		"Substrate-only reachability probe (#144): is the recipient's mailman daemon up and its pane reachable? Queues a kind=ping row that the mailman picks up (proving the daemon is alive) and answers via substrate-health checks (agent registered, pane live) — it does NOT paste into the recipient's pane or load their context, so it's safe for runbook verification and post-restart sanity. Returns {ok, agent, id, state, class, elapsed_ms}: state is `delivered`, `failed` (registered but unreachable — pane gone), or `timeout` (no mailman answered in time). `class` (#366) is the coarse reachability classification, set on every path — `reachable` (confirmed), `pending` (substrate healthy and making progress but the probe didn't confirm in-bound → retry or wait), or `unreachable` (substrate broken → operator must act). On the failing path (ok=false) the response also carries a fine-grained `reason` (#358) — one of `pane_dead` / `mailman_down` / `stuck` / `blocked_delivery` / `backlog_draining` — plus an `evidence` block {mailman_active, queue_depth, current_state, stuck_reason?} so the caller can route recovery: mailman_down → start the daemon, stuck → `register --force`, pane_dead → re-discover, backlog_draining / blocked_delivery → wait (the mailman is working through a queue or finishing a prior delivery; a ping never reaches the observe-gate, so these are healthy-pending, not broken). Branch on `class` for coarse reachability-routing, `reason` for specific recovery. Pinging a non-registered agent fails loud.",
 		json.RawMessage(`{
 			"type": "object",
@@ -298,7 +298,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpPingHandler(s))
 
-	srv.RegisterTool("tmux-msg.whoami_db",
+	srv.RegisterTool("tmux-tell.whoami_db",
 		"Report THIS MCP server's live DB binding (#348): {pid, binary_path, started_at, db_path, db_inode, db_deleted}. Read straight from /proc (the open file handle + exe symlink) — NOT by re-resolving the configured path, so it reveals where the process is *actually* writing even after a deploy moved the DB out from under it (the orphan-inode case: a process spawned pre-deploy keeps writing to the unlinked inode, invisible to sqlite3 on the canonical path). `db_deleted: true` is the orphan smell; a divergent `db_inode` across processes is the cross-surface-divergence `doctor` aggregates. No DB access at all (can't itself be misrouted); safe to expose to peers.",
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpWhoamiDBHandler())
@@ -306,7 +306,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 	return srv
 }
 
-// mcpPingHandler returns the handler for the tmux-msg.ping MCP tool.
+// mcpPingHandler returns the handler for the tmux-tell.ping MCP tool.
 // Resolves the caller's identity (the ping's sender) and runs the shared
 // pingProbe core — the same code path as the `tmux-tell-claude ping` CLI
 // subcommand — so both surfaces emit the identical pingResult shape.
@@ -344,7 +344,7 @@ func mcpPingHandler(s *store.Store) mcp.ToolHandler {
 }
 
 // mcpAgentStateHandler returns the handler for the
-// tmux-msg.agent_state MCP tool. Wraps resolveAgentState (shared
+// tmux-tell.agent_state MCP tool. Wraps resolveAgentState (shared
 // with the CLI subcommand `tmux-tell-claude state`) so both surfaces emit
 // the same JSON schema — durable shape that Binnacle's M6b can
 // consume verbatim per #74's carry-forward spec.
@@ -676,7 +676,7 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 	return resp, nil
 }
 
-// mcpFlushDeferredHandler returns the handler for the tmux-msg.flush_deferred
+// mcpFlushDeferredHandler returns the handler for the tmux-tell.flush_deferred
 // MCP tool (#227). It resolves the caller's identity and promotes that agent's
 // deferred messages matching the trigger — the chamber-side signal "I'm at
 // <trigger point>, deliver what I staged." Authorization is implicit: the
@@ -702,7 +702,7 @@ func mcpFlushDeferredHandler(s *store.Store) mcp.ToolHandler {
 	}
 }
 
-// mcpAskHandler returns the handler for the tmux-msg.ask MCP tool (#250): a
+// mcpAskHandler returns the handler for the tmux-tell.ask MCP tool (#250): a
 // single-recipient send that marks expects_reply and returns the message id as
 // the ask_id to pass to wait_for_reply / check_replies. Routes through the
 // shared send path (doSendMCP) so caps / recipient-status / thread-freshness
@@ -735,7 +735,7 @@ func mcpAskHandler(s *store.Store) mcp.ToolHandler {
 	}
 }
 
-// mcpWaitForReplyHandler returns the handler for tmux-msg.wait_for_reply (#250):
+// mcpWaitForReplyHandler returns the handler for tmux-tell.wait_for_reply (#250):
 // block until a reply to ask_id addressed to the caller arrives or timeout_ms
 // elapses. No auto-ack (Q3); an unverified reply is returned with the flag (Q4).
 func mcpWaitForReplyHandler(s *store.Store) mcp.ToolHandler {
@@ -763,7 +763,7 @@ func mcpWaitForReplyHandler(s *store.Store) mcp.ToolHandler {
 	}
 }
 
-// mcpCheckRepliesHandler returns the handler for tmux-msg.check_replies (#250):
+// mcpCheckRepliesHandler returns the handler for tmux-tell.check_replies (#250):
 // non-blocking — list replies to ask_id addressed to the caller, optionally
 // only those with id > since.
 func mcpCheckRepliesHandler(s *store.Store) mcp.ToolHandler {
@@ -787,7 +787,7 @@ func mcpCheckRepliesHandler(s *store.Store) mcp.ToolHandler {
 	}
 }
 
-// mcpResendHandler returns the handler for the tmux-msg.resend MCP tool.
+// mcpResendHandler returns the handler for the tmux-tell.resend MCP tool.
 // Mirrors runResendWithStore via the shared resendGuard + replayRefusal so the
 // guard policy can't drift between the CLI and MCP surfaces.
 func mcpResendHandler(s *store.Store) mcp.ToolHandler {

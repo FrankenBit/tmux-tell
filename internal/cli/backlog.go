@@ -102,7 +102,7 @@ func applyBacklogPolicy(ctx context.Context, s *store.Store, cfg *config.File, n
 		FromAgent: name,
 		ToAgent:   name,
 		Kind:      store.KindBacklogAnnounce,
-		Body:      fmt.Sprintf("📬 %d queued — run tmux-msg.inbox", skipped),
+		Body:      fmt.Sprintf("📬 %d queued — run tmux-tell.inbox", skipped),
 	})
 	if err != nil {
 		res.Err = err

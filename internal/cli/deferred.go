@@ -70,7 +70,7 @@ type flushResult struct {
 
 // doFlushDeferred promotes the agent's deferred rows whose trigger matches to
 // `queued` (#227), returning how many. Shared by the CLI `flush` subcommand
-// and the tmux-msg.flush_deferred MCP tool so the authorization + trigger
+// and the tmux-tell.flush_deferred MCP tool so the authorization + trigger
 // policy can't drift between them.
 //
 // Authorization: the agent flushes ONLY messages addressed to itself —

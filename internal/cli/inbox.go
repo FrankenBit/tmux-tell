@@ -26,7 +26,7 @@ type ackResult struct {
 //	tmux-tell-claude inbox [AGENT] --ack-all
 //
 // AGENT defaults to the calling pane's identity (via the same
-// resolution rules as tmux-msg.whoami).
+// resolution rules as tmux-tell.whoami).
 func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("inbox", flag.ContinueOnError)
 	fs.SetOutput(stderr)

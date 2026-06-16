@@ -42,13 +42,13 @@ type controlResult struct {
 }
 
 // doControl is the shared validate+insert pipeline behind both the MCP
-// tmux-msg.control tool and the new `tmux-tell-claude control` CLI. Returns
+// tmux-tell.control tool and the new `tmux-tell-claude control` CLI. Returns
 // a structured result the caller renders into its preferred shape.
 //
 // Three execution paths:
 //
 //  1. mcp-restart-tmux-msg macro → two control rows
-//     (/mcp disable tmux-msg, /mcp enable tmux-msg).
+//     (/mcp disable tmux-tell, /mcp enable tmux-tell).
 //  2. compact with resume_with → one control row + one message row,
 //     reply_to-threaded; the mailman's post-compact pause lets the
 //     follow-up land after the slash-command settles.
@@ -87,7 +87,7 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 	// trimmed). We dispatch path 1 / path 2 against this — NOT against
 	// the resolved text — so the macro is keyed on the canonical command
 	// name rather than its prose form. (If a future whitelist edit added
-	// another entry whose Text happened to be `/mcp restart tmux-msg`,
+	// another entry whose Text happened to be `/mcp restart tmux-tell`,
 	// dispatching on text would silently route it through the macro;
 	// dispatching on name keeps the coupling visible.)
 	canonName := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(p.Command), "/"))
@@ -100,13 +100,13 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 	if canonName == "mcp-restart-tmux-msg" {
 		disableP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
-			Body: "/mcp disable tmux-msg", Kind: store.KindControl,
+			Body: "/mcp disable tmux-tell", Kind: store.KindControl,
 			MaxRecipientQueue: p.MaxRecipient,
 			MaxSenderBacklog:  p.MaxSender,
 		}
 		enableP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
-			Body: "/mcp enable tmux-msg", Kind: store.KindControl,
+			Body: "/mcp enable tmux-tell", Kind: store.KindControl,
 		}
 		disableRes, enableRes, err := s.InsertMessagePair(ctx, disableP, enableP, true)
 		if err != nil {

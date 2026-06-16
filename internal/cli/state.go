@@ -32,7 +32,7 @@ type agentStateResult struct {
 
 // resolveAgentState looks up the agent's pane and probes the agent
 // state. Shared between the CLI subcommand (`tmux-tell-claude state`) and
-// the MCP tool (`tmux-msg.agent_state`) so both surfaces produce
+// the MCP tool (`tmux-tell.agent_state`) so both surfaces produce
 // byte-identical JSON. Returns the result + any error from agent
 // resolution or tmux capture.
 //
@@ -94,7 +94,7 @@ func nowRFC3339() string {
 }
 
 // runStateCLI implements `tmux-tell-claude state --agent NAME` — the
-// operator-facing CLI sibling to the MCP `tmux-msg.agent_state`
+// operator-facing CLI sibling to the MCP `tmux-tell.agent_state`
 // tool. Both surfaces consume resolveAgentState so the JSON schema
 // is identical across them.
 //

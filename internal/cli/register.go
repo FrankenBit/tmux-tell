@@ -13,7 +13,7 @@ import (
 )
 
 // runRegisterCLI parses register-subcommand flags and dispatches to the
-// shared register pipeline. Mirrors the `tmux-msg.register` MCP tool so
+// shared register pipeline. Mirrors the `tmux-tell.register` MCP tool so
 // operators-at-a-bare-shell can register their own pane without needing
 // an MCP client (load-bearing for the operator-as-bus-participant use
 // case per #116).

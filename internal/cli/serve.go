@@ -804,7 +804,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				logger.Printf("drift_check_err id=%s err=%v", msg.PublicID, err)
 			case ambiguous:
 				driftFailReason = "drift_check_ambiguous"
-				logger.Printf("WARN drift_check_ambiguous id=%s agent=%s registered_pane=%s — multiple canonicals exact-or-substring-match the running --resume value (resolve via: tmux-msg.register name=<canonical> alias=<unique-suffix> force=true; #47)",
+				logger.Printf("WARN drift_check_ambiguous id=%s agent=%s registered_pane=%s — multiple canonicals exact-or-substring-match the running --resume value (resolve via: tmux-tell.register name=<canonical> alias=<unique-suffix> force=true; #47)",
 					msg.PublicID, opts.Agent, paneForDelivery)
 			case running != "" && running != opts.Agent:
 				newPane, lambig, lerr := walker.LookupByNameWithCanonicals(opCtx, opts.Agent, canonicals)
@@ -1394,7 +1394,7 @@ var errControlUnsupported = errors.New("cli: control command unsupported by this
 
 // isMCPControlCommand reports whether a control message body is an `/mcp …`
 // slash command — `/mcp disable|enable|restart …`, or a bare `/mcp`. The
-// restart macro synthesises `/mcp disable tmux-msg` + `/mcp enable tmux-msg`
+// restart macro synthesises `/mcp disable tmux-tell` + `/mcp enable tmux-tell`
 // rows, both of which this catches.
 //
 // Matches the FIRST whitespace-delimited token via strings.Fields rather than a

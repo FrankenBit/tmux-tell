@@ -72,7 +72,7 @@ func TestControlCLI_RestartMacro_QueuesBothRows(t *testing.T) {
 	if len(msgs) != 2 {
 		t.Fatalf("queued = %d, want 2", len(msgs))
 	}
-	wantBodies := []string{"/mcp disable tmux-msg", "/mcp enable tmux-msg"}
+	wantBodies := []string{"/mcp disable tmux-tell", "/mcp enable tmux-tell"}
 	for i, want := range wantBodies {
 		if msgs[i].Body != want {
 			t.Errorf("row[%d].Body = %q, want %q", i, msgs[i].Body, want)

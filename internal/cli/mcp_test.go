@@ -67,7 +67,7 @@ func TestMCP_Send_HappyPath(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
-	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.send", map[string]any{
 		"to":   "bob",
 		"body": "hello via mcp",
 	})
@@ -84,7 +84,7 @@ func TestMCP_Send_UnknownRecipient(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.send", map[string]any{
 		"to":   "ghost",
 		"body": "hi",
 	})
@@ -101,7 +101,7 @@ func TestMCP_Send_BlockOnStale(t *testing.T) {
 	m1 := tfInsert(t, s, "alice", "bob", "")
 	_ = tfInsert(t, s, "bob", "alice", m1) // crosses in, addressed to alice
 
-	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.send", map[string]any{
 		"to":             "bob",
 		"body":           "late reply",
 		"reply_to":       m1,
@@ -130,7 +130,7 @@ func TestMCP_Resend_GuardAndForce(t *testing.T) {
 	orig := seedResendMsg(t, s, "alice", "bob", "mcp replay body", store.StateDelivered)
 
 	// Without force → structured refusal carrying the replay block.
-	got := callMCPTool(t, s, "tmux-msg.resend", map[string]any{"id": orig})
+	got := callMCPTool(t, s, "tmux-tell.resend", map[string]any{"id": orig})
 	if got["_isError"] == true {
 		t.Fatalf("guard refusal should be structured, not an MCP error; got=%v", got)
 	}
@@ -142,7 +142,7 @@ func TestMCP_Resend_GuardAndForce(t *testing.T) {
 	}
 
 	// With force → ok:true replay.
-	got2 := callMCPTool(t, s, "tmux-msg.resend", map[string]any{"id": orig, "force": true})
+	got2 := callMCPTool(t, s, "tmux-tell.resend", map[string]any{"id": orig, "force": true})
 	if got2["ok"] != true {
 		t.Errorf("force resend ok = %v; got=%v", got2["ok"], got2)
 	}
@@ -154,7 +154,7 @@ func TestMCP_Resend_GuardAndForce(t *testing.T) {
 func TestMCP_Resend_UnknownID(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
-	got := callMCPTool(t, s, "tmux-msg.resend", map[string]any{"id": "ghost"})
+	got := callMCPTool(t, s, "tmux-tell.resend", map[string]any{"id": "ghost"})
 	if got["_isError"] != true {
 		t.Errorf("unknown id should be an MCP error; got=%v", got)
 	}
@@ -164,7 +164,7 @@ func TestMCP_Send_RequiresEnvVar(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "")
 	s := newCmdTestStore(t, "bob")
 
-	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.send", map[string]any{
 		"to":   "bob",
 		"body": "x",
 	})
@@ -177,7 +177,7 @@ func TestMCP_Whoami(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "tmux-msg.whoami", map[string]any{})
+	got := callMCPTool(t, s, "tmux-tell.whoami", map[string]any{})
 	if got["ok"] != true || got["name"] != "alice" {
 		t.Errorf("got %v", got)
 	}
@@ -187,7 +187,7 @@ func TestMCP_Agents(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob", "carol")
 
-	got := callMCPTool(t, s, "tmux-msg.agents", map[string]any{})
+	got := callMCPTool(t, s, "tmux-tell.agents", map[string]any{})
 	arr, ok := got["_array"].([]any)
 	if !ok {
 		t.Fatalf("expected array result, got %v", got)
@@ -243,7 +243,7 @@ func TestMCP_Send_QuickNoReplyExpectedMultiRecipient(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob", "carol")
 
-	got := callMCPTool(t, s, "tmux-msg.send", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.send", map[string]any{
 		"to":                []string{"bob", "carol"},
 		"body":              "quick fyi",
 		"quick":             true,
@@ -285,7 +285,7 @@ func TestMCP_Inbox(t *testing.T) {
 	ctx := context.Background()
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "queued"})
 
-	got := callMCPTool(t, s, "tmux-msg.inbox", map[string]any{})
+	got := callMCPTool(t, s, "tmux-tell.inbox", map[string]any{})
 	arr, ok := got["_array"].([]any)
 	if !ok {
 		t.Fatalf("expected array, got %v", got)
@@ -297,7 +297,7 @@ func TestMCP_Inbox(t *testing.T) {
 
 func TestMCP_Status(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
-	got := callMCPTool(t, s, "tmux-msg.status", map[string]any{})
+	got := callMCPTool(t, s, "tmux-tell.status", map[string]any{})
 	arr, ok := got["_array"].([]any)
 	if !ok {
 		t.Fatalf("expected array, got %v", got)
@@ -320,26 +320,26 @@ func TestMCP_ToolsListContract(t *testing.T) {
 	result := resp["result"].(map[string]any)
 	tools := result["tools"].([]any)
 	want := map[string]bool{
-		"tmux-msg.send":                true,
-		"tmux-msg.resend":              true,
-		"tmux-msg.flush_deferred":      true,
-		"tmux-msg.ask":                 true,
-		"tmux-msg.wait_for_reply":      true,
-		"tmux-msg.check_replies":       true,
-		"tmux-msg.ping":                true,
-		"tmux-msg.whoami_db":           true,
-		"tmux-msg.agents":              true,
-		"tmux-msg.whoami":              true,
-		"tmux-msg.inbox":               true,
-		"tmux-msg.status":              true,
-		"tmux-msg.register":            true,
-		"tmux-msg.unregister":          true,
-		"tmux-msg.control":             true,
-		"tmux-msg.message_status":      true,
-		"tmux-msg.get":                 true,
-		"tmux-msg.agent_state":         true,
-		"tmux-msg.flag_operator":       true,
-		"tmux-msg.clear_operator_flag": true,
+		"tmux-tell.send":                true,
+		"tmux-tell.resend":              true,
+		"tmux-tell.flush_deferred":      true,
+		"tmux-tell.ask":                 true,
+		"tmux-tell.wait_for_reply":      true,
+		"tmux-tell.check_replies":       true,
+		"tmux-tell.ping":                true,
+		"tmux-tell.whoami_db":           true,
+		"tmux-tell.agents":              true,
+		"tmux-tell.whoami":              true,
+		"tmux-tell.inbox":               true,
+		"tmux-tell.status":              true,
+		"tmux-tell.register":            true,
+		"tmux-tell.unregister":          true,
+		"tmux-tell.control":             true,
+		"tmux-tell.message_status":      true,
+		"tmux-tell.get":                 true,
+		"tmux-tell.agent_state":         true,
+		"tmux-tell.flag_operator":       true,
+		"tmux-tell.clear_operator_flag": true,
 	}
 	if len(tools) != len(want) {
 		t.Errorf("tools = %d, want %d", len(tools), len(want))
@@ -383,7 +383,7 @@ func TestMCP_Inbox_AckAll(t *testing.T) {
 	// New arrival after the epoch — must survive ack_all.
 	_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "new"})
 
-	got := callMCPTool(t, s, "tmux-msg.inbox", map[string]any{"ack_all": true})
+	got := callMCPTool(t, s, "tmux-tell.inbox", map[string]any{"ack_all": true})
 	if got["_isError"] == true {
 		t.Fatalf("unexpected error: %v", got)
 	}
@@ -395,7 +395,7 @@ func TestMCP_Inbox_AckAll(t *testing.T) {
 	}
 
 	// Default inbox (queued) must show only the new arrival.
-	inbox := callMCPTool(t, s, "tmux-msg.inbox", map[string]any{})
+	inbox := callMCPTool(t, s, "tmux-tell.inbox", map[string]any{})
 	arr, _ := inbox["_array"].([]any)
 	if len(arr) != 1 {
 		t.Errorf("queued after ack_all = %d, want 1", len(arr))
@@ -410,7 +410,7 @@ func TestMCP_Inbox_AckIds(t *testing.T) {
 	res1, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "m1"})
 	res2, _ := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "m2"})
 
-	got := callMCPTool(t, s, "tmux-msg.inbox", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.inbox", map[string]any{
 		"ack_ids": []string{res1.PublicID},
 	})
 	if got["_isError"] == true {
@@ -424,7 +424,7 @@ func TestMCP_Inbox_AckIds(t *testing.T) {
 	}
 
 	// res2 must remain queued.
-	inbox := callMCPTool(t, s, "tmux-msg.inbox", map[string]any{})
+	inbox := callMCPTool(t, s, "tmux-tell.inbox", map[string]any{})
 	arr, _ := inbox["_array"].([]any)
 	if len(arr) != 1 {
 		t.Fatalf("queued after ack_ids = %d, want 1", len(arr))

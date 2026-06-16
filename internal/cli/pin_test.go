@@ -79,7 +79,7 @@ func TestPin_WireShapeSingleSoT_CLIAndMCPByteIdentity(t *testing.T) {
 	cliMap := parseJSONResult(t, stdout.Bytes())
 
 	// MCP shape.
-	mcpMap := callMCPTool(t, s, "tmux-msg.message_status", map[string]any{"id": id})
+	mcpMap := callMCPTool(t, s, "tmux-tell.message_status", map[string]any{"id": id})
 
 	// Strip MCP-private fields injected by the test harness.
 	delete(mcpMap, "_text")

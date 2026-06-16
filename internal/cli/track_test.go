@@ -159,7 +159,7 @@ func TestMCP_MessageStatus_HappyPath(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
 	id := seedMessage(t, s)
 
-	got := callMCPTool(t, s, "tmux-msg.message_status", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.message_status", map[string]any{
 		"id": id,
 	})
 	if got["ok"] != true || got["id"] != id || got["state"] != "queued" {
@@ -171,7 +171,7 @@ func TestMCP_MessageStatus_NotFound(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
 
-	got := callMCPTool(t, s, "tmux-msg.message_status", map[string]any{
+	got := callMCPTool(t, s, "tmux-tell.message_status", map[string]any{
 		"id": "nope",
 	})
 	if got["_isError"] != true {

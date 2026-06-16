@@ -217,7 +217,7 @@ func resolveSender(ctx context.Context, s *store.Store, fromFlag string) (string
 	return name, nil
 }
 
-// mcpFlagOperatorHandler is the MCP-side surface for `tmux-msg.flag_operator`
+// mcpFlagOperatorHandler is the MCP-side surface for `tmux-tell.flag_operator`
 // (#224). Mirrors doFlagOperator semantics.
 func mcpFlagOperatorHandler(s *store.Store) func(ctx context.Context, args json.RawMessage) (any, error) {
 	type input struct {
@@ -244,7 +244,7 @@ func mcpFlagOperatorHandler(s *store.Store) func(ctx context.Context, args json.
 }
 
 // mcpClearOperatorFlagHandler is the MCP-side surface for
-// `tmux-msg.clear_operator_flag` (#224).
+// `tmux-tell.clear_operator_flag` (#224).
 func mcpClearOperatorFlagHandler(s *store.Store) func(ctx context.Context, args json.RawMessage) (any, error) {
 	return func(ctx context.Context, _ json.RawMessage) (any, error) {
 		from, err := resolveMCPIdentity(ctx, s)

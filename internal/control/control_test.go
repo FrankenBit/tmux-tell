@@ -11,9 +11,9 @@ func TestResolve_SelfScope(t *testing.T) {
 		"rename":               "/rename",
 		"cost":                 "/cost",
 		"help":                 "/help",
-		"mcp-enable-tmux-msg":  "/mcp enable tmux-msg",
-		"mcp-disable-tmux-msg": "/mcp disable tmux-msg",
-		"mcp-restart-tmux-msg": "/mcp restart tmux-msg",
+		"mcp-enable-tmux-msg":  "/mcp enable tmux-tell",
+		"mcp-disable-tmux-msg": "/mcp disable tmux-tell",
+		"mcp-restart-tmux-msg": "/mcp restart tmux-tell",
 		"/compact":             "/compact",
 		"COMPACT":              "/compact",
 		"  cost  ":             "/cost",
@@ -37,8 +37,8 @@ func TestResolve_PeerScope_OnlyPeerAllowed(t *testing.T) {
 	allowed := map[string]string{
 		"rename":               "/rename",
 		"help":                 "/help",
-		"mcp-enable-tmux-msg":  "/mcp enable tmux-msg",
-		"mcp-restart-tmux-msg": "/mcp restart tmux-msg",
+		"mcp-enable-tmux-msg":  "/mcp enable tmux-tell",
+		"mcp-restart-tmux-msg": "/mcp restart tmux-tell",
 	}
 	for in, want := range allowed {
 		// Globally peer-allowed commands resolve for any (sender,

@@ -197,17 +197,17 @@ func mergeCodexConfig(configPath, agentName string, dryRun bool) (hooksWritten, 
 
 	existingAgentName := ""
 	if probe.McpServers != nil {
-		if entry, ok := probe.McpServers["tmux-msg"]; ok {
+		if entry, ok := probe.McpServers["tmux-tell"]; ok {
 			existingAgentName = entry.Env["TMUX_AGENT_NAME"]
 		}
 	}
 	switch {
 	case existingAgentName == "":
-		toAppend = append(toAppend, fmt.Sprintf("[mcp_servers.tmux-msg.env]\nTMUX_AGENT_NAME = %q", agentName))
+		toAppend = append(toAppend, fmt.Sprintf("[mcp_servers.tmux-tell.env]\nTMUX_AGENT_NAME = %q", agentName))
 		envWritten = true
 	case existingAgentName != agentName:
 		warnings = append(warnings, fmt.Sprintf(
-			"mcp_servers.tmux-msg.env.TMUX_AGENT_NAME is %q (want %q); skipped — update manually",
+			"mcp_servers.tmux-tell.env.TMUX_AGENT_NAME is %q (want %q); skipped — update manually",
 			existingAgentName, agentName))
 	}
 
@@ -281,7 +281,7 @@ func emitCodexInstallResult(stdout, stderr io.Writer, r codexInstallResult, form
 				fmt.Fprintf(stdout, "WRITTEN\thooks.UserPromptSubmit + hooks.SessionStart → %s\n", configPath)
 			}
 			if r.EnvWritten {
-				fmt.Fprintf(stdout, "WRITTEN\tmcp_servers.tmux-msg.env.TMUX_AGENT_NAME=%q → %s\n", agentName, configPath)
+				fmt.Fprintf(stdout, "WRITTEN\tmcp_servers.tmux-tell.env.TMUX_AGENT_NAME=%q → %s\n", agentName, configPath)
 			}
 			for _, w := range r.Warnings {
 				fmt.Fprintf(stdout, "WARN\t%s\n", w)

@@ -87,17 +87,17 @@ var Allowed = map[string]Command{
 	// For the legitimate "peer asks me to restart your MCP" case,
 	// callers use the mcp-restart-tmux-msg macro below, which the
 	// MCP handler synthesises into disable+enable internally.
-	"mcp-disable-tmux-msg": {Text: "/mcp disable tmux-msg", Self: true, Peer: false},
-	"mcp-enable-tmux-msg":  {Text: "/mcp enable tmux-msg", Self: true, Peer: true},
+	"mcp-disable-tmux-msg": {Text: "/mcp disable tmux-tell", Self: true, Peer: false},
+	"mcp-enable-tmux-msg":  {Text: "/mcp enable tmux-tell", Self: true, Peer: true},
 	// mcp-restart-tmux-msg is a *macro*. The Text field documents what
 	// the macro represents but is not actually typed into a pane —
 	// Claude Code has no `/mcp restart` slash command. The MCP handler
 	// detects this command by name (or by matching this Text as a
-	// sentinel) and queues two control rows: `/mcp disable tmux-msg`
-	// then `/mcp enable tmux-msg`. Peer-allowed because the synthesised
+	// sentinel) and queues two control rows: `/mcp disable tmux-tell`
+	// then `/mcp enable tmux-tell`. Peer-allowed because the synthesised
 	// rows always restore the connection; the raw disable that would
 	// expose the DoS surface is never exposed to peers directly.
-	"mcp-restart-tmux-msg": {Text: "/mcp restart tmux-msg", Self: true, Peer: true},
+	"mcp-restart-tmux-msg": {Text: "/mcp restart tmux-tell", Self: true, Peer: true},
 }
 
 // Edge identifies a specific (sender → recipient) pair for which a

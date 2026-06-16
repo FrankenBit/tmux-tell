@@ -103,7 +103,7 @@ func TestServe_PingFailedOnDeadPane(t *testing.T) {
 	}
 }
 
-// TestMCPPingHandler_Wiring confirms the tmux-msg.ping MCP handler
+// TestMCPPingHandler_Wiring confirms the tmux-tell.ping MCP handler
 // resolves identity, runs the shared probe, and returns the pingResult
 // shape. With no mailman running it lands in the timeout state on a
 // short budget — enough to prove the wiring without flakiness.

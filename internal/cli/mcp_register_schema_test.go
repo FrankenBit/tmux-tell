@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// TestRegisterToolSchema_AdapterNamedAndNeutral proves the tmux-msg.register MCP
+// TestRegisterToolSchema_AdapterNamedAndNeutral proves the tmux-tell.register MCP
 // tool schema (#314): under a codex profile it names the codex binary in the
 // mailman-unit / inbox / hook-context references and carries no claude literal,
 // and the delivery-mode prose is adapter-neutral ("the recipient agent's

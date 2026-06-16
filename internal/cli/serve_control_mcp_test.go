@@ -33,11 +33,11 @@ func TestIsMCPControlCommand(t *testing.T) {
 		body string
 		want bool
 	}{
-		{"/mcp disable tmux-msg", true},
-		{"/mcp enable tmux-msg", true},
-		{"/mcp restart tmux-msg", true},
+		{"/mcp disable tmux-tell", true},
+		{"/mcp enable tmux-tell", true},
+		{"/mcp restart tmux-tell", true},
 		{"/mcp", true},
-		{"  /mcp disable tmux-msg  ", true},  // whitespace-tolerant
+		{"  /mcp disable tmux-tell  ", true}, // whitespace-tolerant
 		{"/mcp\tdisable tmux-msg", true},     // tab separator (Lookout #421 review)
 		{"/mcp\ndisable tmux-msg", true},     // newline separator
 		{"/mcp\t\n  disable tmux-msg", true}, // mixed whitespace run
@@ -80,7 +80,7 @@ func TestDeliverOne_Codex_SkipsMCPControl(t *testing.T) {
 	withActiveProfile(t, codexPasteCapableProfile)
 	lits := recordSendKeysLiteral(t)
 
-	msg := &store.Message{Kind: store.KindControl, Body: "/mcp disable tmux-msg", PublicID: "abc1"}
+	msg := &store.Message{Kind: store.KindControl, Body: "/mcp disable tmux-tell", PublicID: "abc1"}
 	err := deliverOne(context.Background(), "%3", msg, 0, nil)
 	if !errors.Is(err, errControlUnsupported) {
 		t.Fatalf("codex /mcp control: err = %v, want errControlUnsupported", err)
@@ -96,11 +96,11 @@ func TestDeliverOne_Claude_PastesMCPControl(t *testing.T) {
 	// active defaults to the Claude profile (SupportsMCPSlashCommand=true).
 	lits := recordSendKeysLiteral(t)
 
-	msg := &store.Message{Kind: store.KindControl, Body: "/mcp disable tmux-msg", PublicID: "abc2"}
+	msg := &store.Message{Kind: store.KindControl, Body: "/mcp disable tmux-tell", PublicID: "abc2"}
 	if err := deliverOne(context.Background(), "%3", msg, 0, nil); err != nil {
 		t.Fatalf("claude /mcp control: err = %v, want nil", err)
 	}
-	if len(*lits) != 1 || (*lits)[0] != "/mcp disable tmux-msg" {
+	if len(*lits) != 1 || (*lits)[0] != "/mcp disable tmux-tell" {
 		t.Errorf("claude /mcp control should type the body; got send-keys -l %q", *lits)
 	}
 }
@@ -151,7 +151,7 @@ func TestServe_Codex_MCPControl_SkippedDeliveredWithWarn(t *testing.T) {
 	_ = s.UpsertAgent(ctx, "lookout", "%3")
 	if _, err := s.InsertMessage(ctx, store.InsertParams{
 		FromAgent: "alice", ToAgent: "lookout",
-		Body: "/mcp disable tmux-msg", Kind: store.KindControl,
+		Body: "/mcp disable tmux-tell", Kind: store.KindControl,
 	}); err != nil {
 		t.Fatalf("insert: %v", err)
 	}

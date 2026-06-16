@@ -91,7 +91,7 @@ func TestCodexInstall_FreshInstall(t *testing.T) {
 		"[hooks.UserPromptSubmit]",
 		"[hooks.SessionStart]",
 		"command = \"tmux-tell-codex hook-context\"",
-		"[mcp_servers.tmux-msg.env]",
+		"[mcp_servers.tmux-tell.env]",
 		"TMUX_AGENT_NAME = \"lookout\"",
 	} {
 		if !strings.Contains(body, want) {
@@ -121,7 +121,7 @@ command = "tmux-tell-codex hook-context"
 [hooks.SessionStart]
 command = "tmux-tell-codex hook-context"
 
-[mcp_servers.tmux-msg.env]
+[mcp_servers.tmux-tell.env]
 TMUX_AGENT_NAME = "lookout"
 `
 	if err := os.WriteFile(cfg, []byte(existing), 0o600); err != nil {
@@ -221,7 +221,7 @@ command = "tmux-tell-codex hook-context"
 [hooks.SessionStart]
 command = "tmux-tell-codex hook-context"
 
-[mcp_servers.tmux-msg.env]
+[mcp_servers.tmux-tell.env]
 TMUX_AGENT_NAME = "old-lookout"
 `
 	if err := os.WriteFile(cfg, []byte(existing), 0o600); err != nil {

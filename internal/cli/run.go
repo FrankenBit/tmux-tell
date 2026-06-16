@@ -20,12 +20,12 @@ func usageText() string {
 Subcommands:
   send    Queue a message for an agent (validates caps, returns JSON)
   resend  Replay an existing message to its recipient (recovery; #157)
-  flush   Promote your deferred messages for a trigger (e.g. post-/compact: flush --trigger=resume; mirrors tmux-msg.flush_deferred; #227)
-  ask     Send a question and get an ask_id to wait on (mirrors tmux-msg.ask; #250)
-  wait-for-reply  Block until a reply to <ask_id> arrives or --timeout (mirrors tmux-msg.wait_for_reply; #250)
-  check-replies   Non-blocking: list replies to <ask_id> (mirrors tmux-msg.check_replies; #250)
-  ping    Substrate-only reachability probe — daemon up + agent reachable, no pane paste (mirrors tmux-msg.ping)
-  control Send a whitelisted slash-command to a pane (mirrors tmux-msg.control)
+  flush   Promote your deferred messages for a trigger (e.g. post-/compact: flush --trigger=resume; mirrors tmux-tell.flush_deferred; #227)
+  ask     Send a question and get an ask_id to wait on (mirrors tmux-tell.ask; #250)
+  wait-for-reply  Block until a reply to <ask_id> arrives or --timeout (mirrors tmux-tell.wait_for_reply; #250)
+  check-replies   Non-blocking: list replies to <ask_id> (mirrors tmux-tell.check_replies; #250)
+  ping    Substrate-only reachability probe — daemon up + agent reachable, no pane paste (mirrors tmux-tell.ping)
+  control Send a whitelisted slash-command to a pane (mirrors tmux-tell.control)
   track   Show the delivery state of a single message by its public_id
   get     Fetch a processed message by ID (recovery for swallowed deliveries, #111)
   inbox   List queued messages for an agent
@@ -39,8 +39,8 @@ Subcommands:
   config  Read/show the host-level config (#54). Subcommands: show
   agents  List registered agents with pane liveness
   whoami  Show this session's registration (auto-resolves identity)
-  register   Register this (or another) pane on the bus (mirrors tmux-msg.register; #116)
-  unregister Remove an agent from the registry + stop its mailman (mirrors tmux-msg.unregister; #289)
+  register   Register this (or another) pane on the bus (mirrors tmux-tell.register; #116)
+  unregister Remove an agent from the registry + stop its mailman (mirrors tmux-tell.unregister; #289)
   serve   Run the mailman daemon for one agent
   pause   Halt one or all mailman daemons
   resume  Resume paused mailmen
