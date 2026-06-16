@@ -39,6 +39,12 @@ type controlResult struct {
 	Macro    string `json:"macro,omitempty"`
 	Command  string `json:"command"`
 	Queued   int    `json:"queued"`
+	// Deprecated names the canonical replacement when the caller invoked a
+	// deprecated control-macro alias (#480, e.g. mcp-restart-tmux-msg →
+	// mcp-restart-tmux-tell). Empty (omitted) on a canonical invocation. The
+	// macro still runs correctly; this is the wire-visible nudge. Both callers
+	// also emit a greppable WARN deprecated_control_macro to their log.
+	Deprecated string `json:"deprecated,omitempty"`
 }
 
 // doControl is the shared validate+insert pipeline behind both the MCP
@@ -47,7 +53,7 @@ type controlResult struct {
 //
 // Three execution paths:
 //
-//  1. mcp-restart-tmux-msg macro → two control rows
+//  1. mcp-restart-tmux-tell macro → two control rows
 //     (/mcp disable tmux-tell, /mcp enable tmux-tell).
 //  2. compact with resume_with → one control row + one message row,
 //     reply_to-threaded; the mailman's post-compact pause lets the
@@ -83,21 +89,28 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 		return nil, err
 	}
 
-	// canonName is the whitelist key (lowercased, slash-stripped,
-	// trimmed). We dispatch path 1 / path 2 against this — NOT against
-	// the resolved text — so the macro is keyed on the canonical command
-	// name rather than its prose form. (If a future whitelist edit added
-	// another entry whose Text happened to be `/mcp restart tmux-tell`,
-	// dispatching on text would silently route it through the macro;
-	// dispatching on name keeps the coupling visible.)
-	canonName := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(p.Command), "/"))
+	// canonName is the whitelist key (lowercased, slash-stripped, trimmed,
+	// AND deprecated-alias-resolved per #480). We dispatch path 1 / path 2
+	// against this — NOT against the resolved text — so the macro is keyed on
+	// the canonical command name rather than its prose form. (If a future
+	// whitelist edit added another entry whose Text happened to be `/mcp
+	// restart tmux-tell`, dispatching on text would silently route it through
+	// the macro; dispatching on name keeps the coupling visible.) Canonicalize
+	// follows a legacy `mcp-restart-tmux-msg` alias to `…-tmux-tell` so the old
+	// macro name still triggers the restart path.
+	canonName, wasAlias := control.Canonicalize(p.Command)
+	deprecated := ""
+	if wasAlias {
+		deprecated = fmt.Sprintf("control macro %q is a deprecated alias for %q (removed v1.0, ADR-0008 §Discretion)",
+			strings.ToLower(strings.TrimSpace(p.Command)), canonName)
+	}
 
 	// Path 1: restart macro. After #29, both rows land in a single
 	// BEGIN IMMEDIATE transaction via InsertMessagePair — atomicity
 	// guarantee means we can never leave the recipient half-actioned
 	// (disabled but never re-enabled). Cap budget for +2 slots is
 	// enforced inside the same transaction.
-	if canonName == "mcp-restart-tmux-msg" {
+	if canonName == "mcp-restart-tmux-tell" {
 		disableP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
 			Body: "/mcp disable tmux-tell", Kind: store.KindControl,
@@ -115,6 +128,7 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 		return &controlResult{
 			OK: true, ID: disableRes.PublicID, EnableID: enableRes.PublicID,
 			Queued: enableRes.Queued, Command: text, Macro: "restart",
+			Deprecated: deprecated,
 		}, nil
 	}
 
@@ -149,6 +163,7 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 		return &controlResult{
 			OK: true, ID: compactRes.PublicID, ResumeID: resumeRes.PublicID,
 			Queued: resumeRes.Queued, Command: text, Macro: "resume",
+			Deprecated: deprecated,
 		}, nil
 	}
 
@@ -165,6 +180,7 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 	}
 	return &controlResult{
 		OK: true, ID: res.PublicID, Queued: res.Queued, Command: text,
+		Deprecated: deprecated,
 	}, nil
 }
 
@@ -251,6 +267,9 @@ func runControlCLI(args []string, stdout, stderr io.Writer) int {
 		default:
 			return writeJSONError(stdout, stderr, msg, exitDataErr)
 		}
+	}
+	if res.Deprecated != "" {
+		fmt.Fprintf(stderr, "WARN deprecated_control_macro %s\n", res.Deprecated)
 	}
 	_ = writeJSONResult(stdout, res)
 	return exitOK

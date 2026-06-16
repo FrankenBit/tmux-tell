@@ -33,6 +33,17 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Changed
+
+- **Control-macro identifiers renamed `mcp-{restart,disable,enable}-tmux-msg` →
+  `…-tmux-tell`** to follow the substrate rename (#480). The pre-rename names keep
+  working as **deprecated aliases through v1.0** (ADR-0008 §Discretion): an
+  invocation `Canonicalize`s to the `…-tmux-tell` form, still triggers the same
+  macro, carries a `deprecated` field in the control response, and logs a greppable
+  `WARN deprecated_control_macro` to stderr (CLI + MCP surfaces). `refresh-all-mcps`
+  now fires the canonical `mcp-restart-tmux-tell`, and the permission/whitelist
+  registry advertises the new identifiers.
+
 ## [0.18.0] — 2026-06-16
 
 The rename release — **`tmux-msg` is now `tmux-tell`**. This completes the second

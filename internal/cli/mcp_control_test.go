@@ -187,7 +187,7 @@ func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
 	}
 }
 
-// mcp-restart-tmux-msg is a peer-allowed macro that the handler
+// mcp-restart-tmux-tell is a peer-allowed macro that the handler
 // expands into two control rows: /mcp disable tmux-tell, then
 // /mcp enable tmux-tell (reply_to-threaded for audit).
 func TestMCP_Control_RestartMacro_SelfInvocation_QueuesBothRows(t *testing.T) {
@@ -196,7 +196,7 @@ func TestMCP_Control_RestartMacro_SelfInvocation_QueuesBothRows(t *testing.T) {
 
 	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "alice",
-		"command": "mcp-restart-tmux-msg",
+		"command": "mcp-restart-tmux-tell",
 	})
 	if got["ok"] != true || got["macro"] != "restart" {
 		t.Fatalf("got=%v; want ok+macro=restart", got)
@@ -237,7 +237,7 @@ func TestMCP_Control_RestartMacro_PeerInvocation_QueuesBothRows(t *testing.T) {
 
 	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "bob",
-		"command": "mcp-restart-tmux-msg",
+		"command": "mcp-restart-tmux-tell",
 	})
 	if got["ok"] != true || got["macro"] != "restart" {
 		t.Fatalf("got=%v; want ok+macro=restart", got)
@@ -263,7 +263,7 @@ func TestMCP_Control_RestartMacro_PeerInvocation_QueuesBothRows(t *testing.T) {
 	}
 }
 
-// Regression test for the #28 scope flip: raw mcp-disable-tmux-msg
+// Regression test for the #28 scope flip: raw mcp-disable-tmux-tell
 // is now self-only. A peer attempt must be rejected so a prompt-
 // injected agent can't silently DoS another agent's bus connection.
 func TestMCP_Control_RawDisable_RejectedOnPeer(t *testing.T) {
@@ -272,7 +272,7 @@ func TestMCP_Control_RawDisable_RejectedOnPeer(t *testing.T) {
 
 	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "bob",
-		"command": "mcp-disable-tmux-msg",
+		"command": "mcp-disable-tmux-tell",
 	})
 	if got["_isError"] != true {
 		t.Fatalf("raw mcp-disable on peer must be rejected; got=%v", got)
@@ -293,7 +293,7 @@ func TestMCP_Control_RawDisable_RejectedOnPeer(t *testing.T) {
 // Regression for #28 follow-up (Surveyor Q1A): the macro dispatch is
 // keyed on the canonical command name, not the resolved Text. A call
 // whose .Command resolves through Resolve() but whose name isn't
-// "mcp-restart-tmux-msg" must NOT enter the two-row macro path.
+// "mcp-restart-tmux-tell" must NOT enter the two-row macro path.
 // Today no other entry shares the macro's text, but the contract
 // should be enforced on name to keep the coupling visible.
 func TestMCP_Control_RestartMacro_DispatchesOnName(t *testing.T) {

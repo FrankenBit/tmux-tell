@@ -52,7 +52,7 @@ func TestControlCLI_RestartMacro_QueuesBothRows(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
-		[]string{"--to", "bob", "--command", "mcp-restart-tmux-msg"},
+		[]string{"--to", "bob", "--command", "mcp-restart-tmux-tell"},
 		&stdout, &stderr,
 	)
 	if exit != exitOK {
@@ -77,6 +77,40 @@ func TestControlCLI_RestartMacro_QueuesBothRows(t *testing.T) {
 		if msgs[i].Body != want {
 			t.Errorf("row[%d].Body = %q, want %q", i, msgs[i].Body, want)
 		}
+	}
+}
+
+// TestControlCLI_DeprecatedAlias_StillRestarts pins #480's backward-compat at the
+// CLI surface: invoking the legacy `mcp-restart-tmux-msg` name still triggers the
+// restart macro (2 rows, tmux-tell text), surfaces a `deprecated` field naming the
+// canonical form, and emits a greppable WARN deprecated_control_macro to stderr.
+func TestControlCLI_DeprecatedAlias_StillRestarts(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bob")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
+	t.Setenv("CLAUDE_MSG_DB", ":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+
+	var stdout, stderr bytes.Buffer
+	exit := runControlCLI(
+		[]string{"--to", "bob", "--command", "mcp-restart-tmux-msg"}, // legacy alias
+		&stdout, &stderr,
+	)
+	if exit != exitOK {
+		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
+	}
+	got := parseJSONResult(t, stdout.Bytes())
+	if got["macro"] != "restart" {
+		t.Errorf("macro = %v, want restart (alias must still trigger the macro)", got["macro"])
+	}
+	if dep, _ := got["deprecated"].(string); !strings.Contains(dep, "mcp-restart-tmux-tell") {
+		t.Errorf("deprecated field = %q, want it to name the canonical mcp-restart-tmux-tell", dep)
+	}
+	if !strings.Contains(stderr.String(), "WARN deprecated_control_macro") {
+		t.Errorf("missing WARN deprecated_control_macro on stderr; got: %s", stderr.String())
+	}
+	msgs, _ := s.ListMessages(context.Background(), store.ListFilter{ToAgent: "bob", State: store.StateQueued, Limit: 10})
+	if len(msgs) != 2 || msgs[0].Body != "/mcp disable tmux-tell" || msgs[1].Body != "/mcp enable tmux-tell" {
+		t.Errorf("rows = %+v, want disable+enable tmux-tell", msgs)
 	}
 }
 

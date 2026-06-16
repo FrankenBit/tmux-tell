@@ -31,7 +31,7 @@ type refreshResult struct {
 
 // refreshAgentEntry is one row of refreshResult.agents — a single
 // agent's fan-out outcome. `DisableID` and `EnableID` are the public
-// ids of the two control rows the mcp-restart-tmux-msg macro queues
+// ids of the two control rows the mcp-restart-tmux-tell macro queues
 // (see #28); they're present on success, absent on failure. `Error`
 // is the inverse — present on failure, absent on success.
 type refreshAgentEntry struct {
@@ -47,7 +47,7 @@ type refreshAgentEntry struct {
 // Usage: tmux-tell-claude refresh-all-mcps [--format text|json]
 //
 // Convenience surface for the bulk version of `tmux-tell-claude control
-// --to <agent> --command mcp-restart-tmux-msg`. Iterates the
+// --to <agent> --command mcp-restart-tmux-tell`. Iterates the
 // registered agents table and fires the macro per agent, then
 // reports per-agent success/failure + a summary line.
 //
@@ -96,7 +96,7 @@ func runRefreshAllMcpsCLI(args []string, stdout, stderr io.Writer) int {
 
 // runRefreshAllMcpsWithStore is the testable core. Takes a resolved
 // sender + an open store, iterates registered agents, calls
-// doControl per agent with command=mcp-restart-tmux-msg, and
+// doControl per agent with command=mcp-restart-tmux-tell, and
 // renders the aggregated result.
 func runRefreshAllMcpsWithStore(ctx context.Context, s *store.Store,
 	sender, format string, stdout, stderr io.Writer,
@@ -119,7 +119,7 @@ func runRefreshAllMcpsWithStore(ctx context.Context, s *store.Store,
 		Agents: make([]refreshAgentEntry, 0, len(agents)),
 	}
 
-	// The mcp-restart-tmux-msg macro inserts a pair (2 control rows)
+	// The mcp-restart-tmux-tell macro inserts a pair (2 control rows)
 	// per agent, all from `sender`. With the default sender backlog
 	// cap of 2, the second agent's fan-out would already trip the
 	// cap before alice's first agent drained. Raise the sender cap
@@ -145,7 +145,7 @@ func runRefreshAllMcpsWithStore(ctx context.Context, s *store.Store,
 		ctrlRes, ctrlErr := doControl(ctx, s, controlParams{
 			From:         sender,
 			To:           a.Name,
-			Command:      "mcp-restart-tmux-msg",
+			Command:      "mcp-restart-tmux-tell",
 			MaxRecipient: capRecipientQueue,
 			MaxSender:    maxSenderForFanout,
 			MaxBody:      capBodyBytes,

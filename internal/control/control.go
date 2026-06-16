@@ -85,11 +85,11 @@ var Allowed = map[string]Command{
 	// repeated /mcp disable would silently cut another agent off the
 	// bus. Enable stays peer-allowed (re-enabling someone is helpful).
 	// For the legitimate "peer asks me to restart your MCP" case,
-	// callers use the mcp-restart-tmux-msg macro below, which the
+	// callers use the mcp-restart-tmux-tell macro below, which the
 	// MCP handler synthesises into disable+enable internally.
-	"mcp-disable-tmux-msg": {Text: "/mcp disable tmux-tell", Self: true, Peer: false},
-	"mcp-enable-tmux-msg":  {Text: "/mcp enable tmux-tell", Self: true, Peer: true},
-	// mcp-restart-tmux-msg is a *macro*. The Text field documents what
+	"mcp-disable-tmux-tell": {Text: "/mcp disable tmux-tell", Self: true, Peer: false},
+	"mcp-enable-tmux-tell":  {Text: "/mcp enable tmux-tell", Self: true, Peer: true},
+	// mcp-restart-tmux-tell is a *macro*. The Text field documents what
 	// the macro represents but is not actually typed into a pane —
 	// Claude Code has no `/mcp restart` slash command. The MCP handler
 	// detects this command by name (or by matching this Text as a
@@ -97,7 +97,31 @@ var Allowed = map[string]Command{
 	// then `/mcp enable tmux-tell`. Peer-allowed because the synthesised
 	// rows always restore the connection; the raw disable that would
 	// expose the DoS surface is never exposed to peers directly.
-	"mcp-restart-tmux-msg": {Text: "/mcp restart tmux-tell", Self: true, Peer: true},
+	"mcp-restart-tmux-tell": {Text: "/mcp restart tmux-tell", Self: true, Peer: true},
+}
+
+// aliasOf maps a deprecated control-command name to its canonical replacement
+// (#480, the v0.18.1 substrate-rename follow-up to #478). The pre-rename
+// `mcp-*-tmux-msg` macro identifiers keep working through v1.0 per ADR-0008
+// §Discretion — Resolve + Canonicalize follow them transparently, and the IO
+// boundary (control CLI / MCP handler) emits a deprecation WARN naming the
+// canonical form. A list-shaped seam so the next rename appends without
+// re-shaping (mirrors the binary alias chain from #440 Phase 3).
+var aliasOf = map[string]string{
+	"mcp-disable-tmux-msg": "mcp-disable-tmux-tell",
+	"mcp-enable-tmux-msg":  "mcp-enable-tmux-tell",
+	"mcp-restart-tmux-msg": "mcp-restart-tmux-tell",
+}
+
+// Canonicalize normalises a command name (trim, strip leading slash, lowercase)
+// and follows a deprecated alias to its canonical form. Returns the canonical
+// name + whether the input was a deprecated alias (so the caller can WARN).
+func Canonicalize(name string) (canonical string, wasAlias bool) {
+	n := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(name), "/"))
+	if c, ok := aliasOf[n]; ok {
+		return c, true
+	}
+	return n, false
 }
 
 // Edge identifies a specific (sender → recipient) pair for which a
@@ -172,9 +196,7 @@ var ErrScopeDenied = errors.New("control: command not allowed in this scope")
 // you can't aim it that way (or you specifically aren't on the
 // per-edge allowlist)".
 func Resolve(name string, scope Scope, sender, recipient string) (string, error) {
-	n := strings.TrimSpace(name)
-	n = strings.TrimPrefix(n, "/")
-	n = strings.ToLower(n)
+	n, _ := Canonicalize(name) // follows a deprecated alias to its canonical name
 	if n == "" {
 		return "", ErrNotAllowed
 	}

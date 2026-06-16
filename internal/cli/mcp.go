@@ -935,6 +935,13 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 		if err != nil {
 			return nil, err
 		}
+		// #480: a legacy control-macro alias still runs, but log a greppable
+		// deprecation WARN to the MCP server's stderr (journal) so an operator
+		// can spot fleet usage of the old name. The agent also sees the
+		// `deprecated` field in the response below.
+		if res.Deprecated != "" {
+			fmt.Fprintf(os.Stderr, "WARN deprecated_control_macro %s\n", res.Deprecated)
+		}
 		// The MCP framework json.Marshals handler returns
 		// (internal/mcp/server.go:212), and controlResult's JSON tags
 		// already encode the wire shape — so returning the struct

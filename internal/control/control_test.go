@@ -5,18 +5,47 @@ import (
 	"testing"
 )
 
+// TestCanonicalize_DeprecatedAliases pins #480's backward-compat: the pre-rename
+// mcp-*-tmux-msg macro identifiers canonicalize to their tmux-tell forms (flagged
+// as aliases), canonical names pass through unflagged, and Resolve via a legacy
+// alias yields the same Text as the canonical name.
+func TestCanonicalize_DeprecatedAliases(t *testing.T) {
+	aliases := map[string]string{
+		"mcp-restart-tmux-msg":  "mcp-restart-tmux-tell",
+		"mcp-disable-tmux-msg":  "mcp-disable-tmux-tell",
+		"mcp-enable-tmux-msg":   "mcp-enable-tmux-tell",
+		"/MCP-Restart-Tmux-Msg": "mcp-restart-tmux-tell", // trim/slash/lowercase too
+	}
+	for in, want := range aliases {
+		got, wasAlias := Canonicalize(in)
+		if got != want || !wasAlias {
+			t.Errorf("Canonicalize(%q) = (%q, %v), want (%q, true)", in, got, wasAlias, want)
+		}
+	}
+	for _, canon := range []string{"mcp-restart-tmux-tell", "compact", "rename"} {
+		if got, wasAlias := Canonicalize(canon); got != canon || wasAlias {
+			t.Errorf("Canonicalize(%q) = (%q, %v), want (%q, false)", canon, got, wasAlias, canon)
+		}
+	}
+	legacy, lerr := Resolve("mcp-restart-tmux-msg", ScopePeer, "a", "b")
+	canon, cerr := Resolve("mcp-restart-tmux-tell", ScopePeer, "a", "b")
+	if lerr != nil || cerr != nil || legacy != canon || legacy == "" {
+		t.Errorf("alias Resolve %q (err %v) != canonical Resolve %q (err %v)", legacy, lerr, canon, cerr)
+	}
+}
+
 func TestResolve_SelfScope(t *testing.T) {
 	cases := map[string]string{
-		"compact":              "/compact",
-		"rename":               "/rename",
-		"cost":                 "/cost",
-		"help":                 "/help",
-		"mcp-enable-tmux-msg":  "/mcp enable tmux-tell",
-		"mcp-disable-tmux-msg": "/mcp disable tmux-tell",
-		"mcp-restart-tmux-msg": "/mcp restart tmux-tell",
-		"/compact":             "/compact",
-		"COMPACT":              "/compact",
-		"  cost  ":             "/cost",
+		"compact":               "/compact",
+		"rename":                "/rename",
+		"cost":                  "/cost",
+		"help":                  "/help",
+		"mcp-enable-tmux-tell":  "/mcp enable tmux-tell",
+		"mcp-disable-tmux-tell": "/mcp disable tmux-tell",
+		"mcp-restart-tmux-tell": "/mcp restart tmux-tell",
+		"/compact":              "/compact",
+		"COMPACT":               "/compact",
+		"  cost  ":              "/cost",
 	}
 	for in, want := range cases {
 		// Self scope passes the same name for sender + recipient.
@@ -35,10 +64,10 @@ func TestResolve_SelfScope(t *testing.T) {
 
 func TestResolve_PeerScope_OnlyPeerAllowed(t *testing.T) {
 	allowed := map[string]string{
-		"rename":               "/rename",
-		"help":                 "/help",
-		"mcp-enable-tmux-msg":  "/mcp enable tmux-tell",
-		"mcp-restart-tmux-msg": "/mcp restart tmux-tell",
+		"rename":                "/rename",
+		"help":                  "/help",
+		"mcp-enable-tmux-tell":  "/mcp enable tmux-tell",
+		"mcp-restart-tmux-tell": "/mcp restart tmux-tell",
 	}
 	for in, want := range allowed {
 		// Globally peer-allowed commands resolve for any (sender,
@@ -56,12 +85,12 @@ func TestResolve_PeerScope_OnlyPeerAllowed(t *testing.T) {
 }
 
 func TestResolve_PeerScope_RejectsSelfOnly(t *testing.T) {
-	// mcp-disable-tmux-msg moved from self+peer to self-only in #28.
+	// mcp-disable-tmux-tell moved from self+peer to self-only in #28.
 	// Pin the regression test so future scope shuffles can't silently
 	// expose the peer-DoS surface again. clear is omitted here because
 	// its peer-denial is conditional (lifted for the Bosun→Pilot edge
 	// per #60) — see TestResolve_PeerScope_EdgeRule for that pinning.
-	for _, in := range []string{"compact", "cost", "mcp-disable-tmux-msg"} {
+	for _, in := range []string{"compact", "cost", "mcp-disable-tmux-tell"} {
 		_, err := Resolve(in, ScopePeer, "alice", "bob")
 		if !errors.Is(err, ErrScopeDenied) {
 			t.Errorf("Resolve(%q, peer): want ErrScopeDenied, got %v", in, err)
@@ -217,7 +246,7 @@ func TestNames_SortedAndComplete(t *testing.T) {
 	names := Names()
 	want := []string{
 		"clear", "compact", "cost", "help",
-		"mcp-disable-tmux-msg", "mcp-enable-tmux-msg", "mcp-restart-tmux-msg",
+		"mcp-disable-tmux-tell", "mcp-enable-tmux-tell", "mcp-restart-tmux-tell",
 		"rename",
 	}
 	if len(names) != len(want) {
@@ -236,7 +265,7 @@ func TestNamesForScope(t *testing.T) {
 	self := NamesForScope(ScopeSelf, "alice", "alice")
 	wantSelf := []string{
 		"compact", "cost", "help",
-		"mcp-disable-tmux-msg", "mcp-enable-tmux-msg", "mcp-restart-tmux-msg",
+		"mcp-disable-tmux-tell", "mcp-enable-tmux-tell", "mcp-restart-tmux-tell",
 		"rename",
 	}
 	if len(self) != len(wantSelf) {
@@ -250,7 +279,7 @@ func TestNamesForScope(t *testing.T) {
 
 	// Peer scope, no edge match: only globally peer-allowed commands.
 	peer := NamesForScope(ScopePeer, "alice", "bob")
-	wantPeer := []string{"help", "mcp-enable-tmux-msg", "mcp-restart-tmux-msg", "rename"}
+	wantPeer := []string{"help", "mcp-enable-tmux-tell", "mcp-restart-tmux-tell", "rename"}
 	if len(peer) != len(wantPeer) {
 		t.Fatalf("peer names = %v, want %v", peer, wantPeer)
 	}
@@ -265,7 +294,7 @@ func TestNamesForScope(t *testing.T) {
 	// callers — without this, a Bosun trying /clear on Pilot would
 	// see "peer-invokable: [help …]" and think clear isn't available.
 	bosunPilot := NamesForScope(ScopePeer, "bosun", "pilot")
-	wantBosunPilot := []string{"clear", "help", "mcp-enable-tmux-msg", "mcp-restart-tmux-msg", "rename"}
+	wantBosunPilot := []string{"clear", "help", "mcp-enable-tmux-tell", "mcp-restart-tmux-tell", "rename"}
 	if len(bosunPilot) != len(wantBosunPilot) {
 		t.Fatalf("bosun→pilot names = %v, want %v", bosunPilot, wantBosunPilot)
 	}
@@ -278,7 +307,7 @@ func TestNamesForScope(t *testing.T) {
 	// Peer scope WITH the #167 edge match: quartermaster→pilot also
 	// surfaces "clear", same as the Bosun edge.
 	qmPilot := NamesForScope(ScopePeer, "quartermaster", "pilot")
-	wantQMPilot := []string{"clear", "help", "mcp-enable-tmux-msg", "mcp-restart-tmux-msg", "rename"}
+	wantQMPilot := []string{"clear", "help", "mcp-enable-tmux-tell", "mcp-restart-tmux-tell", "rename"}
 	if len(qmPilot) != len(wantQMPilot) {
 		t.Fatalf("quartermaster→pilot names = %v, want %v", qmPilot, wantQMPilot)
 	}

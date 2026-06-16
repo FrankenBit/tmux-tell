@@ -51,7 +51,7 @@ func TestInsertMessagePair_NoLink_HonoursExplicitReplyTo(t *testing.T) {
 // pin_test.go per ADR-0001.
 
 // TestInsertMessagePair_AtomicityUnderConcurrency confirms the
-// two-row macro path (used by mcp-restart-tmux-msg + resume_with) is
+// two-row macro path (used by mcp-restart-tmux-tell + resume_with) is
 // also race-safe. With cap=5 and concurrent pair inserts of size 2,
 // exactly floor(5/2)=2 pairs (= 4 rows) should land; the rest see
 // ErrRecipientQueueFull on the +2 budget check.

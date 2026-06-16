@@ -91,9 +91,9 @@ Mapped against the code as of v0.2.1.
     gates whether it's reachable as a peer command at all (compact,
     cost, mcp-disable are self-only; rename, help, mcp-enable,
     mcp-restart are peer-allowed).
-  - Sentinel-based macro: `mcp-restart-tmux-msg` peer-invokable
+  - Sentinel-based macro: `mcp-restart-tmux-tell` peer-invokable
     macro synthesises a disable+enable pair atomically (#28). Raw
-    `mcp-disable-tmux-msg` is self-only specifically to prevent a
+    `mcp-disable-tmux-tell` is self-only specifically to prevent a
     prompt-injected peer from denying-of-service another agent's
     bus connection.
   - Silent-drift detection (#37): before delivery, the mailman
@@ -121,7 +121,7 @@ Mapped against the code as of v0.2.1.
   trusts whatever the handler inserts as long as the
   schema-invariants hold (FK references resolve, non-empty
   required fields, etc.). This is the trust boundary Surveyor
-  named in the #28 Q1 review: the `mcp-restart-tmux-msg` macro
+  named in the #28 Q1 review: the `mcp-restart-tmux-tell` macro
   bypasses the per-row whitelist scope check on the inner inserts
   because the handler has already authorized the macro.
 - **What's enforced**:
@@ -337,8 +337,8 @@ keeps the implicit-TODO ambiguity out of §1-§4 (which IS load-bearing
 and gets updated in lockstep with code).
 
 - **Control whitelist text-vs-sentinel ambiguity.** The
-  `mcp-restart-tmux-msg` macro resolves to text
-  `"/mcp restart tmux-msg"` that's never actually typed — it's a
+  `mcp-restart-tmux-tell` macro resolves to text
+  `"/mcp restart tmux-tell"` that's never actually typed — it's a
   sentinel for the handler to dispatch the macro. If a future
   whitelist edit accidentally makes it typeable (e.g. adds a
   `IsTyped bool` field default-true to `Command`), the recipient
@@ -381,4 +381,4 @@ and gets updated in lockstep with code).
 | Trust model              | The set of assumptions the design relies on (single operator, shell-access trust). |
 | Trust boundary           | An interface across which trust changes (operator vs bus, handler vs store, etc.). |
 | Load-bearing assumption  | A design decision that's only correct under the trust model. Naming them makes the cost of trust-model change explicit. |
-| Sentinel                 | A value that signals a special code path rather than being interpreted literally. The `mcp-restart-tmux-msg` Text field is one. |
+| Sentinel                 | A value that signals a special code path rather than being interpreted literally. The `mcp-restart-tmux-tell` Text field is one. |

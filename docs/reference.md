@@ -864,7 +864,7 @@ systemctl --user start 'tmux-tell-claude-mailman@*.service'
 #    NOT systemd-managed — restarting mailmen does not restart them.
 #    A long-lived MCP server holds the OLD DB inode open (file handle survives
 #    the rename), so writes from that chamber's MCP land in a ghost-inode DB
-#    invisible to the new path. refresh-all-mcps fires the mcp-restart-tmux-msg
+#    invisible to the new path. refresh-all-mcps fires the mcp-restart-tmux-tell
 #    macro per registered agent → each chamber's Claude Code re-initializes its
 #    tmux-tell MCP stdio against the current binary + canonical DB.
 tmux-tell-claude refresh-all-mcps
@@ -913,7 +913,7 @@ never move the file alone.** And: **mailmen are not the only readers; refresh
 the MCPs too.**
 
 **Substrate-vs-adapter note: codex chambers.** `refresh-all-mcps` fires the
-`mcp-restart-tmux-msg` macro per registered agent, but the macro is
+`mcp-restart-tmux-tell` macro per registered agent, but the macro is
 claude-only per [#248](https://git.frankenbit.de/frankenbit/tmux-tell/issues/248)
 (B)'s substrate-vs-adapter decision: the paste-and-enter control surface that
 delivers slash-commands is genuinely Claude-bound. For codex chambers,
@@ -1339,9 +1339,14 @@ allowlist of specific (sender, recipient) pairs.
 | `cost`    | ✓ | ✗ | self-only — output goes to the recipient |
 | `help`    | ✓ | ✓ | harmless either way |
 | `clear`   | ✗ | ✗ | **edge-only** rescue path when `/compact` can't recover from token exhaustion; loses in-flight work |
-| `mcp-enable-tmux-msg`  | ✓ | ✓ | refresh the tool surface after deploying a new `tmux-tell.*` tool — no context loss |
-| `mcp-disable-tmux-msg` | ✓ | ✗ | self-only: raw peer-disable is a DoS surface; use the restart macro |
-| `mcp-restart-tmux-msg` | ✓ | ✓ | macro: `disable` + `enable` as two rows for a peer-safe reconnect |
+| `mcp-enable-tmux-tell`  | ✓ | ✓ | refresh the tool surface after deploying a new `tmux-tell.*` tool — no context loss |
+| `mcp-disable-tmux-tell` | ✓ | ✗ | self-only: raw peer-disable is a DoS surface; use the restart macro |
+| `mcp-restart-tmux-tell` | ✓ | ✓ | macro: `disable` + `enable` as two rows for a peer-safe reconnect |
+
+The pre-rename `mcp-{restart,disable,enable}-tmux-msg` names keep working as deprecated
+aliases through v1.0 (#480, ADR-0008 §Discretion): an invocation resolves to the
+canonical `…-tmux-tell` form, carries a `deprecated` field in the response, and logs a
+greppable `WARN deprecated_control_macro`.
 
 Adding a command, flipping a scope, or adding an edge requires a code change
 (`internal/control/control.go`) — the audit surface is intentionally small. The same
@@ -1407,7 +1412,7 @@ tmux-tell-claude unregister --name alcatraz --force --purge-queue
 MCP tool lists are sent once during the `initialize` handshake and not refreshed.
 Updating the binary and restarting the mailmen makes new tools available to *future*
 sessions; sessions started earlier stay pinned to the tool surface they initialized
-with. `mcp-restart-tmux-msg` re-initializes one session's MCP stdio without
+with. `mcp-restart-tmux-tell` re-initializes one session's MCP stdio without
 losing context; for a fleet, `tmux-tell-claude refresh-all-mcps` fires it per registered
 agent (operator-only — a peer-invokable bulk restart would be a DoS amplification
 class).
