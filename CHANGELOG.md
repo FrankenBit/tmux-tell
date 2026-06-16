@@ -33,6 +33,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-06-16
+
 Substrate-hygiene fast-follow after v0.18.0's rename. Three small cleanups that
 finish the rename's long tail — the control-macro names, the codex-config
 migration, and a scope-sharpening source-read — plus an observability fix. The
