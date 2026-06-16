@@ -47,6 +47,13 @@ const (
 	// agent row to notice a `register --force` clear. No tmux probe — a
 	// plain DB read — so a tight-ish cadence costs nothing.
 	defaultStuckPollInterval = 5 * time.Second
+	// defaultSpinGuardThreshold + defaultSpinGuardWindow bound the serve-loop
+	// spin guard (#496). At the 250ms default idle-poll, a healthy idle loop
+	// does ~40 no-progress iterations in 10s — two orders of magnitude under
+	// 1000 — so the guard only trips on a genuine spin (a path looping without
+	// sleeping at thousands/sec).
+	defaultSpinGuardThreshold = 1000
+	defaultSpinGuardWindow    = 10 * time.Second
 	// stuckBackoffCap bounds the exponential pane-not-found retry delay
 	// (#291). Even before the stuck threshold, no retry fires faster than
 	// once per this interval — the 100/s storm that wedged tmux is capped
@@ -217,6 +224,17 @@ type serveOpts struct {
 	// mailman issues NO tmux probes — this is a pure DB read on a slow
 	// cadence. Default defaultStuckPollInterval (5s).
 	StuckPollInterval time.Duration
+	// SpinGuardThreshold is the max consecutive no-progress serve-loop
+	// iterations allowed within SpinGuardWindow before the loop is judged to
+	// be spinning and panics (#496 — "steady-state serve-loop is bounded").
+	// Default defaultSpinGuardThreshold (1000). A value <= 0 disables the
+	// guard (escape hatch, mirrors StuckThreshold).
+	SpinGuardThreshold int
+	// SpinGuardWindow is the sliding window for SpinGuardThreshold. A healthy
+	// idle loop sleeps between iterations so it never packs that many
+	// no-progress iterations into the window. Default defaultSpinGuardWindow
+	// (10s).
+	SpinGuardWindow time.Duration
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -274,6 +292,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"number of consecutive `can't find pane` probe failures before the mailman parks itself in the #291 stuck state (stops probing tmux entirely; visible in `agents`, cleared via `register --force`). Exponential backoff applies on every failure regardless; this is the cutover to zero-probe parking. 0 disables parking (backoff-only). Per-agent TOML knob: `stuck-threshold = N`.")
 	stuckPollInterval := fs.Duration("stuck-poll-interval", defaultStuckPollInterval,
 		"how often a parked (stuck) mailman re-reads its agent row to notice a `register --force` clear. While stuck the mailman issues NO tmux probes — this is a pure DB read. Per-agent TOML knob: `stuck-poll-interval = \"5s\"`.")
+	spinGuardThreshold := fs.Int("spin-guard-threshold", defaultSpinGuardThreshold,
+		"max consecutive no-progress serve-loop iterations within --spin-guard-window before the loop is judged spinning and panics (#496 — fails loud for systemd restart rather than burning CPU). A healthy idle loop sleeps between iterations so it never approaches this. 0 disables the guard. Per-agent TOML knob: `spin-guard-threshold = N`.")
+	spinGuardWindow := fs.Duration("spin-guard-window", defaultSpinGuardWindow,
+		"sliding window for --spin-guard-threshold. Per-agent TOML knob: `spin-guard-window = \"10s\"`.")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -338,6 +360,12 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if !flagWasSet(fs, "stuck-poll-interval") {
 		*stuckPollInterval = config.ResolveDuration(cfg, *agent, "stuck-poll-interval", *stuckPollInterval)
+	}
+	if !flagWasSet(fs, "spin-guard-threshold") {
+		*spinGuardThreshold = config.ResolveInt(cfg, *agent, "spin-guard-threshold", *spinGuardThreshold)
+	}
+	if !flagWasSet(fs, "spin-guard-window") {
+		*spinGuardWindow = config.ResolveDuration(cfg, *agent, "spin-guard-window", *spinGuardWindow)
 	}
 	configDeliveryMode := config.ResolveString(cfg, *agent, "delivery-mode", "")
 	// Resolve the verify-retry budget (#153). Stored as a duration string
@@ -451,6 +479,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		DedupeWindow:                dedupeWindow,
 		StuckThreshold:              *stuckThreshold,
 		StuckPollInterval:           *stuckPollInterval,
+		SpinGuardThreshold:          *spinGuardThreshold,
+		SpinGuardWindow:             *spinGuardWindow,
 	}, logger, stdout, stderr)
 }
 
@@ -672,10 +702,25 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	// unpark can match the label.  Empty = gauge is at 0 (or not yet seen).
 	lastStuckReason := ""
 
+	// Serve-loop spin guard (#496). progressedLastIter carries the previous
+	// iteration's progress (a claimed message) into this iteration's top-of-loop
+	// check, so the pure spinGuard.record stays the single decision point. Seed
+	// true so the first iteration starts a clean window.
+	guard := &spinGuard{threshold: opts.SpinGuardThreshold, window: opts.SpinGuardWindow}
+	progressedLastIter := true
+
 	for {
 		if stopCtx.Err() != nil {
 			return exitOK
 		}
+		// Fail loud on a spin: if the loop has churned past the no-progress
+		// threshold within the window, panic so systemd restarts the mailman
+		// (stack in the journal) instead of silently burning CPU. A healthy
+		// idle loop sleeps every no-progress iteration and never gets here.
+		if guard.record(progressedLastIter, time.Now()) {
+			panic(spinPanicMessage(opts.Agent, guard))
+		}
+		progressedLastIter = false
 		if watchdogPing > 0 {
 			_ = sdnotify.Watchdog()
 		}
@@ -748,6 +793,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			}
 			continue
 		}
+
+		// A claimed message (ping or delivery) is real work — mark progress so
+		// the spin guard resets on the next iteration's top-of-loop check (#496).
+		progressedLastIter = true
 
 		// kind=ping: substrate-only reachability probe (#144). The mere
 		// fact that this mailman claimed the row already proves the

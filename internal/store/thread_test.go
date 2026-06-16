@@ -6,6 +6,24 @@ import (
 	"testing"
 )
 
+// TestFindThreadRoot_HonorsCancelledContext pins the #496 ctx-gap fix: the
+// thread-root traversal checks ctx.Done() at the loop top, so an already-
+// cancelled context aborts with the context error before any DB round-trip —
+// closing the lone long-running loop that received ctx but never checked it.
+func TestFindThreadRoot_HonorsCancelledContext(t *testing.T) {
+	s := newTestStore(t)
+	bg := context.Background()
+	a, _ := s.InsertMessage(bg, InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "ping"})
+	b, _ := s.InsertMessage(bg, InsertParams{FromAgent: "bob", ToAgent: "alice", ReplyTo: a.PublicID, Body: "pong"})
+
+	ctx, cancel := context.WithCancel(bg)
+	cancel() // cancel before the call
+
+	if _, err := s.findThreadRoot(ctx, b.PublicID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("findThreadRoot with cancelled ctx returned %v, want context.Canceled", err)
+	}
+}
+
 func TestGetThread_LinearChain(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()

@@ -75,6 +75,14 @@ func (s *Store) findThreadRoot(ctx context.Context, startID string) (*Message, e
 	current := startID
 	visited := map[string]bool{}
 	for {
+		// Honor cancellation at the loop top (#496) — uniform with every other
+		// long-running loop in the substrate. The QueryRowContext below already
+		// respects ctx, but the explicit check catches a cancelled context before
+		// the DB round-trip and keeps the "every loop checks ctx.Done() near the
+		// top" invariant gap-free.
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if visited[current] {
 			return nil, fmt.Errorf("store: cycle detected at %s", current)
 		}
