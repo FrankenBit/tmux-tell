@@ -33,6 +33,8 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-06-16
+
 The rename release — **`tmux-msg` is now `tmux-tell`**. This completes the second
 half of the naming arc (`cli-semaphore` → `tmux-msg` → `tmux-tell`): the binaries,
 Go module, systemd units, environment variables, data/config paths, the MCP server
