@@ -33,6 +33,46 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+Substrate-hygiene fast-follow after v0.18.0's rename. Three small cleanups that
+finish the rename's long tail — the control-macro names, the codex-config
+migration, and a scope-sharpening source-read — plus an observability fix. The
+through-line, again, is **substrate-empirical honesty**: across this campaign the
+crew repeatedly caught and corrected its own framing as it built — scope reversals
+once the simpler architecture surfaced, a "cross-process" qualifier added when the
+comparison made the real differentiator clear, a logging gap pre-empted before it
+bit. v0.18.1 is the small, honest tail of that.
+
+Headlines:
+
+- **Control-macro names follow the rename — `mcp-*-tmux-msg` → `mcp-*-tmux-tell`
+  (#480).** The MCP restart / enable / disable macros now carry the canonical name;
+  the old names keep working as deprecated aliases through v1.0 (each logs a
+  `WARN deprecated_control_macro` and carries a `deprecated` field in the response).
+  The last cosmetic identifier the v0.18.0 rename left behind.
+- **Codex config is migrated in place on upgrade (#486).** A codex chamber with a
+  pre-rename `[mcp_servers.tmux-msg]` in `~/.codex/config.toml` gets it rewritten to
+  `tmux-tell` on the next `install.sh` — text-surgical (your `approval_mode` / `env`
+  / `args` / comments stay byte-identical) and idempotent. It advances all three
+  rename points, including the inner per-tool key whose `approval_mode` would
+  otherwise silently de-link from the renamed tool — the kind of quiet
+  operator-visible breakage worth closing explicitly.
+- **Project scope sharpened — ADR-0014 source-reading (#442).** A comparative read
+  of AutoGen / CrewAI / the Claude Agent SDK pinned the real differentiator:
+  AutoGen-core is broker-flat too, but single-process — tmux-tell's **cross-process
+  + TUI-paste** delivery is what's distinct. The "cross-process" qualifier sharpens
+  the scope-fence's IS list (the ADR-0014 amendment itself is a follow-up).
+- **Observability fix — chamber-mailman logs labeled in Loki (alcatraz-infra#46).**
+  An Alloy systemd-unit regex gap since the v0.18.0 deploy left chamber-mailman logs
+  unlabeled; fixed, so they land in Loki under the right chamber again.
+
+Deferred: folding the cross-process qualifier into ADR-0014's text is an
+operator-discretion follow-up; and the legacy-alias **hard-cut** for every
+`tmux-msg` surface — these control macros included — still lands at v1.0 (#440
+stays open until then).
+
+The rename's tail is swept and the crew's own corrections are on the record — the
+v1.0 baseline stays coherent.
+
 ### Changed
 
 - **Control-macro identifiers renamed `mcp-{restart,disable,enable}-tmux-msg` →
