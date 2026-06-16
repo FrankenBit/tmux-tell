@@ -139,6 +139,24 @@ jobs:
           echo "==> bump:         $BUMP ($REASON)"
           echo "==> next version: $NEW"
 
+      - name: assemble changelog fragments (#494)
+        # Fragment-per-PR pattern: PRs drop changelog.d/<issue>.<type>.md
+        # fragments instead of editing CHANGELOG.md's [Unreleased] (no
+        # parallel-PR collision). Assemble them into [Unreleased] BEFORE the
+        # transition below reads it. Merge-aware + idempotent: an empty/absent
+        # changelog.d is a clean no-op (the migration passthrough for a release
+        # whose entries were hand-edited the legacy way). The hand-curated
+        # prelude + Headlines (#427) is untouched — the assembler only fills the
+        # `### Type` bullet blocks. `go run` per the tools/check-pin-slugs/
+        # substrate-fit precedent (no external binary on the release path).
+        run: |
+          set -euo pipefail
+          if compgen -G 'changelog.d/*.md' > /dev/null; then
+              go run ./tools/changelog-assemble -prune
+          else
+              echo "::notice::no changelog fragments — [Unreleased] used as-is (legacy path)"
+          fi
+
       - name: mechanical CHANGELOG transition
         id: changelog
         env:
@@ -231,7 +249,10 @@ jobs:
           git config user.name "release-bot"
           git config user.email "release-bot@frankenbit.de"
           git checkout -b "$BRANCH"
-          git add CHANGELOG.md
+          # Stage both the populated CHANGELOG.md and the pruned changelog.d/
+          # fragments (#494) so the release-prep commit captures the assembly +
+          # deletion atomically. `git add changelog.d` records the removals.
+          git add CHANGELOG.md changelog.d
           git commit -m "chore(release): $NEW — CHANGELOG transition (#394)"
           git push --set-upstream origin "$BRANCH"
 

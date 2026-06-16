@@ -18,6 +18,11 @@ go.work.sum
 /dist/
 /tmux-msg-claude
 
+# tools/ helper binaries (run via `go run`; a stray `go build ./tools/...`
+# drops the binary in the repo root — keep it out of commits)
+/changelog-assemble
+/check-pin-slugs
+
 # Local SQLite scratch DBs
 *.db
 *.db-journal

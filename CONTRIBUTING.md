@@ -62,10 +62,17 @@ reads safe concurrent with mailman writes.
 
 ## How we work
 
-- **CHANGELOG.** Every change-carrying PR adds an entry under `## [Unreleased]` in
-  `CHANGELOG.md`, in the [Keep a Changelog](https://keepachangelog.com/) style. Docs
-  PRs included — a doc change is still a change. Keep entries crisp (headline + refs,
-  detail in the PR body) — see [CHANGELOG entries](#changelog-entries) for the
+- **CHANGELOG.** Every change-carrying PR adds a **fragment** in `changelog.d/` —
+  **not** a direct edit of `CHANGELOG.md` (#494). The fragment file is named
+  `changelog.d/<issue>.<type>.md` (e.g. `changelog.d/480.changed.md`), and its content
+  is the [Keep a Changelog](https://keepachangelog.com/)-style bullet the entry would
+  have added. `<type>` ∈ `added changed deprecated removed fixed security documentation`;
+  for two entries of the same type on one issue use `changelog.d/<issue>.<n>.<type>.md`.
+  Docs PRs included — a doc change is still a change. Keep the bullet crisp (headline +
+  refs, detail in the PR body). Fragments are assembled into `[Unreleased]` at
+  release-prep (`tools/changelog-assemble`), so **parallel PRs never collide on
+  `CHANGELOG.md`** — that collision tax (the structural reason for this convention) is
+  what the fragment pattern removes. See [CHANGELOG entries](#changelog-entries) for the
   density convention + the per-release prelude shape.
 - **ADRs.** Architectural decisions are recorded in [`docs/adr/`](docs/adr/) (see its
   `README.md` for the convention and `template.md` for the shape). File an ADR when a
@@ -117,6 +124,17 @@ digest but not the paragraph. This is not decoration: `release-draft.yml` extrac
 everything before the first `### ` subsection as the curated release body, so an
 empty prelude **hard-fails the draft by design** (#427).
 
+**Fragments (per-PR mechanics, #494).** The per-entry convention above applies to the
+fragment body you write in `changelog.d/<issue>.<type>.md` — same crisp-headline density,
+same one-bullet-per-change shape. At release-prep, `tools/changelog-assemble` gathers
+the fragments into `[Unreleased]`, grouping by `### Type` in the canonical order
+(Added → Changed → Deprecated → Removed → Fixed → Security → Documentation) and deleting
+the consumed fragments. The prelude convention is **unchanged and orthogonal** — the
+assembler only fills the `### Type` bullet blocks; the narrative prelude is still added
+by hand at cut, so the #427 extract-before-first-`###` boundary keeps working. Locally,
+`go run ./tools/changelog-assemble -check` validates fragment names/types (CI runs this);
+`go run ./tools/changelog-assemble` assembles into `[Unreleased]` for a manual preview.
+
 **Forward-living-comprehensive.** The `CHANGELOG.md` at a tag is the *comprehensive*
 record — the canonical surface a reader consults for "what exactly changed" — while
 the release body is the curated narrative. So recent release sections stay
@@ -150,7 +168,13 @@ The cut sequence (run from a clean main on the cut branch):
 
 1. **Sync state.** `git fetch origin && git checkout -b i/v<X.Y.Z>-release-cut
    origin/main`
-2. **CHANGELOG header.** Move `[Unreleased]` content under
+2. **CHANGELOG header.** First **assemble fragments**: `go run
+   ./tools/changelog-assemble -prune` gathers `changelog.d/` into `[Unreleased]` and
+   deletes the consumed fragments (#494). The automated `release.yml` does this for you;
+   run it by hand only for a manual cut. *Order matters:* assemble **before** the
+   deprecation check in step 4 — a deprecation that lives only as a
+   `changelog.d/*.deprecated.md` fragment is invisible to `deprecations.sh` until it's
+   assembled into `CHANGELOG.md`. Then move `[Unreleased]` content under
    `## [<X.Y.Z>] — <YYYY-MM-DD>`; leave `## [Unreleased]` as the empty shell.
    Confirm the new `[<X.Y.Z>]` section opens with a narrative prelude + `Headlines:`
    per [CHANGELOG entries](#changelog-entries) — `release-draft.yml` extracts

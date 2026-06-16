@@ -47,3 +47,11 @@ jobs:
 
       - name: check-pin-slugs (#51 — enforce ADR-0001 slug register)
         run: go run ./tools/check-pin-slugs/
+
+      - name: check-changelog-fragments (#494 — validate changelog.d/ fragments)
+        # Read-only: validates every changelog.d/<issue>.<type>.md fragment's
+        # name + type + non-emptiness so a malformed fragment fails at PR time,
+        # not at release-prep. Does NOT enforce fragment-presence per PR (that's
+        # a CONTRIBUTING convention + reviewer check, like the legacy
+        # CHANGELOG-entry rule it replaces).
+        run: go run ./tools/changelog-assemble -check
