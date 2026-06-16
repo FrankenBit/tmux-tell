@@ -3,6 +3,8 @@ package cli
 import (
 	"os"
 	"testing"
+
+	"go.uber.org/goleak"
 )
 
 // TestMain seeds the D-Bus session-bus env vars that startMailmanMissingEnv
@@ -13,8 +15,12 @@ import (
 //
 // Without this, tests that drive the happy-path mailman-start flow fail in
 // CI containers where pam_systemd has not run and the vars are absent.
+//
+// goleak.VerifyTestMain (#496 PR-B) asserts no goroutine outlives the package's
+// test run — catching a test that spawns a serve-loop / metrics-server / poll
+// goroutine and never joins it. It runs m.Run() and owns the exit code.
 func TestMain(m *testing.M) {
 	os.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
 	os.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
-	os.Exit(m.Run())
+	goleak.VerifyTestMain(m)
 }

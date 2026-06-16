@@ -10,6 +10,7 @@ require (
 	github.com/mattn/go-isatty v0.0.20
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2
+	go.uber.org/goleak v1.3.0
 	modernc.org/sqlite v1.51.0
 )
 
