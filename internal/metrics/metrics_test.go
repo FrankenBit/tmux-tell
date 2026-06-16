@@ -63,10 +63,10 @@ func TestObserveHistograms_CountObservations(t *testing.T) {
 	m.ObserveDeliveryLatency("bob", 12)
 	m.ObserveVerifyAttempt("bob", 1.5)
 
-	if c := histSampleCount(t, m, "tmux_msg_delivery_latency_seconds", "bob"); c != 2 {
+	if c := histSampleCount(t, m, "tmux_tell_delivery_latency_seconds", "bob"); c != 2 {
 		t.Errorf("delivery latency sample count = %d, want 2", c)
 	}
-	if c := histSampleCount(t, m, "tmux_msg_delivery_verify_attempt_seconds", "bob"); c != 1 {
+	if c := histSampleCount(t, m, "tmux_tell_delivery_verify_attempt_seconds", "bob"); c != 1 {
 		t.Errorf("verify attempt sample count = %d, want 1", c)
 	}
 }
@@ -108,7 +108,7 @@ func TestHandler_ServesValidExposition(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
 	for _, want := range []string{
-		"tmux_msg_messages_total",
+		"tmux_tell_messages_total",
 		`from="alice"`,
 		`to="bob"`,
 		`state="delivered"`,

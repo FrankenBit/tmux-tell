@@ -224,7 +224,7 @@ type Block struct {
 	// 100ms / 250ms / 500ms / 1s / 1.5s / 1.65s schedule proportionally
 	// to the budget via tmuxio.DeriveRetrySchedule. Operators monitor
 	// verify-attempt latency via #146's
-	// tmux_msg_delivery_verify_attempt_seconds histogram to inform
+	// tmux_tell_delivery_verify_attempt_seconds histogram to inform
 	// per-agent tuning.
 	VerifyRetryBudget *string `toml:"verify-retry-budget"`
 	// Retention is the per-agent message retention window (#245). The mailman

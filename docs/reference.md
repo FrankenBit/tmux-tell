@@ -592,7 +592,7 @@ backoff schedule). The total budget is configurable per agent via the
 `verify-retry-budget` knob — `15s` triples each delay, `2s` halves them, etc.
 Precedence (highest wins): **`--verify-retry-budget` CLI flag > per-agent block >
 `[defaults]` > compiled default `5s`**. Inspect production verify-attempt latency
-via the `tmux_msg_delivery_verify_attempt_seconds` histogram (Prometheus, served on
+via the `tmux_tell_delivery_verify_attempt_seconds` histogram (Prometheus, served on
 each mailman's `/metrics` endpoint) before tuning. Tune for large-payload hubs (e.g.
 Bosun's heavy review pane) if the p99 attempt-latency approaches the budget under
 load.
@@ -749,7 +749,7 @@ Both knobs are per-agent TOML-configurable (`stuck-threshold`,
 `stuck-poll-interval`); `stuck-threshold = 0` disables parking (backoff-only).
 
 **Prometheus gauge.** When metrics are enabled (`--metrics-addr`), the
-`tmux_msg_mailman_stuck{agent,reason}` gauge reflects the park state in
+`tmux_tell_mailman_stuck{agent,reason}` gauge reflects the park state in
 real-time: it is set to `1` on the loop iteration where parking is first
 detected and drops to `0` when the stuck state is cleared. The gauge also
 initialises correctly when a mailman starts against an already-parked agent

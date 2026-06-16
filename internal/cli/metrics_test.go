@@ -129,19 +129,19 @@ func TestServe_Metrics_RecordsDeliveredLatencyVerifyLoop(t *testing.T) {
 	stop()
 	wait()
 
-	if got := gatherCounter(t, m, "tmux_msg_messages_total",
+	if got := gatherCounter(t, m, "tmux_tell_messages_total",
 		map[string]string{"from": "alice", "to": "bob", "state": "delivered"}); got != 1 {
 		t.Errorf("messages_total delivered = %v, want 1", got)
 	}
-	if got := gatherHistCount(t, m, "tmux_msg_delivery_latency_seconds",
+	if got := gatherHistCount(t, m, "tmux_tell_delivery_latency_seconds",
 		map[string]string{"recipient": "bob"}); got != 1 {
 		t.Errorf("delivery_latency sample count = %d, want 1", got)
 	}
-	if got := gatherHistCount(t, m, "tmux_msg_delivery_verify_attempt_seconds",
+	if got := gatherHistCount(t, m, "tmux_tell_delivery_verify_attempt_seconds",
 		map[string]string{"recipient": "bob"}); got != 1 {
 		t.Errorf("verify_attempt sample count = %d, want 1", got)
 	}
-	if got := gatherCounter(t, m, "tmux_msg_mailman_loop_iterations_total",
+	if got := gatherCounter(t, m, "tmux_tell_mailman_loop_iterations_total",
 		map[string]string{"agent": "bob"}); got < 1 {
 		t.Errorf("loop iterations = %v, want >= 1", got)
 	}
@@ -169,11 +169,11 @@ func TestServe_Metrics_RecordsUnverified(t *testing.T) {
 	stop()
 	wait()
 
-	if got := gatherCounter(t, m, "tmux_msg_messages_total",
+	if got := gatherCounter(t, m, "tmux_tell_messages_total",
 		map[string]string{"from": "alice", "to": "bob", "state": "delivered_in_input_box"}); got != 1 {
 		t.Errorf("messages_total delivered_in_input_box = %v, want 1", got)
 	}
-	if got := gatherHistCount(t, m, "tmux_msg_delivery_verify_attempt_seconds",
+	if got := gatherHistCount(t, m, "tmux_tell_delivery_verify_attempt_seconds",
 		map[string]string{"recipient": "bob"}); got < 1 {
 		t.Errorf("verify_attempt sample count = %d, want >= 1", got)
 	}
@@ -219,13 +219,13 @@ func TestServe_Metrics_PasteUnsafeAbort(t *testing.T) {
 	stop()
 	wait()
 
-	if got := gatherCounter(t, m, "tmux_msg_paste_unsafe_aborts_total",
+	if got := gatherCounter(t, m, "tmux_tell_paste_unsafe_aborts_total",
 		map[string]string{"agent": "bob", "reason": "awaiting_operator"}); got < 1 {
 		t.Errorf("paste_unsafe_aborts awaiting_operator = %v, want >= 1", got)
 	}
 	// No terminal outcome → no messages_total of any state.
 	for _, st := range []string{"delivered", "delivered_in_input_box", "failed"} {
-		if got := gatherCounter(t, m, "tmux_msg_messages_total",
+		if got := gatherCounter(t, m, "tmux_tell_messages_total",
 			map[string]string{"from": "alice", "to": "bob", "state": st}); got != 0 {
 			t.Errorf("messages_total state=%s = %v, want 0 (abort is not a terminal outcome)", st, got)
 		}
@@ -284,7 +284,7 @@ func TestServe_Metrics_EndpointGatedByAddr(t *testing.T) {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		c, b, err := getMetrics(addr)
-		if err == nil && c == http.StatusOK && strings.Contains(b, "tmux_msg_messages_total") {
+		if err == nil && c == http.StatusOK && strings.Contains(b, "tmux_tell_messages_total") {
 			code, body = c, b
 			break
 		}
@@ -325,7 +325,7 @@ func TestServe_Metrics_EndpointGatedByAddr(t *testing.T) {
 }
 
 // TestServe_Metrics_MailmanStuck_ParkAndUnpark pins the #300 gauge wiring:
-// the serve loop sets tmux_msg_mailman_stuck=1 when the agent parks and
+// the serve loop sets tmux_tell_mailman_stuck=1 when the agent parks and
 // =0 when the stuck state is cleared externally (the register --force path).
 // Uses StuckThreshold=1 and a phased runner to avoid immediate re-parking
 // after the clear: Phase 1 returns "can't find pane" (parks immediately);
@@ -371,13 +371,13 @@ func TestServe_Metrics_MailmanStuck_ParkAndUnpark(t *testing.T) {
 	// Phase 1: wait for park; gauge must reach 1.
 	deadline := time.Now().Add(4 * time.Second)
 	for time.Now().Before(deadline) {
-		if gatherGauge(t, m, "tmux_msg_mailman_stuck",
+		if gatherGauge(t, m, "tmux_tell_mailman_stuck",
 			map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}) == 1 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if got := gatherGauge(t, m, "tmux_msg_mailman_stuck",
+	if got := gatherGauge(t, m, "tmux_tell_mailman_stuck",
 		map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}); got != 1 {
 		t.Errorf("stuck gauge after park = %v, want 1", got)
 	}
@@ -393,13 +393,13 @@ func TestServe_Metrics_MailmanStuck_ParkAndUnpark(t *testing.T) {
 	}
 	clearDeadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(clearDeadline) {
-		if gatherGauge(t, m, "tmux_msg_mailman_stuck",
+		if gatherGauge(t, m, "tmux_tell_mailman_stuck",
 			map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}) == 0 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if got := gatherGauge(t, m, "tmux_msg_mailman_stuck",
+	if got := gatherGauge(t, m, "tmux_tell_mailman_stuck",
 		map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}); got != 0 {
 		t.Errorf("stuck gauge after unpark = %v, want 0", got)
 	}
@@ -434,13 +434,13 @@ func TestServe_Metrics_MailmanStuck_StartupWithParkedAgent(t *testing.T) {
 	// Gauge must reach 1 within a few loop iterations (no delivery needed).
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if gatherGauge(t, m, "tmux_msg_mailman_stuck",
+		if gatherGauge(t, m, "tmux_tell_mailman_stuck",
 			map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}) == 1 {
 			break
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	if got := gatherGauge(t, m, "tmux_msg_mailman_stuck",
+	if got := gatherGauge(t, m, "tmux_tell_mailman_stuck",
 		map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}); got != 1 {
 		t.Errorf("stuck gauge at startup with parked agent = %v, want 1", got)
 	}

@@ -171,16 +171,16 @@ clean way is a per-agent config block (`[agent.bob] metrics-addr = ":9099"`). A 
 (Prometheus, Grafana Alloy, VictoriaMetrics' vmagent, …) then pulls each endpoint;
 pull-only, no push-gateway needed.
 
-Metrics exposed (all prefixed `tmux_msg_`):
+Metrics exposed (all prefixed `tmux_tell_`):
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
-| `tmux_msg_messages_total` | counter | `from`, `to`, `state` | terminal delivery outcomes; `state` ∈ `delivered` / `delivered_in_input_box` / `failed` — the talk-pair heatmap source |
-| `tmux_msg_delivery_latency_seconds` | histogram | `recipient` | queued→delivered wall-clock |
-| `tmux_msg_delivery_verify_attempt_seconds` | histogram | `recipient` | time in the post-Enter verify-token retry loop |
-| `tmux_msg_queue_depth` | gauge | `agent` | current queued (undelivered) depth, sampled each loop |
-| `tmux_msg_mailman_loop_iterations_total` | counter | `agent` | serve-loop iterations (liveness + cadence) |
-| `tmux_msg_paste_unsafe_aborts_total` | counter | `agent`, `reason` | deliveries aborted because the pane was paste-unsafe; `reason` ∈ `awaiting_operator` / `compaction` / `unknown` / `probe_failed` |
+| `tmux_tell_messages_total` | counter | `from`, `to`, `state` | terminal delivery outcomes; `state` ∈ `delivered` / `delivered_in_input_box` / `failed` — the talk-pair heatmap source |
+| `tmux_tell_delivery_latency_seconds` | histogram | `recipient` | queued→delivered wall-clock |
+| `tmux_tell_delivery_verify_attempt_seconds` | histogram | `recipient` | time in the post-Enter verify-token retry loop |
+| `tmux_tell_queue_depth` | gauge | `agent` | current queued (undelivered) depth, sampled each loop |
+| `tmux_tell_mailman_loop_iterations_total` | counter | `agent` | serve-loop iterations (liveness + cadence) |
+| `tmux_tell_paste_unsafe_aborts_total` | counter | `agent`, `reason` | deliveries aborted because the pane was paste-unsafe; `reason` ∈ `awaiting_operator` / `compaction` / `unknown` / `probe_failed` |
 
 The endpoint is standard Prometheus text exposition, so any compatible scraper works —
 point its scrape config at the per-agent `host:port/metrics`. The alcatraz Alloy scrape

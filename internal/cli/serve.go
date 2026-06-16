@@ -239,7 +239,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	settleDelay := fs.Duration("settle-delay", tmuxio.DefaultSettleDelay,
 		"pause between paste-buffer and the submit Enter, giving the TUI time to ingest a (possibly collapsed/chunked) paste before it is asked to submit. 500ms suits Claude; codex collapses >~1KB pastes into `[Pasted Content]` chunks that need longer to ingest, so a codex mailman may need a larger value (e.g. 2s) or the submit-Enter is eaten and the paste sits unsubmitted (#360). Per-agent TOML knob: `settle-delay = \"2s\"`.")
 	verifyRetryBudget := fs.Duration("verify-retry-budget", tmuxio.DefaultRetryBudget,
-		"total verify-token retry window for post-paste verification (#153). The default ~5s schedule (100ms/250ms/500ms/1s/1.5s/1.65s across 7 capture attempts) scales proportionally to this budget — e.g. 10s doubles each delay, 15s triples. Per-agent TOML knob: `verify-retry-budget = \"15s\"` for large-payload hubs. Inspect with #146's tmux_msg_delivery_verify_attempt_seconds histogram before tuning.")
+		"total verify-token retry window for post-paste verification (#153). The default ~5s schedule (100ms/250ms/500ms/1s/1.5s/1.65s across 7 capture attempts) scales proportionally to this budget — e.g. 10s doubles each delay, 15s triples. Per-agent TOML knob: `verify-retry-budget = \"15s\"` for large-payload hubs. Inspect with #146's tmux_tell_delivery_verify_attempt_seconds histogram before tuning.")
 	postCompactPause := fs.Duration("post-compact-pause", 120*time.Second,
 		"quiescent window after delivering /compact before claiming the next message (0 to disable)")
 	// Observe-gate knobs (#92). The observe-only-with-one-named-

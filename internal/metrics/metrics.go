@@ -29,7 +29,7 @@ import (
 	"net/http"
 )
 
-// State label values for tmux_msg_messages_total. They mirror the durable
+// State label values for tmux_tell_messages_total. They mirror the durable
 // delivery outcomes the mailman writes (#169): a verified delivery, the
 // delivered_in_input_box soft-fail (paste+Enter landed but the verify token
 // never surfaced), and a hard failure. These are the metric's stable wire
@@ -81,33 +81,33 @@ func New() *Metrics {
 	m := &Metrics{
 		reg: reg,
 		messagesTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tmux_msg_messages_total",
+			Name: "tmux_tell_messages_total",
 			Help: "Total messages the mailman drove to a terminal delivery outcome, by sender, recipient, and outcome state.",
 		}, []string{"from", "to", "state"}),
 		deliveryLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "tmux_msg_delivery_latency_seconds",
+			Name:    "tmux_tell_delivery_latency_seconds",
 			Help:    "Wall-clock from a message being queued to it reaching the delivered state, per recipient.",
 			Buckets: latencyBuckets,
 		}, []string{"recipient"}),
 		verifyAttempt: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "tmux_msg_delivery_verify_attempt_seconds",
+			Name:    "tmux_tell_delivery_verify_attempt_seconds",
 			Help:    "Wall-clock spent in the post-Enter verify-token retry loop, per recipient (shared with #153 budget calibration).",
 			Buckets: verifyBuckets,
 		}, []string{"recipient"}),
 		queueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "tmux_msg_queue_depth",
+			Name: "tmux_tell_queue_depth",
 			Help: "Current count of queued (undelivered) messages addressed to the agent, sampled each mailman loop iteration.",
 		}, []string{"agent"}),
 		loopIterations: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tmux_msg_mailman_loop_iterations_total",
+			Name: "tmux_tell_mailman_loop_iterations_total",
 			Help: "Total mailman serve-loop iterations for the agent — a liveness + cadence signal.",
 		}, []string{"agent"}),
 		pasteUnsafeAborts: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "tmux_msg_paste_unsafe_aborts_total",
+			Name: "tmux_tell_paste_unsafe_aborts_total",
 			Help: "Total deliveries aborted by the pre-paste safety / drift guards because the pane was paste-unsafe, by agent and reason.",
 		}, []string{"agent", "reason"}),
 		mailmanStuck: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "tmux_msg_mailman_stuck",
+			Name: "tmux_tell_mailman_stuck",
 			Help: "1 when the mailman is parked in the #291 stuck state (stopped probing tmux), 0 when clear. Labels: agent name and stuck reason (pane-not-found).",
 		}, []string{"agent", "reason"}),
 	}
@@ -145,7 +145,7 @@ func (m *Metrics) Registry() *prometheus.Registry {
 	return m.reg
 }
 
-// RecordDelivery increments tmux_msg_messages_total for one terminal
+// RecordDelivery increments tmux_tell_messages_total for one terminal
 // delivery outcome. state should be one of the State* constants.
 func (m *Metrics) RecordDelivery(from, to, state string) {
 	if m == nil {
@@ -200,7 +200,7 @@ func (m *Metrics) IncPasteUnsafeAbort(agent, reason string) {
 	m.pasteUnsafeAborts.WithLabelValues(agent, reason).Inc()
 }
 
-// SetMailmanStuck sets tmux_msg_mailman_stuck for the agent (#300).
+// SetMailmanStuck sets tmux_tell_mailman_stuck for the agent (#300).
 // parked=true sets the gauge to 1 (mailman is parked); parked=false sets it
 // to 0 (mailman resumed). reason is the stuck reason string from the store
 // (store.StuckReasonPaneNotFound = "pane-not-found"); callers must pass the

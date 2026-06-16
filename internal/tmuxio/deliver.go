@@ -50,7 +50,7 @@ type DeliverParams struct {
 	// verification loop with the wall-clock spent in that loop and whether
 	// the token was observed within the retry budget. It lets the caller
 	// record verify-attempt metrics (#146
-	// tmux_msg_delivery_verify_attempt_seconds, shared with #153's budget
+	// tmux_tell_delivery_verify_attempt_seconds, shared with #153's budget
 	// calibration) WITHOUT tmuxio importing a metrics package — tmuxio just
 	// reports the timing; the caller decides what to do with it. Not called
 	// when VerifyToken is empty (no verification is performed), nor on a
