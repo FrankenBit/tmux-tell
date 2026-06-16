@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/discover"
@@ -20,7 +21,8 @@ const codexHookCommand = "tmux-tell-codex hook-context"
 // codexMCPServerProbe captures the fields of a single mcp_servers entry
 // that codex-install cares about (other fields pass through untouched).
 type codexMCPServerProbe struct {
-	Env map[string]string `toml:"env"`
+	Command string            `toml:"command"`
+	Env     map[string]string `toml:"env"`
 }
 
 // codexConfigProbe is the partial shape of ~/.codex/config.toml used for
@@ -47,6 +49,105 @@ type codexInstallResult struct {
 	EnvWritten   bool     `json:"env_written,omitempty"`
 	AlreadyOK    bool     `json:"already_ok,omitempty"`
 	Warnings     []string `json:"warnings,omitempty"`
+	Notices      []string `json:"notices,omitempty"`
+}
+
+// legacyMcpRenames lists codex `[mcp_servers.<old>]` section renames that
+// codex-install migrates in-place at install time (#486, the codex-config half
+// of the #478 substrate rename). A table so the next substrate rename appends a
+// row rather than re-shaping the call site — the same list-shaped seam as the
+// binary alias chain (#440 Phase 3). Today it carries only tmux-msg → tmux-tell.
+var legacyMcpRenames = []struct{ oldName, newName string }{
+	{"tmux-msg", "tmux-tell"},
+}
+
+// migrateLegacyMcpSection rewrites a pre-rename `[mcp_servers.<old>]` section to
+// `<new>` in place, operating on the raw file text (BurntSushi/toml does NOT
+// round-trip — re-encoding a decoded config would strip operator comments and
+// reorder keys, so we surgically rewrite only the lines that name the old
+// server/binary and leave every other byte — `env`, `args`, `approval_mode`,
+// comments, key order — untouched). Returns:
+//
+//   - "renamed": the `<old>` section(s) were rewritten to `<new>` (the common
+//     pre-rename case — no `<new>` section existed yet). See
+//     renameLegacyMcpSections for exactly which bytes change.
+//   - "removed": a `<new>` section already exists (the post-#478 dup case), so
+//     the orphaned `<old>` section(s) are dropped entirely — renaming would
+//     produce a duplicate `[mcp_servers.<new>]` and a stale section keeps
+//     mis-advertising tools under the old wire prefix.
+//   - "": no `<old>` section present — no-op (so a re-run is idempotent).
+//
+// Only the bare-key header form the writer emits (`[mcp_servers.tmux-msg]`,
+// `[mcp_servers.tmux-msg.env]`, `[mcp_servers.tmux-msg.tools."tmux-msg.<tool>"]`)
+// is matched on `mcp_servers.<old>`; `tmux-msg`/`tmux-tell` are valid TOML bare
+// keys so the writer never quotes the server segment. A hand-quoted operator
+// variant of the server segment is out of scope (left as-is).
+func migrateLegacyMcpSection(content *string, oldName, newName string) string {
+	oldHdr := regexp.MustCompile(
+		`(?m)^[ \t]*\[mcp_servers\.` + regexp.QuoteMeta(oldName) + `(\.[^\]]*)?\][ \t]*$`)
+	if !oldHdr.MatchString(*content) {
+		return ""
+	}
+	newHdr := regexp.MustCompile(
+		`(?m)^[ \t]*\[mcp_servers\.` + regexp.QuoteMeta(newName) + `(\.[^\]]*)?\][ \t]*$`)
+	if newHdr.MatchString(*content) {
+		*content = removeTomlSections(*content, oldHdr)
+		return "removed"
+	}
+	*content = renameLegacyMcpSections(*content, oldHdr, oldName, newName)
+	return "renamed"
+}
+
+// renameLegacyMcpSections advances a pre-rename `[mcp_servers.<old>…]` section to
+// `<new>` (#486). For each matched header line it rewrites EVERY `<old>`
+// occurrence — both the section-path segment (`mcp_servers.<old>`) AND any inner
+// per-tool key (`."<old>.<tool>"`) — because codex keys a tool's `approval_mode`
+// sub-table by the fully-qualified tool name; leaving the inner key at `<old>`
+// while the live tool is now `<new>.<tool>` would silently de-link the operator's
+// per-tool approval setting. Within each migrated section's body it also rewrites
+// a `command` value naming the pre-rename `<old>-<adapter>` binary to
+// `<new>-<adapter>`. Lines outside a migrated section, and non-command body lines,
+// pass through byte-identical.
+func renameLegacyMcpSections(content string, oldHdr *regexp.Regexp, oldName, newName string) string {
+	anyHeader := regexp.MustCompile(`^[ \t]*\[`)
+	cmdLine := regexp.MustCompile(`^[ \t]*command[ \t]*=`)
+	lines := strings.Split(content, "\n")
+	inSection := false
+	for i, line := range lines {
+		switch {
+		case oldHdr.MatchString(line):
+			lines[i] = strings.ReplaceAll(line, oldName, newName)
+			inSection = true
+		case anyHeader.MatchString(line):
+			inSection = false // a non-legacy section begins
+		case inSection && cmdLine.MatchString(line) && strings.Contains(line, oldName+"-"):
+			lines[i] = strings.ReplaceAll(line, oldName+"-", newName+"-")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// removeTomlSections drops every section whose header matches hdr, along with
+// each section's body lines (everything up to the next `[`-header or EOF). Used
+// for the dup-case migration where the legacy section is orphaned.
+func removeTomlSections(content string, hdr *regexp.Regexp) string {
+	anyHeader := regexp.MustCompile(`^[ \t]*\[`)
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	skipping := false
+	for _, line := range lines {
+		switch {
+		case hdr.MatchString(line):
+			skipping = true // start (or continue into another) removed section
+			continue
+		case skipping && anyHeader.MatchString(line):
+			skipping = false // a different section begins — keep it
+		case skipping:
+			continue // body line of the removed section
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // runCodexInstallCLI implements `tmux-tell-codex codex-install` — the
@@ -135,7 +236,7 @@ func runCodexInstallCLI(args []string, stdout, stderr io.Writer) int {
 	}
 
 	// Step 3: merge hook blocks + env into codex config.
-	hooksWritten, envWritten, alreadyOK, warnings, writeErr := mergeCodexConfig(
+	hooksWritten, envWritten, alreadyOK, warnings, notices, writeErr := mergeCodexConfig(
 		resolvedConfig, *agentName, *dryRun,
 	)
 	if writeErr != nil {
@@ -147,6 +248,7 @@ func runCodexInstallCLI(args []string, stdout, stderr io.Writer) int {
 	result.EnvWritten = envWritten
 	result.AlreadyOK = alreadyOK
 	result.Warnings = warnings
+	result.Notices = notices
 	result.OK = true
 
 	return emitCodexInstallResult(stdout, stderr, result, *format, resolvedConfig, *agentName, *dryRun)
@@ -159,17 +261,55 @@ func runCodexInstallCLI(args []string, stdout, stderr io.Writer) int {
 // present-but-wrong values surface as warnings and are not modified (the
 // operator may have intentionally configured them differently). The caller
 // decides whether to abort or proceed.
-func mergeCodexConfig(configPath, agentName string, dryRun bool) (hooksWritten, envWritten, alreadyOK bool, warnings []string, err error) {
+func mergeCodexConfig(configPath, agentName string, dryRun bool) (hooksWritten, envWritten, alreadyOK bool, warnings, notices []string, err error) {
 	existing, readErr := os.ReadFile(configPath)
 	if readErr != nil && !os.IsNotExist(readErr) {
-		return false, false, false, nil, fmt.Errorf("read: %w", readErr)
+		return false, false, false, nil, nil, fmt.Errorf("read: %w", readErr)
 	}
 	fileExists := readErr == nil
+	content := string(existing)
+
+	// Migrate any pre-rename [mcp_servers.<old>] section IN PLACE before the
+	// probe (#486), so the existence check + atomic write below operate on the
+	// canonical section name. Text-surgical (see migrateLegacyMcpSection) so
+	// operator customizations survive byte-identical. `migrated` gates the write
+	// so a migrate-only change (no other appends) is not silently dropped.
+	migrated := false
+	for _, r := range legacyMcpRenames {
+		switch migrateLegacyMcpSection(&content, r.oldName, r.newName) {
+		case "renamed":
+			migrated = true
+			notices = append(notices, fmt.Sprintf(
+				"migrating_legacy_codex_mcp_section old=mcp_servers.%s new=mcp_servers.%s path=%s",
+				r.oldName, r.newName, configPath))
+		case "removed":
+			migrated = true
+			notices = append(notices, fmt.Sprintf(
+				"removing_orphaned_codex_mcp_section old_section=[mcp_servers.%s] "+
+					"reason=\"post-rename coexistence with canonical [mcp_servers.%s]\"",
+				r.oldName, r.newName))
+		}
+	}
 
 	var probe codexConfigProbe
-	if fileExists && len(existing) > 0 {
-		if _, decErr := toml.Decode(string(existing), &probe); decErr != nil {
-			return false, false, false, nil, fmt.Errorf("parse TOML: %w", decErr)
+	if fileExists && len(content) > 0 {
+		if _, decErr := toml.Decode(content, &probe); decErr != nil {
+			return false, false, false, nil, nil, fmt.Errorf("parse TOML: %w", decErr)
+		}
+	}
+
+	// Residual stale-binary WARN (#486). A migrating `[mcp_servers.tmux-msg…]`
+	// section has its `command` rewritten in place by renameLegacyMcpSections
+	// above, so this only fires for the no-migration case: a config already at the
+	// canonical `[mcp_servers.tmux-tell]` section name whose `command` STILL names
+	// the pre-rename `tmux-msg-*` binary. That residue is the operator's to fix
+	// (we don't rewrite a command outside a section we're actively migrating).
+	if probe.McpServers != nil {
+		if entry, ok := probe.McpServers["tmux-tell"]; ok &&
+			entry.Command != "" && strings.Contains(entry.Command, "tmux-msg-") {
+			warnings = append(warnings, fmt.Sprintf(
+				"mcp_servers.tmux-tell.command is %q (still names a pre-rename tmux-msg-* binary); "+
+					"skipped — update manually to the tmux-tell-* binary", entry.Command))
 		}
 	}
 
@@ -211,20 +351,25 @@ func mergeCodexConfig(configPath, agentName string, dryRun bool) (hooksWritten, 
 			existingAgentName, agentName))
 	}
 
-	if len(toAppend) == 0 {
+	// Write when there's something to append OR a migration rewrote the content
+	// (a migrate-only change has no appends but MUST still be persisted — the
+	// `|| migrated` arm is the load-bearing half of the write gate).
+	if len(toAppend) == 0 && !migrated {
 		alreadyOK = len(warnings) == 0
-		return false, false, alreadyOK, warnings, nil
+		return false, false, alreadyOK, warnings, notices, nil
 	}
 
 	if dryRun {
-		return hooksWritten, envWritten, false, warnings, nil
+		return hooksWritten, envWritten, false, warnings, notices, nil
 	}
 
-	// Build the content to append. Lead with a blank line if the file
-	// already exists and has content, so new sections start cleanly.
+	// Build the content to append onto the (possibly migrated) base. Lead with a
+	// blank line if the base has content and we're appending, so new sections
+	// start cleanly; a migrate-only write appends nothing and keeps the base
+	// byte-identical apart from the rewritten header(s).
 	var sb strings.Builder
-	if fileExists && len(existing) > 0 {
-		if !strings.HasSuffix(string(existing), "\n") {
+	if fileExists && len(content) > 0 && len(toAppend) > 0 {
+		if !strings.HasSuffix(content, "\n") {
 			sb.WriteString("\n")
 		}
 		sb.WriteString("\n")
@@ -238,13 +383,13 @@ func mergeCodexConfig(configPath, agentName string, dryRun bool) (hooksWritten, 
 	}
 
 	if mkErr := os.MkdirAll(filepath.Dir(configPath), 0o700); mkErr != nil {
-		return false, false, false, warnings, fmt.Errorf("create config dir: %w", mkErr)
+		return false, false, false, warnings, notices, fmt.Errorf("create config dir: %w", mkErr)
 	}
 
 	// Atomic write: temp file → rename.
 	tmp, tmpErr := os.CreateTemp(filepath.Dir(configPath), ".codex-install-*.toml")
 	if tmpErr != nil {
-		return false, false, false, warnings, fmt.Errorf("create temp: %w", tmpErr)
+		return false, false, false, warnings, notices, fmt.Errorf("create temp: %w", tmpErr)
 	}
 	tmpName := tmp.Name()
 	defer func() {
@@ -252,18 +397,18 @@ func mergeCodexConfig(configPath, agentName string, dryRun bool) (hooksWritten, 
 		os.Remove(tmpName) // no-op after rename succeeds
 	}()
 
-	combined := append(append([]byte(nil), existing...), []byte(sb.String())...)
+	combined := append([]byte(content), []byte(sb.String())...)
 	if _, wErr := tmp.Write(combined); wErr != nil {
-		return false, false, false, warnings, fmt.Errorf("write temp: %w", wErr)
+		return false, false, false, warnings, notices, fmt.Errorf("write temp: %w", wErr)
 	}
 	if cErr := tmp.Close(); cErr != nil {
-		return false, false, false, warnings, fmt.Errorf("close temp: %w", cErr)
+		return false, false, false, warnings, notices, fmt.Errorf("close temp: %w", cErr)
 	}
 	if rErr := os.Rename(tmpName, configPath); rErr != nil {
-		return false, false, false, warnings, fmt.Errorf("rename: %w", rErr)
+		return false, false, false, warnings, notices, fmt.Errorf("rename: %w", rErr)
 	}
 
-	return hooksWritten, envWritten, false, warnings, nil
+	return hooksWritten, envWritten, false, warnings, notices, nil
 }
 
 func emitCodexInstallResult(stdout, stderr io.Writer, r codexInstallResult, format, configPath, agentName string, dryRun bool) int {
@@ -274,6 +419,9 @@ func emitCodexInstallResult(stdout, stderr io.Writer, r codexInstallResult, form
 		if r.AlreadyOK {
 			fmt.Fprintf(stdout, "OK\tcodex config already wired for %q — no changes\n", agentName)
 		} else {
+			for _, n := range r.Notices {
+				fmt.Fprintf(stdout, "NOTICE\t%s\n", n)
+			}
 			if r.Registered {
 				fmt.Fprintf(stdout, "REGISTERED\t%s delivery_mode=hook-context\n", agentName)
 			}

@@ -393,7 +393,7 @@ command = "other-tool mcp"
 		t.Fatalf("write existing: %v", err)
 	}
 
-	_, _, _, warnings, err := mergeCodexConfig(cfg, "lookout", false)
+	_, _, _, warnings, _, err := mergeCodexConfig(cfg, "lookout", false)
 	if err != nil {
 		t.Fatalf("mergeCodexConfig: %v", err)
 	}
@@ -413,5 +413,366 @@ command = "other-tool mcp"
 	}
 	if !strings.Contains(body, "TMUX_AGENT_NAME = \"lookout\"") {
 		t.Errorf("TMUX_AGENT_NAME not written:\n%s", body)
+	}
+}
+
+// --- #486: codex-config [mcp_servers.tmux-msg] → tmux-tell migration ---
+
+// TestMigrateLegacyMcpSection_Rename pins the common pre-rename case: a config
+// with `[mcp_servers.tmux-msg…]` and no `tmux-tell` section gets its headers
+// rewritten to `tmux-tell`, returns "renamed", and leaves every non-header byte
+// (command, env, args, comments, key order) identical.
+func TestMigrateLegacyMcpSection_Rename(t *testing.T) {
+	content := `# operator's hand-tuned codex config
+[mcp_servers.tmux-msg]
+command = "tmux-tell-codex"
+args = ["mcp"]
+approval_mode = "never"   # don't prompt
+
+[mcp_servers.tmux-msg.env]
+TMUX_AGENT_NAME = "lookout"
+
+[some.other-section]
+key = "value"
+`
+	orig := content
+	action := migrateLegacyMcpSection(&content, "tmux-msg", "tmux-tell")
+	if action != "renamed" {
+		t.Fatalf("action = %q, want renamed", action)
+	}
+	// Both headers renamed.
+	if strings.Contains(content, "[mcp_servers.tmux-msg]") ||
+		strings.Contains(content, "[mcp_servers.tmux-msg.env]") {
+		t.Errorf("legacy headers survived:\n%s", content)
+	}
+	if !strings.Contains(content, "[mcp_servers.tmux-tell]") ||
+		!strings.Contains(content, "[mcp_servers.tmux-tell.env]") {
+		t.Errorf("renamed headers missing:\n%s", content)
+	}
+	// Non-header bytes byte-identical: reconstruct expected by renaming only the
+	// two header lines in the original.
+	want := strings.NewReplacer(
+		"[mcp_servers.tmux-msg]", "[mcp_servers.tmux-tell]",
+		"[mcp_servers.tmux-msg.env]", "[mcp_servers.tmux-tell.env]",
+	).Replace(orig)
+	if content != want {
+		t.Errorf("rename touched non-header bytes.\n got:\n%s\nwant:\n%s", content, want)
+	}
+}
+
+// TestMigrateLegacyMcpSection_RewritesToolKeysAndCommand pins #486's full
+// substrate-coverage (Option B, reversing f451's command-WARN-only call): inside
+// a migrating `[mcp_servers.tmux-msg…]` section, the rewrite must advance ALL
+// three substrate-points — the section-path segment, the inner per-tool key
+// (`."tmux-msg.<tool>"`), and the `command` binary (`tmux-msg-codex`) — while
+// leaving `approval_mode`/`args`/`env` byte-identical. Leaving the inner tool key
+// at `tmux-msg` would silently de-link the operator's per-tool approval_mode from
+// the live `tmux-tell.<tool>` tool (the operator-visible failure mode).
+func TestMigrateLegacyMcpSection_RewritesToolKeysAndCommand(t *testing.T) {
+	content := `[mcp_servers.tmux-msg]
+command = "tmux-msg-codex"
+args = ["mcp"]
+env = { TMUX_AGENT_NAME = "lookout" }
+
+[mcp_servers.tmux-msg.tools."tmux-msg.status"]
+approval_mode = "approve"
+
+[mcp_servers.tmux-msg.tools."tmux-msg.send"]
+approval_mode = "approve"
+`
+	action := migrateLegacyMcpSection(&content, "tmux-msg", "tmux-tell")
+	if action != "renamed" {
+		t.Fatalf("action = %q, want renamed", action)
+	}
+	if strings.Contains(content, "tmux-msg") {
+		t.Errorf("a tmux-msg occurrence survived the rewrite:\n%s", content)
+	}
+	for _, want := range []string{
+		"[mcp_servers.tmux-tell]",
+		`command = "tmux-tell-codex"`,                      // binary rewritten
+		`[mcp_servers.tmux-tell.tools."tmux-tell.status"]`, // path + inner key
+		`[mcp_servers.tmux-tell.tools."tmux-tell.send"]`,   // path + inner key
+		`args = ["mcp"]`,                                   // preserved
+		`env = { TMUX_AGENT_NAME = "lookout" }`,            // preserved
+		"approval_mode = \"approve\"",                      // preserved
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("rewrite missing %q:\n%s", want, content)
+		}
+	}
+}
+
+// TestMigrateLegacyMcpSection_RemoveDup pins the post-#478 dup case: when both
+// `tmux-msg` and `tmux-tell` sections exist, the orphaned legacy section is
+// removed entirely (header + body) and the canonical section + other sections
+// are preserved.
+func TestMigrateLegacyMcpSection_RemoveDup(t *testing.T) {
+	content := `[hooks.SessionStart]
+command = "tmux-tell-codex hook-context"
+
+[mcp_servers.tmux-msg.env]
+TMUX_AGENT_NAME = "lookout"
+
+[mcp_servers.tmux-tell.env]
+TMUX_AGENT_NAME = "lookout"
+
+[mcp_servers.other-tool]
+command = "other mcp"
+`
+	action := migrateLegacyMcpSection(&content, "tmux-msg", "tmux-tell")
+	if action != "removed" {
+		t.Fatalf("action = %q, want removed", action)
+	}
+	if strings.Contains(content, "tmux-msg") {
+		t.Errorf("legacy tmux-msg section survived dup-removal:\n%s", content)
+	}
+	for _, want := range []string{
+		"[hooks.SessionStart]",
+		"[mcp_servers.tmux-tell.env]",
+		"[mcp_servers.other-tool]",
+		`command = "other mcp"`,
+	} {
+		if !strings.Contains(content, want) {
+			t.Errorf("dup-removal dropped %q:\n%s", want, content)
+		}
+	}
+}
+
+// TestMigrateLegacyMcpSection_NoOpAndIdempotent pins the no-op states: a config
+// with only the canonical section (or neither) is untouched and returns "", and
+// re-running on an already-migrated config is a no-op (idempotent by
+// construction — no legacy header to match).
+func TestMigrateLegacyMcpSection_NoOpAndIdempotent(t *testing.T) {
+	cases := map[string]string{
+		"canonical-only": "[mcp_servers.tmux-tell.env]\nTMUX_AGENT_NAME = \"lookout\"\n",
+		"neither":        "[hooks.SessionStart]\ncommand = \"x\"\n",
+		"empty":          "",
+	}
+	for name, content := range cases {
+		t.Run(name, func(t *testing.T) {
+			orig := content
+			action := migrateLegacyMcpSection(&content, "tmux-msg", "tmux-tell")
+			if action != "" {
+				t.Errorf("action = %q, want \"\" (no-op)", action)
+			}
+			if content != orig {
+				t.Errorf("content mutated on no-op:\n got:%q\nwant:%q", content, orig)
+			}
+		})
+	}
+
+	// Idempotent re-run: rename once, then a second pass is a no-op.
+	content := "[mcp_servers.tmux-msg.env]\nTMUX_AGENT_NAME = \"lookout\"\n"
+	if got := migrateLegacyMcpSection(&content, "tmux-msg", "tmux-tell"); got != "renamed" {
+		t.Fatalf("first pass action = %q, want renamed", got)
+	}
+	afterFirst := content
+	if got := migrateLegacyMcpSection(&content, "tmux-msg", "tmux-tell"); got != "" {
+		t.Errorf("second pass action = %q, want \"\" (idempotent)", got)
+	}
+	if content != afterFirst {
+		t.Errorf("second pass mutated content:\n got:%q\nwant:%q", content, afterFirst)
+	}
+}
+
+// TestMergeCodexConfig_MigratePreRename drives the full writer over a realistic
+// pre-rename config (mirroring an operator's ~/.codex/config.toml with per-tool
+// approval subsections + a stale binary command): every substrate-point advances
+// to tmux-tell, a migration notice is emitted, operator customizations survive,
+// no stale-binary WARN fires (the command was rewritten, not flagged), and the
+// canonical env is recognized (no dup append).
+func TestMergeCodexConfig_MigratePreRename(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	existing := `[hooks.UserPromptSubmit]
+command = "tmux-tell-codex hook-context"
+
+[hooks.SessionStart]
+command = "tmux-tell-codex hook-context"
+
+[mcp_servers.tmux-msg]
+command = "tmux-msg-codex"
+args = ["mcp"]
+env = { TMUX_AGENT_NAME = "lookout" }
+
+[mcp_servers.tmux-msg.tools."tmux-msg.status"]
+approval_mode = "approve"
+
+[mcp_servers.tmux-msg.tools."tmux-msg.send"]
+approval_mode = "approve"
+`
+	if err := os.WriteFile(cfg, []byte(existing), 0o600); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+
+	hooksWritten, envWritten, alreadyOK, warnings, notices, err := mergeCodexConfig(cfg, "lookout", false)
+	if err != nil {
+		t.Fatalf("mergeCodexConfig: %v", err)
+	}
+	if hooksWritten || envWritten {
+		t.Errorf("unexpected append: hooksWritten=%v envWritten=%v (config already wired under old name)", hooksWritten, envWritten)
+	}
+	if alreadyOK {
+		t.Errorf("AlreadyOK=true, want false (a migration is a change)")
+	}
+	if len(warnings) != 0 {
+		t.Errorf("unexpected warnings: %v (command was rewritten, not flagged)", warnings)
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "migrating_legacy_codex_mcp_section") {
+		t.Fatalf("notices = %v, want one migrating_legacy_codex_mcp_section", notices)
+	}
+
+	body, _ := os.ReadFile(cfg)
+	got := string(body)
+	if strings.Contains(got, "tmux-msg") {
+		t.Errorf("a tmux-msg occurrence survived migration:\n%s", got)
+	}
+	for _, want := range []string{
+		"[mcp_servers.tmux-tell]",
+		`command = "tmux-tell-codex"`,                      // binary rewritten
+		`[mcp_servers.tmux-tell.tools."tmux-tell.status"]`, // path + inner tool key
+		`[mcp_servers.tmux-tell.tools."tmux-tell.send"]`,
+		`args = ["mcp"]`,                        // customization preserved
+		`env = { TMUX_AGENT_NAME = "lookout" }`, // customization preserved
+		"approval_mode = \"approve\"",           // per-tool setting preserved
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("migrated config missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestMergeCodexConfig_MigrateOnlyWrites is the load-bearing pin for the write
+// gate's `|| migrated` arm: a config already fully wired EXCEPT under the legacy
+// section name produces no appends — yet the migration MUST still be persisted.
+// Reverting the `|| migrated` half of the gate (back to a bare `len(toAppend)==0`
+// early return) drops the rename silently → the legacy header survives on disk →
+// this test goes red.
+func TestMergeCodexConfig_MigrateOnlyWrites(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	existing := `[hooks.UserPromptSubmit]
+command = "tmux-tell-codex hook-context"
+
+[hooks.SessionStart]
+command = "tmux-tell-codex hook-context"
+
+[mcp_servers.tmux-msg.env]
+TMUX_AGENT_NAME = "lookout"
+`
+	if err := os.WriteFile(cfg, []byte(existing), 0o600); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+
+	_, _, alreadyOK, _, notices, err := mergeCodexConfig(cfg, "lookout", false)
+	if err != nil {
+		t.Fatalf("mergeCodexConfig: %v", err)
+	}
+	if alreadyOK {
+		t.Errorf("AlreadyOK=true — a migrate-only change must not report no-op")
+	}
+	if len(notices) == 0 {
+		t.Errorf("no migration notice emitted")
+	}
+
+	body, _ := os.ReadFile(cfg)
+	got := string(body)
+	if strings.Contains(got, "[mcp_servers.tmux-msg.env]") {
+		t.Errorf("migrate-only change was NOT persisted (legacy header still on disk):\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.tmux-tell.env]") {
+		t.Errorf("renamed header not on disk:\n%s", got)
+	}
+}
+
+// TestMergeCodexConfig_MigrateRemovesDup drives the full writer over a dup
+// config (both sections present): the orphaned legacy section is removed, a
+// removal notice is emitted, and the canonical section survives.
+func TestMergeCodexConfig_MigrateRemovesDup(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	existing := `[hooks.UserPromptSubmit]
+command = "tmux-tell-codex hook-context"
+
+[hooks.SessionStart]
+command = "tmux-tell-codex hook-context"
+
+[mcp_servers.tmux-msg.env]
+TMUX_AGENT_NAME = "lookout"
+
+[mcp_servers.tmux-tell.env]
+TMUX_AGENT_NAME = "lookout"
+`
+	if err := os.WriteFile(cfg, []byte(existing), 0o600); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+
+	_, _, alreadyOK, _, notices, err := mergeCodexConfig(cfg, "lookout", false)
+	if err != nil {
+		t.Fatalf("mergeCodexConfig: %v", err)
+	}
+	if alreadyOK {
+		t.Errorf("AlreadyOK=true, want false (dup removal is a change)")
+	}
+	if len(notices) != 1 || !strings.Contains(notices[0], "removing_orphaned_codex_mcp_section") {
+		t.Fatalf("notices = %v, want one removing_orphaned_codex_mcp_section", notices)
+	}
+
+	body, _ := os.ReadFile(cfg)
+	got := string(body)
+	if strings.Contains(got, "tmux-msg") {
+		t.Errorf("legacy tmux-msg section survived dup-removal:\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.tmux-tell.env]") {
+		t.Errorf("canonical section dropped:\n%s", got)
+	}
+}
+
+// TestMergeCodexConfig_StaleBinaryWarnsWithoutMigration pins the residual WARN
+// (#486, Option B): when there is NO `[mcp_servers.tmux-msg]` section to migrate
+// but the already-canonical `[mcp_servers.tmux-tell]` section's `command` STILL
+// names the pre-rename `tmux-msg-*` binary, the writer WARNs and leaves it (no
+// migrating section is in scope, so the binary is the operator's to fix). Inside
+// a migrating section the command IS rewritten — that path is covered by
+// TestMergeCodexConfig_MigratePreRename, which asserts zero warnings.
+func TestMergeCodexConfig_StaleBinaryWarnsWithoutMigration(t *testing.T) {
+	tmp := t.TempDir()
+	cfg := filepath.Join(tmp, "config.toml")
+	existing := `[hooks.UserPromptSubmit]
+command = "tmux-tell-codex hook-context"
+
+[hooks.SessionStart]
+command = "tmux-tell-codex hook-context"
+
+[mcp_servers.tmux-tell]
+command = "tmux-msg-codex"
+
+[mcp_servers.tmux-tell.env]
+TMUX_AGENT_NAME = "lookout"
+`
+	if err := os.WriteFile(cfg, []byte(existing), 0o600); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+
+	_, _, _, warnings, notices, err := mergeCodexConfig(cfg, "lookout", false)
+	if err != nil {
+		t.Fatalf("mergeCodexConfig: %v", err)
+	}
+	if len(notices) != 0 {
+		t.Errorf("no migration should run (already canonical); notices=%v", notices)
+	}
+	foundWarn := false
+	for _, w := range warnings {
+		if strings.Contains(w, "tmux-msg-*") {
+			foundWarn = true
+		}
+	}
+	if !foundWarn {
+		t.Errorf("expected a residual stale-binary WARN, got: %v", warnings)
+	}
+	// The command is left as-is (no migrating section authorized a rewrite).
+	body, _ := os.ReadFile(cfg)
+	if !strings.Contains(string(body), `command = "tmux-msg-codex"`) {
+		t.Errorf("command rewritten outside a migrating section; should be WARN-only:\n%s", string(body))
 	}
 }

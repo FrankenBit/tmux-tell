@@ -44,6 +44,22 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   now fires the canonical `mcp-restart-tmux-tell`, and the permission/whitelist
   registry advertises the new identifiers.
 
+### Fixed
+
+- **`codex-install` now migrates a pre-rename `[mcp_servers.tmux-msg]` section in
+  `~/.codex/config.toml` → `tmux-tell`** instead of appending a second
+  `[mcp_servers.tmux-tell]` and orphaning the stale one (#486, the codex-config
+  half of the #478 substrate rename). The migration is text-surgical (only the
+  lines naming the old server/binary change; `approval_mode`/`env`/`args`/comments
+  preserved byte-identical) and idempotent. Within a migrating section it advances
+  all three substrate-points — the section path, the inner per-tool key
+  (`."tmux-msg.<tool>"`, whose `approval_mode` would otherwise silently de-link
+  from the renamed tool), and a `command` naming the `tmux-msg-codex` binary. The
+  dup case (both sections present) removes the orphaned `tmux-msg` section. A
+  `NOTICE` names each rewrite; the migration table (`legacyMcpRenames`) is
+  list-shaped for the next rename. A stale `tmux-msg-*` binary in an
+  already-canonical section (no migration in scope) is WARNed, not rewritten.
+
 ## [0.18.0] — 2026-06-16
 
 The rename release — **`tmux-msg` is now `tmux-tell`**. This completes the second
