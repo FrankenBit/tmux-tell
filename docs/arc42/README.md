@@ -18,22 +18,22 @@ gap it was meant to close.
 | 1 | Introduction and Goals | [01-introduction-and-goals.md](01-introduction-and-goals.md) | drafted (PR-A) |
 | 2 | Architecture Constraints | [02-architecture-constraints.md](02-architecture-constraints.md) | drafted (PR-A) |
 | 3 | Context and Scope | [03-context-and-scope.md](03-context-and-scope.md) | drafted (PR-A) |
-| 4 | Solution Strategy | [04-solution-strategy.md](04-solution-strategy.md) | spine stub → PR-B |
-| 5 | Building Block View | [05-building-block-view.md](05-building-block-view.md) | spine stub → PR-B |
-| 6 | Runtime View | [06-runtime-view.md](06-runtime-view.md) | spine stub → PR-B (one flow) |
+| 4 | Solution Strategy | [04-solution-strategy.md](04-solution-strategy.md) | drafted (PR-B) |
+| 5 | Building Block View | [05-building-block-view.md](05-building-block-view.md) | drafted (PR-B) |
+| 6 | Runtime View | [06-runtime-view.md](06-runtime-view.md) | drafted (PR-B, one flow) |
 | 7 | Deployment View | [07-deployment-view.md](07-deployment-view.md) | drafted (PR-A) |
-| 8 | Crosscutting Concepts | [08-cross-cutting-concepts.md](08-cross-cutting-concepts.md) | spine stub → PR-B |
-| 9 | Architecture Decisions | [09-architecture-decisions.md](09-architecture-decisions.md) | spine stub → PR-B (indexes [`../adr/`](../adr/)) |
+| 8 | Crosscutting Concepts | [08-cross-cutting-concepts.md](08-cross-cutting-concepts.md) | drafted (PR-B) |
+| 9 | Architecture Decisions | [09-architecture-decisions.md](09-architecture-decisions.md) | drafted (PR-B, indexes [`../adr/`](../adr/)) |
 | 10 | Quality Requirements | [10-quality-requirements.md](10-quality-requirements.md) | seed only → canonical PR-C (working session) |
-| 11 | Risks and Technical Debt | [11-risks-and-technical-debt.md](11-risks-and-technical-debt.md) | spine stub → PR-B |
+| 11 | Risks and Technical Debt | [11-risks-and-technical-debt.md](11-risks-and-technical-debt.md) | drafted (PR-B) |
 | 12 | Glossary | [12-glossary.md](12-glossary.md) | drafted (PR-A) |
 
-This is **Phase 1** of #386. PR-A (this) lands the full 12-section spine + the
-five cheap/gap-fill sections (§§1/2/3/7/12) + the freshness convention. PR-B fills
-the substantive sections (§§4/5/6/8/9/11). PR-C canonicalizes §10 after the
-collaborative working session. The *spine is complete now* so a reader can tell a
-section is *planned*, not *missing* — that completeness guarantee is what Arc42 is
-for.
+This is **Phase 1** of #386, landed across PR-A → PR-B → PR-C. PR-A landed the full
+12-section spine + the cheap/gap-fill sections (§§1/2/3/7/12) + the freshness
+convention; PR-B fills the substantive sections (§§4/5/6/8/9/11) + the Layer-1
+per-cut staleness check; PR-C canonicalizes §10 after the collaborative working
+session. The *spine is complete* so a reader can tell a section is *planned*, not
+*missing* — that completeness guarantee is what Arc42 is for.
 
 ## Freshness convention (two markers, single source each)
 

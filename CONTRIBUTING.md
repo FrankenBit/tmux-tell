@@ -196,15 +196,22 @@ The cut sequence (run from a clean main on the cut branch):
    carries the compact checkbox version. Items are N/A-able — a no-doc-impact cut
    ticks them fast — but don't skip it for "small" cuts; that's the drift vector.
    Salience, not machine-enforcement (#495).
-7. **Cut PR.** Open the cut PR; reviewer approves; merge on green.
-8. **Publish the auto-draft.** Merging the cut PR fires `release-draft.yml`,
+7. **Arc42 section staleness.** Scan this cut's changes against the
+   `revisit-triggers` frontmatter of the [Arc42 sections](docs/arc42/): did any
+   section's named trigger fire (a component
+   added/removed, the `PaneProfile` shape moved, a new ADR to anchor, a new
+   risk/term)? If so, pull the section update into this cut. Most cuts are no-op.
+   Sibling to step 6 at the per-cut review-gate axis — salience, not
+   machine-enforcement (#386).
+8. **Cut PR.** Open the cut PR; reviewer approves; merge on green.
+9. **Publish the auto-draft.** Merging the cut PR fires `release-draft.yml`,
    which creates a **draft** Forgejo release whose body is the `[<X.Y.Z>]`
    section's narrative prelude + `Headlines:` (the curated surface per #426), with
    the merge-commit SHA pinned as `target_commitish`. Review the draft in the
    releases UI and click **Publish** — Forgejo creates the `v<X.Y.Z>` tag from the
    draft. No manual `git tag && git push`; the Publish click is the act of
    shipping (#418).
-9. **Deploy fires automatically.** `release: published` triggers
+10. **Deploy fires automatically.** `release: published` triggers
    `release-publish.yml`, which re-validates the tag and chains `deploy.yml` (via
    `workflow_call`) to run `install.sh` + bootstrap on the alcatraz-host runner.
    Watch the deploy job's smoke step; for a manual redeploy or rollback, dispatch
