@@ -1334,30 +1334,32 @@ allowlist of specific (sender, recipient) pairs.
 
 | command | self | peer | note |
 |---|---|---|---|
-| `compact` | ✓ | ✗ | self-only — peers can't truncate your context |
+| `sleep`   | ✓ | ✗ | self-only — peers can't truncate your context (the bus verb for `/compact`; see the [glossary](glossary.md#sleep)) |
 | `rename`  | ✓ | ✓ | useful for `<Project> #<Issue>` tab automation |
 | `cost`    | ✓ | ✗ | self-only — output goes to the recipient |
 | `help`    | ✓ | ✓ | harmless either way |
-| `clear`   | ✗ | ✗ | **edge-only** rescue path when `/compact` can't recover from token exhaustion; loses in-flight work |
+| `clear`   | ✗ | ✗ | **edge-only** rescue path when `sleep` (`/compact`) can't recover from token exhaustion; loses in-flight work |
 | `mcp-enable-tmux-tell`  | ✓ | ✓ | refresh the tool surface after deploying a new `tmux-tell.*` tool — no context loss |
 | `mcp-disable-tmux-tell` | ✓ | ✗ | self-only: raw peer-disable is a DoS surface; use the restart macro |
 | `mcp-restart-tmux-tell` | ✓ | ✓ | macro: `disable` + `enable` as two rows for a peer-safe reconnect |
 
-The pre-rename `mcp-{restart,disable,enable}-tmux-msg` names keep working as deprecated
-aliases through v1.0 (#480, ADR-0008 §Discretion): an invocation resolves to the
-canonical `…-tmux-tell` form, carries a `deprecated` field in the response, and logs a
-greppable `WARN deprecated_control_macro`.
+The pre-rename `mcp-{restart,disable,enable}-tmux-msg` names — and the pre-rename `compact`
+verb (#509) — keep working as deprecated aliases through v1.0 (#480, ADR-0008 §Discretion):
+an invocation resolves to the canonical form (`…-tmux-tell` / `sleep`), carries a
+`deprecated` field in the response, and logs a greppable `WARN deprecated_control_macro`.
 
 Adding a command, flipping a scope, or adding an edge requires a code change
 (`internal/control/control.go`) — the audit surface is intentionally small. The same
 surface is a CLI subcommand (`tmux-tell-claude control --to … --command …`) for scripts and
 sessions whose MCP isn't loaded.
 
-**Self-compact with a follow-up.** `/compact` leaves the session at an empty prompt;
-`command=compact` accepts a `resume_with` string (self-invocation only). The handler
+**Self-sleep with a follow-up.** `/compact` leaves the session at an empty prompt;
+`command=sleep` accepts a `resume_with` string (self-invocation only). The handler
 queues the `/compact` plus the resume message (threaded via `reply_to`), and the
 mailman holds the queue for `--post-compact-pause` (default 120s) so the follow-up
 lands after the CLI tool has settled, not into the slash-command parser mid-compaction.
+(`--post-compact-pause` keeps its name: it keys on the emitted `/compact` primitive,
+which the verb rename leaves unchanged.)
 
 ### Removing a pane (#289)
 

@@ -11,10 +11,10 @@ import (
 //
 // Closes the #44 trap: Go's flag.Parse stops at the first non-flag
 // positional, which silently drops every flag after it. Operator
-// typing `tmux-tell-claude control alice --command compact` (natural English
+// typing `tmux-tell-claude control alice --command sleep` (natural English
 // order — recipient first) had `--command` dropped because `alice` was
 // a positional. With this helper, `alice` slides to the back and
-// `--command compact` parses correctly.
+// `--command sleep` parses correctly.
 //
 // Handles:
 //   - `--flag value` (separate value, looked up to see if flag takes one)

@@ -37,7 +37,7 @@ actionable` (says what's wrong, not what's next).
 |-----------------------------------------------------------------------------------------------------------|-------------------------------|------------|---------------------------------------------------------------------------------------------------------------|
 | `cannot resolve sender identity: set $TMUX_AGENT_NAME, or register this pane (TMUX_PANE=%2) ...`        | clear, actionable             | —          | Exemplary; lists both recovery paths inline with the live $TMUX_PANE value                                    |
 | `store: recipient queue full: bob (5/5, need 1 slot(s))`                                                  | clear, actionable             | —          | Good baseline; depth and cap both shown                                                                       |
-| `control: command not on whitelist; self-invokable: [compact cost help ...]`                              | clear, actionable             | —          | Lists the alternatives. Good                                                                                  |
+| `control: command not on whitelist; self-invokable: [cost help ... sleep]`                                | clear, actionable             | —          | Lists the alternatives. Good                                                                                  |
 | `body required`                                                                                           | clear, not actionable         | paper-cut  | Could be `--body required (or pass body as positional args after the flags)`                                  |
 | `no such message: ghost`                                                                                  | clear, not actionable         | paper-cut  | Could suggest `tmux-tell-claude log --limit 20` to find a recent id                                                 |
 | `WARN delivered_in_input_box id=X — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); message is in recipient's input box pending submit` | clear, actionable | — | Exemplary; explains what happened AND what to do |
@@ -60,7 +60,7 @@ issue surfaces something larger; until then, batched.
 | Subcommand              | Verdict          | Severity   | Note                                                                                                       |
 |-------------------------|------------------|------------|------------------------------------------------------------------------------------------------------------|
 | `send`                  | Good             | —          | `--from` auto-resolves via identity, positional body works as expected                                     |
-| `control`               | Good (post-#44)  | —          | Closed by `reorderFlagsFirst` helper + positional-auto-binds-to-`--to`. Operator's natural typing `tmux-tell-claude control alice --command compact` works as expected.                                                                          |
+| `control`               | Good (post-#44)  | —          | Closed by `reorderFlagsFirst` helper + positional-auto-binds-to-`--to`. Operator's natural typing `tmux-tell-claude control alice --command sleep` works as expected.                                                                          |
 | `track`                 | Good             | —          | Age computation is nice. Could add `--watch` for poll-until-state-change                                   |
 | `inbox`                 | Good             | —          | Self-default works, `--state` filter useful                                                                |
 | `status`                | Sparse           | friction   | Shows paused state + queue depths. Doesn't show: today's delivered count, today's failed count, today's `delivered_in_input_box` count, mailman crash count. Adding these would make morning-coffee health-checking one command instead of grepping journalctl |
@@ -79,7 +79,7 @@ Filed-or-to-be-filed issues:
 
 - [ ] **`control` flag-ordering trap.** Either (a) document at the
   top of `--help` output, or (b) reorganize the subcommand to use
-  positional `command` (`tmux-tell-claude control compact --to bosun`).
+  positional `command` (`tmux-tell-claude control sleep --to bosun`).
   Severity: friction, size/S.
 - [ ] **`status` augmentation: deliver-today / fail-today /
   unverified-today / crash counters.** Same data the

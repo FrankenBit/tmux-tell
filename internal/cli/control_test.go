@@ -22,7 +22,7 @@ func TestControlCLI_HappyPath_PlainCommand(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
-		[]string{"--to", "alice", "--command", "compact"},
+		[]string{"--to", "alice", "--command", "sleep"},
 		&stdout, &stderr,
 	)
 	if exit != exitOK {
@@ -114,6 +114,42 @@ func TestControlCLI_DeprecatedAlias_StillRestarts(t *testing.T) {
 	}
 }
 
+// TestControlCLI_CompactAlias_StillSleeps pins #509's backward-compat at the CLI
+// surface: the deprecated `compact` verb still resolves to the unchanged /compact
+// CLI primitive, surfaces a `deprecated` field naming the canonical `sleep`, and
+// emits the greppable WARN deprecated_control_macro. The retained deprecated-path
+// assertion at the IO boundary (the canonical `sleep` path is covered by the
+// other tests above).
+func TestControlCLI_CompactAlias_StillSleeps(t *testing.T) {
+	s := newCmdTestStore(t, "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
+	t.Setenv("CLAUDE_MSG_DB", ":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+
+	var stdout, stderr bytes.Buffer
+	exit := runControlCLI(
+		[]string{"--to", "alice", "--command", "compact"}, // legacy alias, self-only
+		&stdout, &stderr,
+	)
+	if exit != exitOK {
+		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
+	}
+	got := parseJSONResult(t, stdout.Bytes())
+	if got["command"] != "/compact" {
+		t.Errorf("command = %v, want /compact (alias must still emit the unchanged primitive)", got["command"])
+	}
+	if dep, _ := got["deprecated"].(string); !strings.Contains(dep, "sleep") {
+		t.Errorf("deprecated field = %q, want it to name the canonical sleep", dep)
+	}
+	if !strings.Contains(stderr.String(), "WARN deprecated_control_macro") {
+		t.Errorf("missing WARN deprecated_control_macro on stderr; got: %s", stderr.String())
+	}
+	msgs, _ := s.ListMessages(context.Background(), store.ListFilter{ToAgent: "alice", State: store.StateQueued, Limit: 10})
+	if len(msgs) != 1 || msgs[0].Kind != store.KindControl || msgs[0].Body != "/compact" {
+		t.Errorf("rows = %+v, want one /compact control row", msgs)
+	}
+}
+
 func TestControlCLI_ResumeWith_QueuesBothRows(t *testing.T) {
 	s := newCmdTestStore(t, "alice")
 	t.Setenv("TMUX_AGENT_NAME", "alice")
@@ -123,7 +159,7 @@ func TestControlCLI_ResumeWith_QueuesBothRows(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
 		[]string{
-			"--to", "alice", "--command", "compact",
+			"--to", "alice", "--command", "sleep",
 			"--resume-with", "carry on with #26",
 		},
 		&stdout, &stderr,
@@ -155,7 +191,7 @@ func TestControlCLI_ScopeRejected(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
-		[]string{"--to", "bob", "--command", "compact"},
+		[]string{"--to", "bob", "--command", "sleep"},
 		&stdout, &stderr,
 	)
 	if exit != exitUsage {
@@ -191,7 +227,7 @@ func TestControlCLI_MissingFlags(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"no --to", []string{"--command", "compact"}},
+		{"no --to", []string{"--command", "sleep"}},
 		{"no --command", []string{"--to", "alice"}},
 	}
 	for _, tc := range cases {
@@ -218,7 +254,7 @@ func TestControlCLI_AutoIdentity_FromPane(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
-		[]string{"--to", "alice", "--command", "compact"},
+		[]string{"--to", "alice", "--command", "sleep"},
 		&stdout, &stderr,
 	)
 	if exit != exitOK {

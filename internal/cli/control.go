@@ -55,9 +55,11 @@ type controlResult struct {
 //
 //  1. mcp-restart-tmux-tell macro → two control rows
 //     (/mcp disable tmux-tell, /mcp enable tmux-tell).
-//  2. compact with resume_with → one control row + one message row,
+//  2. sleep with resume_with → one control row + one message row,
 //     reply_to-threaded; the mailman's post-compact pause lets the
-//     follow-up land after the slash-command settles.
+//     follow-up land after the /compact slash-command settles. (The bus
+//     verb is `sleep` (#509); the emitted CLI primitive stays /compact, so
+//     the post-compact-pause machinery keys on it unchanged.)
 //  3. plain control → one control row with the resolved text.
 //
 // The whitelist scope check is performed once at the entry; the inner
@@ -132,12 +134,12 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 		}, nil
 	}
 
-	// Path 2: compact + resume_with. Same atomicity pattern via
+	// Path 2: sleep + resume_with. Same atomicity pattern via
 	// InsertMessagePair so we can never /compact the recipient and
 	// then fail to queue the resume prompt.
 	if p.ResumeWith != "" {
 		if text != "/compact" {
-			return nil, errors.New("resume_with is only valid with command=compact")
+			return nil, errors.New("resume_with is only valid with command=sleep")
 		}
 		if scope != control.ScopeSelf {
 			return nil, errors.New("resume_with requires self-invocation")
@@ -198,7 +200,7 @@ func runControlCLI(args []string, stdout, stderr io.Writer) int {
 		fmt.Sprintf("whitelisted command (one of: %s)",
 			strings.Join(control.Names(), ", ")))
 	resumeWith := fs.String("resume-with", "",
-		"optional continuation prompt; only valid with --command compact on self")
+		"optional continuation prompt; only valid with --command sleep on self")
 	maxRecipient := fs.Int("max-recipient-queue", capRecipientQueue,
 		"reject when the recipient's queue depth would exceed this")
 	maxSender := fs.Int("max-sender-backlog", capSenderBacklog,
@@ -210,7 +212,7 @@ func runControlCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	// If --to wasn't specified and exactly one positional remains, treat
 	// it as the recipient — operator's natural typing pattern
-	// `control alice --command compact` works without remembering that
+	// `control alice --command sleep` works without remembering that
 	// `--to` is a required flag. This is additive: the existing
 	// flag-only form keeps working unchanged.
 	if *to == "" && fs.NArg() == 1 {

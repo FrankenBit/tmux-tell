@@ -88,7 +88,7 @@ Mapped against the code as of v0.2.1.
 - **What's enforced**:
   - Whitelist: only the commands in `internal/control/control.go`'s
     `Allowed` map can be peer-sent. Each command's `Peer` flag
-    gates whether it's reachable as a peer command at all (compact,
+    gates whether it's reachable as a peer command at all (sleep,
     cost, mcp-disable are self-only; rename, help, mcp-enable,
     mcp-restart are peer-allowed).
   - Sentinel-based macro: `mcp-restart-tmux-tell` peer-invokable

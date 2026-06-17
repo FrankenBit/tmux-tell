@@ -251,13 +251,13 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpRegisterHandler(s))
 
 	srv.RegisterTool("tmux-tell.control",
-		"Send a whitelisted Claude Code slash-command directly to a pane. Scope-gated: when to==self, the self-whitelist applies; when to is a peer, the peer-whitelist applies — with a third tier of per-edge exceptions for destructive commands. Specifically, /clear is globally denied but Bosun→Pilot and Quartermaster→Pilot are permitted (routine clear-before-each-task dispatch + rescue path when Pilot can't /compact out of token exhaustion). Bypasses the chat-message renderer. Optional resume_with (only with command=compact, only on self) queues a follow-up message that the mailman delivers AFTER /compact has settled — pre-write your continuation instead of going silent post-compact.",
+		"Send a whitelisted Claude Code slash-command directly to a pane. Scope-gated: when to==self, the self-whitelist applies; when to is a peer, the peer-whitelist applies — with a third tier of per-edge exceptions for destructive commands. Specifically, /clear is globally denied but Bosun→Pilot and Quartermaster→Pilot are permitted (routine clear-before-each-task dispatch + rescue path when Pilot can't sleep (/compact) out of token exhaustion). Bypasses the chat-message renderer. Optional resume_with (only with command=sleep, only on self) queues a follow-up message that the mailman delivers AFTER the sleep (/compact) has settled — pre-write your continuation instead of going silent post-sleep. (`sleep` is the bus verb for /compact, #509; `compact` still works as a deprecated alias.)",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"to":          {"type": "string", "description": "Recipient agent name; set to your own name for self-invocation"},
-				"command":     {"type": "string", "description": "Whitelisted command (e.g. 'compact'); leading slash optional"},
-				"resume_with": {"type": "string", "description": "Optional continuation prompt delivered after /compact settles. Only valid with command=compact on self-invocation."}
+				"command":     {"type": "string", "description": "Whitelisted command (e.g. 'sleep'); leading slash optional"},
+				"resume_with": {"type": "string", "description": "Optional continuation prompt delivered after the sleep (/compact) settles. Only valid with command=sleep on self-invocation."}
 			},
 			"required": ["to", "command"]
 		}`),

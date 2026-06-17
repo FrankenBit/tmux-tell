@@ -67,10 +67,15 @@ type Command struct {
 // to true only where the recipient-side effect is benign. Per-edge
 // exceptions for destructive commands live in PeerEdges below.
 var Allowed = map[string]Command{
-	"compact": {Text: "/compact", Self: true, Peer: false},
-	"rename":  {Text: "/rename", Self: true, Peer: true},
-	"cost":    {Text: "/cost", Self: true, Peer: false},
-	"help":    {Text: "/help", Self: true, Peer: true},
+	// sleep is the bus verb for the Claude Code /compact mechanism (#509,
+	// renamed from `compact` per the lexicon meta-thread). The Text stays
+	// "/compact" — only the bus verb renames; the emitted CLI primitive is
+	// unchanged. Self-only by design (peers can't truncate your context);
+	// `compact` remains a deprecated alias (aliasOf below).
+	"sleep":  {Text: "/compact", Self: true, Peer: false},
+	"rename": {Text: "/rename", Self: true, Peer: true},
+	"cost":   {Text: "/cost", Self: true, Peer: false},
+	"help":   {Text: "/help", Self: true, Peer: true},
 	// /clear discards all session state. Globally denied (Self: false
 	// because a token-exhausted pane can't reach the MCP to call it
 	// anyway; Peer: false because anyone-to-anyone clearing is a
@@ -111,6 +116,10 @@ var aliasOf = map[string]string{
 	"mcp-disable-tmux-msg": "mcp-disable-tmux-tell",
 	"mcp-enable-tmux-msg":  "mcp-enable-tmux-tell",
 	"mcp-restart-tmux-msg": "mcp-restart-tmux-tell",
+	// #509: `compact` → `sleep` bus-verb rename (lexicon meta-thread). The old
+	// verb keeps working through v1.0 per ADR-0008 §Discretion, emitting the
+	// same deprecation WARN as the substrate-rename aliases above.
+	"compact": "sleep",
 }
 
 // Canonicalize normalises a command name (trim, strip leading slash, lowercase)
