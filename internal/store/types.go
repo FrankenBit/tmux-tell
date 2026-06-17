@@ -117,6 +117,10 @@ type Message struct {
 	// false (default) = normal send. Read by inbox --unanswered / sent
 	// --awaiting-reply filters (#270).
 	ExpectsReply bool
+	// Priority mirrors the #449 `priority` column — the integer weight
+	// (low=10 / normal=20 / high=30) that the cross-channel scheduler uses.
+	// Default PriorityNormal (20). Render with PriorityName.
+	Priority int
 }
 
 // Agent mirrors a row in the agents table.

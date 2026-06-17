@@ -62,6 +62,9 @@ const (
 	defaultProviderCapTTL           = 6 * time.Second
 	defaultProviderCapRecheck       = 1 * time.Second
 	defaultObservedStateInterval    = 2 * time.Second
+	// defaultPostDeliverCooldown is the #449 per-chamber post-delivery hold —
+	// the operator tenet's ≥5s ingest window before the next paste.
+	defaultPostDeliverCooldown = 5 * time.Second
 	// stuckBackoffCap bounds the exponential pane-not-found retry delay
 	// (#291). Even before the stuck threshold, no retry fires faster than
 	// once per this interval — the 100/s storm that wedged tmux is capped
@@ -265,6 +268,16 @@ type serveOpts struct {
 	// that don't fake tmuxio.AgentState set it (mirrors GateDisabled). Default
 	// false (cap on in production).
 	ProviderCapDisabled bool
+	// PriorityStrategy selects the #449 cross-channel scheduler: StrategyMaxPriority
+	// (default — uniform priority reduces to FIFO) or StrategyAged. Threaded into
+	// ClaimNextWithStrategy.
+	PriorityStrategy store.SchedulerStrategy
+	// PostDeliverCooldown is the per-chamber hold after a successful delivery
+	// before the next paste (#449 operator tenet) — gives the recipient an
+	// ingest window so a burst of queued messages doesn't flood + collide during
+	// the chamber-read. Default defaultPostDeliverCooldown (5s); 0 disables (the
+	// inter-message-delay still applies).
+	PostDeliverCooldown time.Duration
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -334,6 +347,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"#448 how often a cap-deferred mailman re-checks for an open slot. Per-agent TOML knob: `provider-cap-recheck-interval = \"1s\"`.")
 	observedStateInterval := fs.Duration("observed-state-interval", defaultObservedStateInterval,
 		"#448 throttle for the per-mailman self-probe that publishes agents.observed_state for the cross-mailman cap count. Per-agent TOML knob: `observed-state-interval = \"2s\"`.")
+	priorityStrategy := fs.String("priority-strategy", "max",
+		"#449 cross-channel scheduler: `max` (default — weight a sender-channel by its top priority; uniform priority → plain FIFO) or `aged` (also depth-ages within same-priority channels, favoring the longest backlog under uniform priority). Per-agent TOML knob: `priority-strategy = \"max\"`.")
+	postDeliverCooldown := fs.Duration("post-deliver-cooldown", defaultPostDeliverCooldown,
+		"#449 per-chamber hold after a successful delivery before the next paste — an ingest window so a burst doesn't flood + collide during chamber-read. 0 disables (inter-message-delay still applies). Per-agent TOML knob: `post-deliver-cooldown = \"5s\"`.")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -416,6 +433,20 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if !flagWasSet(fs, "observed-state-interval") {
 		*observedStateInterval = config.ResolveDuration(cfg, *agent, "observed-state-interval", *observedStateInterval)
+	}
+	if !flagWasSet(fs, "priority-strategy") {
+		*priorityStrategy = config.ResolveString(cfg, *agent, "priority-strategy", *priorityStrategy)
+	}
+	if !flagWasSet(fs, "post-deliver-cooldown") {
+		*postDeliverCooldown = config.ResolveDuration(cfg, *agent, "post-deliver-cooldown", *postDeliverCooldown)
+	}
+	// Parse the #449 strategy after config resolution so a TOML override is
+	// honored; a bad value fails loud (usage error) rather than silently
+	// scheduling FIFO.
+	strategy, serr := store.ParseStrategy(*priorityStrategy)
+	if serr != nil {
+		fmt.Fprintf(stderr, "%v\n", serr)
+		return exitUsage
 	}
 	configDeliveryMode := config.ResolveString(cfg, *agent, "delivery-mode", "")
 	// Resolve the verify-retry budget (#153). Stored as a duration string
@@ -535,6 +566,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		ProviderCapTTL:              *providerCapTTL,
 		ProviderCapRecheckInterval:  *providerCapRecheck,
 		ObservedStateInterval:       *observedStateInterval,
+		PriorityStrategy:            strategy,
+		PostDeliverCooldown:         *postDeliverCooldown,
 	}, logger, stdout, stderr)
 }
 
@@ -864,7 +897,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			obsCancel()
 		}
 
-		msg, err := s.ClaimNext(opCtx, opts.Agent)
+		msg, err := s.ClaimNextWithStrategy(opCtx, opts.Agent, opts.PriorityStrategy)
 		if err != nil {
 			logger.Printf("claim_failed err=%v", err)
 			if stopOrSleep(stopCtx, opts.IdlePollInterval) {
@@ -1285,15 +1318,22 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		//     even though it's sitting in the input box.
 		//   - other err: hard failure (tmux command errored, ctx
 		//     cancelled, etc.). Mark failed.
+		// #449: a true delivery (verified or input-box) earns the post-deliver
+		// cooldown — the recipient now has a message to ingest. The control-skip
+		// and hard-failure cases below do not (nothing landed in the chamber's
+		// context), so they fall through to the plain inter-message delay.
+		delivered := false
 		switch {
 		case derr == nil:
 			logger.Printf("delivered id=%s", msg.PublicID)
 			if err := s.MarkDelivered(opCtx, msg.PublicID); err != nil {
 				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
 			}
+			delivered = true
 			m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateDelivered)
 			if sec, ok := deliveryLatencySeconds(msg.CreatedAt); ok {
 				m.ObserveDeliveryLatency(opts.Agent, sec)
+				m.ObserveDeliveryLatencyByPriority(store.PriorityName(msg.Priority), sec)
 			}
 			if isCompactControl(msg) && opts.PostCompactPause > 0 {
 				logger.Printf("post_compact_pause id=%s duration=%s",
@@ -1312,11 +1352,13 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if err := s.MarkDeliveredInInputBox(opCtx, msg.PublicID); err != nil {
 				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
 			}
+			delivered = true
 			// delivered_in_input_box is still a `delivered` row, so it carries
 			// a meaningful queued→delivered latency (#146).
 			m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateDeliveredInInputBox)
 			if sec, ok := deliveryLatencySeconds(msg.CreatedAt); ok {
 				m.ObserveDeliveryLatency(opts.Agent, sec)
+				m.ObserveDeliveryLatencyByPriority(store.PriorityName(msg.Priority), sec)
 			}
 			maybeInsertFailureNotice(opCtx, s, logger,
 				opts.NotifyOnDeliveredInInputBox, opts.Agent, msg,
@@ -1350,10 +1392,23 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				opts.NotifyOnFailed, opts.Agent, msg, "failed", derr.Error())
 		}
 
-		if stopOrSleep(stopCtx, opts.InterMessageDelay) {
+		// #449 post-deliver cooldown: after a true delivery, hold the longer of
+		// the inter-message delay and the cooldown so the recipient gets an
+		// ingest window before the next paste. Non-deliveries use the plain delay.
+		if stopOrSleep(stopCtx, postDeliverDelay(delivered, opts.InterMessageDelay, opts.PostDeliverCooldown)) {
 			return exitOK
 		}
 	}
+}
+
+// postDeliverDelay is the pure choice for the end-of-iteration sleep (#449): a
+// true delivery waits the longer of the inter-message delay and the post-deliver
+// cooldown (the recipient's ingest window); anything else waits the plain delay.
+func postDeliverDelay(delivered bool, interMsg, cooldown time.Duration) time.Duration {
+	if delivered && cooldown > interMsg {
+		return cooldown
+	}
+	return interMsg
 }
 
 // maybeInsertFailureNotice generates a delivery-failure notice back to

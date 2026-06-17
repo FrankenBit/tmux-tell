@@ -54,6 +54,11 @@ type InsertParams struct {
 	// original ask's id, so a marker on the replay would be redundant.
 	ExpectsReply bool
 
+	// Priority is the #449 scheduling weight (low=10 / normal=20 / high=30).
+	// Zero is normalized to PriorityNormal at insert, so every existing call
+	// site that doesn't set it gets the default unchanged.
+	Priority int
+
 	MaxRecipientQueue int // 0 = no cap check
 	MaxSenderBacklog  int // 0 = no cap check
 }
@@ -367,10 +372,16 @@ func insertOneInTx(ctx context.Context, tx *sql.Tx, p InsertParams) (InsertResul
 		if p.ExpectsReply {
 			er = 1
 		}
+		// #449: priority weight. 0 (the un-set zero value) normalizes to
+		// PriorityNormal so existing callers are unchanged.
+		priority := p.Priority
+		if priority == 0 {
+			priority = PriorityNormal
+		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, quick, replay_of, replay_of_at, state, deliver_after, expects_reply)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, q, replayOfArg, replayOfAtArg, state, deliverAfterArg, er)
+			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, quick, replay_of, replay_of_at, state, deliver_after, expects_reply, priority)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, q, replayOfArg, replayOfAtArg, state, deliverAfterArg, er, priority)
 		if err == nil {
 			publicID = candidate
 			break
@@ -396,59 +407,85 @@ func insertOneInTx(ctx context.Context, tx *sql.Tx, p InsertParams) (InsertResul
 	return InsertResult{PublicID: publicID, Queued: queued}, nil
 }
 
-// ClaimNext atomically transitions the oldest queued message for toAgent
-// from 'queued' to 'delivering' and returns it. Returns nil (no error) if
-// no queued message is available — the mailman loop's idle case.
+// ClaimNext atomically transitions the next-to-deliver queued message for
+// toAgent from 'queued' to 'delivering' and returns it. Returns nil (no error)
+// if no queued message is available — the mailman loop's idle case.
+//
+// Uses StrategyMaxPriority (the default scheduler, #449): under uniform priority
+// it reduces to plain FIFO, so every caller that doesn't care about priority
+// (and the 67 existing tests) observe the historical oldest-first behavior. The
+// mailman threads its configured strategy via ClaimNextWithStrategy.
 func (s *Store) ClaimNext(ctx context.Context, toAgent string) (*Message, error) {
+	return s.ClaimNextWithStrategy(ctx, toAgent, StrategyMaxPriority)
+}
+
+// ClaimNextWithStrategy is ClaimNext with an explicit cross-channel scheduling
+// strategy (#449). It scans the eligible queued rows, lets selectScheduled pick
+// which sender-channel's head fires next (within-channel FIFO preserved), and
+// claims that row — all inside one BEGIN IMMEDIATE transaction so the pick is
+// consistent with the claim.
+func (s *Store) ClaimNextWithStrategy(ctx context.Context, toAgent string, strategy SchedulerStrategy) (*Message, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var m Message
-	var nre, q int
-	// #204 backlog floor: skip any queued row whose id is at or below the
-	// agent's backlog_epoch_id — that is the pre-existing backlog the
-	// register handler decided not to flood the pane with (announce mode
-	// leaves all of it queued; auto-deliver leaves the oldest M−N queued).
-	// COALESCE folds both "no epoch stamped" (NULL) and "floor 0"
-	// (deliver-all) into id > 0, which every real row satisfies, so the
-	// claim behaves exactly as before for agents that never registered
-	// with a backlog. The subquery runs inside the BEGIN IMMEDIATE tx, so
-	// the floor read is consistent with the claim it gates.
-	//
-	// #227 deferred composition: a promoted-deferred row keeps its non-NULL
-	// deliver_after marker (PromoteDeferred only flips state, not the column),
-	// and such rows BYPASS the floor (the `deliver_after IS NOT NULL OR …`
-	// branch). A deferred message has an old id (assigned at defer time), so
-	// if a register set the floor above it between defer and flush, the plain
-	// id>floor test would wrongly skip it — exactly the message the chamber
-	// staged for this resume. The marker exemption makes "freshly promoted"
-	// equivalent to "above the floor" without re-assigning the row's id. Normal
-	// queued rows (deliver_after NULL) are unaffected: the floor applies as
-	// before. Still-deferred rows are excluded by the state filter regardless.
-	var er int
-	err = tx.QueryRowContext(ctx,
-		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply
+	// Scan eligible queued candidates — lightweight (id, from_agent, priority).
+	// The WHERE preserves the #204 backlog floor + the #227 promoted-deferred
+	// exemption exactly as before; only the SELECTION among eligible rows
+	// changes (priority-weighted across channels instead of pure id-FIFO). The
+	// floor subquery runs inside the IMMEDIATE tx, so the read is consistent
+	// with the claim it gates.
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, from_agent, priority
 		 FROM messages
 		 WHERE to_agent = ? AND state = ?
 		   AND (deliver_after IS NOT NULL
 		        OR id > COALESCE((SELECT backlog_epoch_id FROM agents WHERE name = ?), 0))
-		 ORDER BY id
-		 LIMIT 1`,
-		toAgent, StateQueued, toAgent).Scan(
+		 ORDER BY id`,
+		toAgent, StateQueued, toAgent)
+	if err != nil {
+		return nil, fmt.Errorf("store: scan queued candidates: %w", err)
+	}
+	var cands []claimCandidate
+	for rows.Next() {
+		var c claimCandidate
+		if err := rows.Scan(&c.ID, &c.FromAgent, &c.Priority); err != nil {
+			_ = rows.Close()
+			return nil, fmt.Errorf("store: scan candidate: %w", err)
+		}
+		cands = append(cands, c)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return nil, cerr
+	}
+	if rerr := rows.Err(); rerr != nil {
+		return nil, rerr
+	}
+
+	chosenID, ok := selectScheduled(cands, strategy)
+	if !ok {
+		return nil, nil // idle: nothing eligible
+	}
+
+	// Fetch the full chosen row + claim it, same tx (it is still queued — the
+	// IMMEDIATE write lock is held, so no other writer changed it since the scan).
+	var m Message
+	var nre, q, er int
+	err = tx.QueryRowContext(ctx,
+		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply, priority
+		 FROM messages WHERE id = ?`,
+		chosenID).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er)
+		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er, &m.Priority)
+	if err != nil {
+		return nil, fmt.Errorf("store: fetch chosen message: %w", err)
+	}
 	m.NoReplyExpected = nre != 0
 	m.Quick = q != 0
 	m.ExpectsReply = er != 0
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	} else if err != nil {
-		return nil, fmt.Errorf("store: select queued: %w", err)
-	}
 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE messages SET state = ? WHERE id = ?`,
@@ -763,14 +800,14 @@ func (s *Store) FindDedupeMatch(ctx context.Context, fromAgent, toAgent, body, c
 	var er int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply, priority
 		 FROM messages
 		 WHERE from_agent = ? AND to_agent = ? AND body = ?
 		   AND state = ? AND verified = 0 AND created_at > ?
 		 ORDER BY id DESC LIMIT 1`,
 		fromAgent, toAgent, body, StateDelivered, cutoff).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er)
+		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er, &m.Priority)
 	m.NoReplyExpected = nre != 0
 	m.Quick = q != 0
 	m.ExpectsReply = er != 0
@@ -808,11 +845,11 @@ func (s *Store) GetMessage(ctx context.Context, publicID string) (*Message, erro
 	var nre, q, er int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply, priority
 		 FROM messages WHERE public_id = ?`,
 		publicID).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er)
+		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er, &m.Priority)
 	m.NoReplyExpected = nre != 0
 	m.Quick = q != 0
 	m.ExpectsReply = er != 0
@@ -849,7 +886,7 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 	escaped := escapeLikePrefix(prefix)
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply, priority
 		 FROM messages WHERE public_id LIKE ? ESCAPE '\' ORDER BY id ASC`,
 		escaped+"%")
 	if err != nil {
@@ -862,7 +899,7 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 		var nre, q, er int
 		if err := rows.Scan(&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent,
 			&m.ReplyTo, &m.Body, &m.Kind, &nre, &q, &m.State, &m.CreatedAt,
-			&m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er); err != nil {
+			&m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er, &m.Priority); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0
@@ -991,7 +1028,7 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 		ord = "DESC"
 	}
 	qry := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply
+	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply, priority
 	      FROM messages`
 	if len(wheres) > 0 {
 		qry += " WHERE " + strings.Join(wheres, " AND ")
@@ -1050,7 +1087,7 @@ func (s *Store) TailRows(ctx context.Context, afterID int64, f TailFilter, limit
 	args = append(args, limit)
 
 	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply
+	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply, priority
 	      FROM messages WHERE ` + strings.Join(wheres, " AND ") +
 		` ORDER BY id ASC LIMIT ?`
 	rows, err := s.db.QueryContext(ctx, q, args...)
@@ -1076,7 +1113,7 @@ func (s *Store) MessagesByIDs(ctx context.Context, ids []int64) ([]Message, erro
 		args[i] = id
 	}
 	q := `SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply
+	             no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply, priority
 	      FROM messages WHERE id IN (` + strings.Join(placeholders, ",") + `) ORDER BY id ASC`
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -1095,7 +1132,7 @@ func scanMessages(rows *sql.Rows) ([]Message, error) {
 		var nre, q, er int
 		if err := rows.Scan(
 			&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-			&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er); err != nil {
+			&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er, &m.Priority); err != nil {
 			return nil, err
 		}
 		m.NoReplyExpected = nre != 0

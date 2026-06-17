@@ -63,14 +63,15 @@ var verifyBuckets = []float64{0.1, 0.25, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 8, 10}
 type Metrics struct {
 	reg *prometheus.Registry
 
-	messagesTotal     *prometheus.CounterVec
-	deliveryLatency   *prometheus.HistogramVec
-	verifyAttempt     *prometheus.HistogramVec
-	queueDepth        *prometheus.GaugeVec
-	loopIterations    *prometheus.CounterVec
-	pasteUnsafeAborts *prometheus.CounterVec
-	mailmanStuck      *prometheus.GaugeVec
-	providerDefer     *prometheus.CounterVec
+	messagesTotal             *prometheus.CounterVec
+	deliveryLatency           *prometheus.HistogramVec
+	deliveryLatencyByPriority *prometheus.HistogramVec
+	verifyAttempt             *prometheus.HistogramVec
+	queueDepth                *prometheus.GaugeVec
+	loopIterations            *prometheus.CounterVec
+	pasteUnsafeAborts         *prometheus.CounterVec
+	mailmanStuck              *prometheus.GaugeVec
+	providerDefer             *prometheus.CounterVec
 }
 
 // New builds the collector set, registers it against a fresh private
@@ -90,6 +91,11 @@ func New() *Metrics {
 			Help:    "Wall-clock from a message being queued to it reaching the delivered state, per recipient.",
 			Buckets: latencyBuckets,
 		}, []string{"recipient"}),
+		deliveryLatencyByPriority: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "tmux_tell_delivery_latency_by_priority_seconds",
+			Help:    "Wall-clock queued→delivered latency by message priority (#449) — low / normal / high.",
+			Buckets: latencyBuckets,
+		}, []string{"priority"}),
 		verifyAttempt: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "tmux_tell_delivery_verify_attempt_seconds",
 			Help:    "Wall-clock spent in the post-Enter verify-token retry loop, per recipient (shared with #153 budget calibration).",
@@ -119,6 +125,7 @@ func New() *Metrics {
 	reg.MustRegister(
 		m.messagesTotal,
 		m.deliveryLatency,
+		m.deliveryLatencyByPriority,
 		m.verifyAttempt,
 		m.queueDepth,
 		m.loopIterations,
@@ -168,6 +175,15 @@ func (m *Metrics) ObserveDeliveryLatency(recipient string, seconds float64) {
 		return
 	}
 	m.deliveryLatency.WithLabelValues(recipient).Observe(seconds)
+}
+
+// ObserveDeliveryLatencyByPriority records a queued→delivered duration (seconds)
+// labeled by message priority (#449 — "low" / "normal" / "high").
+func (m *Metrics) ObserveDeliveryLatencyByPriority(priority string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.deliveryLatencyByPriority.WithLabelValues(priority).Observe(seconds)
 }
 
 // ObserveVerifyAttempt records the wall-clock spent in the post-Enter

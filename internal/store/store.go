@@ -192,6 +192,10 @@ var migrations = []string{
 	`ALTER TABLE agents ADD COLUMN provider TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE agents ADD COLUMN observed_state TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE agents ADD COLUMN observed_state_at TEXT`,
+	// #449: per-message priority weight (low=10 / normal=20 / high=30). Drives
+	// the cross-channel scheduler in ClaimNext (within-channel FIFO preserved).
+	// Default 20 (normal) so every existing + un-prioritized message is normal.
+	`ALTER TABLE messages ADD COLUMN priority INTEGER NOT NULL DEFAULT 20`,
 }
 
 // Close releases the underlying database handle.

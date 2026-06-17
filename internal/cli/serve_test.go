@@ -46,6 +46,10 @@ func fastOpts(agent string) serveOpts {
 		// (which these tests don't fake) and the gate counts cross-mailman state.
 		// Off here; cap-specific tests opt in by setting ProviderCapDisabled=false.
 		ProviderCapDisabled: true,
+		// #449: collapse the 5s post-deliver cooldown to a tick so integration
+		// tests that drive several deliveries don't pay it. Cooldown-specific
+		// tests set it explicitly.
+		PostDeliverCooldown: time.Millisecond,
 	}
 }
 

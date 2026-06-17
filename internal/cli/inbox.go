@@ -172,7 +172,7 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 		return exitOK
 
 	case "text", "":
-		header := []string{"ID", "FROM", "TO", "STATE", "AGE", "BODY"}
+		header := []string{"ID", "FROM", "TO", "STATE", "PRIO", "AGE", "BODY"}
 		rows := make([][]string, 0, len(msgs))
 		for _, m := range msgs {
 			state := string(m.State)
@@ -184,6 +184,7 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 				m.FromAgent,
 				m.ToAgent,
 				state,
+				store.PriorityName(m.Priority), // #449
 				ageOf(m.CreatedAt),
 				shortBody(m.Body, 60),
 			})
@@ -209,6 +210,7 @@ func messageToMap(m store.Message) map[string]any {
 		"created_at":    m.CreatedAt,
 		"quick":         m.Quick,
 		"expects_reply": m.ExpectsReply,
+		"priority":      store.PriorityName(m.Priority), // #449
 	}
 	if m.ReplyTo.Valid {
 		out["reply_to"] = m.ReplyTo.String

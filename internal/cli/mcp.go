@@ -107,7 +107,8 @@ func newMCPServer(s *store.Store) *mcp.Server {
 				"timeout":           {"type": "string", "description": "Bound for wait_for_delivered as a Go duration (e.g. \"10s\"). Default 10s."},
 				"block_on_stale":    {"type": "boolean", "description": "With reply_to: fail (ok:false) instead of queueing when the thread_freshness check finds the thread moved since you last spoke (newer messages addressed to you arrived after your last message in the chain). Default false — staleness is reported but the send still succeeds (#155)."},
 				"deliver_after":     {"type": "string", "description": "Defer delivery until a trigger fires (#227): the message is STAGED (not queued) and delivers only after the trigger. Accepts \"resume\" — post-compaction self-handoff: stage orientation text with deliver_after=\"resume\", then call tmux-tell.flush_deferred{trigger:\"resume\"} in your post-/compact resume routine so it lands in the freshly-resumed context instead of being absorbed by the summarizer — or \"register\" (#258a): a spawn-die session bridge addressed to another agent (\"remember this for its next dispatch\"); it auto-promotes when that agent next (re)registers, no explicit flush needed. Single-recipient only. The response carries deliver_after to confirm staging."},
-				"expects_reply":     {"type": "boolean", "description": "Signal that you'd like a reply — lightweight intent-marker WITHOUT the blocking wait of ask/wait_for_reply (#270). Use when you want an answer eventually but aren't blocking on it. Your unanswered sends appear under sent --awaiting-reply; the recipient's owed replies appear under inbox --unanswered. Default false."}
+				"expects_reply":     {"type": "boolean", "description": "Signal that you'd like a reply — lightweight intent-marker WITHOUT the blocking wait of ask/wait_for_reply (#270). Use when you want an answer eventually but aren't blocking on it. Your unanswered sends appear under sent --awaiting-reply; the recipient's owed replies appear under inbox --unanswered. Default false."},
+				"priority":          {"type": "string", "enum": ["low", "normal", "high"], "description": "Delivery priority for cross-channel scheduling (#449). Default normal. Within a sender→recipient channel order is always FIFO; priority only decides which channel's head the recipient's mailman delivers next when several are queued. Trust-based — reserve high for genuinely urgent coordination, not routine FYIs."}
 			},
 			"required": ["to", "body"]
 		}`),
@@ -422,11 +423,16 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 		BlockOnStale     bool            `json:"block_on_stale"`
 		DeliverAfter     string          `json:"deliver_after"`
 		ExpectsReply     bool            `json:"expects_reply"`
+		Priority         string          `json:"priority"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
 		if err := json.Unmarshal(args, &in); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		priority, perr := store.ParsePriority(in.Priority)
+		if perr != nil {
+			return nil, perr
 		}
 		toList, err := parseMCPToField(in.To)
 		if err != nil {
@@ -462,6 +468,7 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 			BlockOnStale:         in.BlockOnStale,
 			DeliverAfter:         in.DeliverAfter,
 			ExpectsReply:         in.ExpectsReply,
+			Priority:             priority,
 		}
 		if len(toList) > 1 {
 			p.ToRecipients = toList
@@ -647,6 +654,7 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		Quick:             p.Quick,
 		DeliverAfter:      p.DeliverAfter,
 		ExpectsReply:      p.ExpectsReply,
+		Priority:          p.Priority,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})

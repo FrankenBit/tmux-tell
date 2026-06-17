@@ -32,6 +32,10 @@ type sendParams struct {
 	// column so the request-reply seams / future introspection can recognize
 	// it. Set by the ask surface; a normal send leaves it false.
 	ExpectsReply bool
+	// Priority is the #449 scheduling weight (store.PriorityLow/Normal/High),
+	// already parsed from the --priority flag / MCP field. Zero defaults to
+	// normal at insert.
+	Priority     int
 	MaxRecipient int
 	MaxSender    int
 	MaxBody      int
@@ -79,9 +83,16 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		"defer delivery until a trigger fires (#227): the message is staged (not queued) and delivers only after the trigger. `resume` flushes via `flush --trigger=resume` (post-compaction self-handoff); `register` auto-promotes on the recipient's next (re)register (#258a). Single-recipient only.")
 	expectsReply := fs.Bool("expects-reply", false,
 		"signal that you'd like a reply — sets the expects_reply marker WITHOUT invoking ask/wait_for_reply machinery (#270). Use for lightweight intent-signaling when you're not blocking on the answer. Sender's unanswered sends appear under `sent --awaiting-reply`; recipient's owed replies appear under `inbox --unanswered`.")
+	priorityFlag := fs.String("priority", "",
+		"delivery priority for cross-channel scheduling (#449): low | normal | high. Default normal. Within a sender→recipient channel order is always FIFO; priority only decides which channel's head the recipient's mailman delivers next when several are queued. Trust-based — no urgent-spam.")
 	format := fs.String("format", "json", "json|text")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
+	}
+
+	priority, perr := store.ParsePriority(*priorityFlag)
+	if perr != nil {
+		return writeJSONError(stdout, stderr, perr.Error(), exitUsage)
 	}
 
 	s, err := store.Open(resolveDBPath(*dbPath))
@@ -109,6 +120,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		Quick:                *quick,
 		DeliverAfter:         *deliverAfter,
 		ExpectsReply:         *expectsReply,
+		Priority:             priority,
 		MaxRecipient:         *maxRecipient,
 		MaxSender:            *maxSender,
 		MaxBody:              *maxBody,
@@ -259,6 +271,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		Quick:             p.Quick,
 		DeliverAfter:      p.DeliverAfter,
 		ExpectsReply:      p.ExpectsReply,
+		Priority:          p.Priority,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})
