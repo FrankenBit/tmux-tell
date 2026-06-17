@@ -33,6 +33,64 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+The delivery-scheduling release — the bus learns to deliver *intelligently under
+load*. Until now the mailman delivered first-come-first-served and leaned on caps
+for safety; v0.19.0 makes delivery **provider-aware** (it won't burst-saturate a
+shared LLM-provider pool) and **priority-aware** (an urgent message can lift its
+whole channel ahead of routine traffic — without ever breaking per-channel FIFO),
+and hardens the serve-loop against runaway spin and goroutine leaks. Alongside the
+scheduling work the architecture gains a navigable Arc42 documentation spine and a
+cut-time docs-coherence gate, and the last Phase-1 rename residue clears at the
+observability surface — the one change here that needs a coordinated operator
+action at deploy.
+
+Headlines:
+
+- **Provider-aware delivery rate limiter (#448).** The mailman now defers delivery
+  while too many same-provider chambers are already generating, so a fleet can't
+  burst-saturate a shared provider pool. Each adapter declares its `Provider`
+  (claude = `anthropic`, codex = `openai`); `--max-concurrent-per-provider`
+  (default 3, `0` = unbounded) gates on a cross-mailman count of same-provider
+  chambers in `StateWorking`, coordinated through the shared SQLite DB with a TTL so
+  a crashed mailman can't pin a slot. Additive — an adapter that declares no provider
+  is never gated or counted.
+- **Per-message priority + cross-channel scheduling (#449).** Senders can declare
+  `--priority low|normal|high` (CLI + MCP `send`; default normal). Within a
+  sender→recipient channel order stays strictly **FIFO** — priority never reorders a
+  channel — but when several senders contend for one recipient, the scheduler picks
+  which channel's head delivers next by priority, so a buried urgent message lifts
+  its whole channel above a normal-only one (anti-starvation). The default strategy
+  reduces to plain global FIFO under uniform priority, so un-prioritized traffic is
+  unchanged. A per-chamber `--post-deliver-cooldown` (default **5s**) gives the
+  recipient an ingest window after each delivery.
+- **Serve-loop spin guard + uniform loop-cancellation (#496).** The mailman
+  serve-loop now **panics** (→ systemd restart, stack in the journal) if it churns
+  past a no-progress threshold instead of silently burning CPU behind a stuck worker;
+  the one long-running loop that ignored its context now honors cancellation, closing
+  the "every loop checks `ctx.Done()`" gap. `goleak` in `internal/cli` +
+  `internal/tmuxio` guards against future goroutine leaks (it found zero existing).
+- **Arc42 architecture-doc spine (#386, Phase 1).** `docs/arc42/` now carries the
+  full 12-section [Arc42](https://arc42.org/) spine (ADR-0015), link-first and
+  mirroring Binnacle for cross-project operator-consistency: §§1–9 + §11 + §12
+  authored, §10 Quality Requirements seeded pending a collaborative working session.
+- **Breaking — Prometheus metrics renamed `tmux_msg_*` → `tmux_tell_*` (#488).** The
+  7 scrape-surface metrics now carry the `tmux_tell_` prefix (the last Phase-1 rename
+  residue). There is **no deprecated-name mechanism on the metrics surface** — the old
+  series stop and the new ones begin at the deploy boundary, so **Grafana dashboards +
+  Alloy scrape config must update in the same v0.19.0 deploy window** (alcatraz-infra
+  side).
+
+Plus the companions — the release process itself got more honest: a **cut-time
+docs-coherence gate (#495)** surfaces the off-PR-net doc surfaces (BookStack,
+`/srv/CLAUDE.md`, sister-chamber instructions) that drift on a rename, and
+**CHANGELOG-fragment-per-PR authoring (#494)** ends the parallel-PR collision tax on
+`[Unreleased]` (this is the first cut to assemble from fragments).
+
+Deferred: reactive rate-limit detection + cap-aware wake (**#504**, completes the
+#448/#449 scheduling trio) → v0.19.1; the `compact` → `sleep` control-verb rename →
+a v0.19.1 tracker; the Arc42 **§10** canonical NFR set → its collaborative working
+session; and the v1.0 legacy-alias hard-cut stays open until v1.0.
+
 ### Added
 
 - **Cross-surface docs-coherence gate at release cuts (#495).** A new
