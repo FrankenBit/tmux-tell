@@ -24,14 +24,14 @@ gap it was meant to close.
 | 7 | Deployment View | [07-deployment-view.md](07-deployment-view.md) | drafted (PR-A) |
 | 8 | Crosscutting Concepts | [08-cross-cutting-concepts.md](08-cross-cutting-concepts.md) | drafted (PR-B) |
 | 9 | Architecture Decisions | [09-architecture-decisions.md](09-architecture-decisions.md) | drafted (PR-B, indexes [`../adr/`](../adr/)) |
-| 10 | Quality Requirements | [10-quality-requirements.md](10-quality-requirements.md) | seed only → canonical PR-C (working session) |
+| 10 | Quality Requirements | [10-quality-requirements.md](10-quality-requirements.md) | drafted (PR-C) |
 | 11 | Risks and Technical Debt | [11-risks-and-technical-debt.md](11-risks-and-technical-debt.md) | drafted (PR-B) |
 | 12 | Glossary | [12-glossary.md](12-glossary.md) | drafted (PR-A) |
 
 This is **Phase 1** of #386, landed across PR-A → PR-B → PR-C. PR-A landed the full
 12-section spine + the cheap/gap-fill sections (§§1/2/3/7/12) + the freshness
 convention; PR-B fills the substantive sections (§§4/5/6/8/9/11) + the Layer-1
-per-cut staleness check; PR-C canonicalizes §10 after the collaborative working
+per-cut staleness check; PR-C canonicalized §10 after the collaborative working
 session. The *spine is complete* so a reader can tell a section is *planned*, not
 *missing* — that completeness guarantee is what Arc42 is for.
 
