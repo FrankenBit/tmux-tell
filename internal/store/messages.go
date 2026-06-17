@@ -424,6 +424,17 @@ func (s *Store) ClaimNext(ctx context.Context, toAgent string) (*Message, error)
 // which sender-channel's head fires next (within-channel FIFO preserved), and
 // claims that row — all inside one BEGIN IMMEDIATE transaction so the pick is
 // consistent with the claim.
+//
+// Cost shape: this materializes every eligible queued row for the recipient
+// (id, from_agent, priority) into memory each call, so one claim is O(N) in the
+// recipient's queue depth rather than the O(1) "claim the indexed head" a pure
+// FIFO would allow. That is intentional and bounded: cross-channel priority
+// selection (#449) needs to see all channel heads at once, and a single
+// recipient's undelivered backlog is small (the mailman drains continuously;
+// depth is the queue-depth gauge, normally low single digits). If a recipient's
+// steady-state depth ever grew large enough to matter, the fix is to push the
+// per-channel-head reduction into SQL (a window function over from_agent)
+// rather than scanning in Go — not a reason to revert to id-only FIFO.
 func (s *Store) ClaimNextWithStrategy(ctx context.Context, toAgent string, strategy SchedulerStrategy) (*Message, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
