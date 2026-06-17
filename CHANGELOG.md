@@ -33,10 +33,14 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.19.0] — 2026-06-17
+
+
 The delivery-scheduling release — the bus learns to deliver *intelligently under
 load*. Until now the mailman delivered first-come-first-served and leaned on caps
-for safety; v0.19.0 makes delivery **provider-aware** (it won't burst-saturate a
-shared LLM-provider pool) and **priority-aware** (an urgent message can lift its
+for safety; v0.19.0 makes delivery **provider-aware** (it keeps a fleet's
+same-provider concurrency bounded near a cap) and **priority-aware** (an urgent
+message can lift its
 whole channel ahead of routine traffic — without ever breaking per-channel FIFO),
 and hardens the serve-loop against runaway spin and goroutine leaks. Alongside the
 scheduling work the architecture gains a navigable Arc42 documentation spine and a
@@ -47,8 +51,10 @@ action at deploy.
 Headlines:
 
 - **Provider-aware delivery rate limiter (#448).** The mailman now defers delivery
-  while too many same-provider chambers are already generating, so a fleet can't
-  burst-saturate a shared provider pool. Each adapter declares its `Provider`
+  while too many same-provider chambers are already generating, so a fleet stays
+  bounded near a per-provider cap rather than unbounded-bursting a shared pool (a
+  soft cap — bounded overshoot that self-corrects on the next observe round). Each
+  adapter declares its `Provider`
   (claude = `anthropic`, codex = `openai`); `--max-concurrent-per-provider`
   (default 3, `0` = unbounded) gates on a cross-mailman count of same-provider
   chambers in `StateWorking`, coordinated through the shared SQLite DB with a TTL so
@@ -93,6 +99,7 @@ session; and the v1.0 legacy-alias hard-cut stays open until v1.0.
 
 ### Added
 
+
 - **Cross-surface docs-coherence gate at release cuts (#495).** A new
   `docs/release-cut-checklist.md` + a compact checklist in the release-prep PR body
   (`release.yml`) + a §Release-cuts step enumerate the operator-facing surfaces a
@@ -102,6 +109,76 @@ session; and the v1.0 legacy-alias hard-cut stays open until v1.0.
   rename. A salience mechanism (visible at cut time), not machine enforcement (an
   audit tool is a deferred follow-up). Codifies the surface-sweep Phase 4 (#440)
   did by hand.
+- **Arc42 architecture-doc spine — Phase 1** ([#386](https://git.frankenbit.de/frankenbit/tmux-tell/issues/386)).
+  `docs/arc42/` now carries the full 12-section [Arc42](https://arc42.org/) spine
+  (per-section files + index), adopted via [ADR-0015](docs/adr/0015-adopt-arc42-architecture-spine.md)
+  mirroring Binnacle's precedent for cross-project operator-consistency. §§1–9 + §11
+  + §12 are authored (Introduction & Goals, Constraints, Context & Scope, Solution
+  Strategy, Building Block View, Runtime View, Deployment View, Crosscutting
+  Concepts, Architecture Decisions, Risks & Technical Debt, Glossary); §10 Quality
+  Requirements carries the substrate-empirical seed pending a collaborative working
+  session (canonical set lands later). Governed by a **link-first principle**
+  (sections link the living docs they cover, never duplicate them) + a two-marker
+  freshness convention (`revisit-triggers` frontmatter + `last-reviewed` comment).
+  A per-cut Arc42-staleness check folds into `CONTRIBUTING.md` §Release cuts as a
+  sibling to the #495 docs-coherence gate. README links the spine.
+- **Provider-aware delivery rate limiter** ([#448](https://git.frankenbit.de/frankenbit/tmux-tell/issues/448)).
+  The mailman now defers delivery while too many same-provider chambers are already
+  generating, preventing burst saturation of a shared LLM-provider pool. Each adapter
+  declares its `Provider` (claude = `anthropic`, codex = `openai`); the
+  `--max-concurrent-per-provider` cap (default 3, `0` = unbounded, per-agent TOML) gates
+  on a cross-mailman count of same-provider chambers in `StateWorking`, coordinated
+  through the shared SQLite DB (`agents.observed_state`) with a TTL so a crashed
+  mailman's stale state can't pin a slot. Deferrals are observable via a
+  `provider_cap_deferred` log line, the `tmux_tell_provider_defer_total{provider}`
+  metric, and the message staying `queued`. Additive: an adapter that declares no
+  provider is never gated or counted.
+- **Per-message priority + cross-channel scheduling** ([#449](https://git.frankenbit.de/frankenbit/tmux-tell/issues/449)).
+  Senders can now declare `--priority low|normal|high` (CLI + the MCP `send` tool; default
+  normal). Within a sender→recipient channel order is always **FIFO** — priority never
+  reorders a channel — but when several senders have messages queued for one recipient, the
+  mailman's scheduler picks which channel's head delivers next by priority, so a buried
+  urgent message lifts its whole channel above a normal-only one (anti-starvation). The
+  default strategy (`--priority-strategy=max`) reduces to plain global FIFO under uniform
+  priority, so un-prioritized traffic is unchanged; `aged` is the opt-in depth-aging
+  alternative. A per-chamber `--post-deliver-cooldown` (default 5s) gives the recipient an
+  ingest window after each delivery. Priority surfaces in `inbox` (a `PRIO` column + the
+  JSON/MCP `priority` field) and the `tmux_tell_delivery_latency_by_priority_seconds` metric.
+- **Serve-loop spin guard + uniform loop-cancellation** ([#496](https://git.frankenbit.de/frankenbit/tmux-tell/issues/496)).
+  The mailman serve-loop now enforces a "steady-state serve-loop is bounded" invariant
+  at runtime: if it churns past `--spin-guard-threshold` no-progress iterations within
+  `--spin-guard-window` (defaults 1000 / 10s; `0` disables), it **panics** so systemd
+  restarts the process (stack in the journal) instead of silently burning CPU behind a
+  stuck worker. A healthy idle loop sleeps between iterations and never approaches the
+  threshold. Separately, `store.findThreadRoot` now checks `ctx.Done()` at its loop top
+  — closing the one long-running loop that received a context but never honored
+  cancellation, so the substrate's "every loop checks `ctx.Done()`" invariant is now
+  gap-free.
+- **`goleak` goroutine-leak detection in tests** ([#496](https://git.frankenbit.de/frankenbit/tmux-tell/issues/496)).
+  `internal/cli` and `internal/tmuxio` now run `goleak.VerifyTestMain`, asserting no
+  goroutine outlives the package's test suite — a forward-watch that catches a future
+  test spawning a serve-loop / metrics-server / poll goroutine it never joins. Adopting
+  it surfaced **zero** existing leaks, corroborating the substrate's goroutine hygiene.
+  Composes with `go test -race` for the broader concurrency-hygiene class.
+
+### Changed
+
+- **Prometheus metric names renamed `tmux_msg_*` → `tmux_tell_*`**
+  ([#488](https://git.frankenbit.de/frankenbit/tmux-tell/issues/488)) — the 7 metrics in
+  `internal/metrics/metrics.go` (`messages_total`, `delivery_latency_seconds`,
+  `delivery_verify_attempt_seconds`, `queue_depth`, `mailman_loop_iterations_total`,
+  `paste_unsafe_aborts_total`, `mailman_stuck`) now carry the `tmux_tell_` prefix, the
+  last Phase-1 rename residue at the observability wire surface. **This is a breaking
+  interface change on the Prometheus scrape surface** — unlike the binary/macro aliases,
+  there is no deprecated-metric-name mechanism, so the old series stop and the new ones
+  begin at the deploy boundary. Grafana dashboards + Alloy scrape config must update in
+  the same v0.19.0 deploy window (alcatraz-infra side).
+- **CHANGELOG entries are now fragment-per-PR** ([#494](https://git.frankenbit.de/frankenbit/tmux-tell/issues/494)).
+  Each change-carrying PR drops a `changelog.d/<issue>.<type>.md` fragment instead of
+  editing `CHANGELOG.md`'s `[Unreleased]` directly — eliminating the parallel-PR
+  collision tax (#480/#486, #464). `tools/changelog-assemble` gathers the fragments into
+  `[Unreleased]` at release-prep; the hand-curated prelude + `Headlines:` convention
+  (#427) is untouched. See CONTRIBUTING.md §How we work.
 
 ## [0.18.1] — 2026-06-16
 
