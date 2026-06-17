@@ -69,6 +69,13 @@ func TestObserveHistograms_CountObservations(t *testing.T) {
 	if c := histSampleCount(t, m, "tmux_tell_delivery_verify_attempt_seconds", "bob"); c != 1 {
 		t.Errorf("verify attempt sample count = %d, want 1", c)
 	}
+
+	// #507: provider-cap defer-wait histogram, labeled by provider.
+	m.ObserveProviderDeferWait("anthropic", 2.5)
+	m.ObserveProviderDeferWait("anthropic", 40)
+	if c := histSampleCount(t, m, "tmux_tell_provider_defer_wait_seconds", "anthropic"); c != 2 {
+		t.Errorf("provider defer-wait sample count = %d, want 2", c)
+	}
 }
 
 func TestQueueDepthAndLoopAndAborts(t *testing.T) {
@@ -157,6 +164,8 @@ func TestNilMetrics_AllNoOp(t *testing.T) {
 	m.IncLoopIteration("b")
 	m.IncPasteUnsafeAbort("b", "unknown")
 	m.SetMailmanStuck("b", "pane-not-found", true)
+	m.IncProviderDefer("anthropic")
+	m.ObserveProviderDeferWait("anthropic", 1)
 	if m.Registry() != nil {
 		t.Error("nil Metrics Registry() should be nil")
 	}

@@ -806,8 +806,21 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		if perr := s.SetProvider(opCtx, opts.Agent, active.Provider); perr != nil {
 			logger.Printf("set_provider_failed err=%v", perr)
 		}
+		// #507: persist the cap too, so a separate `inbox` process can
+		// live-derive the provider-cap deferral state of our queued messages.
+		if perr := s.SetProviderCap(opCtx, opts.Agent, opts.MaxConcurrentPerProvider); perr != nil {
+			logger.Printf("set_provider_cap_failed err=%v", perr)
+		}
 	}
 	var lastObservedWrite time.Time
+
+	// #507: per-message first-defer timestamps (publicID → first time the
+	// provider cap deferred it this serve run). Stamped on the first defer,
+	// observed + cleared at the gate-pass that ends the deferral, feeding the
+	// tmux_tell_provider_defer_wait_seconds histogram. Mailman-local runtime
+	// state (a restart resets it — an acceptable loss for a wait histogram); it
+	// never needs to outlive the process, so it stays out of the DB.
+	deferStart := make(map[string]time.Time)
 
 	for {
 		if stopCtx.Err() != nil {
@@ -950,6 +963,11 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				if m != nil {
 					m.IncProviderDefer(active.Provider)
 				}
+				// #507: stamp the FIRST defer of this message so the wait
+				// histogram measures the full hold, not just the last recheck.
+				if _, seen := deferStart[msg.PublicID]; !seen {
+					deferStart[msg.PublicID] = time.Now()
+				}
 				logger.Printf("provider_cap_deferred id=%s provider=%s working=%d cap=%d",
 					msg.PublicID, active.Provider, working, opts.MaxConcurrentPerProvider)
 				if stopOrSleep(stopCtx, opts.ProviderCapRecheckInterval) {
@@ -957,6 +975,18 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				}
 				continue
 			}
+		}
+
+		// #507: the message passed the cap gate (or the cap is off) — its slot is
+		// open. If it had been deferred, observe how long it waited and clear the
+		// stamp. This fires for every message that stops being deferred, so the
+		// histogram captures the deferred→slot-open wait regardless of the
+		// downstream delivery outcome ("waited before its slot opened" per the AC).
+		if t0, deferred := deferStart[msg.PublicID]; deferred {
+			if m != nil {
+				m.ObserveProviderDeferWait(active.Provider, time.Since(t0).Seconds())
+			}
+			delete(deferStart, msg.PublicID)
 		}
 
 		logger.Printf("delivering id=%s kind=%s from=%s body_bytes=%d",

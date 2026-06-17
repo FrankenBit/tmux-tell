@@ -6,6 +6,41 @@ import (
 	"time"
 )
 
+// TestProviderCapConfig pins the #507 persistence round-trip: SetProviderCap
+// stores the cap next to the #448 provider, ProviderCapConfig reads both back,
+// and an agent that never had a provider set reads as the ("", 0) opt-out — the
+// values a separate `inbox` process needs to recompute the gate predicate.
+func TestProviderCapConfig(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.UpsertAgent(ctx, "engineer", "%1"); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Fresh agent: no provider, default cap 0 → opt-out.
+	if p, c, err := s.ProviderCapConfig(ctx, "engineer"); err != nil || p != "" || c != 0 {
+		t.Fatalf("fresh agent config = (%q, %d, %v), want (\"\", 0, nil)", p, c, err)
+	}
+
+	// After the mailman writes provider + cap at serve start, both read back.
+	if err := s.SetProvider(ctx, "engineer", "anthropic"); err != nil {
+		t.Fatalf("set provider: %v", err)
+	}
+	if err := s.SetProviderCap(ctx, "engineer", 2); err != nil {
+		t.Fatalf("set cap: %v", err)
+	}
+	if p, c, err := s.ProviderCapConfig(ctx, "engineer"); err != nil || p != "anthropic" || c != 2 {
+		t.Fatalf("config after set = (%q, %d, %v), want (\"anthropic\", 2, nil)", p, c, err)
+	}
+
+	// An agent that was never registered is the opt-out, not an error (a listing
+	// target addressed by a not-yet-registered name).
+	if p, c, err := s.ProviderCapConfig(ctx, "ghost"); err != nil || p != "" || c != 0 {
+		t.Fatalf("unregistered config = (%q, %d, %v), want (\"\", 0, nil)", p, c, err)
+	}
+}
+
 // TestCountWorkingOnProvider pins the #448 cap-count primitive: it counts only
 // same-provider agents whose observed_state is "working" AND whose state write
 // is fresh within the TTL — so a crashed mailman's stale "working" ages out and

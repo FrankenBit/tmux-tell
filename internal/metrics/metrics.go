@@ -72,6 +72,7 @@ type Metrics struct {
 	pasteUnsafeAborts         *prometheus.CounterVec
 	mailmanStuck              *prometheus.GaugeVec
 	providerDefer             *prometheus.CounterVec
+	providerDeferWait         *prometheus.HistogramVec
 }
 
 // New builds the collector set, registers it against a fresh private
@@ -121,6 +122,11 @@ func New() *Metrics {
 			Name: "tmux_tell_provider_defer_total",
 			Help: "Total deliveries deferred by the #448 per-provider concurrency cap (too many same-provider chambers working), by provider.",
 		}, []string{"provider"}),
+		providerDeferWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "tmux_tell_provider_defer_wait_seconds",
+			Help:    "Wall-clock a cap-deferred message waited from its first #448 provider-cap deferral until the cap slot reopened and it was delivered (#507), by provider.",
+			Buckets: latencyBuckets,
+		}, []string{"provider"}),
 	}
 	reg.MustRegister(
 		m.messagesTotal,
@@ -132,6 +138,7 @@ func New() *Metrics {
 		m.pasteUnsafeAborts,
 		m.mailmanStuck,
 		m.providerDefer,
+		m.providerDeferWait,
 	)
 	return m
 }
@@ -219,6 +226,18 @@ func (m *Metrics) IncProviderDefer(provider string) {
 		return
 	}
 	m.providerDefer.WithLabelValues(provider).Inc()
+}
+
+// ObserveProviderDeferWait records how long a cap-deferred message waited
+// (seconds) from its first provider-cap deferral until the slot reopened and it
+// was delivered (#507). Fed once per deferred message, at the gate-pass that
+// ends its deferral — complements the IncProviderDefer count with a wait
+// distribution per provider.
+func (m *Metrics) ObserveProviderDeferWait(provider string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.providerDeferWait.WithLabelValues(provider).Observe(seconds)
 }
 
 // IncPasteUnsafeAbort bumps the paste-unsafe-abort counter for the agent

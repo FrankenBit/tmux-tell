@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"time"
 )
 
@@ -19,6 +20,31 @@ func (s *Store) SetProvider(ctx context.Context, agent, provider string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET provider = ? WHERE name = ?`, provider, agent)
 	return err
+}
+
+// SetProviderCap records the per-provider concurrency cap the agent's mailman
+// is serving with (#507), written once at serve start next to SetProvider. The
+// gate itself reads its cap from the serve flag (not this column); this
+// persists it so a separate `inbox` process can live-derive the provider-cap
+// deferral state of a recipient's queued message. cap <= 0 means "no cap".
+func (s *Store) SetProviderCap(ctx context.Context, agent string, cap int) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET provider_cap = ? WHERE name = ?`, cap, agent)
+	return err
+}
+
+// ProviderCapConfig returns an agent's persisted provider + cap (#507), the two
+// values a separate process needs to recompute the #448 gate predicate for a
+// recipient. A not-yet-registered agent, or one whose mailman never set a
+// provider, yields ("", 0, nil) — the caller treats that as "no cap, nothing to
+// surface" (the empty-provider opt-out path, same as the gate).
+func (s *Store) ProviderCapConfig(ctx context.Context, agent string) (provider string, cap int, err error) {
+	err = s.db.QueryRowContext(ctx,
+		`SELECT provider, provider_cap FROM agents WHERE name = ?`, agent).Scan(&provider, &cap)
+	if err == sql.ErrNoRows {
+		return "", 0, nil
+	}
+	return provider, cap, err
 }
 
 // SetObservedState records the mailman's most recent live AgentState

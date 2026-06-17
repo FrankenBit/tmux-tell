@@ -157,6 +157,23 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 		return m.State == store.StateQueued && !m.DeliverAfter.Valid && epoch > 0 && m.ID <= epoch
 	}
 
+	// #507: provider-cap deferral, live-derived like backlog_fenced — no per-row
+	// stored flag. A queued, claimable (not backlog-fenced) message isn't moving
+	// because the recipient's #448 provider cap is currently saturated when the
+	// recipient declares a provider + cap (persisted at its mailman's serve start)
+	// AND the same-provider working-count is at/over that cap right now. This
+	// recomputes the gate predicate from a separate process; it uses the default
+	// cap-TTL, so a mailman started with a custom --provider-cap-ttl can make the
+	// freshness boundary here slightly off — a display nuance, not a gate change.
+	capDeferred := func(store.Message) bool { return false }
+	if provider, cap, perr := s.ProviderCapConfig(ctx, agent); perr == nil && provider != "" && cap > 0 {
+		if working, cerr := s.CountWorkingOnProvider(ctx, provider, defaultProviderCapTTL, time.Now()); cerr == nil && working >= cap {
+			capDeferred = func(m store.Message) bool {
+				return m.State == store.StateQueued && !fenced(m)
+			}
+		}
+	}
+
 	switch format {
 	case "json":
 		out := make([]map[string]any, 0, len(msgs))
@@ -166,6 +183,10 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 			// backlog_fenced to detect the won't-auto-deliver state. Always
 			// emitted (true/false) on the inbox listing, not omitted.
 			mm["backlog_fenced"] = fenced(m)
+			// #507: provider_cap_deferred — queued-but-held-by-the-provider-cap.
+			// Always emitted (true/false) so consumers can distinguish a
+			// cap-held message from a merely-waiting-its-turn one.
+			mm["provider_cap_deferred"] = capDeferred(m)
 			out = append(out, mm)
 		}
 		_ = writeJSONResult(stdout, out)
@@ -178,6 +199,8 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 			state := string(m.State)
 			if fenced(m) {
 				state = "queued (backlog-fenced)"
+			} else if capDeferred(m) {
+				state = "queued (provider-cap)"
 			}
 			rows = append(rows, []string{
 				m.PublicID,

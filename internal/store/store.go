@@ -196,6 +196,12 @@ var migrations = []string{
 	// the cross-channel scheduler in ClaimNext (within-channel FIFO preserved).
 	// Default 20 (normal) so every existing + un-prioritized message is normal.
 	`ALTER TABLE messages ADD COLUMN priority INTEGER NOT NULL DEFAULT 20`,
+	// #507: the per-provider concurrency cap the agent's mailman serves with,
+	// persisted at serve start alongside provider (#448) so a *separate* process
+	// (`inbox`) can live-derive whether a recipient's queued message is being
+	// held by the provider cap without knowing the mailman's serve flags. 0 (the
+	// default) means "no cap configured" — never gated, never surfaced as deferred.
+	`ALTER TABLE agents ADD COLUMN provider_cap INTEGER NOT NULL DEFAULT 0`,
 }
 
 // Close releases the underlying database handle.

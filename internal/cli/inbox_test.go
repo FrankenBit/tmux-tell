@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
@@ -99,6 +100,88 @@ func TestInbox_BacklogFencedAnnotation(t *testing.T) {
 	}
 	if trueCount != 3 {
 		t.Errorf("json backlog_fenced=true count = %d, want 3", trueCount)
+	}
+}
+
+// TestInbox_ProviderCapDeferredAnnotation pins the #507 live-derivation: a
+// recipient's queued messages are flagged `queued (provider-cap)` in text +
+// carry `provider_cap_deferred: true` on the JSON surface exactly when the
+// recipient declares a provider + cap AND the same-provider working-count is
+// at/over that cap. It mirrors the backlog_fenced derivation (no stored flag).
+func TestInbox_ProviderCapDeferredAnnotation(t *testing.T) {
+	s := newCmdTestStore(t, "bosun", "lookout", "peer")
+	ctx := context.Background()
+
+	// lookout (the recipient) serves anthropic with a cap of 1, persisted by its
+	// mailman at serve start. `peer` is a same-provider chamber currently
+	// working, observed fresh — so anthropic's working-count is 1 ≥ cap.
+	if err := s.SetProvider(ctx, "lookout", "anthropic"); err != nil {
+		t.Fatalf("set provider: %v", err)
+	}
+	if err := s.SetProviderCap(ctx, "lookout", 1); err != nil {
+		t.Fatalf("set cap: %v", err)
+	}
+	if err := s.SetProvider(ctx, "peer", "anthropic"); err != nil {
+		t.Fatalf("set peer provider: %v", err)
+	}
+	if err := s.SetObservedState(ctx, "peer", "working", time.Now()); err != nil {
+		t.Fatalf("set peer state: %v", err)
+	}
+
+	for _, b := range []string{"m1", "m2"} {
+		if _, err := s.InsertMessage(ctx, store.InsertParams{FromAgent: "bosun", ToAgent: "lookout", Body: b}); err != nil {
+			t.Fatalf("insert %s: %v", b, err)
+		}
+	}
+
+	// Over cap: both queued rows annotated.
+	var stdout bytes.Buffer
+	if exit := runInboxWithStore(ctx, s, "lookout", store.StateQueued, 100, false, "text", &stdout, &bytes.Buffer{}); exit != exitOK {
+		t.Fatalf("text exit = %d", exit)
+	}
+	if got := strings.Count(stdout.String(), "queued (provider-cap)"); got != 2 {
+		t.Errorf("text provider-cap count = %d, want 2\n%s", got, stdout.String())
+	}
+
+	var jb bytes.Buffer
+	if exit := runInboxWithStore(ctx, s, "lookout", store.StateQueued, 100, false, "json", &jb, &bytes.Buffer{}); exit != exitOK {
+		t.Fatalf("json exit = %d", exit)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(jb.Bytes()), &rows); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	trueCount := 0
+	for _, r := range rows {
+		v, ok := r["provider_cap_deferred"]
+		if !ok {
+			t.Errorf("row %v missing provider_cap_deferred (stable surface must always emit it)", r["id"])
+		}
+		if v == true {
+			trueCount++
+		}
+	}
+	if trueCount != 2 {
+		t.Errorf("json provider_cap_deferred=true count = %d, want 2", trueCount)
+	}
+
+	// Negative control: drop the working peer below the cap (age its observation
+	// out) → no row is provider-cap-deferred, and the flag is still emitted false.
+	if err := s.SetObservedState(ctx, "peer", "working", time.Now().Add(-time.Hour)); err != nil {
+		t.Fatalf("age peer state: %v", err)
+	}
+	var jb2 bytes.Buffer
+	if exit := runInboxWithStore(ctx, s, "lookout", store.StateQueued, 100, false, "json", &jb2, &bytes.Buffer{}); exit != exitOK {
+		t.Fatalf("json exit (under cap) = %d", exit)
+	}
+	var rows2 []map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(jb2.Bytes()), &rows2); err != nil {
+		t.Fatalf("decode under-cap: %v", err)
+	}
+	for _, r := range rows2 {
+		if v, ok := r["provider_cap_deferred"]; !ok || v == true {
+			t.Errorf("under-cap row %v: provider_cap_deferred = %v, want false (and present)", r["id"], v)
+		}
 	}
 }
 
