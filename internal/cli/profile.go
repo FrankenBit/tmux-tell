@@ -69,6 +69,14 @@ type Profile struct {
 	// disables cursor-aware classification — adapters should supply a complete
 	// profile (e.g. tmuxio.ClaudePaneProfile() for the Claude adapter).
 	Pane tmuxio.PaneProfile
+	// Provider names the upstream LLM provider this adapter consumes —
+	// "anthropic" for claude, "openai" for codex (#448). The mailman writes it
+	// to agents.provider at serve start so the cross-mailman per-provider
+	// concurrency cap can count how many same-provider chambers are working.
+	// Empty (the zero value) opts the agent out of provider-cap accounting — an
+	// adapter that doesn't declare a provider is never gated and never counted,
+	// so the feature is purely additive on the uncoordinated path.
+	Provider string
 }
 
 // active is the process-global adapter profile. A CLI binary serves exactly one
@@ -85,4 +93,5 @@ var active = Profile{
 	PasteCapable:            true,
 	SupportsMCPSlashCommand: true,
 	Pane:                    tmuxio.ClaudePaneProfile(),
+	Provider:                "anthropic",
 }

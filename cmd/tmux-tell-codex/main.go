@@ -65,5 +65,9 @@ func codexProfile() cli.Profile {
 		// empty pending characterization of Codex's compaction / popup / status
 		// UIs — see tmuxio.CodexPaneProfile for the named gaps.
 		Pane: tmuxio.CodexPaneProfile(),
+		// Provider for the #448 per-provider concurrency cap — Codex consumes
+		// OpenAI's API, a separate provider pool from Claude's Anthropic, so the
+		// two adapters' caps are accounted independently.
+		Provider: "openai",
 	}
 }

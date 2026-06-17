@@ -70,6 +70,7 @@ type Metrics struct {
 	loopIterations    *prometheus.CounterVec
 	pasteUnsafeAborts *prometheus.CounterVec
 	mailmanStuck      *prometheus.GaugeVec
+	providerDefer     *prometheus.CounterVec
 }
 
 // New builds the collector set, registers it against a fresh private
@@ -110,6 +111,10 @@ func New() *Metrics {
 			Name: "tmux_tell_mailman_stuck",
 			Help: "1 when the mailman is parked in the #291 stuck state (stopped probing tmux), 0 when clear. Labels: agent name and stuck reason (pane-not-found).",
 		}, []string{"agent", "reason"}),
+		providerDefer: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tmux_tell_provider_defer_total",
+			Help: "Total deliveries deferred by the #448 per-provider concurrency cap (too many same-provider chambers working), by provider.",
+		}, []string{"provider"}),
 	}
 	reg.MustRegister(
 		m.messagesTotal,
@@ -119,6 +124,7 @@ func New() *Metrics {
 		m.loopIterations,
 		m.pasteUnsafeAborts,
 		m.mailmanStuck,
+		m.providerDefer,
 	)
 	return m
 }
@@ -188,6 +194,15 @@ func (m *Metrics) IncLoopIteration(agent string) {
 		return
 	}
 	m.loopIterations.WithLabelValues(agent).Inc()
+}
+
+// IncProviderDefer bumps the provider-cap deferral counter (#448) for the
+// provider whose concurrency cap deferred a delivery.
+func (m *Metrics) IncProviderDefer(provider string) {
+	if m == nil {
+		return
+	}
+	m.providerDefer.WithLabelValues(provider).Inc()
 }
 
 // IncPasteUnsafeAbort bumps the paste-unsafe-abort counter for the agent

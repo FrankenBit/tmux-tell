@@ -54,6 +54,14 @@ const (
 	// sleeping at thousands/sec).
 	defaultSpinGuardThreshold = 1000
 	defaultSpinGuardWindow    = 10 * time.Second
+	// #448 provider-cap defaults. The cap counts same-provider chambers that
+	// are StateWorking; the TTL is ~3× the observe interval so one missed
+	// self-write doesn't drop a live chamber out of the count, while a crashed
+	// mailman ages out within a few seconds.
+	defaultMaxConcurrentPerProvider = 3
+	defaultProviderCapTTL           = 6 * time.Second
+	defaultProviderCapRecheck       = 1 * time.Second
+	defaultObservedStateInterval    = 2 * time.Second
 	// stuckBackoffCap bounds the exponential pane-not-found retry delay
 	// (#291). Even before the stuck threshold, no retry fires faster than
 	// once per this interval — the 100/s storm that wedged tmux is capped
@@ -235,6 +243,28 @@ type serveOpts struct {
 	// no-progress iterations into the window. Default defaultSpinGuardWindow
 	// (10s).
 	SpinGuardWindow time.Duration
+	// MaxConcurrentPerProvider caps how many same-provider chambers may be
+	// StateWorking before this mailman defers delivery (#448). Default
+	// defaultMaxConcurrentPerProvider (3); 0 = unbounded (gate off).
+	MaxConcurrentPerProvider int
+	// ProviderCapTTL is the freshness window for a peer's observed "working":
+	// a crashed mailman's stale state older than this is not counted, so it
+	// can't pin a slot forever. Default defaultProviderCapTTL (6s, ~3× the
+	// observe interval).
+	ProviderCapTTL time.Duration
+	// ProviderCapRecheckInterval is how often a cap-deferred mailman re-checks
+	// for an open slot. Default defaultProviderCapRecheck (1s).
+	ProviderCapRecheckInterval time.Duration
+	// ObservedStateInterval throttles the per-mailman self-probe that writes
+	// agents.observed_state for the cross-mailman cap count — bounding the extra
+	// capture-pane probes the idle path now does. Default
+	// defaultObservedStateInterval (2s).
+	ObservedStateInterval time.Duration
+	// ProviderCapDisabled is a test seam: when true the mailman skips provider
+	// accounting entirely (no SetProvider, no self-probe, no cap gate). Tests
+	// that don't fake tmuxio.AgentState set it (mirrors GateDisabled). Default
+	// false (cap on in production).
+	ProviderCapDisabled bool
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -296,6 +326,14 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"max consecutive no-progress serve-loop iterations within --spin-guard-window before the loop is judged spinning and panics (#496 — fails loud for systemd restart rather than burning CPU). A healthy idle loop sleeps between iterations so it never approaches this. 0 disables the guard. Per-agent TOML knob: `spin-guard-threshold = N`.")
 	spinGuardWindow := fs.Duration("spin-guard-window", defaultSpinGuardWindow,
 		"sliding window for --spin-guard-threshold. Per-agent TOML knob: `spin-guard-window = \"10s\"`.")
+	maxConcurrentPerProvider := fs.Int("max-concurrent-per-provider", defaultMaxConcurrentPerProvider,
+		"#448 provider-cap: defer delivery while this many same-provider chambers are already StateWorking (prevents burst saturation of the shared provider pool). 0 = unbounded (gate off). Cross-mailman count via the shared DB. Per-agent TOML knob: `max-concurrent-per-provider = N`.")
+	providerCapTTL := fs.Duration("provider-cap-ttl", defaultProviderCapTTL,
+		"#448 freshness window for a peer's observed working-state — a crashed mailman's stale state older than this stops counting (so it can't pin a slot). Per-agent TOML knob: `provider-cap-ttl = \"6s\"`.")
+	providerCapRecheck := fs.Duration("provider-cap-recheck-interval", defaultProviderCapRecheck,
+		"#448 how often a cap-deferred mailman re-checks for an open slot. Per-agent TOML knob: `provider-cap-recheck-interval = \"1s\"`.")
+	observedStateInterval := fs.Duration("observed-state-interval", defaultObservedStateInterval,
+		"#448 throttle for the per-mailman self-probe that publishes agents.observed_state for the cross-mailman cap count. Per-agent TOML knob: `observed-state-interval = \"2s\"`.")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -366,6 +404,18 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if !flagWasSet(fs, "spin-guard-window") {
 		*spinGuardWindow = config.ResolveDuration(cfg, *agent, "spin-guard-window", *spinGuardWindow)
+	}
+	if !flagWasSet(fs, "max-concurrent-per-provider") {
+		*maxConcurrentPerProvider = config.ResolveInt(cfg, *agent, "max-concurrent-per-provider", *maxConcurrentPerProvider)
+	}
+	if !flagWasSet(fs, "provider-cap-ttl") {
+		*providerCapTTL = config.ResolveDuration(cfg, *agent, "provider-cap-ttl", *providerCapTTL)
+	}
+	if !flagWasSet(fs, "provider-cap-recheck-interval") {
+		*providerCapRecheck = config.ResolveDuration(cfg, *agent, "provider-cap-recheck-interval", *providerCapRecheck)
+	}
+	if !flagWasSet(fs, "observed-state-interval") {
+		*observedStateInterval = config.ResolveDuration(cfg, *agent, "observed-state-interval", *observedStateInterval)
 	}
 	configDeliveryMode := config.ResolveString(cfg, *agent, "delivery-mode", "")
 	// Resolve the verify-retry budget (#153). Stored as a duration string
@@ -481,6 +531,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		StuckPollInterval:           *stuckPollInterval,
 		SpinGuardThreshold:          *spinGuardThreshold,
 		SpinGuardWindow:             *spinGuardWindow,
+		MaxConcurrentPerProvider:    *maxConcurrentPerProvider,
+		ProviderCapTTL:              *providerCapTTL,
+		ProviderCapRecheckInterval:  *providerCapRecheck,
+		ObservedStateInterval:       *observedStateInterval,
 	}, logger, stdout, stderr)
 }
 
@@ -709,6 +763,19 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	guard := &spinGuard{threshold: opts.SpinGuardThreshold, window: opts.SpinGuardWindow}
 	progressedLastIter := true
 
+	// #448 provider-cap accounting. Record our adapter's provider once at
+	// startup so peers' cap gate can scope its working-count to it;
+	// lastObservedWrite throttles the per-iteration self-probe that publishes
+	// our live state. Both no-op when the cap is disabled (test seam) or the
+	// adapter declares no provider.
+	capOn := !opts.ProviderCapDisabled && active.Provider != ""
+	if capOn {
+		if perr := s.SetProvider(opCtx, opts.Agent, active.Provider); perr != nil {
+			logger.Printf("set_provider_failed err=%v", perr)
+		}
+	}
+	var lastObservedWrite time.Time
+
 	for {
 		if stopCtx.Err() != nil {
 			return exitOK
@@ -779,6 +846,24 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			continue
 		}
 
+		// #448 self-observation: on a throttled cadence, probe our own pane's
+		// AgentState and publish it to agents.observed_state so OTHER mailmen's
+		// provider-cap gate can count us as working. Not stuck (checked above) so
+		// the pane is live; throttled (not every iteration) to bound the extra
+		// capture-pane probes. A probe error just skips this round (lastObserved
+		// stays put → retried next iteration). The TTL guard on the read side
+		// handles a crashed mailman's stale row.
+		if capOn && a.PaneID != "" && time.Since(lastObservedWrite) >= opts.ObservedStateInterval {
+			obsCtx, obsCancel := context.WithTimeout(opCtx, 2*time.Second)
+			if st, _, perr := tmuxio.AgentState(obsCtx, a.PaneID); perr == nil {
+				if werr := s.SetObservedState(opCtx, opts.Agent, st.String(), time.Now()); werr != nil {
+					logger.Printf("observed_state_write_failed err=%v", werr)
+				}
+				lastObservedWrite = time.Now()
+			}
+			obsCancel()
+		}
+
 		msg, err := s.ClaimNext(opCtx, opts.Agent)
 		if err != nil {
 			logger.Printf("claim_failed err=%v", err)
@@ -813,6 +898,32 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				return exitOK
 			}
 			continue
+		}
+
+		// #448 provider-cap gate. Pings already returned above (substrate-only,
+		// no token cost). For a real delivery, defer if too many same-provider
+		// chambers are currently working: revert the claimed row to queued and
+		// re-check after a short interval — the slot reopens when a same-provider
+		// chamber leaves StateWorking. The deferral is observable (log + metric)
+		// so an operator isn't left wondering why a queued message isn't moving.
+		if capOn && opts.MaxConcurrentPerProvider > 0 {
+			working, cerr := s.CountWorkingOnProvider(opCtx, active.Provider, opts.ProviderCapTTL, time.Now())
+			if cerr != nil {
+				logger.Printf("provider_cap_count_failed err=%v", cerr)
+			} else if working >= opts.MaxConcurrentPerProvider {
+				if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
+					logger.Printf("provider_cap_revert_failed id=%s err=%v", msg.PublicID, rerr)
+				}
+				if m != nil {
+					m.IncProviderDefer(active.Provider)
+				}
+				logger.Printf("provider_cap_deferred id=%s provider=%s working=%d cap=%d",
+					msg.PublicID, active.Provider, working, opts.MaxConcurrentPerProvider)
+				if stopOrSleep(stopCtx, opts.ProviderCapRecheckInterval) {
+					return exitOK
+				}
+				continue
+			}
 		}
 
 		logger.Printf("delivering id=%s kind=%s from=%s body_bytes=%d",

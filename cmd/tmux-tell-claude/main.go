@@ -39,6 +39,9 @@ func main() {
 		// markers, empirically pinned by the canary tests in
 		// internal/tmuxio/state_canary_test.go.
 		Pane: tmuxio.ClaudePaneProfile(),
+		// Provider for the #448 per-provider concurrency cap — Claude consumes
+		// Anthropic's API.
+		Provider: "anthropic",
 	}
 	os.Exit(cli.Run(p, os.Args[0], os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }

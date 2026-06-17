@@ -180,6 +180,18 @@ var migrations = []string{
 	// query becomes load-bearing as the (infinite-retention-by-default) messages
 	// table grows over the substrate's lifetime — index-now beats scan-then-add.
 	`CREATE INDEX IF NOT EXISTS idx_messages_recipient_state_delivered ON messages(to_agent, state, delivered_at)`,
+	// #448: provider-aware concurrency cap. provider is the adapter-declared
+	// upstream LLM provider ("anthropic" / "openai"), written at serve start.
+	// observed_state mirrors the mailman's most recent live AgentState
+	// observation of its own pane ("working" / "idle" / …) so any mailman can
+	// count how many same-provider chambers are currently working;
+	// observed_state_at stamps that write so a crashed mailman's stale
+	// "working" ages out of the count (TTL guard) instead of pinning a slot.
+	// All additive with empty/NULL defaults — an agent with no provider is
+	// never gated and never counted.
+	`ALTER TABLE agents ADD COLUMN provider TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE agents ADD COLUMN observed_state TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE agents ADD COLUMN observed_state_at TEXT`,
 }
 
 // Close releases the underlying database handle.

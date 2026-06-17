@@ -42,6 +42,10 @@ func fastOpts(agent string) serveOpts {
 		// specific tests opt in by setting PrePasteSafetyDisabled=false
 		// and faking AgentState.
 		PrePasteSafetyDisabled: true,
+		// Same for the #448 provider-cap: the self-probe calls tmuxio.AgentState
+		// (which these tests don't fake) and the gate counts cross-mailman state.
+		// Off here; cap-specific tests opt in by setting ProviderCapDisabled=false.
+		ProviderCapDisabled: true,
 	}
 }
 
