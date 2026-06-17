@@ -1,0 +1,81 @@
+name: mutation
+
+# Optional non-blocking mutation-testing lane (#497 disposition-a).
+# Runs weekly (Sunday 03:00 UTC) or on manual trigger.
+# All jobs use continue-on-error: true — LIVED mutants are informational,
+# not a merge gate. Review the summary to decide whether to add tests.
+#
+# Packages and coefficients determined by #497 characterisation run (2026-06-17):
+#   render  coeff 10  — sync-only, 0% TIMED OUT, clean signal
+#   store   coeff 10  — async, 1.2% TIMED OUT after #496 goroutine fixes
+#   tmuxio  coeff 50  — async, 8.5% TIMED OUT at coeff 50 (#522 auditing remainder)
+#   cli     coeff 10  — workers=4 (default 12 OOMs chamber at 5 GiB; 4 concurrent builds ~1.6 GB peak)
+
+on:
+  schedule:
+    - cron: '0 3 * * 0'
+  workflow_dispatch: {}
+
+jobs:
+  gremlins-render:
+    name: gremlins (render)
+    runs-on: go
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: go version
+      - run: go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+      - name: mutate render
+        run: |
+          gremlins unleash \
+            --timeout-coefficient=10 \
+            ./internal/render
+
+  gremlins-store:
+    name: gremlins (store)
+    runs-on: go
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: go version
+      - run: go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+      - name: mutate store
+        run: |
+          gremlins unleash \
+            --timeout-coefficient=10 \
+            ./internal/store
+
+  gremlins-tmuxio:
+    name: gremlins (tmuxio)
+    runs-on: go
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: go version
+      - run: go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+      - name: mutate tmuxio
+        # coeff 50 reduces TIMED OUT from 100% (coeff 1) to 8.5%.
+        # 12 remaining TIMED OUT are genuine goroutine-loop mutations being
+        # addressed in #522 (loop-guard audit); expect further improvement
+        # once that lands.
+        run: |
+          gremlins unleash \
+            --timeout-coefficient=50 \
+            ./internal/tmuxio
+
+  gremlins-cli:
+    name: gremlins (cli)
+    runs-on: go
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - run: go version
+      - run: go install github.com/go-gremlins/gremlins/cmd/gremlins@latest
+      - name: mutate cli
+        # E2E tests build the full binary per mutant; default 12 workers OOMs
+        # the runner at ~5 GB. workers=4 caps concurrent builds at ~1.6 GB peak.
+        run: |
+          gremlins unleash \
+            --timeout-coefficient=10 \
+            --workers=4 \
+            ./internal/cli
