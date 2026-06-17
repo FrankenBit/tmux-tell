@@ -180,7 +180,11 @@ The cut sequence (run from a clean main on the cut branch):
    per [CHANGELOG entries](#changelog-entries) — `release-draft.yml` extracts
    everything before the first `### ` as the curated release body, so an empty
    prelude **hard-fails the draft by design** (#427).
-3. **README version pin.** Update the `--version` example to v<X.Y.Z>.
+3. **README version pin — automated.** `release.yml`'s transition step now pins the
+   README `--version` example to v<X.Y.Z> as part of the mechanical transition (#514);
+   no manual action. It **hard-fails the cut** if the `tmux-tell-claude vX.Y.Z` example
+   line is missing — if you restructure that README block, update the regex in
+   `release.yml`. For a fully-manual cut, do the bump by hand.
 4. **Deprecation eligibility check.** Run `./scripts/deprecations.sh --for
    v<X.Y.Z>` and confirm the cleared-for-removal list matches intent. If a
    listed surface is NOT being removed this cut, document the extension reason

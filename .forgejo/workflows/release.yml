@@ -157,7 +157,7 @@ jobs:
               echo "::notice::no changelog fragments — [Unreleased] used as-is (legacy path)"
           fi
 
-      - name: mechanical CHANGELOG transition
+      - name: mechanical CHANGELOG transition + README version pin
         id: changelog
         env:
           NEW: ${{ steps.version.outputs.new }}
@@ -191,6 +191,29 @@ jobs:
               print("::error::CHANGELOG.md has no [Unreleased] section to rename", file=sys.stderr)
               sys.exit(1)
           p.write_text(new_text)
+
+          # CONTRIBUTING §Release cuts step 3 — pin the README `--version` example
+          # to the cut version (#514). Anchored regex matches ONLY that line, never
+          # prose. Hard-fail on miss: a verification step that silently falls back
+          # isn't verifying — it re-introduces the 5-cut silent-drift (v0.17.0 →
+          # v0.18.1 all missed step 3 by hand) this automates away. A README
+          # restructure that moves the line breaks the cut LOUDLY (update the regex)
+          # — loud-not-silent by design.
+          r = Path("README.md")
+          rtext = r.read_text()
+          new_rtext, rn = re.subn(
+              r"^(tmux-tell-claude v)\d+\.\d+\.\d+$",
+              rf"\g<1>{NEW_NO_V}",
+              rtext,
+              count=1,
+              flags=re.M,
+          )
+          if rn != 1:
+              print("::error::README.md `--version` example line not found "
+                    "(CONTRIBUTING step 3 auto-pin) — expected a `tmux-tell-claude vX.Y.Z` "
+                    "line; if the README moved it, update the regex in release.yml", file=sys.stderr)
+              sys.exit(1)
+          r.write_text(new_rtext)
           PYEOF
 
           # Capture the moved section's content for the PR body (everything
@@ -207,8 +230,8 @@ jobs:
           set -euo pipefail
           echo "::notice::DRY RUN — would create release-prep PR for ${{ steps.version.outputs.new }}"
           echo
-          echo "==> CHANGELOG.md diff:"
-          git diff --no-color CHANGELOG.md | head -60
+          echo "==> CHANGELOG.md + README.md diff:"
+          git diff --no-color CHANGELOG.md README.md | head -80
           echo
           echo "==> release-notes.md (proposed PR body content):"
           cat /tmp/release-notes.md
@@ -249,11 +272,12 @@ jobs:
           git config user.name "release-bot"
           git config user.email "release-bot@frankenbit.de"
           git checkout -b "$BRANCH"
-          # Stage both the populated CHANGELOG.md and the pruned changelog.d/
-          # fragments (#494) so the release-prep commit captures the assembly +
-          # deletion atomically. `git add changelog.d` records the removals.
-          git add CHANGELOG.md changelog.d
-          git commit -m "chore(release): $NEW — CHANGELOG transition (#394)"
+          # Stage the populated CHANGELOG.md, the pruned changelog.d/ fragments
+          # (#494), and the README --version pin (#514) so the release-prep commit
+          # captures the assembly + deletion + version-pin atomically.
+          # `git add changelog.d` records the removals.
+          git add CHANGELOG.md changelog.d README.md
+          git commit -m "chore(release): $NEW — CHANGELOG transition + README pin (#394, #514)"
           git push --set-upstream origin "$BRANCH"
 
           # Build PR body via Python so we can JSON-escape it cleanly.
@@ -267,6 +291,11 @@ jobs:
           body = f"""## Summary
 
           Mechanical CHANGELOG transition for {os.environ['NEW']} per #394's release.yml.
+
+          > **Review against the diff, not just this body.** This body is generated at
+          > transition time and is point-in-time-static — any commit cherry-picked onto
+          > this release-prep branch after creation (a prelude fix, a late content edit)
+          > updates the *diff* but not this text (#513 forward-watch).
 
           ## Bump determination
 
