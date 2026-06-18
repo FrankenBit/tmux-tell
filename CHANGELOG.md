@@ -33,8 +33,11 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.20.0] — 2026-06-18
+
+
 The substrate-honesty release — v0.19.0 taught the bus to schedule under load;
-v0.19.1 makes the substrate *honest about what it's doing while it does it*. You
+v0.20.0 makes the substrate *honest about what it's doing while it does it*. You
 can now see **why** a message is waiting behind the provider cap (#507), the
 control verb says what it actually does now that `compact` is **`sleep`** (#509),
 and the release cut itself can no longer silently drift the README's version pin
@@ -90,6 +93,44 @@ Deferred: reactive rate-limit detection + cap-aware wake (**#504**, the last leg
 of the #448/#449/#507 scheduling-and-observability arc) — earmarked for this cut
 at v0.19.0 but slipped to a later one; and the v1.0 legacy-alias hard-cut, which
 stays open until v1.0.
+
+### Added
+
+- **Weekly mutation-testing CI lane** ([#497](https://git.frankenbit.de/frankenbit/tmux-tell/issues/497), [#524](https://git.frankenbit.de/frankenbit/tmux-tell/issues/524)).
+  A non-blocking, informational scheduled lane runs `gremlins` mutation testing
+  over `render` / `store` / `tmuxio` / `cli`, surfacing test-suite gaps that line
+  coverage misses. It is informational only — it never blocks a merge.
+- Provider-cap deferral observability (#507, follow-up to #448): a `tmux_tell_provider_defer_wait_seconds{provider}` histogram records how long a cap-deferred message waited from its first deferral until its slot reopened, and `inbox` now flags a queued message held by the provider cap — `queued (provider-cap)` in text and a `provider_cap_deferred` boolean on the JSON surface (live-derived, alongside `backlog_fenced`).
+
+### Changed
+
+- Renamed the `control` bus verb `compact` → `sleep` (#509): `control(command=sleep)` is the macro for the Claude Code `/compact` mechanism. `compact` keeps working as a deprecated alias through v1.0 (resolves to `sleep`, carries a `deprecated` field + a `WARN deprecated_control_macro`, per #480 / ADR-0008 §Discretion). Self-only semantics are unchanged (peers can't make you sleep), and the emitted `/compact` CLI primitive — and the `--post-compact-pause` machinery keyed on it — is untouched; only the bus verb renames. New `docs/glossary.md` covers `sleep` (incl. the sleep-vs-`pause` distinction).
+- **`release.yml` now auto-pins the README `--version` example at cut time** ([#514](https://git.frankenbit.de/frankenbit/tmux-tell/issues/514)).
+  CONTRIBUTING §Release cuts step 3 (pin the README `tmux-tell-claude vX.Y.Z` example to
+  the cut version) was a manual step silently missed across 5 cuts (v0.17.0 → v0.18.1).
+  The mechanical-transition step now rewrites the example line to the resolved version
+  alongside the `[Unreleased]` → `[X.Y.Z]` CHANGELOG move, with an anchored regex that
+  touches only that line. It **hard-fails the cut** if the line is absent rather than
+  silently skipping — a verification step that falls back silently re-introduces the
+  exact drift it exists to kill. CONTRIBUTING step 3 reworded to "automated." Also folds
+  in a note in the release-prep PR body that the body is point-in-time-static (verify
+  against the diff, not the body, when commits are cherry-picked onto the branch).
+
+### Documentation
+
+- **Arc42 spine Phase 1 complete — §10 Quality Requirements** ([#386](https://git.frankenbit.de/frankenbit/tmux-tell/issues/386)).
+  The §10 section v0.19.0 shipped as a substrate-empirical seed now carries its
+  canonical content (PR-C, authored in a collaborative working session): five
+  quality goals — Truthfulness, Reliable, lossless delivery, Inspectability,
+  Approachability, and Continuity across versions — a quality tree decomposing each
+  into checkable sub-attributes, and the scenarios that exercise them. This closes
+  the one Phase-1 section v0.19.0 left pending; the full 12-section spine is now
+  drafted.
+- **Outreach README for direct-contact rollouts** ([#516](https://git.frankenbit.de/frankenbit/tmux-tell/issues/516)).
+  A new `README.outreach.md` — problem-first, jargon-free, and substrate-neutral
+  (zero chamber-framework vocabulary, per ADR-0005) — gives a person you hand
+  tmux-tell-claude to directly a plain-language front door, distinct from the
+  contributor-facing `README.md`.
 
 ## [0.19.0] — 2026-06-17
 
