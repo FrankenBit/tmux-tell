@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +17,8 @@ import (
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
+
+var mcpParentEnvValue = procParentEnvValue
 
 // runMCPCLI parses MCP-mode flags, opens the store, and serves on stdio.
 //
@@ -376,33 +379,76 @@ func mcpAgentStateHandler(s *store.Store) mcp.ToolHandler {
 
 // resolveMCPIdentity is the MCP-side adapter over identity.Resolve. Returns an
 // actionable error when identity cannot be resolved — either from a store error
-// or because neither $TMUX_AGENT_NAME nor $TMUX_PANE resolved to a registered
-// agent. The empty-pane case (#355) fires for codex MCP children that don't
-// inherit shell env; the error names the missing source and recovery path.
+// or because neither the MCP child env nor its parent process env resolved to a
+// registered agent. The parent-env fallback covers codex MCP children whose
+// spawn path drops $TMUX_PANE while the parent Codex process still has it (#553).
 func resolveMCPIdentity(ctx context.Context, s *store.Store) (string, error) {
 	name, _, err := identity.Resolve(ctx, s, "")
 	if err != nil {
 		return "", err
 	}
 	if name == "" {
+		if parentName, parentErr := resolveMCPParentIdentity(ctx, s); parentName != "" || parentErr != nil {
+			return parentName, parentErr
+		}
 		return "", mcpIdentityError()
 	}
 	return name, nil
 }
 
+func resolveMCPParentIdentity(ctx context.Context, s *store.Store) (string, error) {
+	if name, ok := mcpParentEnvValue("TMUX_AGENT_NAME"); ok && name != "" {
+		return name, nil
+	}
+	if name, ok := mcpParentEnvValue("CLAUDE_AGENT_NAME"); ok && name != "" {
+		return name, nil
+	}
+	pane, ok := mcpParentEnvValue("TMUX_PANE")
+	if !ok || pane == "" {
+		return "", nil
+	}
+	agents, err := s.ListAgents(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, a := range agents {
+		if a.PaneID == pane {
+			return a.Name, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"cannot resolve identity: MCP parent $TMUX_PANE=%s is not in the agent registry — "+
+			"run `%s register --name <name>` to register this pane",
+		pane, active.BinaryName)
+}
+
+func procParentEnvValue(key string) (string, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", os.Getppid()))
+	if err != nil {
+		return "", false
+	}
+	prefix := []byte(key + "=")
+	for _, item := range bytes.Split(data, []byte{0}) {
+		if value, ok := bytes.CutPrefix(item, prefix); ok {
+			return string(value), true
+		}
+	}
+	return "", false
+}
+
 // mcpIdentityError constructs an actionable "cannot resolve identity" error
-// for MCP contexts (#355). Distinguishes two cases:
-//   - $TMUX_PANE is empty: likely codex MCP child with no env inheritance —
-//     instruct the operator to set TMUX_AGENT_NAME in the MCP wrapper.
+// for MCP contexts (#355/#553). Distinguishes two cases:
+//   - $TMUX_PANE is empty in both child and parent: the MCP spawn substrate lost
+//     the pane identity; instruct the operator to relaunch from a tmux pane or
+//     inspect the MCP spawn environment.
 //   - $TMUX_PANE is set but not in the registry: instructs to run register.
 func mcpIdentityError() error {
 	pane := os.Getenv("TMUX_PANE")
 	if pane == "" {
 		return fmt.Errorf(
 			"cannot resolve identity: $TMUX_AGENT_NAME is unset and $TMUX_PANE is " +
-				"empty — MCP child processes (e.g. codex) do not inherit shell env. " +
-				"Add TMUX_AGENT_NAME=<name> to the MCP wrapper env block " +
-				"(docs/reference.md §Codex), or set it via the shell's MCP server config")
+				"empty in the MCP child and parent process — launch Codex from a " +
+				"registered tmux pane, or inspect the MCP server spawn environment")
 	}
 	return fmt.Errorf(
 		"cannot resolve identity: $TMUX_PANE=%s is not in the agent registry — "+

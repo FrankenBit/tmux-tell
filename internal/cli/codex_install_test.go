@@ -43,7 +43,7 @@ func runCodexInstall(t *testing.T, dbPath, configPath, agentName string, extraAr
 }
 
 // TestCodexInstall_FreshInstall verifies a fresh install (no existing config)
-// writes all three blocks and reports hooksWritten + envWritten.
+// writes hook blocks without a global MCP TMUX_AGENT_NAME pin (#553).
 func TestCodexInstall_FreshInstall(t *testing.T) {
 	tmp := t.TempDir()
 	db := filepath.Join(tmp, "msgs.db")
@@ -71,8 +71,8 @@ func TestCodexInstall_FreshInstall(t *testing.T) {
 	if !result.HooksWritten {
 		t.Errorf("HooksWritten=false, want true")
 	}
-	if !result.EnvWritten {
-		t.Errorf("EnvWritten=false, want true")
+	if result.EnvWritten {
+		t.Errorf("EnvWritten=true, want false")
 	}
 	if result.AlreadyOK {
 		t.Errorf("AlreadyOK=true on fresh install")
@@ -81,7 +81,7 @@ func TestCodexInstall_FreshInstall(t *testing.T) {
 		t.Errorf("unexpected warnings: %v", result.Warnings)
 	}
 
-	// Verify the written file contains all three blocks.
+	// Verify the written file contains the hook blocks.
 	contents, err := os.ReadFile(cfg)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
@@ -91,12 +91,13 @@ func TestCodexInstall_FreshInstall(t *testing.T) {
 		"[hooks.UserPromptSubmit]",
 		"[hooks.SessionStart]",
 		"command = \"tmux-tell-codex hook-context\"",
-		"[mcp_servers.tmux-tell.env]",
-		"TMUX_AGENT_NAME = \"lookout\"",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("config missing %q\nfull content:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "TMUX_AGENT_NAME") || strings.Contains(body, "[mcp_servers.tmux-tell.env]") {
+		t.Errorf("fresh install wrote a global MCP env pin (#553):\n%s", body)
 	}
 }
 
@@ -114,15 +115,12 @@ func TestCodexInstall_Idempotent(t *testing.T) {
 	seedCodexAgent(t, s, "lookout")
 	_ = s.Close()
 
-	// Pre-populate with the exact expected content.
+	// Pre-populate with the exact expected hook content.
 	existing := `[hooks.UserPromptSubmit]
 command = "tmux-tell-codex hook-context"
 
 [hooks.SessionStart]
 command = "tmux-tell-codex hook-context"
-
-[mcp_servers.tmux-tell.env]
-TMUX_AGENT_NAME = "lookout"
 `
 	if err := os.WriteFile(cfg, []byte(existing), 0o600); err != nil {
 		t.Fatalf("write existing config: %v", err)
@@ -154,9 +152,9 @@ TMUX_AGENT_NAME = "lookout"
 	}
 }
 
-// TestCodexInstall_PartialConfig verifies that when hooks are already present
-// but the env block is missing, only the env block is appended.
-func TestCodexInstall_PartialConfig(t *testing.T) {
+// TestCodexInstall_HooksOnlyConfigAlreadyOK verifies that hooks-only config is
+// now complete; codex-install must not append a global MCP env pin (#553).
+func TestCodexInstall_HooksOnlyConfigAlreadyOK(t *testing.T) {
 	tmp := t.TempDir()
 	db := filepath.Join(tmp, "msgs.db")
 	cfg := filepath.Join(tmp, "config.toml")
@@ -190,20 +188,22 @@ command = "tmux-tell-codex hook-context"
 	if result.HooksWritten {
 		t.Errorf("HooksWritten=true, want false (hooks already present)")
 	}
-	if !result.EnvWritten {
-		t.Errorf("EnvWritten=false, want true (env block was missing)")
+	if result.EnvWritten {
+		t.Errorf("EnvWritten=true, want false")
+	}
+	if !result.AlreadyOK {
+		t.Errorf("AlreadyOK=false, want true for hooks-only config")
 	}
 
 	contents, _ := os.ReadFile(cfg)
-	if !strings.Contains(string(contents), "TMUX_AGENT_NAME = \"lookout\"") {
-		t.Errorf("env block not written: %s", contents)
+	if strings.Contains(string(contents), "TMUX_AGENT_NAME") {
+		t.Errorf("global env pin was written: %s", contents)
 	}
 }
 
-// TestCodexInstall_WrongAgentName verifies that a pre-existing
-// TMUX_AGENT_NAME with a different value produces a warning and is not
-// overwritten.
-func TestCodexInstall_WrongAgentName(t *testing.T) {
+// TestCodexInstall_ExistingAgentEnvWarns verifies that a pre-existing
+// TMUX_AGENT_NAME produces a warning and is not overwritten or removed.
+func TestCodexInstall_ExistingAgentEnvWarns(t *testing.T) {
 	tmp := t.TempDir()
 	db := filepath.Join(tmp, "msgs.db")
 	cfg := filepath.Join(tmp, "config.toml")
@@ -238,16 +238,16 @@ TMUX_AGENT_NAME = "old-lookout"
 		t.Fatalf("parse result: %v", err)
 	}
 	if len(result.Warnings) == 0 {
-		t.Errorf("expected warning about wrong TMUX_AGENT_NAME, got none")
+		t.Errorf("expected warning about global TMUX_AGENT_NAME, got none")
 	}
 	foundWarn := false
 	for _, w := range result.Warnings {
-		if strings.Contains(w, "old-lookout") && strings.Contains(w, "lookout-new") {
+		if strings.Contains(w, "old-lookout") && strings.Contains(w, "global MCP agent pins") {
 			foundWarn = true
 		}
 	}
 	if !foundWarn {
-		t.Errorf("warning doesn't mention old/new names: %v", result.Warnings)
+		t.Errorf("warning doesn't mention stale global env pin: %v", result.Warnings)
 	}
 	// File must still contain the OLD name (no overwrite).
 	contents, _ := os.ReadFile(cfg)
@@ -315,8 +315,8 @@ func TestCodexInstall_DryRun(t *testing.T) {
 	if !result.HooksWritten {
 		t.Errorf("HooksWritten=false in dry-run; want true (would have written)")
 	}
-	if !result.EnvWritten {
-		t.Errorf("EnvWritten=false in dry-run; want true (would have written)")
+	if result.EnvWritten {
+		t.Errorf("EnvWritten=true in dry-run; want false")
 	}
 }
 
@@ -411,8 +411,8 @@ command = "other-tool mcp"
 	if !strings.Contains(body, "[hooks.UserPromptSubmit]") {
 		t.Errorf("hooks.UserPromptSubmit not written:\n%s", body)
 	}
-	if !strings.Contains(body, "TMUX_AGENT_NAME = \"lookout\"") {
-		t.Errorf("TMUX_AGENT_NAME not written:\n%s", body)
+	if strings.Contains(body, "TMUX_AGENT_NAME") {
+		t.Errorf("global MCP env pin was written (#553):\n%s", body)
 	}
 }
 
@@ -580,7 +580,7 @@ func TestMigrateLegacyMcpSection_NoOpAndIdempotent(t *testing.T) {
 // approval subsections + a stale binary command): every substrate-point advances
 // to tmux-tell, a migration notice is emitted, operator customizations survive,
 // no stale-binary WARN fires (the command was rewritten, not flagged), and the
-// canonical env is recognized (no dup append).
+// preserved canonical env is warned as a global identity pin (#553).
 func TestMergeCodexConfig_MigratePreRename(t *testing.T) {
 	tmp := t.TempDir()
 	cfg := filepath.Join(tmp, "config.toml")
@@ -615,8 +615,10 @@ approval_mode = "approve"
 	if alreadyOK {
 		t.Errorf("AlreadyOK=true, want false (a migration is a change)")
 	}
-	if len(warnings) != 0 {
-		t.Errorf("unexpected warnings: %v (command was rewritten, not flagged)", warnings)
+	if len(warnings) != 1 ||
+		!strings.Contains(warnings[0], "global MCP agent pins") ||
+		strings.Contains(warnings[0], "tmux-msg-*") {
+		t.Errorf("warnings = %v, want only global-env-pin warning (command was rewritten, not flagged)", warnings)
 	}
 	if len(notices) != 1 || !strings.Contains(notices[0], "migrating_legacy_codex_mcp_section") {
 		t.Fatalf("notices = %v, want one migrating_legacy_codex_mcp_section", notices)

@@ -45,7 +45,7 @@ ADAPTER=${ADAPTER:-claude}
 #
 # For --adapter=codex, `--agent=NAME` is required (or set TMUX_AGENT_NAME
 # in the environment). It identifies which codex chamber to configure the
-# codex hook blocks + MCP env block for (#384).
+# codex hook blocks for (#384).
 BOOTSTRAP=1
 PRUNE_ORPHANS=0
 # --allow-stale-mailmen (#436 / Lookout #439): demote a post-install
@@ -75,7 +75,7 @@ if [[ "$ADAPTER" == "codex" && "$BOOTSTRAP" -eq 1 && -z "$AGENT_NAME" ]]; then
 fi
 if [[ "$ADAPTER" == "codex" && "$BOOTSTRAP" -eq 1 && -z "$AGENT_NAME" ]]; then
     echo "install.sh: --agent=NAME required for --adapter=codex bootstrap (#384)" >&2
-    echo "  Identifies which codex chamber to configure hook blocks + MCP env for." >&2
+    echo "  Identifies which codex chamber to configure hook blocks for." >&2
     echo "  Pass --agent=<name> or run from a shell where TMUX_AGENT_NAME is set," >&2
     echo "  or skip automatic config with --no-bootstrap." >&2
     exit 1
@@ -308,7 +308,7 @@ if [[ "$BOOTSTRAP" -eq 0 ]]; then
         echo "  systemctl --user restart ${UNIT_NAME%@.service}@<agent>.service"
         echo "  # OR a HOOK-CONTEXT chamber (no mailman; delivers via the UserPromptSubmit hook):"
         echo "  $BIN_NAME register --name <agent> --delivery-mode=hook-context"
-        echo "  $BIN_NAME codex-install --agent=<agent>   # writes hook blocks + MCP env"
+        echo "  $BIN_NAME codex-install --agent=<agent>   # writes hook blocks"
         echo "  # then manually approve hooks in Codex on next launch:"
         echo "  #   UserPromptSubmit: tmux-tell-codex hook-context"
         echo "  #   SessionStart:     tmux-tell-codex hook-context"
@@ -374,10 +374,10 @@ if [[ "$ADAPTER" == "codex" ]]; then
 
     case "$CODEX_MODE" in
     hook-context)
-        # Deliberate hook-context chamber: write hook blocks + MCP env. The mode
+        # Deliberate hook-context chamber: write hook blocks. The mode
         # is already hook-context so codex-install's step 2 is a no-op (no flip).
         # No mailman — hook-context delivers via the UserPromptSubmit hook.
-        echo "==> '$AGENT_NAME' is hook-context → codex-install (hook config + MCP env)"
+        echo "==> '$AGENT_NAME' is hook-context → codex-install (hook config)"
         sudo -u "$OPERATOR_USER" \
             --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR \
             env HOME="$OPERATOR_HOME" \

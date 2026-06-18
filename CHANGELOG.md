@@ -818,7 +818,7 @@ that ships it.
   paste-capable since #360) back to hook-context and writing the hook blocks that
   cause the #443 Obs1 duplicate delivery. The bootstrap now branches on the
   agent's CURRENT delivery_mode (read via `whoami`'s new `MODE` line): a
-  hook-context chamber still gets `codex-install` (hook config + MCP env), while a
+  hook-context chamber still gets `codex-install` (hook config), while a
   paste-served chamber gets its systemd mailman enabled + restarted (the claude
   sibling-shape, #410) with its mode preserved and no hook blocks written.
   `enable-linger` now runs on the codex bootstrap path too (a paste-served codex

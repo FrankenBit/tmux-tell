@@ -40,12 +40,63 @@ func TestResolveMCPIdentity_TMUXPaneLookup(t *testing.T) {
 	}
 }
 
+func TestResolveMCPIdentity_ParentTMUXPaneLookup(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "")
+	t.Setenv("TMUX_PANE", "")
+	prevParentEnv := mcpParentEnvValue
+	t.Cleanup(func() { mcpParentEnvValue = prevParentEnv })
+	mcpParentEnvValue = func(key string) (string, bool) {
+		if key == "TMUX_PANE" {
+			return "%5", true
+		}
+		return "", false
+	}
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "pilot", "%5")
+	_ = s.UpsertAgent(ctx, "bosun", "%7")
+
+	got, err := resolveMCPIdentity(ctx, s)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got != "pilot" {
+		t.Errorf("got %q, want pilot (parent TMUX_PANE=%%5)", got)
+	}
+}
+
+func TestResolveMCPIdentity_ParentAgentEnv(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "")
+	t.Setenv("TMUX_PANE", "")
+	prevParentEnv := mcpParentEnvValue
+	t.Cleanup(func() { mcpParentEnvValue = prevParentEnv })
+	mcpParentEnvValue = func(key string) (string, bool) {
+		if key == "TMUX_AGENT_NAME" {
+			return "carpenter", true
+		}
+		return "", false
+	}
+	s := newCmdTestStore(t)
+
+	got, err := resolveMCPIdentity(context.Background(), s)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got != "carpenter" {
+		t.Errorf("got %q, want carpenter (parent TMUX_AGENT_NAME)", got)
+	}
+}
+
 // TestResolveMCPIdentity_UnregisteredPaneReturnsError confirms the #355 fix:
 // a pane that is set but not in the registry returns an error naming the pane,
 // not a silent empty string.
 func TestResolveMCPIdentity_UnregisteredPaneReturnsError(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "%999") // not registered
+	prevParentEnv := mcpParentEnvValue
+	t.Cleanup(func() { mcpParentEnvValue = prevParentEnv })
+	mcpParentEnvValue = func(string) (string, bool) { return "", false }
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })
 
@@ -67,13 +118,16 @@ func TestResolveMCPIdentity_UnregisteredPaneReturnsError(t *testing.T) {
 func TestResolveMCPIdentity_NeitherEnvSet(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("TMUX_PANE", "")
+	prevParentEnv := mcpParentEnvValue
+	t.Cleanup(func() { mcpParentEnvValue = prevParentEnv })
+	mcpParentEnvValue = func(string) (string, bool) { return "", false }
 	s := newCmdTestStore(t, "alice")
 
 	_, err := resolveMCPIdentity(context.Background(), s)
 	if err == nil {
 		t.Fatal("want error when no identity source, got nil")
 	}
-	// Error must hint at TMUX_AGENT_NAME and the MCP wrapper env block (#355).
+	// Error must hint at the missing identity source and MCP spawn context (#355/#553).
 	if !strings.Contains(err.Error(), "TMUX_AGENT_NAME") {
 		t.Errorf("error should mention TMUX_AGENT_NAME; got: %v", err)
 	}

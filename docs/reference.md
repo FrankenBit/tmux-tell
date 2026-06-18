@@ -441,18 +441,19 @@ The mailman handles both, driven by the codex `PaneProfile.PasteCollapseMarker`
 Pinned by `TestPasteStillInInput`, `TestDeliver_Codex_ResubmitsStuckCollapsedPaste`, and
 `TestDeliver_Claude_NoResubmit`.
 
-**Codex MCP env contract (#355, #356).** The Codex MCP server process is
-spawned by the Codex CLI and does **not** automatically inherit the calling
-shell's full environment. Two env-completeness requirements apply:
+**Codex MCP env contract (#355, #356, #553).** The Codex MCP server process is
+spawned by the Codex CLI and may not inherit the calling shell's full
+environment. Two env-completeness requirements apply:
 
 1. **Identity resolution** — `tmux-tell.send`, `tmux-tell.inbox`, and most
    other MCP tools resolve the caller's identity from `$TMUX_AGENT_NAME`
-   (preferred) or `$TMUX_PANE` → registry lookup. Because `$TMUX_PANE` is
-   set by tmux for every pane but is **not** propagated to the Codex MCP
-   child, the `$TMUX_PANE` path silently fails. Set `TMUX_AGENT_NAME=<name>`
-   explicitly in the MCP wrapper so the child has a fixed identity — see
-   [#320](https://git.frankenbit.de/frankenbit/tmux-tell/issues/320) for the
-   recommended `~/.codex/config.toml` MCP wrapper block.
+   (preferred) or `$TMUX_PANE` → registry lookup. For Codex MCP children that
+   have neither var, the server also checks the parent Codex process
+   environment via `/proc/<ppid>/environ` and resolves that parent
+   `$TMUX_PANE` through the agents table. Do **not** put a global
+   `TMUX_AGENT_NAME=<name>` pin in `~/.codex/config.toml`; that config is
+   shared by every Codex chamber and can make all MCP calls report as the same
+   agent.
 
 2. **Mailman daemon start** — `tmux-tell.register` calls `systemctl --user`
    to start the mailman daemon. `systemctl --user` requires
@@ -467,8 +468,10 @@ shell's full environment. Two env-completeness requirements apply:
    tmux-tell-codex serve --agent <name>   # or: nohup … &
    ```
 
-Both gaps share the same root cause (MCP env isolation) and the same fix
-(explicit `env` block in the Codex MCP config).
+Identity and mailman-start env are intentionally separate: identity should
+come from the pane/parent process path above, while `systemctl --user` may
+still require explicit D-Bus vars in the Codex MCP config if the MCP child
+doesn't inherit them.
 
 *Verified against codex-cli 0.130.0 (2026-05-10), per the [`Aldenysq/agents-connector`](https://github.com/Aldenysq/agents-connector)
 integration notes — Codex hook events with `additionalContext` support: `SessionStart`,
@@ -1227,12 +1230,13 @@ When the CLI tool in a pane spawns the MCP server, the child inherits `$TMUX_PAN
 `agents` table and uses the matching name as the session's identity. So onboarding a
 **new pane** is one call from that pane:
 
-> **Codex note (#355):** The Codex MCP server is spawned differently and does
-> **not** inherit `$TMUX_PANE` from the shell. Set `TMUX_AGENT_NAME=<name>`
-> in the Codex MCP wrapper `env` block instead — the substrate checks
-> `$TMUX_AGENT_NAME` first in the identity chain and skips the pane lookup.
-> See the [Codex adapter section](#codex----tmux-tell-codex) for the full env
-> contract.
+> **Codex note (#355/#553):** The Codex MCP server is spawned differently and may
+> not inherit `$TMUX_PANE` in the child process. If the child env is empty, the
+> MCP server falls back to the parent Codex process env and resolves that
+> `$TMUX_PANE` through the agents table. Do not add a global
+> `TMUX_AGENT_NAME=<name>` pin to the Codex MCP config; that config is shared by
+> every Codex chamber. See the [Codex adapter section](#codex----tmux-tell-codex)
+> for the full env contract.
 
 > *call `tmux-tell.register name=myname`*
 

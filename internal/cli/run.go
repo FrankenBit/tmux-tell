@@ -57,7 +57,7 @@ Subcommands:
   restart-mailmen  Restart this adapter's running mailman units so a freshly-installed binary takes effect (#436)
   db      DB-housekeeping verbs (#349). Subcommands: migrate
   bootstrap  Substrate-honest install hard-cut: discover + enable mailmen + orphan walk + refresh (#349)
-  codex-install  Codex-adapter bootstrap: set hook-context delivery mode + write hook blocks + MCP env to ~/.codex/config.toml (#384)
+  codex-install  Codex-adapter bootstrap: set hook-context delivery mode + write hook blocks to ~/.codex/config.toml (#384)
   mcp     Speak MCP over stdio (%s tools)
   hook-context  Present pending messages as additionalContext for a hook-context agent — invoked by a %s SessionStart/UserPromptSubmit hook (#249)
 

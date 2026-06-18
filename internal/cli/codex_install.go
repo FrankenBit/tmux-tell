@@ -155,12 +155,12 @@ func removeTomlSections(content string, hdr *regexp.Regexp) string {
 // template land (#384).
 //
 // Unlike the claude bootstrap (mailmen + MCP refresh), the codex bootstrap
-// writes codex config entries — hook blocks + MCP env block — since Codex
-// agents deliver via hook-context, not pane paste. Three steps:
+// writes codex config hook entries since Codex agents deliver via hook-context,
+// not pane paste. Three steps:
 //
 //  1. Discover: populate agent pane IDs from current tmux state.
 //  2. Register: set delivery_mode=hook-context for the named agent.
-//  3. Config: merge hook blocks + TMUX_AGENT_NAME env into ~/.codex/config.toml.
+//  3. Config: merge hook blocks into ~/.codex/config.toml.
 //     Idempotent: parse+check+skip-or-append, not blind append.
 //
 // Prints post-install instructions naming Codex's hook-trust prompt.
@@ -235,7 +235,7 @@ func runCodexInstallCLI(args []string, stdout, stderr io.Writer) int {
 		result.Registered = true
 	}
 
-	// Step 3: merge hook blocks + env into codex config.
+	// Step 3: merge hook blocks into codex config.
 	hooksWritten, envWritten, alreadyOK, warnings, notices, writeErr := mergeCodexConfig(
 		resolvedConfig, *agentName, *dryRun,
 	)
@@ -255,8 +255,10 @@ func runCodexInstallCLI(args []string, stdout, stderr io.Writer) int {
 }
 
 // mergeCodexConfig reads the existing codex config, probes which of the
-// three needed blocks are already correctly present, and atomically appends
-// the missing ones.
+// hook blocks are already correctly present, and atomically appends the missing
+// ones. Legacy/operator MCP env blocks are preserved but no longer created:
+// a global TMUX_AGENT_NAME pin in ~/.codex/config.toml applies to every Codex
+// chamber and can force all MCP calls to report as the same agent (#553).
 //
 // present-but-wrong values surface as warnings and are not modified (the
 // operator may have intentionally configured them differently). The caller
@@ -335,20 +337,16 @@ func mergeCodexConfig(configPath, agentName string, dryRun bool) (hooksWritten, 
 			probe.Hooks.SessionStart.Command, codexHookCommand))
 	}
 
-	existingAgentName := ""
 	if probe.McpServers != nil {
 		if entry, ok := probe.McpServers["tmux-tell"]; ok {
-			existingAgentName = entry.Env["TMUX_AGENT_NAME"]
+			if existingAgentName := entry.Env["TMUX_AGENT_NAME"]; existingAgentName != "" {
+				warnings = append(warnings, fmt.Sprintf(
+					"mcp_servers.tmux-tell.env.TMUX_AGENT_NAME is %q; global MCP agent pins "+
+						"apply to every Codex chamber and can misattribute bus sends — "+
+						"remove it to use parent-pane identity resolution (#553)",
+					existingAgentName))
+			}
 		}
-	}
-	switch {
-	case existingAgentName == "":
-		toAppend = append(toAppend, fmt.Sprintf("[mcp_servers.tmux-tell.env]\nTMUX_AGENT_NAME = %q", agentName))
-		envWritten = true
-	case existingAgentName != agentName:
-		warnings = append(warnings, fmt.Sprintf(
-			"mcp_servers.tmux-tell.env.TMUX_AGENT_NAME is %q (want %q); skipped — update manually",
-			existingAgentName, agentName))
 	}
 
 	// Write when there's something to append OR a migration rewrote the content
@@ -427,9 +425,6 @@ func emitCodexInstallResult(stdout, stderr io.Writer, r codexInstallResult, form
 			}
 			if r.HooksWritten {
 				fmt.Fprintf(stdout, "WRITTEN\thooks.UserPromptSubmit + hooks.SessionStart → %s\n", configPath)
-			}
-			if r.EnvWritten {
-				fmt.Fprintf(stdout, "WRITTEN\tmcp_servers.tmux-tell.env.TMUX_AGENT_NAME=%q → %s\n", agentName, configPath)
 			}
 			for _, w := range r.Warnings {
 				fmt.Fprintf(stdout, "WARN\t%s\n", w)
