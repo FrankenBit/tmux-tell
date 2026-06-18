@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
@@ -18,7 +20,22 @@ import (
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
-var mcpParentEnvValue = procParentEnvValue
+// maxAncestorWalkDepth bounds the PPid walk the MCP identity resolver uses to
+// find an ancestor that still carries the tmux env (#549/#553 Fix-1b). 16 covers
+// a realistic Codex → shim/wrapper → MCP-server chain without an unbounded climb
+// to init; /proc reads are cheap, but this runs on hot-ish MCP call setup, so the
+// walk stays deterministic. A visited-PID set additionally guards a cyclic or
+// corrupted /proc (PPid should be acyclic, but the bound + cycle guard keep a
+// proc-test stub safe).
+const maxAncestorWalkDepth = 16
+
+// procEnvForPID / procPPIDForPID are the /proc readers the ancestor walk uses,
+// kept as package vars so the white-box tests can stub a synthetic process tree
+// (pid → environ, pid → ppid) without a real /proc.
+var (
+	procEnvForPID  = realProcEnvForPID
+	procPPIDForPID = realProcPPIDForPID
+)
 
 // runMCPCLI parses MCP-mode flags, opens the store, and serves on stdio.
 //
@@ -409,53 +426,128 @@ func mcpSetPaneNameHandler(s *store.Store) mcp.ToolHandler {
 
 // --- tool handlers ---
 
-// resolveMCPIdentity is the MCP-side adapter over identity.Resolve. Returns an
-// actionable error when identity cannot be resolved — either from a store error
-// or because neither the MCP child env nor its parent process env resolved to a
-// registered agent. The parent-env fallback covers codex MCP children whose
-// spawn path drops $TMUX_PANE while the parent Codex process still has it (#553).
+// resolveMCPIdentity is the MCP-side adapter over identity.Resolve. It enforces
+// Lookout's #553/#549 precedence: a resolvable pane — the calling process's OWN
+// registered $TMUX_PANE, or one carried by an ANCESTOR process — outranks any
+// name pin ($TMUX_AGENT_NAME), because the pin can be a stale global-config
+// value while a pane is tied to a real tmux pane. The ancestor walk covers codex
+// MCP children whose spawn path drops $TMUX_PANE while a parent Codex process
+// still has it (#553), and the depth bound (vs #562's immediate-parent-only read)
+// handles a shim/wrapper sitting between Codex and the MCP server.
+//
+// Order: own registered pane (or explicit override) → ancestor registered pane →
+// own name pin → ancestor name pin → actionable error. A name pin that disagrees
+// with a resolved pane is surfaced via identity.WarnMismatch (the pane wins).
 func resolveMCPIdentity(ctx context.Context, s *store.Store) (string, error) {
-	name, _, err := identity.Resolve(ctx, s, "")
+	name, src, err := identity.Resolve(ctx, s, "")
 	if err != nil {
 		return "", err
 	}
-	if name == "" {
-		if parentName, parentErr := resolveMCPParentIdentity(ctx, s); parentName != "" || parentErr != nil {
-			return parentName, parentErr
-		}
-		return "", mcpIdentityError()
+	// Own registered pane (or an explicit override) is authoritative.
+	if src == identity.SourcePane || src == identity.SourceExplicit {
+		return name, nil
 	}
-	return name, nil
+	// src is SourceEnv (own name pin) or SourceNone. Consult the ancestor pane
+	// walk BEFORE settling for a name pin: an ancestor's REGISTERED pane outranks
+	// it.
+	ancestorPaneName, unregisteredPane, walkErr := resolveAncestorPaneIdentity(ctx, s)
+	if walkErr != nil {
+		return "", walkErr
+	}
+	if ancestorPaneName != "" {
+		// `name` (if non-empty) is the own name pin — flag if it disagrees.
+		identity.WarnMismatch(name, ancestorPaneName)
+		return ancestorPaneName, nil
+	}
+	// No registered ancestor pane. A valid OWN name pin is the next-best signal —
+	// an unregistered ancestor pane must not clobber it (we cannot prove the pin
+	// stale without a registered pane to compare against).
+	if name != "" {
+		return name, nil
+	}
+	// No own identity at all. If an ancestor carried an unregistered pane, nudge
+	// the operator to register it rather than silently falling to a higher name
+	// pin (Lookout finding 1).
+	if unregisteredPane != "" {
+		return "", fmt.Errorf(
+			"cannot resolve identity: ancestor $TMUX_PANE=%s is not in the agent registry — "+
+				"run `%s register --name <name>` to register this pane",
+			unregisteredPane, active.BinaryName)
+	}
+	if pin := ancestorNamePin(); pin != "" {
+		return pin, nil
+	}
+	return "", mcpIdentityError()
 }
 
-func resolveMCPParentIdentity(ctx context.Context, s *store.Store) (string, error) {
-	if name, ok := mcpParentEnvValue("TMUX_AGENT_NAME"); ok && name != "" {
-		return name, nil
-	}
-	if name, ok := mcpParentEnvValue("CLAUDE_AGENT_NAME"); ok && name != "" {
-		return name, nil
-	}
-	pane, ok := mcpParentEnvValue("TMUX_PANE")
-	if !ok || pane == "" {
-		return "", nil
-	}
+// resolveAncestorPaneIdentity walks the PPid chain from this process's parent
+// upward (bounded) and inspects the FIRST ancestor that carries $TMUX_PANE — the
+// walk stops there rather than climbing to a higher ancestor's (less trustworthy)
+// name pin (Lookout's #553 finding). It returns:
+//   - (name, "",      nil) — a registered ancestor pane was found.
+//   - ("",   paneID,  nil) — a pane-bearing ancestor was found but its pane is
+//     unregistered; the caller fails loud only if it has no other identity.
+//   - ("",   "",      nil) — no ancestor within the bound carries a pane.
+func resolveAncestorPaneIdentity(ctx context.Context, s *store.Store) (string, string, error) {
 	agents, err := s.ListAgents(ctx)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
-	for _, a := range agents {
-		if a.PaneID == pane {
-			return a.Name, nil
+	visited := make(map[int]bool)
+	pid := os.Getppid()
+	for depth := 0; depth < maxAncestorWalkDepth; depth++ {
+		if pid <= 1 || visited[pid] {
+			break
 		}
+		visited[pid] = true
+		if pane, ok := procEnvForPID(pid, "TMUX_PANE"); ok && pane != "" {
+			for _, a := range agents {
+				if a.PaneID == pane {
+					return a.Name, "", nil
+				}
+			}
+			return "", pane, nil // pane-bearing but unregistered; stop here
+		}
+		ppid, ok := procPPIDForPID(pid)
+		if !ok {
+			break
+		}
+		pid = ppid
 	}
-	return "", fmt.Errorf(
-		"cannot resolve identity: MCP parent $TMUX_PANE=%s is not in the agent registry — "+
-			"run `%s register --name <name>` to register this pane",
-		pane, active.BinaryName)
+	return "", "", nil
 }
 
-func procParentEnvValue(key string) (string, bool) {
-	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", os.Getppid()))
+// ancestorNamePin walks the PPid chain for a $TMUX_AGENT_NAME (or legacy
+// $CLAUDE_AGENT_NAME) pin — the last-resort signal used only when neither this
+// process nor any ancestor carries a resolvable pane. A name pin is less
+// trustworthy than a pane (a shared global config can pin it wrong), which is
+// why it is consulted only after the pane walk comes up empty.
+func ancestorNamePin() string {
+	visited := make(map[int]bool)
+	pid := os.Getppid()
+	for depth := 0; depth < maxAncestorWalkDepth; depth++ {
+		if pid <= 1 || visited[pid] {
+			break
+		}
+		visited[pid] = true
+		if v, ok := procEnvForPID(pid, "TMUX_AGENT_NAME"); ok && v != "" {
+			return v
+		}
+		if v, ok := procEnvForPID(pid, "CLAUDE_AGENT_NAME"); ok && v != "" {
+			return v
+		}
+		ppid, ok := procPPIDForPID(pid)
+		if !ok {
+			break
+		}
+		pid = ppid
+	}
+	return ""
+}
+
+// realProcEnvForPID reads env var key from /proc/<pid>/environ (NUL-separated).
+func realProcEnvForPID(pid int, key string) (string, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	if err != nil {
 		return "", false
 	}
@@ -466,6 +558,30 @@ func procParentEnvValue(key string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// realProcPPIDForPID returns pid's parent PID from /proc/<pid>/stat (field 4).
+// The comm field (2) is parenthesized and may contain spaces/parens, so the
+// scan starts after the last ')' to avoid mis-splitting.
+func realProcPPIDForPID(pid int) (int, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, false
+	}
+	rparen := strings.LastIndexByte(string(data), ')')
+	if rparen < 0 {
+		return 0, false
+	}
+	fields := strings.Fields(string(data)[rparen+1:])
+	// After ')': fields[0]=state, fields[1]=ppid.
+	if len(fields) < 2 {
+		return 0, false
+	}
+	ppid, err := strconv.Atoi(fields[1])
+	if err != nil {
+		return 0, false
+	}
+	return ppid, true
 }
 
 // mcpIdentityError constructs an actionable "cannot resolve identity" error
