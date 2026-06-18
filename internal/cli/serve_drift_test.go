@@ -75,8 +75,18 @@ func TestServe_DriftDetectionWithCanonicalAlias(t *testing.T) {
 	t.Cleanup(func() { _ = s.Close() })
 	ctx := context.Background()
 	_ = s.UpsertAgent(ctx, "alice", "%1")
+	// surveyor's row is STALE: it points at %4, but %4 now runs Pilot (e.g. a
+	// post-reboot pane renumber moved surveyor to %3 without a re-register).
+	// Pre-#549 this test also registered pilot→%4 ("pilot registered
+	// correctly") to model "surveyor drifted onto pilot's pane" — but Fix-2a's
+	// one-pane-one-identity rule makes that simultaneous two-names-one-pane
+	// state unreachable via UpsertAgent (whoever registers %4 last holds it
+	// solely; the other row is released to NULL). The realistic drift this #37
+	// guard exists for is a stale SINGLE registration whose pane now runs
+	// someone else — exactly what remains here. Fix-2a and this guard compose:
+	// Fix-2a PROACTIVELY prevents the mis-delivery at register time once the new
+	// occupant registers; this guard REACTIVELY catches it while they haven't.
 	_ = s.UpsertAgent(ctx, "surveyor", "%4") // drifted; %4 is Pilot now
-	_ = s.UpsertAgent(ctx, "pilot", "%4")    // pilot registered correctly
 	_, _ = s.InsertMessage(ctx, store.InsertParams{
 		FromAgent: "alice", ToAgent: "surveyor", Body: "hello",
 	})

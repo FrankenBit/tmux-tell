@@ -11,6 +11,15 @@ import (
 // UpsertAgent creates or updates an agent registry entry. If paneID is
 // empty the existing pane_id (if any) is preserved — useful for `pause`
 // or other operations that shouldn't touch discovery state.
+//
+// One-pane-one-identity (#549 Fix-2a): when paneID is non-empty, the upsert
+// also SUPERSEDES any prior binding of that pane to a *different* name, so a
+// pane_id is held by at most one agent row. Without this, registering a pane
+// to a new name leaves the old name as a second row pointing at the same pane
+// (the ON CONFLICT key is name, not pane_id); because identity resolution lists
+// agents ORDER BY name and takes the first pane match, the alphabetically-prior
+// stale name keeps winning — the chamber resolves to, and sends under, its old
+// identity until the stale row is removed (the duplicate-pane-row drift).
 func (s *Store) UpsertAgent(ctx context.Context, name, paneID string) error {
 	if name == "" {
 		return errors.New("store: agent name required")
@@ -28,14 +37,35 @@ func (s *Store) UpsertAgent(ctx context.Context, name, paneID string) error {
 			name)
 		return err
 	}
-	_, err := s.db.ExecContext(ctx,
+
+	// Clear the pane from any OTHER row first, then upsert — atomically, so the
+	// binding moves in one step and no observer sees the pane held by two names.
+	// The prior holder is rebound to NULL (not deleted): it survives as a
+	// dormant, pane-less registration, preserving any queued messages and
+	// letting a later re-register re-bind it.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE agents
+		 SET pane_id = NULL,
+		     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		 WHERE pane_id = ? AND name != ?`,
+		paneID, name); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO agents (name, pane_id, updated_at)
 		 VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 		 ON CONFLICT(name) DO UPDATE SET
 		   pane_id = excluded.pane_id,
 		   updated_at = excluded.updated_at`,
-		name, paneID)
-	return err
+		name, paneID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetPaused updates the paused flag for an existing agent. Returns

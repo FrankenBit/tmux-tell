@@ -455,6 +455,81 @@ func TestUpsertAgent_UpdatesPaneID(t *testing.T) {
 	}
 }
 
+// TestUpsertAgent_SupersedesOtherPaneHolder pins the #549 Fix-2a invariant: a
+// pane_id is held by at most one agent row. Registering a NEW name to a pane
+// already bound to a different name must rebind that pane to the new name and
+// release the old row (pane_id → NULL), not leave two rows pointing at one
+// pane. Mutation check: drop the `UPDATE ... SET pane_id = NULL WHERE pane_id
+// = ? AND name != ?` statement from UpsertAgent and this fails — both rows keep
+// pane %5, and because ListAgents orders by name, the alphabetically-prior
+// stale "alice" wins identity resolution (the live Shipwright/%5 drift, n=6).
+func TestUpsertAgent_SupersedesOtherPaneHolder(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// %5 first registered as alice, then re-registered as shipwright.
+	if err := s.UpsertAgent(ctx, "alice", "%5"); err != nil {
+		t.Fatalf("upsert alice: %v", err)
+	}
+	if err := s.UpsertAgent(ctx, "shipwright", "%5"); err != nil {
+		t.Fatalf("upsert shipwright: %v", err)
+	}
+
+	// Exactly one row holds %5, and it is shipwright.
+	list, err := s.ListAgents(ctx)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var holders []string
+	for _, a := range list {
+		if a.PaneID == "%5" {
+			holders = append(holders, a.Name)
+		}
+	}
+	if len(holders) != 1 || holders[0] != "shipwright" {
+		t.Errorf("pane %%5 holders = %v, want [shipwright] only", holders)
+	}
+
+	// The superseded alice row survives, rebound to no pane (dormant).
+	alice, err := s.GetAgent(ctx, "alice")
+	if err != nil {
+		t.Fatalf("get alice: %v (superseded row must survive, not be deleted)", err)
+	}
+	if alice.PaneID != "" {
+		t.Errorf("alice pane_id = %q, want released to empty", alice.PaneID)
+	}
+}
+
+// TestUpsertAgent_SupersedeLeavesOtherPanesIntact ensures the rebind is scoped
+// to the colliding pane — agents on *other* panes are untouched.
+func TestUpsertAgent_SupersedeLeavesOtherPanesIntact(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%5")
+	_ = s.UpsertAgent(ctx, "bob", "%6")
+	if err := s.UpsertAgent(ctx, "shipwright", "%5"); err != nil {
+		t.Fatalf("upsert shipwright: %v", err)
+	}
+	if b, _ := s.GetAgent(ctx, "bob"); b.PaneID != "%6" {
+		t.Errorf("bob pane_id = %q, want %%6 (unrelated pane must not move)", b.PaneID)
+	}
+}
+
+// TestUpsertAgent_SameNameReregisterKeepsPane guards the self-exclusion in the
+// `name != ?` predicate: re-registering the SAME name to the SAME pane must not
+// null its own pane out from under it.
+func TestUpsertAgent_SameNameReregisterKeepsPane(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%5")
+	if err := s.UpsertAgent(ctx, "alice", "%5"); err != nil {
+		t.Fatalf("re-upsert alice: %v", err)
+	}
+	if a, _ := s.GetAgent(ctx, "alice"); a.PaneID != "%5" {
+		t.Errorf("alice pane_id = %q, want %%5 preserved on same-name re-register", a.PaneID)
+	}
+}
+
 func TestSetPaused(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
