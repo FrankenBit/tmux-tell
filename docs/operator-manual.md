@@ -88,6 +88,49 @@ in [`security.md`](security.md); the agent's-eye view of drift is in the
 
 ---
 
+## Surviving reboot — auto-register on every chamber launch
+
+Registry drift after a reboot is the predictable form of the pane-respawn case.
+Tmux re-numbers panes on every server start, but the registry's `name → pane_id`
+mappings persist (SQLite). On boot, the mailmen come up bound to the
+*pre-reboot* pane ids and immediately enter `pane_not_found_backoff` retry;
+deliveries stall until something triggers a re-registration.
+
+The fix is to re-register on every chamber launch. A wrapper around your
+chamber's launch line that calls `register --force` makes the registry
+self-heal at start, every time:
+
+```bash
+#!/bin/bash
+# my-chamber-launch.sh
+tmux-tell-claude register --name "$CHAMBER" --pane "$TMUX_PANE" --force \
+    --start-mailman=false
+systemctl --user restart "tmux-tell-claude-mailman@${CHAMBER}.service"
+exec your-chamber-binary "$@"
+```
+
+Three things to know:
+
+- `--force` makes it safe to re-apply at every launch — same registry shape,
+  no error if already registered.
+- The mailman restart gives you *immediate, deterministic* clean state.
+  Without it, a mailman in `pane_not_found_backoff` self-heals on `register
+  --force` along one of two paths, both with latency: a message-arrival
+  during the backoff window re-triggers the agent re-read, or — once the
+  mailman parks itself in the stuck state (after `stuck-threshold`
+  consecutive pane-not-found failures, exponential backoff 1/2/4/8/16/32/60s)
+  — its `stuck-poll-interval` re-reads the agent row every 5s on a pure
+  DB read specifically to notice the `register --force` clear. The restart
+  skips both latencies and any in-flight delivery state cached against the
+  stale pane.
+- This composes with cgroup-based memory caps or any other launch-time
+  hygiene the wrapper already does — it's one more pre-launch line.
+
+Worked instance: alcatraz-infra's `chamber-claude.sh` follows this convention
+(tmux-tell#532).
+
+---
+
 ## Your first message — send it, watch it land, read the row
 
 ```bash
