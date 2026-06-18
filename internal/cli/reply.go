@@ -122,7 +122,7 @@ func runAskCLI(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeJSONError(stdout, stderr, fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	ctx := context.Background()
 	fromName, _, err := identity.Resolve(ctx, s, *from)
@@ -169,7 +169,7 @@ func runWaitForReplyCLI(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeJSONError(stdout, stderr, fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	ctx := context.Background()
 	caller, _, err := identity.Resolve(ctx, s, *from)
@@ -211,7 +211,7 @@ func runCheckRepliesCLI(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeJSONError(stdout, stderr, fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	ctx := context.Background()
 	caller, _, err := identity.Resolve(ctx, s, *from)

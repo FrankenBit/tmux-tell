@@ -433,7 +433,7 @@ func runPingCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	ctx := context.Background()
 	fromName, _, err := identity.Resolve(ctx, s, *from)

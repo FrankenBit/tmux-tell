@@ -64,7 +64,7 @@ func TestCodexAdapter_EndToEnd(t *testing.T) {
 	if err := s.SetDeliveryMode(ctx, "bob", store.DeliveryModeHookContext); err != nil {
 		t.Fatalf("set bob hook-context: %v", err)
 	}
-	s.Close()
+	_ = s.Close()
 
 	run := func(stdin string, args ...string) (stdout, stderr string, code int) {
 		t.Helper()

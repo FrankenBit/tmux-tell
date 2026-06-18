@@ -36,8 +36,8 @@ func withDedupeRunner(t *testing.T, captureOutput string) {
 	t.Helper()
 	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
 	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
-	prevRetry := tmuxio.SetRetryDelaysForTest([]time.Duration{time.Microsecond})
-	t.Cleanup(func() { tmuxio.SetRetryDelaysForTest(prevRetry) })
+	prevRetry := tmuxio.SetRetrySchedule([]time.Duration{time.Microsecond})
+	t.Cleanup(func() { tmuxio.SetRetrySchedule(prevRetry) })
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
 		if args[0] == "capture-pane" {
 			return []byte(captureOutput), nil
@@ -194,8 +194,8 @@ func TestDedupeWindow_OriginalGone(t *testing.T) {
 	// the body (for deliverOne verify). We track call count.
 	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
 	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
-	prevRetry := tmuxio.SetRetryDelaysForTest([]time.Duration{time.Microsecond})
-	t.Cleanup(func() { tmuxio.SetRetryDelaysForTest(prevRetry) })
+	prevRetry := tmuxio.SetRetrySchedule([]time.Duration{time.Microsecond})
+	t.Cleanup(func() { tmuxio.SetRetrySchedule(prevRetry) })
 	var callCount int
 	var lastBody string
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {

@@ -112,7 +112,7 @@ func runTrackCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	if *watch {
 		return runTrackWatch(s, id, *format, *watchInterval, *watchTimeout, stdout, stderr)

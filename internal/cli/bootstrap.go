@@ -136,7 +136,7 @@ func runBootstrapCLI(args []string, stdout, stderr io.Writer) int {
 			fmt.Sprintf("open store at %s: %v", resolvedDB, err),
 			exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	// Step 3: discover.
 	if !*skipDiscover {

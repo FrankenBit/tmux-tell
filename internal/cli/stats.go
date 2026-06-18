@@ -42,7 +42,7 @@ func runStatsCLI(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeJSONError(stdout, stderr, fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	return runStatsWithStore(context.Background(), s, w, *window, *format, *agent, *pair, *top, stdout, stderr)
 }

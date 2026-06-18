@@ -193,7 +193,7 @@ func runHookContextCLI(args []string, stdin io.Reader, stdout, stderr io.Writer)
 	if err != nil {
 		return writeJSONError(stdout, stderr, fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

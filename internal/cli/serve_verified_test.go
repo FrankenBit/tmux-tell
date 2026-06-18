@@ -30,8 +30,8 @@ func withUnverifiedDelivery(t *testing.T) {
 	t.Helper()
 	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
 	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
-	prevRetry := tmuxio.SetRetryDelaysForTest([]time.Duration{time.Microsecond})
-	t.Cleanup(func() { tmuxio.SetRetryDelaysForTest(prevRetry) })
+	prevRetry := tmuxio.SetRetrySchedule([]time.Duration{time.Microsecond})
+	t.Cleanup(func() { tmuxio.SetRetrySchedule(prevRetry) })
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
 		if args[0] == "capture-pane" {
 			return []byte("\n"), nil // token never surfaces

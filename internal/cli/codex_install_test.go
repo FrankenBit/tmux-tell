@@ -54,7 +54,7 @@ func TestCodexInstall_FreshInstall(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	seedCodexAgent(t, s, "lookout")
-	s.Close()
+	_ = s.Close()
 
 	so, se, code := runCodexInstall(t, db, cfg, "lookout", "--format", "json")
 	if code != exitOK {
@@ -112,7 +112,7 @@ func TestCodexInstall_Idempotent(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	seedCodexAgent(t, s, "lookout")
-	s.Close()
+	_ = s.Close()
 
 	// Pre-populate with the exact expected content.
 	existing := `[hooks.UserPromptSubmit]
@@ -166,7 +166,7 @@ func TestCodexInstall_PartialConfig(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	seedCodexAgent(t, s, "lookout")
-	s.Close()
+	_ = s.Close()
 
 	partial := `[hooks.UserPromptSubmit]
 command = "tmux-tell-codex hook-context"
@@ -213,7 +213,7 @@ func TestCodexInstall_WrongAgentName(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	seedCodexAgent(t, s, "lookout-new")
-	s.Close()
+	_ = s.Close()
 
 	existing := `[hooks.UserPromptSubmit]
 command = "tmux-tell-codex hook-context"
@@ -272,7 +272,7 @@ func TestCodexInstall_CreatesMissingConfigDir(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	seedCodexAgent(t, s, "lookout")
-	s.Close()
+	_ = s.Close()
 
 	so, se, code := runCodexInstall(t, db, cfg, "lookout")
 	if code != exitOK {
@@ -295,7 +295,7 @@ func TestCodexInstall_DryRun(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	seedCodexAgent(t, s, "lookout")
-	s.Close()
+	_ = s.Close()
 
 	so, _, code := runCodexInstall(t, db, cfg, "lookout", "--dry-run", "--format", "json")
 	if code != exitOK {
@@ -332,7 +332,7 @@ func TestCodexInstall_PostInstallMessageInTextOutput(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	seedCodexAgent(t, s, "lookout")
-	s.Close()
+	_ = s.Close()
 
 	so, _, code := runCodexInstall(t, db, cfg, "lookout") // text format (default)
 	if code != exitOK {
@@ -362,7 +362,7 @@ func TestCodexInstall_AgentNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	s.Close()
+	_ = s.Close()
 
 	var so, se bytes.Buffer
 	code := runCodexInstallCLI([]string{

@@ -161,7 +161,7 @@ func runStrandedListCLI(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeJSONError(stdout, stderr, fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	ctx := context.Background()
 	who, err := resolveStrandedAgent(ctx, s, *agent)
 	if err != nil {
@@ -230,7 +230,7 @@ func runStrandedShowCLI(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeJSONError(stdout, stderr, fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	return runStrandedShowWithStore(context.Background(), s, id, *outFile, stdout, stderr)
 }
 
@@ -283,7 +283,7 @@ func runStrandedPruneCLI(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeJSONError(stdout, stderr, fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	ctx := context.Background()
 	who, err := resolveStrandedAgent(ctx, s, *agent)
 	if err != nil {

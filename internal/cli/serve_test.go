@@ -378,19 +378,6 @@ type errString struct{ s string }
 
 func (e *errString) Error() string { return e.s }
 
-// fakeWalker stubs discover.Walker.LookupByName for the auto-heal tests.
-type fakeWalker struct {
-	hits map[string]string // agent → pane id
-}
-
-func (f *fakeWalker) walker() *discover.Walker {
-	return &discover.Walker{
-		CmdlineReader:  func(int) (string, error) { return "", nil },
-		ChildrenReader: func(int) []int { return nil },
-		MaxDepth:       0,
-	}
-}
-
 func TestIsCantFindPaneError(t *testing.T) {
 	cases := map[string]bool{
 		"":                 false,

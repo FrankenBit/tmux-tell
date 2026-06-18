@@ -173,7 +173,7 @@ func TestRegister_CLI_PromotesRegisterDeferred(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer check.Close()
+	defer check.Close() //nolint:errcheck // best-effort close
 	queued, _ := check.ListMessages(ctx, store.ListFilter{ToAgent: "pilot", State: store.StateQueued})
 	if len(queued) != 1 || queued[0].PublicID != reg.PublicID {
 		t.Errorf("queued = %v, want only the promoted register row %s", queued, reg.PublicID)
@@ -230,7 +230,7 @@ func TestRegister_CLI_RefusesStartMailmanWithNonDefaultDB(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store post-refusal: %v", err)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	_, err = s.GetAgent(context.Background(), "alice")
 	if err == nil {
 		t.Errorf("agent row exists after refusal; should have been blocked before upsert")
@@ -261,7 +261,7 @@ func TestRegister_CLI_AllowsNonDefaultDBWithStartMailmanFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	if _, err := s.GetAgent(context.Background(), "alice"); err != nil {
 		t.Errorf("agent row missing after register: %v", err)
 	}
@@ -360,7 +360,7 @@ func TestRegister_FlipStaleQueueDisposition(t *testing.T) {
 		if err != nil {
 			t.Fatalf("open: %v", err)
 		}
-		defer s.Close()
+		defer s.Close() //nolint:errcheck // best-effort close
 		if err := s.UpsertAgent(ctx, "lookout", "%8"); err != nil {
 			t.Fatalf("upsert: %v", err)
 		}
@@ -390,7 +390,7 @@ func TestRegister_FlipStaleQueueDisposition(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reopen: %v", err)
 		}
-		defer s.Close()
+		defer s.Close() //nolint:errcheck // best-effort close
 		a, err := s.GetAgent(ctx, "lookout")
 		if err != nil {
 			t.Fatalf("get: %v", err)

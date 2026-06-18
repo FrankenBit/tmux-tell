@@ -36,7 +36,7 @@ var DefaultSender Sender = func(message string) error {
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer conn.Close() //nolint:errcheck // best-effort close
 	_, err = conn.Write([]byte(message))
 	return err
 }

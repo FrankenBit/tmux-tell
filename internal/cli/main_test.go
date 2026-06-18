@@ -20,7 +20,7 @@ import (
 // test run — catching a test that spawns a serve-loop / metrics-server / poll
 // goroutine and never joins it. It runs m.Run() and owns the exit code.
 func TestMain(m *testing.M) {
-	os.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
-	os.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+	_ = os.Setenv("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus")
+	_ = os.Setenv("XDG_RUNTIME_DIR", "/run/user/1000")
 	goleak.VerifyTestMain(m)
 }

@@ -310,7 +310,7 @@ record: [operator reference](docs/reference.md#versioning-and-the-k-counter) and
 ## Development
 
 ```bash
-go vet ./... && go build ./... && go test -race -count=1 ./...   # CI runs without -race (runner lacks cgo)
+make lint && go build ./... && go test -race -count=1 ./...   # CI runs without -race (runner lacks cgo)
 ```
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the contributor guide and the

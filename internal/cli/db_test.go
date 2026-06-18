@@ -289,7 +289,7 @@ func TestCheckpointTruncate_OK(t *testing.T) {
 	if err != nil {
 		t.Fatalf("re-open after checkpoint: %v", err)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	agents, err := s.ListAgents(context.Background())
 	if err != nil {
 		t.Fatalf("list agents post-checkpoint: %v", err)
@@ -335,7 +335,7 @@ func seedAgents(t *testing.T, path string, names []string) {
 	if err != nil {
 		t.Fatalf("seed open: %v", err)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	ctx := context.Background()
 	for _, n := range names {
 		if err := s.UpsertAgent(ctx, n, "%99"); err != nil {
@@ -354,7 +354,7 @@ func seedAgentsWithModes(t *testing.T, path string, modes map[string]string) {
 	if err != nil {
 		t.Fatalf("seed open: %v", err)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	ctx := context.Background()
 	for name, mode := range modes {
 		if err := s.UpsertAgent(ctx, name, "%99"); err != nil {

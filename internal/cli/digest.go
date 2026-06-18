@@ -43,7 +43,7 @@ func runDigestCLI(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return writeJSONError(stdout, stderr, fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	return runDigestWithStore(context.Background(), s, w, *since, *counterparty, *format, stdout, stderr)
 }
@@ -154,8 +154,7 @@ func classifyThreads(msgs []store.Message) ([]threadInfo, error) {
 	// set; memoized so a deep chain is walked once. Cycle-guarded defensively
 	// even though reply_to is a once-set edge.
 	rootCache := map[string]string{}
-	var rootOf func(id string) string
-	rootOf = func(id string) string {
+	rootOf := func(id string) string {
 		if r, ok := rootCache[id]; ok {
 			return r
 		}

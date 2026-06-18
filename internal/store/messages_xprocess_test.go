@@ -199,7 +199,7 @@ func TestPin_AtomicCapEnforcement_CrossProcessCeilingForSingleInsert(t *testing.
 	if err != nil {
 		t.Fatalf("post-test open: %v", err)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	depth, err := s.RecipientQueueDepth(context.Background(), "bob")
 	if err != nil {
 		t.Fatalf("depth: %v", err)
@@ -303,7 +303,7 @@ func TestPin_AtomicCapEnforcement_CrossProcessCeilingForInsertPair(t *testing.T)
 	if err != nil {
 		t.Fatalf("post-test open: %v", err)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	depth, err := s.RecipientQueueDepth(context.Background(), "bob")
 	if err != nil {
 		t.Fatalf("depth: %v", err)

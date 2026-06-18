@@ -205,7 +205,7 @@ func runCodexInstallCLI(args []string, stdout, stderr io.Writer) int {
 			fmt.Sprintf("open store at %s: %v", resolvedDB, err),
 			exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	// Step 1: discover — populate/update pane IDs from current tmux state.
 	if !*skipDiscover {
@@ -393,8 +393,8 @@ func mergeCodexConfig(configPath, agentName string, dryRun bool) (hooksWritten, 
 	}
 	tmpName := tmp.Name()
 	defer func() {
-		tmp.Close()
-		os.Remove(tmpName) // no-op after rename succeeds
+		_ = tmp.Close()
+		_ = os.Remove(tmpName) // no-op after rename succeeds
 	}()
 
 	combined := append([]byte(content), []byte(sb.String())...)

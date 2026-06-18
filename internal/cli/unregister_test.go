@@ -276,7 +276,7 @@ func TestCLI_Unregister_FullLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open verify: %v", err)
 	}
-	defer verify.Close()
+	defer verify.Close() //nolint:errcheck // best-effort close
 
 	_, err = verify.GetAgent(ctx, "bob")
 	if !errors.Is(err, store.ErrNotFound) {
@@ -362,7 +362,7 @@ func TestCLI_Unregister_SoftFailsSystemctlError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open verify: %v", err)
 	}
-	defer verify.Close()
+	defer verify.Close() //nolint:errcheck // best-effort close
 	if _, err := verify.GetAgent(ctx, "bob"); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("GetAgent(bob) = %v, want ErrNotFound", err)
 	}

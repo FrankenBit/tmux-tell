@@ -48,7 +48,7 @@ func (s *Store) GetThread(ctx context.Context, anyID string) ([]Message, error) 
 			if err := rows.Scan(
 				&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
 				&nre, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			m.NoReplyExpected = nre != 0

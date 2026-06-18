@@ -40,7 +40,7 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
 		return exitInternal
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	srv := newMCPServer(s)
 	if err := srv.Serve(context.Background(), stdin, stdout); err != nil && !errors.Is(err, io.EOF) {
@@ -402,7 +402,7 @@ func mcpIdentityError() error {
 			"cannot resolve identity: $TMUX_AGENT_NAME is unset and $TMUX_PANE is " +
 				"empty — MCP child processes (e.g. codex) do not inherit shell env. " +
 				"Add TMUX_AGENT_NAME=<name> to the MCP wrapper env block " +
-				"(docs/reference.md §Codex), or set it via the shell's MCP server config.")
+				"(docs/reference.md §Codex), or set it via the shell's MCP server config")
 	}
 	return fmt.Errorf(
 		"cannot resolve identity: $TMUX_PANE=%s is not in the agent registry — "+
@@ -1024,7 +1024,7 @@ func mcpWhoamiHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 		live, _ := tmuxio.LivePanes(ctx)
-		paneStatus := "no-pane"
+		var paneStatus string
 		switch {
 		case a.PaneID == "":
 			paneStatus = "no-pane"
@@ -1241,10 +1241,7 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		// (no daemon needed; messages stay queued for operator polling
 		// per #116). Explicit start_mailman=true overrides the
 		// implicit default if operator really wants a daemon running.
-		start := true
-		if deliveryMode == store.DeliveryModeMailboxOnly {
-			start = false
-		}
+		start := deliveryMode != store.DeliveryModeMailboxOnly
 		if in.StartMailman != nil {
 			start = *in.StartMailman
 		}

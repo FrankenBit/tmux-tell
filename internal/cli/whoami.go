@@ -31,7 +31,7 @@ func runWhoamiCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	ctx := context.Background()
 	name, src, err := identity.Resolve(ctx, s, *asName)
@@ -70,7 +70,7 @@ func runWhoamiWithStore(ctx context.Context, s *store.Store,
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
 
-	paneStatus := "no-pane"
+	var paneStatus string
 	switch {
 	case a.PaneID == "":
 		paneStatus = "no-pane"

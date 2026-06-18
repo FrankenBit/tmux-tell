@@ -37,7 +37,7 @@ func runResetCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	return runResetWithStore(context.Background(), s, *agent, *hard, *olderThan, *stateFilter, *format, time.Now(), stdout, stderr)
 }

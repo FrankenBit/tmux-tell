@@ -353,8 +353,8 @@ func TestServe_DriftUnrecoverable_SoftFailEscapeHatch(t *testing.T) {
 
 	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
 	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
-	prevRetry := tmuxio.SetRetryDelaysForTest([]time.Duration{time.Microsecond})
-	t.Cleanup(func() { tmuxio.SetRetryDelaysForTest(prevRetry) })
+	prevRetry := tmuxio.SetRetrySchedule([]time.Duration{time.Microsecond})
+	t.Cleanup(func() { tmuxio.SetRetrySchedule(prevRetry) })
 
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })

@@ -159,7 +159,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // best-effort close
 
 	var out []Agent
 	for rows.Next() {

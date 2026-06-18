@@ -251,7 +251,7 @@ func getMetrics(addr string) (int, string, error) {
 	if err != nil {
 		return 0, "", err
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // best-effort close
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(body), nil
 }

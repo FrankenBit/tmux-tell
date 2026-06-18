@@ -44,7 +44,7 @@ func TestReadRegister_MissingMarker(t *testing.T) {
 	if err != nil {
 		t.Fatalf("temp: %v", err)
 	}
-	defer tmp.Close()
+	defer tmp.Close() //nolint:errcheck // best-effort close
 	if _, err := tmp.WriteString("no markers here\n"); err != nil {
 		t.Fatalf("write: %v", err)
 	}

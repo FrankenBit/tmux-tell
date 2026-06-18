@@ -199,7 +199,7 @@ func TestRunHookContextCLI_UnregisteredFromAgentErrors(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	// Deliberately do NOT register "ghost" — it must be treated as unregistered.
-	s.Close()
+	_ = s.Close()
 
 	var stdout, stderr bytes.Buffer
 	exit := runHookContextCLI(
@@ -237,7 +237,7 @@ func TestRunHookContextCLI_EventNameOverride(t *testing.T) {
 	if _, err := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "ping"}); err != nil {
 		t.Fatalf("seed message: %v", err)
 	}
-	s.Close()
+	_ = s.Close()
 
 	var stdout, stderr bytes.Buffer
 	// stdin says UserPromptSubmit; --event-name pins SessionStart — the override wins.

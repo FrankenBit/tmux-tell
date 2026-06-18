@@ -73,10 +73,7 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 	// override beats the implicit default. Both mailbox-only (#116) and
 	// hook-context (#249) have a no-paste mailman that short-circuits at
 	// startup, so neither auto-starts one.
-	start := true
-	if *deliveryMode == store.DeliveryModeMailboxOnly || *deliveryMode == store.DeliveryModeHookContext {
-		start = false
-	}
+	start := *deliveryMode != store.DeliveryModeMailboxOnly && *deliveryMode != store.DeliveryModeHookContext
 	if *startMailmanFlag != "" {
 		switch *startMailmanFlag {
 		case "true":
@@ -119,7 +116,7 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	ctx := context.Background()
 	existing, err := s.GetAgent(ctx, *name)

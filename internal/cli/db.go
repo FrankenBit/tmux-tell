@@ -302,7 +302,7 @@ func checkpointTruncate(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 	if _, err := s.DB().ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
 		return fmt.Errorf("exec pragma: %w", err)
 	}
@@ -324,7 +324,7 @@ func moveFile(source, dest string) error {
 	if err != nil {
 		return fmt.Errorf("open source: %w", err)
 	}
-	defer src.Close()
+	defer src.Close() //nolint:errcheck // best-effort close
 	srcStat, err := src.Stat()
 	if err != nil {
 		return fmt.Errorf("stat source: %w", err)

@@ -903,7 +903,7 @@ func (s *Store) FindMessagesByPrefix(ctx context.Context, prefix string) ([]Mess
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // best-effort close
 	var out []Message
 	for rows.Next() {
 		var m Message
@@ -1050,7 +1050,7 @@ func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, erro
 	if err != nil {
 		return nil, fmt.Errorf("store: list messages: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // best-effort close
 	return scanMessages(rows)
 }
 
@@ -1105,7 +1105,7 @@ func (s *Store) TailRows(ctx context.Context, afterID int64, f TailFilter, limit
 	if err != nil {
 		return nil, fmt.Errorf("store: tail rows: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // best-effort close
 	return scanMessages(rows)
 }
 
@@ -1130,7 +1130,7 @@ func (s *Store) MessagesByIDs(ctx context.Context, ids []int64) ([]Message, erro
 	if err != nil {
 		return nil, fmt.Errorf("store: messages by ids: %w", err)
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // best-effort close
 	return scanMessages(rows)
 }
 

@@ -101,7 +101,7 @@ func (s *Store) scanStats(ctx context.Context, w StatsWindow) ([]statRow, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // best-effort close
 	var out []statRow
 	for rows.Next() {
 		var r statRow
@@ -255,7 +255,7 @@ func (s *Store) MessagesInWindow(ctx context.Context, w StatsWindow) ([]Message,
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // best-effort close
 	var out []Message
 	for rows.Next() {
 		var m Message
@@ -296,7 +296,7 @@ func (s *Store) DeliveredVerificationCounts(ctx context.Context, w StatsWindow) 
 	if err != nil {
 		return VerificationCounts{}, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // best-effort close
 
 	var vc VerificationCounts
 	for rows.Next() {
@@ -333,7 +333,7 @@ func (s *Store) VerificationCountsByAgent(ctx context.Context, w StatsWindow) (m
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer rows.Close() //nolint:errcheck // best-effort close
 
 	out := map[string]VerificationCounts{}
 	for rows.Next() {

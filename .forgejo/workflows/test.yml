@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    name: go vet + build + test
+    name: lint + build + test
     runs-on: go
     steps:
       - name: checkout
@@ -17,17 +17,8 @@ jobs:
       - name: go version
         run: go version
 
-      - name: gofmt
-        run: |
-          drift=$(gofmt -l .)
-          if [ -n "$drift" ]; then
-            echo "::error::gofmt drift detected. Run 'gofmt -w .' to fix."
-            echo "$drift"
-            exit 1
-          fi
-
-      - name: go vet
-        run: go vet ./...
+      - name: golangci-lint
+        run: golangci-lint run --timeout=5m
 
       - name: go build
         run: go build ./...

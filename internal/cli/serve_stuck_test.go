@@ -174,7 +174,7 @@ func TestRegister_ClearsStuckState(t *testing.T) {
 	if err := s.SetStuck(ctx, "bob", store.StuckReasonPaneNotFound); err != nil {
 		t.Fatalf("seed stuck: %v", err)
 	}
-	s.Close()
+	_ = s.Close()
 
 	var stdout, stderr strings.Builder
 	exit := runRegisterCLI(

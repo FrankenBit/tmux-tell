@@ -593,7 +593,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
 		return exitInternal
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	stopCtx, stop := signal.NotifyContext(context.Background(),
 		syscall.SIGTERM, syscall.SIGINT)

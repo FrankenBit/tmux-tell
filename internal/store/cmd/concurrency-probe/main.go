@@ -57,7 +57,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "concurrency-probe: open: %v\n", err)
 		os.Exit(exitOther)
 	}
-	defer s.Close()
+	defer s.Close() //nolint:errcheck // best-effort close
 
 	ctx := context.Background()
 	p := store.InsertParams{

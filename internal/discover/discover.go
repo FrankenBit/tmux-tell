@@ -271,27 +271,6 @@ func exactMatches(running string, canonicals []CanonicalAgent) []string {
 	return out
 }
 
-func matchesExact(running, name string, aliases []string) bool {
-	if running == name {
-		return true
-	}
-	for _, a := range aliases {
-		if running == a {
-			return true
-		}
-	}
-	return false
-}
-
-func canonicalAliases(canonicals []CanonicalAgent, name string) []string {
-	for _, c := range canonicals {
-		if c.Name == name {
-			return c.Aliases
-		}
-	}
-	return nil
-}
-
 func substringMatches(running string, canonicals []CanonicalAgent) []string {
 	low := strings.ToLower(running)
 	var out []string

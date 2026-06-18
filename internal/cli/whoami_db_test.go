@@ -28,7 +28,7 @@ func TestOpenDBHandle_FindsOpenDB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // best-effort close
 	wantInode := inodeOf(t, dbPath)
 
 	path, inode, deleted, found := openDBHandle(os.Getpid())
@@ -56,7 +56,7 @@ func TestOpenDBHandle_OrphanInode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer f.Close() //nolint:errcheck // best-effort close
 	wantInode := inodeOf(t, dbPath)
 
 	if err := os.Remove(dbPath); err != nil { // unlink while the fd stays open

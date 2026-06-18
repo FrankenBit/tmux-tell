@@ -17,7 +17,7 @@ ADAPTERS := $(notdir $(wildcard cmd/tmux-tell-*))
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS = -X git.frankenbit.de/frankenbit/tmux-tell/internal/version.Version=$(VERSION)
 
-.PHONY: build build-claude test vet install clean version check-pin-slugs
+.PHONY: build build-claude test vet lint install clean version check-pin-slugs
 
 version:
 	@echo $(VERSION)
@@ -46,6 +46,9 @@ $(BINDIR)/tmux-tell-%: $(GO_SOURCES) go.mod go.sum
 
 vet:
 	$(GO) vet ./...
+
+lint:
+	golangci-lint run --timeout=5m
 
 test:
 	$(GO) test -race -count=1 ./...
