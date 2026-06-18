@@ -105,6 +105,71 @@ func TestDeliver_HappyPath_PastesAndVerifies(t *testing.T) {
 	}
 }
 
+func TestNormalizeCollapsePaste(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"f21d footer shape (trailing newline)", "PR #531 received\n\n— Bosun\n", "PR #531 received\n— Bosun"},
+		{"footer no trailing newline", "body\n\n— Bosun", "body\n— Bosun"},
+		{"already single newline before tail", "body\n— Bosun", "body\n— Bosun"},
+		{"single trailing newline only", "body\n— Bosun\n", "body\n— Bosun"},
+		{"multi-line tail not collapsed", "body\n\nline one\nline two", "body\n\nline one\nline two"},
+		{"interior paragraph preserved", "a\n\nb\n\n— Sig\n", "a\n\nb\n— Sig"},
+		{"no blank-line paragraph", "just one line", "just one line"},
+		{"trailing newlines stripped then collapsed", "body\n\n— Bosun\n\n\n", "body\n— Bosun"},
+		{"empty tail after blank line", "body\n\n", "body"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := normalizeCollapsePaste(c.in); got != c.want {
+				t.Errorf("normalizeCollapsePaste(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// TestDeliver_CodexNormalizesTrailingSignoff pins #533: on a collapse-capable
+// profile (codex), the trailing `\n\n— Sender` paragraph is collapsed to a
+// single `\n` in the PASTE so codex doesn't leave the sign-off literal and
+// fragment it. Asserts the bytes handed to load-buffer.
+func TestDeliver_CodexNormalizesTrailingSignoff(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	defer SetActivePaneProfile(prev)
+	calls := withFakeRunner(t, nil)
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%9",
+		Body: "PR #531 received\n\n— Bosun",
+	})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if (*calls)[0].args[0] != "load-buffer" {
+		t.Fatalf("first call = %v, want load-buffer", (*calls)[0].args)
+	}
+	if got := (*calls)[0].stdin; got != "PR #531 received\n— Bosun" {
+		t.Errorf("codex load-buffer stdin = %q, want trailing paragraph collapsed", got)
+	}
+}
+
+// TestDeliver_NonCollapseLeavesBodyUnchanged is the gate mutation anchor: a
+// profile WITHOUT a collapse marker (Claude) must paste the body byte-identical
+// — the #533 normalization is codex-scoped and must never touch the Claude path.
+func TestDeliver_NonCollapseLeavesBodyUnchanged(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(PaneProfile{}) // no PasteCollapseMarker
+	defer SetActivePaneProfile(prev)
+	calls := withFakeRunner(t, nil)
+	body := "PR #531 received\n\n— Bosun"
+	err := Deliver(context.Background(), DeliverParams{Pane: "%3", Body: body})
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if got := (*calls)[0].stdin; got != body {
+		t.Errorf("non-collapse load-buffer stdin = %q, want unchanged %q", got, body)
+	}
+}
+
 func TestDeliver_UniqueBufferPerCall(t *testing.T) {
 	shortRetries(t)
 	calls := withFakeRunner(t, nil)

@@ -196,7 +196,20 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 	// #389 standalone-Header-submit window). A large Body that collapses in
 	// the recipient TUI (codex `[Pasted Content]`) expands on submit; the
 	// resubmit loop (#401) + cursor-anchor verify (steps 3-4) handle it.
-	if err := pasteChunk(ctx, p.Pane, p.Body); err != nil {
+	//
+	// #533: on a collapse-capable TUI (codex) only, normalize a trailing
+	// single-line paragraph (typically a `— Sender` sign-off) so codex does not
+	// leave it as literal text outside the `[Pasted Content]` placeholder and
+	// then submit it as a separate prompt. This is an OBSERVABLE codex-adapter
+	// rendering accommodation, not a silent content mutation: the message content
+	// is delivered intact (the sign-off arrives), the adapter just normalizes its
+	// presentation (the trailing blank line) to fit codex's paste-collapse. Gated
+	// on the collapse marker, so the Claude paste is byte-identical.
+	body := p.Body
+	if activeProfile.PasteCollapseMarker != "" {
+		body = normalizeCollapsePaste(body)
+	}
+	if err := pasteChunk(ctx, p.Pane, body); err != nil {
 		return err
 	}
 	// 2.5. Settle. Let Claude Code's TUI finish ingesting the pasted
@@ -375,6 +388,59 @@ func pasteChunk(ctx context.Context, pane, content string) error {
 		return fmt.Errorf("tmuxio: paste-buffer: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// normalizeCollapsePaste reshapes content so a collapse-capable TUI (codex)
+// does not leave a short trailing paragraph as literal composer text outside its
+// `[Pasted Content]` placeholder (#533). Mechanism: codex collapses a
+// over-threshold bracketed paste into a placeholder but segments at `\n\n`
+// paragraph boundaries; a single-line final paragraph after the last `\n\n`
+// (typically a `— Sender` sign-off) stays literal, survives the submit Enter,
+// and is later submitted as a separate prompt — because it is literal text, not
+// the collapse marker, the resubmit loop (pasteStillInInput) never re-fires.
+//
+// Two reshapes, both removing the trailing-paragraph isolation so the final line
+// collapses with the bulk:
+//  1. strip trailing newlines — our own appended `\n` amplifies by giving codex
+//     a clean prompt boundary after the tail; and
+//  2. collapse the LAST `\n\n` to a single `\n` WHEN its tail is a single line,
+//     attaching that line to the preceding bulk (a single `\n` is a line break,
+//     not a paragraph boundary, so codex no longer segments it out).
+//
+// Only the trailing single-line paragraph is touched — interior paragraph breaks
+// are preserved. No-op for content that does not end in a single-line paragraph.
+// Deliver applies this ONLY when a collapse marker is configured (codex), so the
+// Claude paste path is unaffected.
+//
+// Empirical grounding (#533):
+//   - Escalation MEASURED-GREEN: a `\n` (single-newline) tail submits atomically
+//     on codex (Pilot factor-isolation), confirming Lookout's read that the
+//     `\n\n` paragraph boundary — not the newline itself — triggers the split.
+//     So collapsing `\n\n`→`\n` is sufficient; no escalation to a no-newline join.
+//   - No length bound, by dominance: collapsing ANY trailing single-line
+//     paragraph is acceptable whether or not long tails fragment. If they do,
+//     this covers them; if they don't, it is a LOW-HARM (not zero-harm) cosmetic
+//     over-reach on a rare shape — a long single-line final paragraph visibly
+//     merges with the prior paragraph (more noticeable than a short sign-off
+//     losing one blank line), codex-only. A length bound is the escape hatch if
+//     that shape ever surfaces; unbounded is fine for v1.
+//   - Multi-line trailing paragraphs are intentionally left alone — the observed
+//     bug is a single-line sign-off; multi-line-tail fragmentation is unconfirmed
+//     (file a follow-up if it ever surfaces).
+//   - Intermittent-timing efficacy is a POST-DEPLOY confirmation: fragmentation
+//     fires only in codex's intermediate-settle window (~production 500ms), which
+//     a point-in-time test environment couldn't cleanly reproduce. The fix is
+//     mechanism-determined + consistent with the production control; an f21d-shape
+//     replay under real traffic is the standing confirmation.
+func normalizeCollapsePaste(content string) string {
+	content = strings.TrimRight(content, "\n")
+	if i := strings.LastIndex(content, "\n\n"); i >= 0 {
+		tail := content[i+len("\n\n"):]
+		if tail != "" && !strings.Contains(tail, "\n") {
+			content = content[:i] + "\n" + tail
+		}
+	}
+	return content
 }
 
 func uniqueBufferName() string {
