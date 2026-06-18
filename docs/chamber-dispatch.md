@@ -4,7 +4,11 @@ This is a coordination convention for **multi-agent deployments** where several
 agents (here, the alcatraz "chambers" — one Claude instance per tmux pane) draw
 work from a shared issue tracker, and more than one party can hand out that work.
 It is not a tmux-tell feature; it is a discipline that sits *next to* the bus and
-covers a gap the bus deliberately doesn't fill.
+covers a gap the bus deliberately doesn't fill. It uses the project-overlay
+"chamber" vocabulary, which per [ADR-0005](adr/0005-substrate-honest-terminology.md)
+is intentionally *outside* the substrate-neutral surface — so this doc is
+deliberately **not** part of the [Arc42](arc42/) architecture spine (which
+documents the substrate only). Orphan-kept by design.
 
 If you run one agent, or never dispatch the same tracker from two directions, you
 don't need this.

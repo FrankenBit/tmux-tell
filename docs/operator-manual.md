@@ -189,7 +189,9 @@ which the model accepts), and there is no authentication, authorization, or
 crypto. That's a deliberate fit to the deployment, not an oversight — and
 [`security.md`](security.md) names every load-bearing assumption and exactly what
 would have to change before this belonged anywhere less trusted. Read it before
-you put it somewhere it wasn't built for.
+you put it somewhere it wasn't built for. (At the architecture level these givens
+are catalogued in [Arc42 §2 Constraints](arc42/02-architecture-constraints.md),
+which links straight back to `security.md` for the depth.)
 
 ---
 

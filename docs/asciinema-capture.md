@@ -67,7 +67,10 @@ shape both possible and dramatically more on-message.)
 > **F6 substrate finding (QM dry-run, 2026-06-08, resolved by Herald):** the
 > observe-gate is calibrated for Claude Code's `❯` prompt sentinel
 > (`internal/tmuxio/state.go:288-424` — the AgentState classifier looks for the
-> sentinel + cursor positioning relative to it). A non-Claude shell pane
+> sentinel + cursor positioning relative to it). The canonical statement of this
+> calibration — the Claude-specific markers and the `unknown` safe-default — lives
+> in [observe-gate.md](observe-gate.md) (the five-states table + "Note on the
+> markers"); this is the demo-capture consequence of it. A non-Claude shell pane
 > classifies as **StateUnknown**, which is paste-unsafe; the gate loops for
 > MaxWait (~5min default) before timing out — no visible hold-on-typing
 > dynamics. Bob's pane must run real **`claude`** for the demo to show the

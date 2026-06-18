@@ -57,6 +57,10 @@ thing in an afternoon.
 If you run one agent at a time, you don't need this. If you've ever been the relay
 between three of them, you might.
 
+(This page is the plain-language pitch; the formal scope boundary and the
+architecture behind it live in [Arc42 §2 Constraints](arc42/02-architecture-constraints.md)
+and [§3 Context & Scope](arc42/03-context-and-scope.md).)
+
 ## But why not just…?
 
 ### …raw `tmux send-keys`?

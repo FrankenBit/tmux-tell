@@ -1,10 +1,13 @@
 # Operator UX audit — tmux-tell at v0.2.1
 
-> **Status: DRAFT.** Admin-led per the lead/verify split in bus
-> message id 8117. Surveyor shape-verify complete (issue #36,
-> comment 58673 — approved shape with four formatting/dimensional
-> notes plus the §4 `message_status` 1.0-candidate verdict). This
-> version applies N1-N4 + the §7 ordering disclosure.
+> **Status: Historical (v0.2.1) — partially superseded by
+> [Arc42 §10 Quality Requirements](arc42/10-quality-requirements.md).** This is a
+> point-in-time UX audit from v0.2.1, kept as a record; the canonical home for the
+> quality principles it gestures at (Approachability, Inspectability) is §10, and
+> several findings have since been addressed. Admin-led per the lead/verify split in
+> bus message id 8117. Surveyor shape-verify complete (issue #36, comment 58673 —
+> approved shape with four formatting/dimensional notes plus the §4 `message_status`
+> 1.0-candidate verdict). This version applied N1-N4 + the §7 ordering disclosure.
 >
 > **Scope**: catalog rough edges from heavy operator use across two
 > days of running the bus for four agents. Each finding has a

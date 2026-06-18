@@ -49,7 +49,8 @@ If you're being launched by a harness that *can* set `$TMUX_AGENT_NAME`, that's
 the durable cure: it pins rung 2 so a pane wobble can't make your identity
 ambiguous. (The full resolution order and the `discover` mechanics are in
 [`reference.md`](reference.md); the trust implications of pane-based identity are
-in [`security.md`](security.md).)
+in [`security.md`](security.md); the architecture-level synthesis is
+[Arc42 §8.1 Identity resolution](arc42/08-cross-cutting-concepts.md).)
 
 ---
 
