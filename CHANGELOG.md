@@ -45,6 +45,11 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   works for codex MCP children that don't inherit `$TMUX_PANE`); multi-word names
   ("Master Bosun") are preserved. The chamber-launch title remains the launch
   wrapper's job — this is the reactive complement, not a replacement.
+- **Persisted display names in `agents`** (#556). `set_pane_name` also records
+  the asserted name as `display_name` on the agent row, so `agents` listings
+  (new trailing `DISPLAY` column; `display_name` on the JSON wire) carry the
+  case-preserved name alongside the canonical routing key. `display_name` is
+  render-only — never a routing key — and falls back to "-"/the name when unset.
 
 ## [0.21.0] — 2026-06-18
 

@@ -168,6 +168,12 @@ type Agent struct {
 	// server (2026-06-10 17:54). Messages stay queued; cleared by
 	// `register --force`, which resumes delivery on the next mailman loop.
 	StuckReason string
+	// DisplayName is the chamber-asserted display name (#556) — the
+	// case-/space-preserved label ("Lookout", "Master Bosun") set via
+	// set_pane_name and shown in agents listings + status outputs. Distinct
+	// from Name (the canonical routing key): render-only, never a routing key.
+	// Empty when the agent never asserted one (the UI falls back to Name).
+	DisplayName string
 }
 
 // Delivery-mode constants. Constrained string set; see Agent.DeliveryMode

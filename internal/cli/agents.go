@@ -71,6 +71,11 @@ type agentView struct {
 	// `systemctl --user enable` for hook-context agents). Emitted on the
 	// JSON wire only; the text formatter is unchanged.
 	DeliveryMode string `json:"delivery_mode,omitempty"`
+	// DisplayName is the chamber-asserted display name (#556) — the
+	// case-/space-preserved label set via set_pane_name. Empty omitted from
+	// JSON so pre-#556 callers see no schema-shape change; the text formatter
+	// shows it in the trailing DISPLAY column ("-" when unset).
+	DisplayName string `json:"display_name,omitempty"`
 }
 
 // mailmanIdleHuman renders the agents-listing MAILMAN column (#348): a compact
@@ -119,6 +124,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 			AttentionState: a.AttentionState,
 			Stuck:          a.StuckReason,
 			DeliveryMode:   a.DeliveryMode,
+			DisplayName:    a.DisplayName,
 		}
 		switch {
 		case a.PaneID == "":
@@ -152,7 +158,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 		return exitOK
 	case "text", "":
 		now := time.Now()
-		header := []string{"NAME", "PANE", "STATUS", "PAUSED", "QUEUED", "ATTENTION", "STUCK", "MAILMAN"}
+		header := []string{"NAME", "PANE", "STATUS", "PAUSED", "QUEUED", "ATTENTION", "STUCK", "MAILMAN", "DISPLAY"}
 		out := make([][]string, 0, len(rows))
 		for _, r := range rows {
 			pane := r.Pane
@@ -167,9 +173,13 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 			if stuck == "" {
 				stuck = "-"
 			}
+			display := r.DisplayName
+			if display == "" {
+				display = "-"
+			}
 			out = append(out, []string{
 				r.Name, pane, r.PaneStatus, yesNo(r.Paused), itoa(r.Queued), attention, stuck,
-				mailmanIdleHuman(r.MailmanLastDelivered, now),
+				mailmanIdleHuman(r.MailmanLastDelivered, now), display,
 			})
 		}
 		renderTextTable(stdout, header, out)

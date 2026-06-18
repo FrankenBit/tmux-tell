@@ -118,8 +118,8 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 		deliveryMode string
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -132,6 +132,26 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 	a.Aliases = decodeAliases(aliases)
 	a.DeliveryMode = deliveryMode
 	return &a, nil
+}
+
+// SetDisplayName persists an agent's chamber-asserted display name (#556).
+// Called by set_pane_name alongside the tmux title-set so agents listings +
+// status outputs can show the case-preserved name. Returns ErrNotFound if no
+// agent with that name is registered.
+//
+// Does not bump updated_at: like the attention-state / stuck setters, this is
+// a presentational signal from the chamber, not a discovery-relevant change.
+func (s *Store) SetDisplayName(ctx context.Context, name, displayName string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET display_name = ? WHERE name = ?`,
+		displayName, name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
 }
 
 // SetDeliveryMode updates the delivery_mode for an existing agent.
@@ -185,7 +205,7 @@ func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) e
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +220,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 			aliases      string
 			deliveryMode string
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName); err != nil {
 			return nil, err
 		}
 		if pane.Valid {

@@ -1055,7 +1055,7 @@ func mcpAgentsHandler(s *store.Store) mcp.ToolHandler {
 		}
 		out := []agentView{}
 		for _, a := range agents {
-			v := agentView{Name: a.Name, Pane: a.PaneID, Paused: a.Paused, AttentionState: a.AttentionState, Stuck: a.StuckReason}
+			v := agentView{Name: a.Name, Pane: a.PaneID, Paused: a.Paused, AttentionState: a.AttentionState, Stuck: a.StuckReason, DisplayName: a.DisplayName}
 			switch {
 			case a.PaneID == "":
 				v.PaneStatus = "no-pane"

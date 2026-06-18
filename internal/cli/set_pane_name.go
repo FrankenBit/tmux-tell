@@ -19,10 +19,11 @@ import (
 // two surfaces stay byte-identical (the JSON tags are the single source of
 // truth, same discipline as pingResult/agentState).
 type setPaneNameResult struct {
-	OK    bool   `json:"ok"`
-	Agent string `json:"agent,omitempty"` // resolved caller; omitted when the pane isn't a registered agent
-	Pane  string `json:"pane"`            // tmux pane id the title was set on (e.g. "%5")
-	Title string `json:"title"`           // the display name applied
+	OK               bool   `json:"ok"`
+	Agent            string `json:"agent,omitempty"`        // resolved caller; omitted when the pane isn't a registered agent
+	Pane             string `json:"pane"`                   // tmux pane id the title was set on (e.g. "%5")
+	Title            string `json:"title"`                  // the display name applied
+	DisplayPersisted bool   `json:"display_name_persisted"` // true when display_name was stored on the agent row (#556)
 }
 
 // setPaneName is the shared core behind #556 Path B: assert a chamber's pane
@@ -42,7 +43,18 @@ func setPaneName(ctx context.Context, s *store.Store, override, title string) (s
 	if err := tmuxio.SetPaneTitle(ctx, pane, title); err != nil {
 		return setPaneNameResult{}, err
 	}
-	return setPaneNameResult{OK: true, Agent: agent, Pane: pane, Title: title}, nil
+	res := setPaneNameResult{OK: true, Agent: agent, Pane: pane, Title: title}
+	// Best-effort persist the display name on the agent row (#556) so agents
+	// listings + status outputs can show the case-preserved name. The visible
+	// surface (the tmux title) is already set; a persistence failure (e.g. the
+	// pane isn't a registered agent, or the row vanished) must NOT fail the
+	// title-set — it just means the listing won't carry the display name.
+	if agent != "" {
+		if err := s.SetDisplayName(ctx, agent, title); err == nil {
+			res.DisplayPersisted = true
+		}
+	}
+	return res, nil
 }
 
 // resolveCallerPane decides which pane the title-set targets, and which agent

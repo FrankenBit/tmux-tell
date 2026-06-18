@@ -202,6 +202,12 @@ var migrations = []string{
 	// held by the provider cap without knowing the mailman's serve flags. 0 (the
 	// default) means "no cap configured" — never gated, never surfaced as deferred.
 	`ALTER TABLE agents ADD COLUMN provider_cap INTEGER NOT NULL DEFAULT 0`,
+	// #556: the chamber-asserted display name (case-/space-preserved, e.g.
+	// "Lookout", "Master Bosun") shown in agents listings + status outputs.
+	// Distinct from the canonical `name` PK (the bus routing key, possibly
+	// lowercase) — display_name is render-only, never a routing key. Empty
+	// default: an agent that never asserted one falls back to its name in the UI.
+	`ALTER TABLE agents ADD COLUMN display_name TEXT NOT NULL DEFAULT ''`,
 }
 
 // Close releases the underlying database handle.

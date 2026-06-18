@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"testing"
@@ -139,6 +140,43 @@ func TestSetPaneName_NoPaneNoAgentErrors(t *testing.T) {
 	captureTitle(t)
 	if _, err := setPaneName(context.Background(), s, "", "X"); err == nil {
 		t.Error("should error when no pane is resolvable")
+	}
+}
+
+// setPaneName persists the display name on the agent row (#556 final commit)
+// and the agents listing surfaces it in the trailing DISPLAY column.
+func TestSetPaneName_PersistsDisplayName(t *testing.T) {
+	s := newCmdTestStore(t)
+	ctx := context.Background()
+	if err := s.UpsertAgent(ctx, "lookout", "%6"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	t.Setenv("TMUX_PANE", "%6")
+	t.Setenv("TMUX_AGENT_NAME", "")
+	captureTitle(t)
+
+	res, err := setPaneName(ctx, s, "", "Lookout")
+	if err != nil {
+		t.Fatalf("setPaneName: %v", err)
+	}
+	if !res.DisplayPersisted {
+		t.Error("DisplayPersisted = false, want true")
+	}
+	a, err := s.GetAgent(ctx, "lookout")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if a.DisplayName != "Lookout" {
+		t.Errorf("persisted display_name = %q, want Lookout", a.DisplayName)
+	}
+
+	// The text listing carries it in the DISPLAY column.
+	var stdout, stderr bytes.Buffer
+	if rc := runAgentsWithStore(ctx, s, map[string]bool{"%6": true}, false, "text", &stdout, &stderr); rc != exitOK {
+		t.Fatalf("agents rc=%d stderr=%s", rc, stderr.String())
+	}
+	if !bytes.Contains(stdout.Bytes(), []byte("DISPLAY")) || !bytes.Contains(stdout.Bytes(), []byte("Lookout")) {
+		t.Errorf("agents listing missing DISPLAY/Lookout:\n%s", stdout.String())
 	}
 }
 
