@@ -307,6 +307,17 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		json.RawMessage(`{"type": "object", "properties": {}}`),
 		mcpWhoamiDBHandler())
 
+	srv.RegisterTool("tmux-tell.set_pane_name",
+		"Set THIS chamber's tmux pane title to <name> (#556). The calling chamber asserts its OWN display name: resolves the caller's pane via the same $TMUX_PANE / $TMUX_AGENT_NAME path as whoami, then runs `tmux select-pane -T`. Call it after an in-session rename or session-switch (e.g. a codex `resume`/`fork` that swaps the session under the same pane) so the pane title follows the new identity — the chamber-launch title is set by the launch wrapper; this method covers the in-session changes the wrapper cannot observe. Multi-word names are preserved (\"Master Bosun\"). Returns {ok, agent, pane, title}.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"name": {"type": "string", "description": "The display name to set as this chamber's pane title — case- and space-preserved (e.g. \"Lookout\" or \"Master Bosun\")"}
+			},
+			"required": ["name"]
+		}`),
+		mcpSetPaneNameHandler(s))
+
 	return srv
 }
 
@@ -370,6 +381,27 @@ func mcpAgentStateHandler(s *store.Store) mcp.ToolHandler {
 		// MCP error channel for callers that want to gate on success.
 		if err != nil {
 			return res, err
+		}
+		return res, nil
+	}
+}
+
+// mcpSetPaneNameHandler returns the handler for the tmux-tell.set_pane_name MCP
+// tool (#556). Always self-assert — the calling chamber sets its OWN pane title
+// (no override), so it shares the setPaneName core with the CLI subcommand and
+// emits the identical setPaneNameResult shape.
+func mcpSetPaneNameHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		Name string `json:"name"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		res, err := setPaneName(ctx, s, "", in.Name)
+		if err != nil {
+			return nil, err
 		}
 		return res, nil
 	}

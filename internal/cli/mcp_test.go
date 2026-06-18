@@ -340,6 +340,7 @@ func TestMCP_ToolsListContract(t *testing.T) {
 		"tmux-tell.agent_state":         true,
 		"tmux-tell.flag_operator":       true,
 		"tmux-tell.clear_operator_flag": true,
+		"tmux-tell.set_pane_name":       true,
 	}
 	if len(tools) != len(want) {
 		t.Errorf("tools = %d, want %d", len(tools), len(want))

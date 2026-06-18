@@ -33,6 +33,19 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Added
+
+- **Chamber-asserted pane display names** (#556). A chamber can now assert its
+  own tmux pane title on demand via the new `tmux-tell.set_pane_name(name)` MCP
+  tool, or the matching `set-pane-name <name>` CLI subcommand (both adapters).
+  This covers the in-session case the launch wrapper can't see: when a codex
+  session is renamed or switched in-process (`resume` / `fork`), the chamber
+  re-asserts its display name and the pane title follows. Resolves the caller's
+  pane via the same `$TMUX_PANE` / `$TMUX_AGENT_NAME` path as `whoami` (so it
+  works for codex MCP children that don't inherit `$TMUX_PANE`); multi-word names
+  ("Master Bosun") are preserved. The chamber-launch title remains the launch
+  wrapper's job — this is the reactive complement, not a replacement.
+
 ## [0.21.0] — 2026-06-18
 
 
