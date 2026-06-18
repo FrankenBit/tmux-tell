@@ -35,6 +35,95 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [0.21.0] — 2026-06-18
 
+
+The substrate-care discipline release — every cut since v0.18 has been the
+substrate-mechanism settling-shape; v0.21.0 lands the **substrate-care discipline**
+the crew has been firming up alongside it. Two substantial substrate-mechanism arcs
+ship: the rate-limit + usage-limit handling that v0.20.0 deferred to "next cut"
+([#504](https://git.frankenbit.de/frankenbit/tmux-tell/issues/504) /
+[#540](https://git.frankenbit.de/frankenbit/tmux-tell/issues/540)), and the
+notify-not-poll layer that gives the wait/poll surface sub-second wake without a
+daemon ([#515](https://git.frankenbit.de/frankenbit/tmux-tell/issues/515)). Codex
+chambers get first-class substrate-care across paste-fragmentation
+([#533](https://git.frankenbit.de/frankenbit/tmux-tell/issues/533)),
+chamber-launch auto-register-on-boot
+([#532](https://git.frankenbit.de/frankenbit/tmux-tell/issues/532)), and
+copy-mode delivery deferral
+([#526](https://git.frankenbit.de/frankenbit/tmux-tell/issues/526)). The repo
+itself gains golangci-lint as a CI gate
+([#542](https://git.frankenbit.de/frankenbit/tmux-tell/issues/542)) — the
+baseline-clean sweep that surfaced six pre-existing findings demonstrates the
+gate's value-not-friction shape immediately.
+
+Headlines:
+
+- **Rate-limit + usage-limit substrate-mechanism (#504/#541/#540/#548).** Both
+  Codex and Claude chambers can now hit provider rate-limit or account
+  usage-limit and the substrate handles them honestly: rate-limit gets reactive
+  defer with retry-after extraction (operator-configurable regex with a
+  `retry_seconds` named capture group) plus exponential fallback; usage-limit
+  gets park-until-reset (30s recheck, NOT backoff — quota resets on a window
+  boundary, not progressively). Distinct `StateRateLimited` + `StateUsageLimited`
+  chamber states, distinct gauges (`tmux_tell_chamber_rate_limited_seconds`,
+  `tmux_tell_chamber_usage_limited_seconds` — both refreshed live during the
+  park window), and `paste_unsafe_aborts_total{reason=*}` clarified as
+  pre-paste TOCTOU-only (steady-state parks observed via the gauges).
+  Layer-3 cap-aware wake-ordering deferred to
+  [#543](https://git.frankenbit.de/frankenbit/tmux-tell/issues/543).
+- **Notify-not-poll cross-process doorbell (#515).** Daemonless `fsnotify`-based
+  doorbell wired into 6 wait loops (mailman idle, wait-for-reply, inbox-watch,
+  ping, send--wait, track-watch). Sub-second wake on a best-effort signal; every
+  loop keeps its poll as correctness fallback. No daemon, no durability, no
+  exactly-once machinery.
+- **golangci-lint adoption + baseline-clean sweep (#542).** Conservative
+  five-linter starter (`errcheck`, `govet`, `ineffassign`, `staticcheck`,
+  `unused`) plus formatters (`gofmt`, `goimports`) wired as a single CI step.
+  Baseline-clean swept 6 deprecated-API usages, 2 dead-code clusters, 2
+  ineffectual assignments, an error-string finding, and ~70 errcheck annotations
+  — net −263 lines across 64 files. Operator runs `make lint` locally.
+- **Codex paste-fragmentation fix (#533).** Codex's ~1KB paste-collapse
+  threshold left short trailing sign-off lines as literal composer text outside
+  the `[Pasted Content]` placeholder, submitting as separate prompts. Fix
+  collapses a trailing `\n\n<short-line>` to `\n<short-line>` in the codex paste
+  path — scope-gated via `PasteCollapseMarker != ""`, Claude path byte-identical
+  (gate-mutation-verified). Mechanism-determined merge earned by
+  structural-cause-removal (eliminates the paragraph segmentation point;
+  timing-invariant); first-worked-instance AC deferred to organic production
+  observation per Surveyor's substance-vs-form re-grounding.
+- **Chamber-launch auto-register-on-boot (#532).** `chamber-claude.sh` now
+  registers the pane + restarts the mailman on launch, closing the post-reboot
+  substrate-state gap (registry mappings survive across reboot via SQLite; tmux
+  pane IDs don't — tmux re-numbers on each server start). Restart is for
+  promptness (immediate vs self-heal-with-latency via the stuck-poll path),
+  NOT substrate-mechanism-necessity. Codex sibling scope-fenced to
+  alcatraz-infra#57.
+- **Copy-mode delivery deferral (#526).** Mailman holds delivery while the
+  recipient pane is in copy-mode (precedence-0 `AgentState`, detected via
+  `#{pane_in_mode}` before the capture-pane snapshot). Held messages surface as
+  `queued (pane-in-copy-mode)` and deliver automatically once the pane exits.
+
+Plus the companions:
+
+- Branch-protection PATCH automation + recurring-drift recipe in CONTRIBUTING
+  ([#546](https://git.frankenbit.de/frankenbit/tmux-tell/issues/546) /
+  [#547](https://git.frankenbit.de/frankenbit/tmux-tell/pulls/547)).
+- Operator-manual "Surviving reboot" section + chamber-launch convention
+  ([#552](https://git.frankenbit.de/frankenbit/tmux-tell/pulls/552)).
+
+Deferred to next cut:
+
+- Layer-3 cap-aware wake / priority-biased wake-ordering for rate-limited
+  chambers ([#543](https://git.frankenbit.de/frankenbit/tmux-tell/issues/543)).
+- Poll-interval defaults re-tune (entangled with #496 spin-guard)
+  ([#550](https://git.frankenbit.de/frankenbit/tmux-tell/issues/550)).
+- Codex MCP child env identity gap
+  ([#553](https://git.frankenbit.de/frankenbit/tmux-tell/issues/553)).
+- whoami-cache substrate-bug
+  ([#549](https://git.frankenbit.de/frankenbit/tmux-tell/issues/549)).
+- Copy-mode hardening + per-message wait
+  ([#537](https://git.frankenbit.de/frankenbit/tmux-tell/issues/537) /
+  [#538](https://git.frankenbit.de/frankenbit/tmux-tell/issues/538)).
+
 ### Added
 
 - **Cross-process change notification (notify-not-poll)** ([#515](https://git.frankenbit.de/frankenbit/tmux-tell/issues/515)).
