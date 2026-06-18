@@ -50,6 +50,14 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   (new trailing `DISPLAY` column; `display_name` on the JSON wire) carry the
   case-preserved name alongside the canonical routing key. `display_name` is
   render-only — never a routing key — and falls back to "-"/the name when unset.
+- **Duplicate-pane-row warning in `agents`** (#565). The listing now flags rows
+  whose `pane_id` is held by more than one agent — a `⚠` marker on the PANE cell,
+  a `pane_conflict` field on the JSON wire (omitempty), and a per-pane warning
+  line naming the sharers + a recovery hint. The visible-vessel backstop to #549
+  Fix-2a's register-time prevention: if any future path sets `pane_id` bypassing
+  `UpsertAgent`, the resulting identity drift shows up at a glance instead of
+  being debugged from first principles. Pure detection over the listing — no new
+  query, no hot path.
 
 ## [0.21.0] — 2026-06-18
 

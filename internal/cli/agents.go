@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
@@ -76,6 +78,55 @@ type agentView struct {
 	// JSON so pre-#556 callers see no schema-shape change; the text formatter
 	// shows it in the trailing DISPLAY column ("-" when unset).
 	DisplayName string `json:"display_name,omitempty"`
+	// PaneConflict flags that this row's pane_id is held by more than one agent
+	// (#565) — the #549 duplicate-pane-row drift detect signal. #549 Fix-2a
+	// prevents it at the register source; this is the visible backstop for any
+	// future path that sets pane_id bypassing UpsertAgent. Omitted from JSON in
+	// the common no-conflict case (false) so the schema shape is unchanged.
+	PaneConflict bool `json:"pane_conflict,omitempty"`
+}
+
+// paneConflicts maps each pane_id held by more than one agent to the sorted
+// names sharing it. Non-empty panes only; empty/NULL panes never conflict (a
+// dormant pane-less row is the expected post-Fix-2a rebind state, #549). Pure
+// over the agent set — the #565 duplicate-pane-row detect signal. Computed over
+// the FULL agent list (before any --available-only filter) so a conflict whose
+// stale participant is filtered out of the view is still detected and named.
+func paneConflicts(agents []store.Agent) map[string][]string {
+	byPane := map[string][]string{}
+	for _, a := range agents {
+		if a.PaneID == "" {
+			continue
+		}
+		byPane[a.PaneID] = append(byPane[a.PaneID], a.Name)
+	}
+	out := map[string][]string{}
+	for pane, names := range byPane {
+		if len(names) > 1 {
+			sort.Strings(names)
+			out[pane] = names
+		}
+	}
+	return out
+}
+
+// renderPaneConflictWarnings emits one operator-facing warning line per
+// conflicted pane (#565), naming the sharers + the shared pane + a recovery
+// hint. Deterministic order (panes sorted) so the output is stable.
+func renderPaneConflictWarnings(w io.Writer, conflicts map[string][]string) {
+	if len(conflicts) == 0 {
+		return
+	}
+	panes := make([]string, 0, len(conflicts))
+	for p := range conflicts {
+		panes = append(panes, p)
+	}
+	sort.Strings(panes)
+	for _, p := range panes {
+		names := conflicts[p]
+		fmt.Fprintf(w, "⚠ pane %s shared by %d agents: %s — likely #549 duplicate-pane-row drift; `unregister --name <stale>` the dormant one (or re-register to supersede)\n",
+			p, len(names), strings.Join(names, ", "))
+	}
 }
 
 // mailmanIdleHuman renders the agents-listing MAILMAN column (#348): a compact
@@ -115,6 +166,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
 
+	conflicts := paneConflicts(agents)
 	rows := make([]agentView, 0, len(agents))
 	for _, a := range agents {
 		v := agentView{
@@ -125,6 +177,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 			Stuck:          a.StuckReason,
 			DeliveryMode:   a.DeliveryMode,
 			DisplayName:    a.DisplayName,
+			PaneConflict:   len(conflicts[a.PaneID]) > 0,
 		}
 		switch {
 		case a.PaneID == "":
@@ -165,6 +218,9 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 			if pane == "" {
 				pane = "-"
 			}
+			if r.PaneConflict {
+				pane += " ⚠" // #565: this pane_id is held by >1 agent
+			}
 			attention := r.AttentionState
 			if attention == "" {
 				attention = "idle"
@@ -183,6 +239,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 			})
 		}
 		renderTextTable(stdout, header, out)
+		renderPaneConflictWarnings(stdout, conflicts)
 		return exitOK
 	default:
 		return writeJSONError(stdout, stderr,
