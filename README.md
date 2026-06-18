@@ -185,7 +185,7 @@ Metrics exposed (all prefixed `tmux_tell_`):
 | `tmux_tell_provider_defer_inflight` | gauge | `provider` | current count of messages held by the #448 per-provider concurrency cap in this mailman process |
 | `tmux_tell_provider_defer_wait_seconds` | histogram | `provider` | wall-clock wait from a message's first provider-cap deferral until the cap slot reopens |
 | `tmux_tell_copymode_defer_total` | counter | `agent` | delivery cycles deferred because the recipient pane was scrolled up in copy-mode (#526) |
-| `tmux_tell_copymode_defer_wait_seconds` | histogram | `agent` | wall-clock a delivery waited on copy-mode, from first observation until the gate resolved (delivered on return-to-live, or reverted at MaxWait) (#526) |
+| `tmux_tell_copymode_defer_wait_seconds` | histogram | `agent` | per-gate-cycle wall-clock a delivery waited on copy-mode, from first observation until the cycle resolved (delivered on return-to-live, or reverted at MaxWait); not a per-message total (#526) |
 | `tmux_tell_delivery_latency_by_priority_seconds` | histogram | `priority` | queued→delivered latency by message priority (#449) — low / normal / high |
 
 Provider-cap metrics are emitted per mailman process. For

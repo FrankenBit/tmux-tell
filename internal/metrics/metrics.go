@@ -140,7 +140,7 @@ func New() *Metrics {
 		}, []string{"agent"}),
 		copymodeDeferWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "tmux_tell_copymode_defer_wait_seconds",
-			Help:    "Wall-clock from the first copy-mode observation in a gate cycle until the gate resolved (delivered on return-to-live, or reverted at MaxWait), by agent (#526).",
+			Help:    "Per-gate-cycle wall-clock a delivery waited on copy-mode — from the first copy-mode observation in a cycle until that cycle resolved (delivered on return-to-live, or reverted at MaxWait), by agent (#526). NOT a per-message total: a read outlasting MaxWait records one ~MaxWait sample per revert-retry cycle.",
 			Buckets: latencyBuckets,
 		}, []string{"agent"}),
 	}
@@ -292,10 +292,11 @@ func (m *Metrics) IncCopyModeDefer(agent string) {
 	m.copymodeDefer.WithLabelValues(agent).Inc()
 }
 
-// ObserveCopyModeDeferWait records how long a gate cycle waited on copy-mode
-// (seconds) from its first copy-mode observation until the gate resolved —
-// delivered on return-to-live or reverted at MaxWait (#526). Fed from
-// GateOutcome.CopyModeWait, by agent.
+// ObserveCopyModeDeferWait records how long a single gate cycle waited on
+// copy-mode (seconds) from its first copy-mode observation until the cycle
+// resolved — delivered on return-to-live or reverted at MaxWait (#526). Fed
+// from GateOutcome.CopyModeWait, by agent. Per-gate-cycle grain, not a
+// per-message total (see the GateOutcome.CopyModeWait doc-comment).
 func (m *Metrics) ObserveCopyModeDeferWait(agent string, seconds float64) {
 	if m == nil {
 		return

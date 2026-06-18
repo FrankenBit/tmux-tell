@@ -114,12 +114,20 @@ type GateOutcome struct {
 	// content is what stayed stable across InputStaleThreshold.
 	InputContent string
 	// CopyModeWait is the wall-clock from the FIRST StateInCopyMode
-	// observation in this gate cycle until the gate returned (#526).
-	// Zero when the pane was never in copy-mode. The caller feeds it to
-	// the tmux_tell_copymode_defer_wait_seconds histogram — semantics
-	// mirror #507's first-defer-to-resolution wait. Populated on every
+	// observation in THIS gate cycle until the gate returned (#526). Zero
+	// when the pane was never in copy-mode. The caller feeds it to the
+	// tmux_tell_copymode_defer_wait_seconds histogram. Populated on every
 	// return path that saw copy-mode (the idle delivery path AND the
 	// ErrCopyModeUnsafe revert path).
+	//
+	// Grain (Surveyor #535 review): this is a PER-GATE-CYCLE wait, not a
+	// per-message total. A single-cycle read (exits copy-mode within MaxWait)
+	// records the full hold in one sample — the common case. A read that
+	// outlasts MaxWait reverts-and-retries, so it records N samples of ~MaxWait
+	// across N cycles rather than one cumulative total. For a true
+	// first-defer-to-final-delivery total, thread the first-copy-mode timestamp
+	// across cycles via a serve-side per-publicID map (the #507 deferStart
+	// shape) — deferred; per-cycle is the honest grain for v1.
 	CopyModeWait time.Duration
 }
 

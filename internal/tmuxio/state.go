@@ -319,9 +319,21 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 	// HISTORICAL view, so the heuristic below would read stale content (an old
 	// `❯ ` scrolled into frame misclassifies as Idle → paste into a scrolled
 	// pane, the 83b3 bug). The display-message query is cheap + authoritative
-	// and reflects the live pane regardless of scroll position. A query error
-	// is non-fatal: fall through to the capture-based classification (degrade
-	// to prior behavior rather than block delivery on a tmux hiccup).
+	// and reflects the live pane regardless of scroll position.
+	//
+	// RESIDUAL RISK (Surveyor #535 review): a query *error* falls through to
+	// the capture-based path, which is the pre-#526 83b3-susceptible classifier
+	// — AND because the returned state is not StateInCopyMode, the IsPasteUnsafe
+	// belt doesn't catch it either. So both defense layers depend on this query
+	// succeeding. The risk is low (display-message is reliable, and reproducing
+	// 83b3 needs a 4-way conjunction: scrolled pane + query error + an old `❯ `
+	// scrolled into frame + a stable two-capture window), so v1 degrades to
+	// prior behavior on a hiccup rather than blocking delivery. The architectural
+	// close, if the error path ever bites: track *consecutive* pane_in_mode query
+	// failures (in the gate loop, where per-poll state lives) and bias a
+	// PERSISTENT failure toward defer — distinguishing a transient tmux hiccup
+	// (degrade) from a pane the query genuinely can't read (defer). Deferred as a
+	// follow-up; not built here.
 	if inMode, merr := PaneInCopyMode(ctx, pane); merr == nil && inMode {
 		return StateInCopyMode,
 			Evidence{Reason: "pane in copy-mode / scrolled up (pane_in_mode=1)"}, nil
