@@ -57,12 +57,54 @@ func TestState_String_AllValues(t *testing.T) {
 		{StateAtRestInCompaction, "at-rest-in-compaction"},
 		{StateAwaitingOperator, "awaiting-operator"},
 		{StateInCopyMode, "copy-mode"},
+		{StateRateLimited, "rate-limited"},
 		{State(99), "unknown"}, // out-of-range defaults to "unknown" (safer)
 	}
 	for _, c := range cases {
 		if got := c.s.String(); got != c.want {
 			t.Errorf("State(%d).String() = %q, want %q", int(c.s), got, c.want)
 		}
+	}
+}
+
+func TestAgentState_RateLimitedMarkerWinsOverWorking(t *testing.T) {
+	fastTemporalDelta(t)
+	setActivePaneProfileForTest(t, PaneProfile{
+		PromptSentinel:   PromptSentinel,
+		RateLimitMarkers: []string{"SYNTHETIC RATE LIMIT"},
+	})
+	paneA := "history\nSYNTHETIC RATE LIMIT\nretry countdown 10s\n❯\u00a0\n"
+	paneB := "history\nSYNTHETIC RATE LIMIT\nretry countdown 9s\n❯\u00a0\n"
+	fr := newFakeProbeRunner([]string{paneA, paneB})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateRateLimited {
+		t.Errorf("state = %v, want StateRateLimited (marker must beat working animation)", state)
+	}
+	if ev.Marker != "SYNTHETIC RATE LIMIT" {
+		t.Errorf("Evidence.Marker = %q, want synthetic rate-limit marker", ev.Marker)
+	}
+}
+
+func TestAgentState_RateLimitMarkerDisabledWhenProfileEmpty(t *testing.T) {
+	fastTemporalDelta(t)
+	setActivePaneProfileForTest(t, PaneProfile{PromptSentinel: PromptSentinel})
+	pane := "history\nSYNTHETIC RATE LIMIT\n❯\u00a0\n"
+	fr := newFakeProbeRunner([]string{pane, pane})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state == StateRateLimited {
+		t.Fatal("state = StateRateLimited with empty profile markers — production literals must remain sample-gated")
 	}
 }
 

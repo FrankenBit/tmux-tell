@@ -38,3 +38,10 @@ func TestCodexProfile_PaneSentinel(t *testing.T) {
 			p.Pane.PromptSentinel, tmuxio.CodexPromptSentinel)
 	}
 }
+
+func TestCodexProfile_RateLimitMarkersSampleGated(t *testing.T) {
+	p := codexProfile()
+	if len(p.Pane.RateLimitMarkers) != 0 {
+		t.Fatalf("Codex RateLimitMarkers = %v, want empty until real rate-limit pane samples land (#504)", p.Pane.RateLimitMarkers)
+	}
+}

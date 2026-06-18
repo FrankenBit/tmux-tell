@@ -2,6 +2,7 @@ package tmuxio
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -148,12 +149,12 @@ func TestAgentState_ClassifiesCodexPane(t *testing.T) {
 // never go through cli.Run (every existing tmuxio test) rely on activeProfile
 // defaulting to the Claude profile.
 func TestSetActivePaneProfile_Installs(t *testing.T) {
-	if got := ActivePaneProfile(); got != ClaudePaneProfile() {
+	if got := ActivePaneProfile(); !reflect.DeepEqual(got, ClaudePaneProfile()) {
 		t.Fatalf("default ActivePaneProfile() = %+v, want Claude default", got)
 	}
 	want := syntheticCodexLikeProfile()
 	setActivePaneProfileForTest(t, want)
-	if got := ActivePaneProfile(); got != want {
+	if got := ActivePaneProfile(); !reflect.DeepEqual(got, want) {
 		t.Errorf("after install, ActivePaneProfile() = %+v, want %+v", got, want)
 	}
 }

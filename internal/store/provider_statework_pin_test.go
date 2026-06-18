@@ -50,3 +50,15 @@ func TestStateInCopyModeIsNotWorkingSentinel(t *testing.T) {
 			"observed_state value the inbox surface + docs reference).", got)
 	}
 }
+
+func TestStateRateLimitedIsNotWorkingSentinel(t *testing.T) {
+	if got := tmuxio.StateRateLimited.String(); got == observedStateWorking {
+		t.Fatalf("tmuxio.StateRateLimited renders %q == observedStateWorking %q — a rate-limited "+
+			"pane would wrongly consume #448 provider capacity while waiting (#504). Keep them distinct.",
+			got, observedStateWorking)
+	}
+	if got := tmuxio.StateRateLimited.String(); got != "rate-limited" {
+		t.Fatalf("tmuxio.StateRateLimited.String() = %q, want \"rate-limited\" (the persisted "+
+			"observed_state value the state/status surfaces should report).", got)
+	}
+}

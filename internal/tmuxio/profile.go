@@ -53,12 +53,18 @@ package tmuxio
 //     (Enter-on-empty is a safe no-op, operator + Lookout confirmed). Empty
 //     disables both — correct for Claude, which submits a collapsed paste on the
 //     first Enter and needs no resubmit.
+//   - RateLimitMarkers: empirically-captured substrings that identify an
+//     adapter's rate-limit pane (#504). Empty disables rate-limit detection for
+//     the adapter. These MUST stay empty until real pane output is captured for
+//     that adapter; guessed literals are worse than no detector because they
+//     silently never fire in production.
 type PaneProfile struct {
 	PromptSentinel         string
 	CompactionMarker       string
 	AwaitingOperatorMarker string
 	StatusLineMarker       string
 	PasteCollapseMarker    string
+	RateLimitMarkers       []string
 }
 
 // ClaudePaneProfile returns the Claude Code pane-observation profile — the
@@ -117,6 +123,8 @@ const CodexPasteCollapseMarker = "[Pasted Content"
 //     unreachable while Codex is PasteCapable=false — so the gap is moot until
 //     the verify-token-robustness work makes Codex paste-capable. Named here so
 //     it is not a silent gap.
+//   - RateLimitMarkers: empty pending empirical Codex rate-limit captures
+//     (#504). Do not add production literals without a real pane sample.
 func CodexPaneProfile() PaneProfile {
 	return PaneProfile{
 		PromptSentinel:      CodexPromptSentinel,

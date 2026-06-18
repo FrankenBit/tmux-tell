@@ -92,6 +92,13 @@ const (
 	// a scroll-read (#448 cap counts it as not-working, self-healing on
 	// exit).
 	StateInCopyMode
+	// StateRateLimited means the adapter pane shows an empirically-captured
+	// provider rate-limit marker (#504). Detection is marker-in-capture, same
+	// precedence family as CompactionMarker (not copy-mode's pre-capture
+	// pane_in_mode query): the pane content is still live, but it may be static
+	// or animate a countdown, so the marker must win before working/idle
+	// heuristics. Paste-unsafe until the reactive layer decides when to retry.
+	StateRateLimited
 )
 
 // String returns the wire-format name of the state — the same string
@@ -110,6 +117,8 @@ func (s State) String() string {
 		return "awaiting-operator"
 	case StateInCopyMode:
 		return "copy-mode"
+	case StateRateLimited:
+		return "rate-limited"
 	default:
 		return "unknown"
 	}
@@ -140,6 +149,10 @@ func (s State) String() string {
 //     failure. The observe-gate defers it, but this also covers the
 //     post-gate-pass race where the operator scrolls up in the window
 //     between an idle gate-pass and the actual paste.
+//   - StateRateLimited: the adapter is showing a provider rate-limit marker
+//     (#504). Pasting more work at this point deepens provider pressure and
+//     risks losing the delivery behind an upstream cooldown; the reactive
+//     layer decides when to retry.
 //
 // StateIdle and StateWorking are paste-safe (idle by definition;
 // working buffers mid-turn keystrokes per Claude Code TUI behavior).
@@ -149,7 +162,8 @@ func (s State) String() string {
 // actual paste-and-Enter aborts the delivery when this returns true.
 func IsPasteUnsafe(s State) bool {
 	return s == StateAwaitingOperator || s == StateUnknown ||
-		s == StateAtRestInCompaction || s == StateInCopyMode
+		s == StateAtRestInCompaction || s == StateInCopyMode ||
+		s == StateRateLimited
 }
 
 // Evidence carries the observation that led to the State classification.
@@ -272,9 +286,14 @@ func SetAgentStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //     is animating (spinner glyph cycles, percentage ticks) so capA
 //     != capB; without the marker check firing first, the agent
 //     would mis-classify as Working.
-//  3. If capture A != capture B → StateWorking. Any substantive change
+//  3. If any RateLimitMarkers entry is non-empty AND found in capture B →
+//     StateRateLimited. The markers are adapter-profile-owned and MUST come
+//     from real pane captures (#504). This runs before Working because a
+//     rate-limit pane may animate a countdown; it runs after compaction because
+//     compaction is a more specific local TUI mode.
+//  4. If capture A != capture B → StateWorking. Any substantive change
 //     across the temporal-delta window means the agent is painting.
-//  4. **Cursor-position-aware input-row classification** (the v2 gap-fix):
+//  5. **Cursor-position-aware input-row classification** (the v2 gap-fix):
 //     query the cursor position via display-message; identify the row
 //     the cursor sits on; if that row starts with PromptSentinel:
 //     - Cursor at sentinel position (col == sentinel-width): the
@@ -287,15 +306,15 @@ func SetAgentStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //     StateAwaitingOperator (agent blocked on operator finishing
 //     their draft).
 //     - Cursor before sentinel position: unusual; treat as Unknown.
-//  5. If AwaitingOperatorMarker is non-empty AND found in capture B →
+//  6. If AwaitingOperatorMarker is non-empty AND found in capture B →
 //     StateAwaitingOperator. (Backup detection for non-`❯`-painting
 //     UIs — AskUserQuestion popups, search dialogs, etc.)
-//  6. If the cursor query failed or the cursor row doesn't start with
+//  7. If the cursor query failed or the cursor row doesn't start with
 //     PromptSentinel, fall back to the cursor-less heuristic
 //     (isInputRowQuiet returns true → Idle; else Unknown). This
 //     preserves classification when the cursor substrate is
 //     unreachable.
-//  7. Otherwise → StateUnknown with an accurate reason naming the
+//  8. Otherwise → StateUnknown with an accurate reason naming the
 //     sub-case that fired (sentinel found vs not, cursor query failure
 //     vs cursor-not-on-input-row).
 //
@@ -376,7 +395,18 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 			}, nil
 	}
 
-	// Precedence 2: working (any substantive change across the window).
+	// Precedence 2: empirical rate-limit marker (#504). Profile-owned markers
+	// stay empty until real adapter pane output is captured; synthetic tests can
+	// still exercise the mechanism without guessing production literals.
+	if m := firstRateLimitMarker(capBStr); m != "" {
+		return StateRateLimited,
+			Evidence{
+				Reason: fmt.Sprintf("rate-limit marker found: %q", m),
+				Marker: m,
+			}, nil
+	}
+
+	// Precedence 3: working (any substantive change across the window).
 	if capAStr != capBStr {
 		return StateWorking,
 			Evidence{
@@ -472,6 +502,15 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 	return StateUnknown,
 		Evidence{Reason: "pane stable; prompt sentinel not found in any row + no recognized marker" + cursorNote},
 		nil
+}
+
+func firstRateLimitMarker(capture string) string {
+	for _, m := range activeProfile.RateLimitMarkers {
+		if m != "" && strings.Contains(capture, m) {
+			return m
+		}
+	}
+	return ""
 }
 
 // PaneInCopyMode reports whether the pane is currently in a tmux mode

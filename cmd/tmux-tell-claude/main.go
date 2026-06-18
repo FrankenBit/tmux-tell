@@ -22,7 +22,11 @@ import (
 )
 
 func main() {
-	p := cli.Profile{
+	os.Exit(cli.Run(claudeProfile(), os.Args[0], os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+func claudeProfile() cli.Profile {
+	return cli.Profile{
 		BinaryName:        "tmux-tell-claude",
 		DisplayLabel:      "Claude Code",
 		DeprecatedAliases: []string{"claude-msg", "tmux-msg-claude"},
@@ -43,5 +47,4 @@ func main() {
 		// Anthropic's API.
 		Provider: "anthropic",
 	}
-	os.Exit(cli.Run(p, os.Args[0], os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
 }
