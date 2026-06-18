@@ -20,10 +20,11 @@ import (
 // truth, same discipline as pingResult/agentState).
 type setPaneNameResult struct {
 	OK               bool   `json:"ok"`
-	Agent            string `json:"agent,omitempty"`        // resolved caller; omitted when the pane isn't a registered agent
-	Pane             string `json:"pane"`                   // tmux pane id the title was set on (e.g. "%5")
-	Title            string `json:"title"`                  // the display name applied
-	DisplayPersisted bool   `json:"display_name_persisted"` // true when display_name was stored on the agent row (#556)
+	Agent            string `json:"agent,omitempty"`              // resolved caller; omitted when the pane isn't a registered agent
+	Pane             string `json:"pane"`                         // tmux pane id the title was set on (e.g. "%5")
+	Title            string `json:"title"`                        // the display name applied
+	DisplayPersisted bool   `json:"display_name_persisted"`       // true when display_name was stored on the agent row (#556)
+	DisplayError     string `json:"display_name_error,omitempty"` // why persistence was skipped/failed (title still set; observability per Surveyor #563)
 }
 
 // setPaneName is the shared core behind #556 Path B: assert a chamber's pane
@@ -52,6 +53,11 @@ func setPaneName(ctx context.Context, s *store.Store, override, title string) (s
 	if agent != "" {
 		if err := s.SetDisplayName(ctx, agent, title); err == nil {
 			res.DisplayPersisted = true
+		} else {
+			// Best-effort priority stands (the title is set); but surface WHY
+			// persistence didn't land rather than swallowing it (Surveyor #563
+			// observability nit) — e.g. the resolved name has no agent row.
+			res.DisplayError = err.Error()
 		}
 	}
 	return res, nil
@@ -136,6 +142,9 @@ func runSetPaneNameCLI(args []string, stdout, stderr io.Writer) int {
 		_ = writeJSONResult(stdout, res)
 	case "text", "":
 		fmt.Fprintf(stdout, "pane %s title set to %q\n", res.Pane, res.Title)
+		if res.DisplayError != "" {
+			fmt.Fprintf(stderr, "note: display_name not persisted: %s\n", res.DisplayError)
+		}
 	default:
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("unknown --format: %s", *format), exitUsage)

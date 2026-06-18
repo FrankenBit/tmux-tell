@@ -180,6 +180,31 @@ func TestSetPaneName_PersistsDisplayName(t *testing.T) {
 	}
 }
 
+// When the resolved name has no agent row, persistence can't land — but the
+// title is still set and the failure is SURFACED (not swallowed) via
+// DisplayError (Surveyor #563 observability nit). Induced via $TMUX_AGENT_NAME
+// pointing at an unregistered name while $TMUX_PANE provides the pane.
+func TestSetPaneName_SurfacesPersistFailure(t *testing.T) {
+	s := newCmdTestStore(t)
+	t.Setenv("TMUX_PANE", "%6")
+	t.Setenv("TMUX_AGENT_NAME", "ghost") // resolves a name with no agent row
+	calls := captureTitle(t)
+
+	res, err := setPaneName(context.Background(), s, "", "Ghost")
+	if err != nil {
+		t.Fatalf("title-set must still succeed: %v", err)
+	}
+	if !res.OK || len(*calls) != 1 {
+		t.Errorf("title should be set despite persist failure; res=%+v calls=%d", res, len(*calls))
+	}
+	if res.DisplayPersisted {
+		t.Error("DisplayPersisted should be false (no agent row)")
+	}
+	if res.DisplayError == "" {
+		t.Error("persist failure should be surfaced in DisplayError, not swallowed")
+	}
+}
+
 // MCP round-trip: the tool resolves self (no override) and emits the shared
 // setPaneNameResult shape.
 func TestMCP_SetPaneName(t *testing.T) {
