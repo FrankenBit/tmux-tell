@@ -385,10 +385,11 @@ correctly and the observe-gate defers paste-and-enter while a Codex operator is 
 the read side of the substrate-vs-adapter pane-observation contract is adapter-uniform.
 
 `PaneProfile.RateLimitPattern` is the #504 hook for future reactive rate-limit
-detection: it is matched in captured pane content after compaction and before
-working/idle classification. Production adapter patterns intentionally stay empty
-until real Claude/Codex rate-limit pane output is captured; guessed literals would
-compile but silently fail to detect the real UI.
+detection, and `PaneProfile.UsageLimitPattern` is the #540 hook for hard-stop
+usage-limit parking: both are matched in captured pane content after compaction
+and before working/idle classification. Production adapter patterns intentionally
+stay empty until real Claude/Codex pane output is captured; guessed literals
+would compile but silently fail to detect the real UI.
 
 This is what unblocked `PasteCapable = true` (#360). The historical blocker was **verify-token
 robustness**, not pane-reading: both adapters collapse a pasted message to a `[Pasted …]`

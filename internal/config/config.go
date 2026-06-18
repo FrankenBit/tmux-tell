@@ -232,6 +232,11 @@ type Block struct {
 	// path validates the regex and installs it into the active pane profile;
 	// malformed patterns fail loud rather than quietly disabling the feature.
 	RateLimitPattern *string `toml:"rate-limit-pattern"`
+	// UsageLimitPattern is the operator-configurable regex that identifies an
+	// adapter's usage-limit pane (#540). Empty parks the detector. This is a
+	// distinct hard-stop sibling to rate-limit, so operators can configure
+	// park-until-reset behavior separately from temporary throttling.
+	UsageLimitPattern *string `toml:"usage-limit-pattern"`
 	// Retention is the per-agent message retention window (#245). The mailman
 	// runs a background sweep that deletes delivered + failed rows older than
 	// this window. "infinite" (the default) disables the sweep entirely —
@@ -490,6 +495,8 @@ func blockStringField(b *Block, field string) *string {
 		return b.VerifyRetryBudget
 	case "rate-limit-pattern":
 		return b.RateLimitPattern
+	case "usage-limit-pattern":
+		return b.UsageLimitPattern
 	case "retention":
 		return b.Retention
 	}

@@ -99,6 +99,11 @@ const (
 	// countdown, so the pattern must win before working/idle heuristics.
 	// Paste-unsafe until the reactive layer decides when to retry.
 	StateRateLimited
+	// StateUsageLimited means the adapter pane matches the operator-configured
+	// usage-limit regex (#540). This is the hard-stop sibling to rate-limit:
+	// account quota is exhausted, so the mailman parks until quota reset rather
+	// than backing off exponentially. Paste-unsafe while parked.
+	StateUsageLimited
 )
 
 // String returns the wire-format name of the state — the same string
@@ -119,6 +124,8 @@ func (s State) String() string {
 		return "copy-mode"
 	case StateRateLimited:
 		return "rate-limited"
+	case StateUsageLimited:
+		return "usage-limited"
 	default:
 		return "unknown"
 	}
@@ -153,6 +160,9 @@ func (s State) String() string {
 //     matched by the operator-configured regex (#504). Pasting more work at
 //     this point deepens provider pressure and risks losing the delivery
 //     behind an upstream cooldown; the reactive layer decides when to retry.
+//   - StateUsageLimited: the adapter is showing an account usage-limit banner
+//     matched by the operator-configured regex (#540). This is a hard-stop
+//     quota event, not a temporary throttle; the mailman parks until reset.
 //
 // StateIdle and StateWorking are paste-safe (idle by definition;
 // working buffers mid-turn keystrokes per Claude Code TUI behavior).
@@ -163,7 +173,7 @@ func (s State) String() string {
 func IsPasteUnsafe(s State) bool {
 	return s == StateAwaitingOperator || s == StateUnknown ||
 		s == StateAtRestInCompaction || s == StateInCopyMode ||
-		s == StateRateLimited
+		s == StateRateLimited || s == StateUsageLimited
 }
 
 // Evidence carries the observation that led to the State classification.
@@ -290,14 +300,19 @@ func SetAgentStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //     is animating (spinner glyph cycles, percentage ticks) so capA
 //     != capB; without the marker check firing first, the agent
 //     would mis-classify as Working.
-//  3. If the active RateLimitPattern matches capture B → StateRateLimited.
+//  3. If the active UsageLimitPattern matches capture B →
+//     StateUsageLimited. The regex is adapter-profile-owned and MUST be
+//     validated against a real pane sample (#540). This is the hard-stop
+//     sibling to rate-limit: it runs before rate-limit so a usage-limit pane
+//     can't be shadowed by a broader cooldown banner.
+//  4. If the active RateLimitPattern matches capture B → StateRateLimited.
 //     The regex is adapter-profile-owned and MUST be validated against a
 //     real pane sample (#504). This runs before Working because a rate-limit
-//     pane may animate a countdown; it runs after compaction because
-//     compaction is a more specific local TUI mode.
-//  4. If capture A != capture B → StateWorking. Any substantive change
+//     pane may animate a countdown; it runs after compaction and usage-limit
+//     because those are more specific local TUI modes.
+//  5. If capture A != capture B → StateWorking. Any substantive change
 //     across the temporal-delta window means the agent is painting.
-//  5. **Cursor-position-aware input-row classification** (the v2 gap-fix):
+//  6. **Cursor-position-aware input-row classification** (the v2 gap-fix):
 //     query the cursor position via display-message; identify the row
 //     the cursor sits on; if that row starts with PromptSentinel:
 //     - Cursor at sentinel position (col == sentinel-width): the
@@ -310,15 +325,15 @@ func SetAgentStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //     StateAwaitingOperator (agent blocked on operator finishing
 //     their draft).
 //     - Cursor before sentinel position: unusual; treat as Unknown.
-//  6. If AwaitingOperatorMarker is non-empty AND found in capture B →
+//  7. If AwaitingOperatorMarker is non-empty AND found in capture B →
 //     StateAwaitingOperator. (Backup detection for non-`❯`-painting
 //     UIs — AskUserQuestion popups, search dialogs, etc.)
-//  7. If the cursor query failed or the cursor row doesn't start with
+//  8. If the cursor query failed or the cursor row doesn't start with
 //     PromptSentinel, fall back to the cursor-less heuristic
 //     (isInputRowQuiet returns true → Idle; else Unknown). This
 //     preserves classification when the cursor substrate is
 //     unreachable.
-//  8. Otherwise → StateUnknown with an accurate reason naming the
+//  9. Otherwise → StateUnknown with an accurate reason naming the
 //     sub-case that fired (sentinel found vs not, cursor query failure
 //     vs cursor-not-on-input-row).
 //
@@ -399,7 +414,18 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 			}, nil
 	}
 
-	// Precedence 2: empirical rate-limit regex (#504). The configured pattern
+	// Precedence 2: empirical usage-limit regex (#540). The configured pattern
+	// stays empty until real adapter pane output is captured; synthetic tests
+	// can still exercise the mechanism without guessing production literals.
+	if m := firstUsageLimitMatch(capBStr); m != "" {
+		return StateUsageLimited,
+			Evidence{
+				Reason: fmt.Sprintf("usage-limit pattern matched: %q", m),
+				Marker: m,
+			}, nil
+	}
+
+	// Precedence 3: empirical rate-limit regex (#504). The configured pattern
 	// stays empty until real adapter pane output is captured; synthetic tests
 	// can still exercise the mechanism without guessing production literals.
 	if m, retryAfter := firstRateLimitMatch(capBStr); m != "" {
@@ -411,7 +437,7 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 			}, nil
 	}
 
-	// Precedence 3: working (any substantive change across the window).
+	// Precedence 4: working (any substantive change across the window).
 	if capAStr != capBStr {
 		return StateWorking,
 			Evidence{
@@ -467,7 +493,7 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 		}
 	}
 
-	// Precedence 5: awaiting-operator marker (backup for non-sentinel-
+	// Precedence 7: awaiting-operator marker (backup for non-sentinel-
 	// painting UIs — AskUserQuestion popups, search dialogs, etc.). From the
 	// active PaneProfile; empty disables the backup check.
 	if m := activeProfile.AwaitingOperatorMarker; m != "" && strings.Contains(capBStr, m) {
@@ -524,6 +550,17 @@ func firstRateLimitMatch(capture string) (string, time.Duration) {
 		}
 	}
 	return matched, 0
+}
+
+func firstUsageLimitMatch(capture string) string {
+	if activeUsageLimitRE == nil {
+		return ""
+	}
+	matches := activeUsageLimitRE.FindStringSubmatch(capture)
+	if len(matches) == 0 {
+		return ""
+	}
+	return matches[0]
 }
 
 func parseRetrySeconds(s string) (time.Duration, error) {

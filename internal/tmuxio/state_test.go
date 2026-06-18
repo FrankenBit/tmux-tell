@@ -58,6 +58,7 @@ func TestState_String_AllValues(t *testing.T) {
 		{StateAwaitingOperator, "awaiting-operator"},
 		{StateInCopyMode, "copy-mode"},
 		{StateRateLimited, "rate-limited"},
+		{StateUsageLimited, "usage-limited"},
 		{State(99), "unknown"}, // out-of-range defaults to "unknown" (safer)
 	}
 	for _, c := range cases {
@@ -108,6 +109,47 @@ func TestAgentState_RateLimitPatternDisabledWhenProfileEmpty(t *testing.T) {
 	}
 	if state == StateRateLimited {
 		t.Fatal("state = StateRateLimited with empty profile pattern — production literals must remain sample-gated")
+	}
+}
+
+func TestAgentState_UsageLimitedPatternWinsOverWorking(t *testing.T) {
+	fastTemporalDelta(t)
+	setActivePaneProfileForTest(t, PaneProfile{
+		PromptSentinel:    PromptSentinel,
+		UsageLimitPattern: `■ You've hit your usage limit(?:.*?try again at (?P<retry_at>.+))?`,
+	})
+	paneA := "history\n■ You've hit your usage limit. Try again at 3:59 PM.\n❯\u00a0\n"
+	paneB := "history\n■ You've hit your usage limit. Try again at 4:00 PM.\n❯\u00a0\n"
+	fr := newFakeProbeRunner([]string{paneA, paneB})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateUsageLimited {
+		t.Errorf("state = %v, want StateUsageLimited (pattern must beat working animation)", state)
+	}
+	if !strings.Contains(ev.Marker, "You've hit your usage limit") {
+		t.Errorf("Evidence.Marker = %q, want usage-limit text", ev.Marker)
+	}
+}
+
+func TestAgentState_UsageLimitPatternDisabledWhenProfileEmpty(t *testing.T) {
+	fastTemporalDelta(t)
+	setActivePaneProfileForTest(t, PaneProfile{PromptSentinel: PromptSentinel})
+	pane := "history\n■ You've hit your usage limit.\n❯\u00a0\n"
+	fr := newFakeProbeRunner([]string{pane, pane})
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state == StateUsageLimited {
+		t.Fatal("state = StateUsageLimited with empty profile pattern — production literals must remain sample-gated")
 	}
 }
 
@@ -744,6 +786,7 @@ func TestIsPasteUnsafe(t *testing.T) {
 		StateAwaitingOperator:   true,  // operator typing or popup
 		StateAtRestInCompaction: true,  // /compact slash-command parser destruction
 		StateRateLimited:        true,  // upstream retry-after / cooldown
+		StateUsageLimited:       true,  // quota exhausted / park-until-reset
 		StateIdle:               false, // safe by definition
 		StateWorking:            false, // Claude Code buffers mid-turn keystrokes
 	}

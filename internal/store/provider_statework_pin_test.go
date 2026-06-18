@@ -62,3 +62,15 @@ func TestStateRateLimitedIsNotWorkingSentinel(t *testing.T) {
 			"observed_state value the state/status surfaces should report).", got)
 	}
 }
+
+func TestStateUsageLimitedIsNotWorkingSentinel(t *testing.T) {
+	if got := tmuxio.StateUsageLimited.String(); got == observedStateWorking {
+		t.Fatalf("tmuxio.StateUsageLimited renders %q == observedStateWorking %q — a usage-limited "+
+			"pane would wrongly consume #448 provider capacity while parked (#540). Keep them distinct.",
+			got, observedStateWorking)
+	}
+	if got := tmuxio.StateUsageLimited.String(); got != "usage-limited" {
+		t.Fatalf("tmuxio.StateUsageLimited.String() = %q, want \"usage-limited\" (the persisted "+
+			"observed_state value the state/status surfaces should report).", got)
+	}
+}

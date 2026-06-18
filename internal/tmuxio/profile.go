@@ -59,6 +59,10 @@ import "regexp"
 //     adapter's rate-limit pane (#504). Empty parks the detector. The regex is
 //     validated at startup and may use named capture groups `retry_seconds`
 //     (load-bearing in #504) plus future-extensible fields such as `retry_at`.
+//   - UsageLimitPattern: operator-configurable regex that identifies an
+//     adapter's usage-limit pane (#540). Empty parks the detector. This is a
+//     distinct hard-stop sibling to rate-limit: the mailman parks until quota
+//     reset rather than backing off exponentially.
 type PaneProfile struct {
 	PromptSentinel         string
 	CompactionMarker       string
@@ -66,6 +70,7 @@ type PaneProfile struct {
 	StatusLineMarker       string
 	PasteCollapseMarker    string
 	RateLimitPattern       string
+	UsageLimitPattern      string
 }
 
 // ClaudePaneProfile returns the Claude Code pane-observation profile — the
@@ -126,6 +131,8 @@ const CodexPasteCollapseMarker = "[Pasted Content"
 //     it is not a silent gap.
 //   - RateLimitPattern: empty pending empirical Codex rate-limit captures
 //     (#504). Do not add production literals without a real pane sample.
+//   - UsageLimitPattern: empty pending empirical Codex usage-limit captures
+//     (#540). Do not add production literals without a real pane sample.
 func CodexPaneProfile() PaneProfile {
 	return PaneProfile{
 		PromptSentinel:      CodexPromptSentinel,
@@ -143,6 +150,7 @@ func CodexPaneProfile() PaneProfile {
 // observe the historical behavior unchanged.
 var activeProfile = ClaudePaneProfile()
 var activeRateLimitRE *regexp.Regexp
+var activeUsageLimitRE *regexp.Regexp
 
 // SetActivePaneProfile installs the active pane-observation profile. Called once
 // from cli.Run at process start with the adapter's Profile.Pane. Callers should
@@ -153,21 +161,21 @@ var activeRateLimitRE *regexp.Regexp
 // goroutine starts observing.
 func SetActivePaneProfile(p PaneProfile) {
 	activeProfile = p
-	if p.RateLimitPattern == "" {
-		activeRateLimitRE = nil
-		return
-	}
-	re, err := regexp.Compile(p.RateLimitPattern)
-	if err != nil {
-		// The serve startup path validates the pattern before installing it.
-		// Direct test callers that bypass validation should not inherit a stale
-		// matcher from a previous profile.
-		activeRateLimitRE = nil
-		return
-	}
-	activeRateLimitRE = re
+	activeRateLimitRE = compileProfilePattern(p.RateLimitPattern)
+	activeUsageLimitRE = compileProfilePattern(p.UsageLimitPattern)
 }
 
 // ActivePaneProfile returns the installed pane-observation profile — a read-only
 // accessor for callers and tests that need to inspect the active snippets.
 func ActivePaneProfile() PaneProfile { return activeProfile }
+
+func compileProfilePattern(pattern string) *regexp.Regexp {
+	if pattern == "" {
+		return nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil
+	}
+	return re
+}

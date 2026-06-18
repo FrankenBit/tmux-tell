@@ -180,12 +180,13 @@ Metrics exposed (all prefixed `tmux_tell_`):
 | `tmux_tell_delivery_verify_attempt_seconds` | histogram | `recipient` | time in the post-Enter verify-token retry loop |
 | `tmux_tell_queue_depth` | gauge | `agent` | current queued (undelivered) depth, sampled each loop |
 | `tmux_tell_mailman_loop_iterations_total` | counter | `agent` | serve-loop iterations (liveness + cadence) |
-| `tmux_tell_paste_unsafe_aborts_total` | counter | `agent`, `reason` | deliveries aborted because the pane was paste-unsafe; `reason` ∈ `awaiting_operator` / `compaction` / `copy_mode` / `rate_limited` / `unknown` / `probe_failed` |
+| `tmux_tell_paste_unsafe_aborts_total` | counter | `agent`, `reason` | pre-paste TOCTOU aborts only: the gate passed, but the pane went paste-unsafe before paste; `reason` ∈ `awaiting_operator` / `compaction` / `copy_mode` / `rate_limited` / `usage_limited` / `unknown` / `probe_failed` |
 | `tmux_tell_provider_defer_total` | counter | `provider` | deliveries deferred by the #448 per-provider concurrency cap (too many same-provider chambers working) |
 | `tmux_tell_provider_defer_inflight` | gauge | `provider` | current count of messages held by the #448 per-provider concurrency cap in this mailman process |
 | `tmux_tell_provider_defer_wait_seconds` | histogram | `provider` | wall-clock wait from a message's first provider-cap deferral until the cap slot reopens |
 | `tmux_tell_chamber_rate_limited_seconds` | gauge | `agent`, `provider` | live age of a rate-limited chamber, refreshed while the retry wait is active; present-at-zero when rate-limit detection is configured |
 | `tmux_tell_chamber_rate_limit_retry_after_seconds` | gauge | `agent`, `provider` | live seconds remaining until the next retry after the last rate-limit observation; present-at-zero when detection is configured |
+| `tmux_tell_chamber_usage_limited_seconds` | gauge | `agent`, `provider` | live age of a usage-limited chamber, refreshed while parked until reset; present-at-zero when usage-limit detection is configured |
 | `tmux_tell_copymode_defer_total` | counter | `agent` | delivery cycles deferred because the recipient pane was scrolled up in copy-mode (#526) |
 | `tmux_tell_copymode_defer_wait_seconds` | histogram | `agent` | per-gate-cycle wall-clock a delivery waited on copy-mode, from first observation until the cycle resolved (delivered on return-to-live, or reverted at MaxWait); not a per-message total (#526) |
 | `tmux_tell_delivery_latency_by_priority_seconds` | histogram | `priority` | queued→delivered latency by message priority (#449) — low / normal / high |
@@ -199,6 +200,14 @@ For the chamber rate-limit gauges, each `{agent,provider}` series is one
 mailman process's local view. `tmux_tell_chamber_rate_limited_seconds` tracks
 how long the chamber has been rate-limited; `tmux_tell_chamber_rate_limit_retry_after_seconds`
 tracks live seconds remaining until the next retry.
+
+For the usage-limit gauge, each `{agent,provider}` series is one mailman
+process's local view. `tmux_tell_chamber_usage_limited_seconds` tracks how long
+the chamber has been parked on a usage limit.
+
+`tmux_tell_paste_unsafe_aborts_total{reason=*}` is separate from those steady-state
+gauges: it counts only the rare pre-paste safety aborts in the gate→paste window,
+not the ongoing defer/park states themselves.
 
 The endpoint is standard Prometheus text exposition, so any compatible scraper works —
 point its scrape config at the per-agent `host:port/metrics`. The alcatraz Alloy scrape

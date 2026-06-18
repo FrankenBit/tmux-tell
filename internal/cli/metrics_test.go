@@ -458,6 +458,7 @@ func TestPasteUnsafeReason(t *testing.T) {
 		{tmuxio.StateAwaitingOperator, nil, "awaiting_operator"},
 		{tmuxio.StateAtRestInCompaction, nil, "compaction"},
 		{tmuxio.StateRateLimited, nil, "rate_limited"},
+		{tmuxio.StateUsageLimited, nil, "usage_limited"},
 		{tmuxio.StateUnknown, nil, "unknown"},
 		{tmuxio.StateIdle, nil, "unknown"}, // non-unsafe state never reaches here; maps to unknown
 		{tmuxio.StateIdle, context.DeadlineExceeded, "probe_failed"},

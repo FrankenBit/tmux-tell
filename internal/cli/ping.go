@@ -140,8 +140,8 @@ type pingEvidence struct {
 	// our ping"; >1 means a real backlog behind/ahead of it.
 	QueueDepth int `json:"queue_depth"`
 	// CurrentState is the observe-gate / agent_state classification
-	// (idle / working / rate-limited / awaiting-operator /
-	// at-rest-in-compaction / unknown).
+	// (idle / working / rate-limited / usage-limited /
+	// awaiting-operator / at-rest-in-compaction / unknown).
 	CurrentState string `json:"current_state"`
 	// StuckReason is the #291 park reason (e.g. "pane-not-found") when the
 	// mailman has parked itself; empty otherwise.
@@ -433,7 +433,7 @@ func runPingCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("open store: %v", err), exitInternal)
 	}
-	defer s.Close() //nolint:errcheck // best-effort close
+	defer func() { _ = s.Close() }()
 
 	ctx := context.Background()
 	fromName, _, err := identity.Resolve(ctx, s, *from)

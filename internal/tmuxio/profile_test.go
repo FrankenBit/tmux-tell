@@ -59,6 +59,9 @@ func TestClaudePaneProfile_MatchesConsts(t *testing.T) {
 	if p.RateLimitPattern != "" {
 		t.Errorf("RateLimitPattern = %q, want empty by default", p.RateLimitPattern)
 	}
+	if p.UsageLimitPattern != "" {
+		t.Errorf("UsageLimitPattern = %q, want empty by default", p.UsageLimitPattern)
+	}
 }
 
 // TestCodexPromptSentinel_Bytes pins the byte-level encoding of the Codex
@@ -89,6 +92,9 @@ func TestCodexPaneProfile_Shape(t *testing.T) {
 	}
 	if p.RateLimitPattern != "" {
 		t.Errorf("Codex RateLimitPattern = %q, want empty pending characterization", p.RateLimitPattern)
+	}
+	if p.UsageLimitPattern != "" {
+		t.Errorf("Codex UsageLimitPattern = %q, want empty pending characterization", p.UsageLimitPattern)
 	}
 }
 

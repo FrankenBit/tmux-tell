@@ -37,11 +37,13 @@ func TestLoadFrom_HappyPathParsesDefaultsAndAgent(t *testing.T) {
 notify-on-failed = false
 input-stale-threshold = "45s"
 rate-limit-pattern = "limit reached"
+usage-limit-pattern = "usage limit"
 
 [agent.surveyor]
 notify-on-failed = true
 input-stale-threshold = "90s"
 rate-limit-pattern = "retry after (?P<retry_seconds>\\d+s)"
+usage-limit-pattern = "quota exhausted"
 `
 	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -61,6 +63,9 @@ rate-limit-pattern = "retry after (?P<retry_seconds>\\d+s)"
 	if f.Defaults.RateLimitPattern == nil || *f.Defaults.RateLimitPattern != "limit reached" {
 		t.Errorf("Defaults.RateLimitPattern = %v, want limit reached", f.Defaults.RateLimitPattern)
 	}
+	if f.Defaults.UsageLimitPattern == nil || *f.Defaults.UsageLimitPattern != "usage limit" {
+		t.Errorf("Defaults.UsageLimitPattern = %v, want usage limit", f.Defaults.UsageLimitPattern)
+	}
 	if f.Agent == nil || f.Agent["surveyor"].NotifyOnFailed == nil {
 		t.Fatalf("agent.surveyor.NotifyOnFailed missing")
 	}
@@ -69,6 +74,9 @@ rate-limit-pattern = "retry after (?P<retry_seconds>\\d+s)"
 	}
 	if f.Agent["surveyor"].RateLimitPattern == nil || *f.Agent["surveyor"].RateLimitPattern != "retry after (?P<retry_seconds>\\d+s)" {
 		t.Errorf("agent.surveyor.RateLimitPattern = %v, want retry after (?P<retry_seconds>\\d+s)", f.Agent["surveyor"].RateLimitPattern)
+	}
+	if f.Agent["surveyor"].UsageLimitPattern == nil || *f.Agent["surveyor"].UsageLimitPattern != "quota exhausted" {
+		t.Errorf("agent.surveyor.UsageLimitPattern = %v, want quota exhausted", f.Agent["surveyor"].UsageLimitPattern)
 	}
 }
 
@@ -110,6 +118,24 @@ func TestResolveString_PrecedenceChain_RateLimitPattern(t *testing.T) {
 		t.Fatalf("defaults resolve = %q, want defaults pattern", got)
 	}
 	if got := ResolveString(&File{}, "other", "rate-limit-pattern", "hardcoded"); got != "hardcoded" {
+		t.Fatalf("hardcoded resolve = %q, want hardcoded", got)
+	}
+}
+
+func TestResolveString_PrecedenceChain_UsageLimitPattern(t *testing.T) {
+	file := &File{
+		Defaults: Block{UsageLimitPattern: strPtr("defaults usage pattern")},
+		Agent: map[string]Block{
+			"surveyor": {UsageLimitPattern: strPtr("agent usage pattern")},
+		},
+	}
+	if got := ResolveString(file, "surveyor", "usage-limit-pattern", "hardcoded"); got != "agent usage pattern" {
+		t.Fatalf("agent override resolve = %q, want agent usage pattern", got)
+	}
+	if got := ResolveString(file, "other", "usage-limit-pattern", "hardcoded"); got != "defaults usage pattern" {
+		t.Fatalf("defaults resolve = %q, want defaults usage pattern", got)
+	}
+	if got := ResolveString(&File{}, "other", "usage-limit-pattern", "hardcoded"); got != "hardcoded" {
 		t.Fatalf("hardcoded resolve = %q, want hardcoded", got)
 	}
 }

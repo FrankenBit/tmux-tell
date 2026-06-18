@@ -857,6 +857,39 @@ func TestObserveGate_WorkingDeliverImmediately_FastPath(t *testing.T) {
 	}
 }
 
+// TestObserveGate_UsageLimited_ReturnsErrUsageLimited pins the hard-stop
+// sibling to rate-limit: when the pane matches the usage-limit regex, the gate
+// returns ErrUsageLimited immediately so the caller can park until reset.
+func TestObserveGate_UsageLimited_ReturnsErrUsageLimited(t *testing.T) {
+	fastObserveDelta(t)
+	setActivePaneProfileForTest(t, PaneProfile{
+		PromptSentinel:    PromptSentinel,
+		UsageLimitPattern: `■ You've hit your usage limit`,
+	})
+	pane := "history\n■ You've hit your usage limit.\n❯\u00a0\n"
+	runner := newObserveGateRunner([]observeStep{
+		{paneA: pane, paneB: pane, cursorX: 2, cursorY: 2, inputContent: ""},
+	})
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     time.Microsecond,
+		PollIntervalMax:     time.Microsecond,
+		InputStaleThreshold: time.Minute,
+		MaxWait:             time.Second,
+	})
+	if !errors.Is(err, ErrUsageLimited) {
+		t.Fatalf("err = %v, want ErrUsageLimited", err)
+	}
+	if outcome.State != StateUsageLimited {
+		t.Fatalf("State = %v, want StateUsageLimited", outcome.State)
+	}
+	if outcome.Iterations != 1 {
+		t.Fatalf("Iterations = %d, want 1", outcome.Iterations)
+	}
+}
+
 // TestObserveGate_WorkingDeliverImmediately_Off_DefaultBackoff pins
 // the default-off behavior: same StateWorking capture without the
 // opt-in flag falls through to the safer-default wait, hits MaxWait,

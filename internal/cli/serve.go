@@ -77,6 +77,12 @@ const (
 	// rateLimitMetricsTick refreshes the standing rate-limit gauges while the
 	// mailman is sleeping in the defer window so scrapes see live values.
 	rateLimitMetricsTick = 50 * time.Millisecond
+	// usageLimitRecheckInterval is the fixed park-until-reset cadence for a
+	// usage-limited chamber. Hard stops do not exponential-backoff; they park.
+	usageLimitRecheckInterval = 30 * time.Second
+	// usageLimitMetricsTick refreshes the standing usage-limit gauge while the
+	// mailman is parked so scrapes see live values.
+	usageLimitMetricsTick = 5 * time.Second
 )
 
 // stuckBackoffBase is the unit for paneNotFoundBackoff's exponential schedule.
@@ -514,7 +520,14 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	rateLimitPattern := config.ResolveString(cfg, *agent, "rate-limit-pattern", "")
 	if rateLimitPattern != "" {
 		if _, perr := regexp.Compile(rateLimitPattern); perr != nil {
-			fmt.Fprintf(stderr, "WARN config: rate-limit-pattern %q: %v\n", rateLimitPattern, perr)
+			fmt.Fprintf(stderr, "ERROR config: rate-limit-pattern %q: %v\n", rateLimitPattern, perr)
+			return exitUsage
+		}
+	}
+	usageLimitPattern := config.ResolveString(cfg, *agent, "usage-limit-pattern", "")
+	if usageLimitPattern != "" {
+		if _, perr := regexp.Compile(usageLimitPattern); perr != nil {
+			fmt.Fprintf(stderr, "ERROR config: usage-limit-pattern %q: %v\n", usageLimitPattern, perr)
 			return exitUsage
 		}
 	}
@@ -540,6 +553,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	tmuxio.SetRetrySchedule(tmuxio.DeriveRetrySchedule(*verifyRetryBudget))
 	current := tmuxio.ActivePaneProfile()
 	current.RateLimitPattern = rateLimitPattern
+	current.UsageLimitPattern = usageLimitPattern
 	tmuxio.SetActivePaneProfile(current)
 	// Resolve the paste→Enter settle delay (#360), same precedence chain as
 	// the verify-retry budget: TOML per-agent value unless the CLI flag was
@@ -593,7 +607,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
 		return exitInternal
 	}
-	defer s.Close() //nolint:errcheck // best-effort close
+	defer func() { _ = s.Close() }()
 
 	stopCtx, stop := signal.NotifyContext(context.Background(),
 		syscall.SIGTERM, syscall.SIGINT)
@@ -897,6 +911,9 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		m.SetChamberRateLimited(opts.Agent, active.Provider, 0)
 		m.SetChamberRateLimitRetryAfter(opts.Agent, active.Provider, 0)
 	}
+	if m != nil && tmuxio.ActivePaneProfile().UsageLimitPattern != "" {
+		m.SetChamberUsageLimited(opts.Agent, active.Provider, 0)
+	}
 
 	// #507: per-message first-defer timestamps (publicID → first time the
 	// provider cap deferred it this serve run). Stamped on the first defer,
@@ -913,6 +930,8 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		rateLimitedSince    time.Time
 		rateLimitedRetryAt  time.Time
 		rateLimitedAttempts int
+		usageLimitedMsgID   string
+		usageLimitedSince   time.Time
 	)
 	clearRateLimitState := func() {
 		if rateLimitedMsgID == "" {
@@ -926,6 +945,16 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		rateLimitedSince = time.Time{}
 		rateLimitedRetryAt = time.Time{}
 		rateLimitedAttempts = 0
+	}
+	clearUsageLimitState := func() {
+		if usageLimitedMsgID == "" {
+			return
+		}
+		if m != nil {
+			m.SetChamberUsageLimited(opts.Agent, active.Provider, 0)
+		}
+		usageLimitedMsgID = ""
+		usageLimitedSince = time.Time{}
 	}
 
 	for {
@@ -1039,6 +1068,9 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 
 		if rateLimitedMsgID != "" && rateLimitedMsgID != msg.PublicID {
 			clearRateLimitState()
+		}
+		if usageLimitedMsgID != "" && usageLimitedMsgID != msg.PublicID {
+			clearUsageLimitState()
 		}
 
 		// kind=ping: substrate-only reachability probe (#144). The mere
@@ -1282,6 +1314,35 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				case errors.Is(gerr, context.Canceled):
 					// SIGTERM during the observe loop — exit cleanly.
 					return exitOK
+				case errors.Is(gerr, tmuxio.ErrUsageLimited):
+					// #540: the pane is visibly usage-limited. Revert the
+					// claim and park until quota resets; this is a hard-stop
+					// sibling to rate-limit, not a retryable throttle.
+					if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
+						logger.Printf("WARN gate_usagelimited_recover_failed id=%s err=%v", msg.PublicID, rerr)
+					}
+					if usageLimitedMsgID != msg.PublicID {
+						usageLimitedMsgID = msg.PublicID
+						usageLimitedSince = time.Now()
+					}
+					logger.Printf("WARN gate_usagelimited id=%s pane=%s iter=%d — reverting to queued and parking until reset",
+						msg.PublicID, paneForDelivery, outcome.Iterations)
+					if m != nil {
+						refreshUsageLimitMetrics := func(now time.Time) {
+							age := now.Sub(usageLimitedSince).Seconds()
+							if age < 0 {
+								age = 0
+							}
+							m.SetChamberUsageLimited(opts.Agent, active.Provider, age)
+						}
+						refreshUsageLimitMetrics(time.Now())
+						if stopOrSleepWithUpdates(stopCtx, usageLimitRecheckInterval, usageLimitMetricsTick, refreshUsageLimitMetrics) {
+							return exitOK
+						}
+					} else if stopOrSleep(stopCtx, usageLimitRecheckInterval) {
+						return exitOK
+					}
+					continue
 				case errors.Is(gerr, tmuxio.ErrRateLimited):
 					// #504: the pane is visibly rate-limited. Revert the claim
 					// and defer the retry using the parsed retry hint when
@@ -1348,6 +1409,9 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			}
 			if rateLimitedMsgID == msg.PublicID {
 				clearRateLimitState()
+			}
+			if usageLimitedMsgID == msg.PublicID {
+				clearUsageLimitState()
 			}
 			// (c) primary path: when the operator had stable content in
 			// the input row past InputStaleThreshold, archive the

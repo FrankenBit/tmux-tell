@@ -40,7 +40,7 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "open store: %v\n", err)
 		return exitInternal
 	}
-	defer s.Close() //nolint:errcheck // best-effort close
+	defer func() { _ = s.Close() }()
 
 	srv := newMCPServer(s)
 	if err := srv.Serve(context.Background(), stdin, stdout); err != nil && !errors.Is(err, io.EOF) {
@@ -277,7 +277,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpUnregisterHandler(s))
 
 	srv.RegisterTool("tmux-tell.agent_state",
-		"Probe an agent's agent-state via read-only capture-pane (#71). Returns one of six states: idle / working / rate-limited / at-rest-in-compaction / awaiting-operator / unknown. 'Knock at the door without waking the inhabitant' — exactly two capture-pane calls, zero pane mutation, ~200ms latency. Consumers should treat 'unknown' as advisory-not-authoritative per #65's substrate-class-of-claim convention (don't silently roll up an unknown classification to a known state). v1 detects idle/working/unknown reliably; at-rest-in-compaction, awaiting-operator, and rate-limited land when their empirical pane patterns are configured.",
+		"Probe an agent's agent-state via read-only capture-pane (#71). Returns one of seven states: idle / working / rate-limited / usage-limited / at-rest-in-compaction / awaiting-operator / unknown. 'Knock at the door without waking the inhabitant' — exactly two capture-pane calls, zero pane mutation, ~200ms latency. Consumers should treat 'unknown' as advisory-not-authoritative per #65's substrate-class-of-claim convention (don't silently roll up an unknown classification to a known state). v1 detects idle/working/unknown reliably; at-rest-in-compaction, awaiting-operator, rate-limited, and usage-limited land when their empirical pane patterns are configured.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {

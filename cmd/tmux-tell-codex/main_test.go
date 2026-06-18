@@ -44,4 +44,7 @@ func TestCodexProfile_RateLimitPatternSampleGated(t *testing.T) {
 	if p.Pane.RateLimitPattern != "" {
 		t.Fatalf("Codex RateLimitPattern = %q, want empty until real rate-limit pane samples land (#504)", p.Pane.RateLimitPattern)
 	}
+	if p.Pane.UsageLimitPattern != "" {
+		t.Fatalf("Codex UsageLimitPattern = %q, want empty until real usage-limit pane samples land (#540)", p.Pane.UsageLimitPattern)
+	}
 }

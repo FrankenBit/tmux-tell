@@ -27,7 +27,8 @@ type ObserveGateOpts struct {
 	PollIntervalMax time.Duration
 	// BackoffFactor is the multiplicative growth on PollInterval per
 	// iteration when the agent is not yet ready (StateAwaitingOperator,
-	// StateWorking, StateAtRestInCompaction, StateUnknown). Default 1.5.
+	// StateWorking, StateUsageLimited, StateAtRestInCompaction,
+	// StateUnknown). Default 1.5.
 	// The interval resets to PollIntervalMin when the input-row content
 	// changes (operator typed something new) so a fresh observation
 	// cadence kicks in.
@@ -155,6 +156,10 @@ var ErrCopyModeUnsafe = errors.New("tmuxio: observe-gate copy-mode persisted pas
 // an exponential backoff.
 var ErrRateLimited = errors.New("tmuxio: observe-gate rate-limited")
 
+// ErrUsageLimited is returned when the pane is visibly usage-limited. The
+// caller should revert the message to queued and park until quota reset.
+var ErrUsageLimited = errors.New("tmuxio: observe-gate usage-limited")
+
 // sinceIfSet returns the elapsed time since t, or 0 when t is the zero value
 // (the event never happened). Used to populate GateOutcome.CopyModeWait only
 // when the pane was actually observed in copy-mode during the cycle.
@@ -188,10 +193,12 @@ func sinceIfSet(t time.Time) time.Duration {
 //     If the hash remains stable for at least InputStaleThreshold,
 //     return Stale=true with InputContent populated so the caller can
 //     archive + Ctrl+U + paste.
-//  3. On StateWorking / StateRateLimited / StateAtRestInCompaction /
-//     StateUnknown, treat as a safer-default wait or reactive defer
-//     — defer and re-poll, or for rate-limited return ErrRateLimited so the
-//     caller can back off with the parsed retry hint.
+//  3. On StateWorking / StateUsageLimited / StateRateLimited /
+//     StateAtRestInCompaction / StateUnknown, treat as a safer-default wait
+//     or reactive defer — defer and re-poll; for usage-limited return
+//     ErrUsageLimited so the caller can park until reset, and for rate-limited
+//     return ErrRateLimited so the caller can back off with the parsed retry
+//     hint.
 //  4. On each non-idle iteration, sleep PollInterval (starting at
 //     PollIntervalMin, growing by BackoffFactor up to PollIntervalMax)
 //     before the next poll. Reset to PollIntervalMin when the
@@ -328,6 +335,12 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 				Iterations: iterations,
 				RetryAfter: ev.RetryAfter,
 			}, ErrRateLimited
+		case StateUsageLimited:
+			return GateOutcome{
+				Reason:     "usage-limited: " + ev.Reason,
+				State:      state,
+				Iterations: iterations,
+			}, ErrUsageLimited
 		case StateInCopyMode:
 			// #526: operator scrolled the pane up into copy-mode. Safer-
 			// default wait — defer + re-poll; a paste here is consumed as

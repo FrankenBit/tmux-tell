@@ -39,10 +39,15 @@ func startMetricsServer(stopCtx context.Context, m *metrics.Metrics, addr string
 }
 
 // pasteUnsafeReason maps a pre-paste-safety probe outcome to the stable
-// `reason` label on tmux_tell_paste_unsafe_aborts_total. The label set is
-// closed (awaiting_operator | compaction | rate_limited | copy_mode | unknown | probe_failed)
-// so the Grafana panel can enumerate it — it mirrors #146's exposition sketch
-// and the IsPasteUnsafe state set (tmuxio.state). A probe error outranks the
+// `reason` label on tmux_tell_paste_unsafe_aborts_total. This counter is
+// intentionally pre-paste TOCTOU scoped: it records the rare case where the
+// gate passed, then the pane became paste-unsafe before paste. Steady-state
+// defers/parks (rate_limited / usage_limited) are surfaced by their gauges,
+// not by this counter. The label set is closed (awaiting_operator |
+// compaction | rate_limited | usage_limited | copy_mode | unknown |
+// probe_failed) so the
+// Grafana panel can enumerate it — it mirrors #146's exposition sketch and
+// the IsPasteUnsafe state set (tmuxio.state). A probe error outranks the
 // state classification because a failed probe already coerces the state to
 // StateUnknown; the explicit probe_failed label keeps the two distinguishable
 // for the operator reading the heatmap.
@@ -57,6 +62,8 @@ func pasteUnsafeReason(state tmuxio.State, probeErr error) string {
 		return "compaction"
 	case tmuxio.StateRateLimited:
 		return "rate_limited"
+	case tmuxio.StateUsageLimited:
+		return "usage_limited"
 	case tmuxio.StateInCopyMode:
 		return "copy_mode"
 	default:

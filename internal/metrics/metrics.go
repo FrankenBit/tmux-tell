@@ -77,6 +77,7 @@ type Metrics struct {
 	providerDeferWait          *prometheus.HistogramVec
 	chamberRateLimited         *prometheus.GaugeVec
 	chamberRateLimitRetryAfter *prometheus.GaugeVec
+	chamberUsageLimited        *prometheus.GaugeVec
 	copymodeDefer              *prometheus.CounterVec
 	copymodeDeferWait          *prometheus.HistogramVec
 }
@@ -118,7 +119,7 @@ func New() *Metrics {
 		}, []string{"agent"}),
 		pasteUnsafeAborts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tmux_tell_paste_unsafe_aborts_total",
-			Help: "Total deliveries aborted by the pre-paste safety / drift guards because the pane was paste-unsafe, by agent and reason.",
+			Help: "Total pre-paste TOCTOU aborts: the gate passed, then the pane became paste-unsafe before paste, by agent and reason. Steady-state rate_limited/usage_limited parks are counted by their gauges, not here.",
 		}, []string{"agent", "reason"}),
 		mailmanStuck: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tmux_tell_mailman_stuck",
@@ -145,6 +146,10 @@ func New() *Metrics {
 			Name: "tmux_tell_chamber_rate_limit_retry_after_seconds",
 			Help: "Live seconds remaining until the next retry after the chamber's last rate-limit observation, by agent and provider. Zero means the banner did not expose a parseable retry_seconds capture or the retry window has elapsed.",
 		}, []string{"agent", "provider"}),
+		chamberUsageLimited: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tmux_tell_chamber_usage_limited_seconds",
+			Help: "Live age of a chamber's usage-limited state, by agent and provider. Present-at-zero when usage-limit detection is configured; zero means not currently usage-limited.",
+		}, []string{"agent", "provider"}),
 		copymodeDefer: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tmux_tell_copymode_defer_total",
 			Help: "Total delivery cycles deferred because the recipient pane was scrolled up in tmux copy-mode (#526), by agent. One increment per gate cycle that observed copy-mode (delivered-on-exit or reverted-at-MaxWait).",
@@ -169,6 +174,7 @@ func New() *Metrics {
 		m.providerDeferWait,
 		m.chamberRateLimited,
 		m.chamberRateLimitRetryAfter,
+		m.chamberUsageLimited,
 		m.copymodeDefer,
 		m.copymodeDeferWait,
 	)
@@ -289,6 +295,16 @@ func (m *Metrics) SetChamberRateLimitRetryAfter(agent, provider string, seconds 
 		return
 	}
 	m.chamberRateLimitRetryAfter.WithLabelValues(agent, provider).Set(seconds)
+}
+
+// SetChamberUsageLimited sets the current age of a chamber's usage-limited
+// state (#540). Callers should refresh it while the park-until-reset wait is
+// active; zero means not currently usage-limited.
+func (m *Metrics) SetChamberUsageLimited(agent, provider string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.chamberUsageLimited.WithLabelValues(agent, provider).Set(seconds)
 }
 
 // ObserveProviderDeferWait records how long a cap-deferred message waited
