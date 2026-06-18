@@ -33,6 +33,64 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+The substrate-honesty release — v0.19.0 taught the bus to schedule under load;
+v0.19.1 makes the substrate *honest about what it's doing while it does it*. You
+can now see **why** a message is waiting behind the provider cap (#507), the
+control verb says what it actually does now that `compact` is **`sleep`** (#509),
+and the release cut itself can no longer silently drift the README's version pin
+(#514). The throughline isn't decoration: the Arc42 spine's **§10** lands its
+canonical quality goals this cut — *Truthfulness, Reliable, lossless delivery,
+Inspectability, Approachability, Continuity* — and each of those three changes is
+a mechanism that makes one of them more true. Two of the three items v0.19.0
+deferred to "next cut" land here; the third (#504) stays deferred.
+
+Headlines:
+
+- **Provider-cap deferral is now observable (#507, closing #448's partial AC).**
+  v0.19.0 let the mailman *defer* a message while too many same-provider chambers
+  were already generating — but a deferred message just looked `queued`, with no
+  *why*. Now `inbox` flags it (`queued (provider-cap)` in text, a
+  `provider_cap_deferred` boolean on the JSON surface, live-derived alongside
+  `backlog_fenced`), and a `tmux_tell_provider_defer_wait_seconds{provider}`
+  histogram records how long each deferred message waited from its first deferral
+  until its slot reopened. The wait is live-derived rather than stored, so it
+  carries a TTL caveat. **Inspectability** (§10 goal 3) gets its mechanism.
+
+- **The control verb `compact` is now `sleep` (#509).** `control(command=sleep)`
+  is the macro for the Claude Code `/compact` mechanism — the verb now matches
+  what the crew was already saying. `compact` keeps working as a deprecated alias
+  through v1.0 (it resolves to `sleep`, carries a `deprecated` field, and emits a
+  `WARN deprecated_control_macro`, per #480 / ADR-0008 §Discretion). Self-only
+  semantics are unchanged — a peer still can't make you sleep — and the emitted
+  `/compact` CLI primitive plus the `--post-compact-pause` machinery keyed on it
+  are untouched; only the bus verb renames. A new `docs/glossary.md` carries the
+  substrate-neutral lexicon, including the `sleep`-vs-`pause` distinction.
+  **Approachability** (§10 goal 4, consistent vocabulary) made real.
+
+- **The release cut can no longer silently drift the README version pin (#514).**
+  Pinning the README's `tmux-tell-claude vX.Y.Z` example to the cut version was a
+  manual `CONTRIBUTING.md` step silently missed across five cuts (v0.17.0 →
+  v0.18.1). `release.yml`'s transition step now rewrites that line automatically
+  alongside the `[Unreleased]` → `[X.Y.Z]` CHANGELOG move — and **hard-fails the
+  cut** if the line is missing, because a verification step that falls back
+  silently re-introduces the exact drift it exists to kill. **This cut is the
+  first to exercise it.** **Truthfulness** (§10 goal 1), turned on the cut process
+  itself.
+
+Plus the companions — the Arc42 spine reaches its Phase-1 finish line:
+**§10 Quality Requirements (#386)** lands its canonical five-goal set, quality
+tree, and scenarios after a collaborative working session, closing the one section
+v0.19.0 shipped as a seed. A new **outreach README (#516)** — `README.outreach.md`,
+substrate-neutral and free of chamber-framework vocabulary — gives a direct-contact
+rollout a plain-language front door. And the test surface gains a **weekly
+mutation-testing lane (#497/#524)**, non-blocking and informational, exercising
+render / store / tmuxio / cli — this cut is also its first-worked instance.
+
+Deferred: reactive rate-limit detection + cap-aware wake (**#504**, the last leg
+of the #448/#449/#507 scheduling-and-observability arc) — earmarked for this cut
+at v0.19.0 but slipped to a later one; and the v1.0 legacy-alias hard-cut, which
+stays open until v1.0.
+
 ## [0.19.0] — 2026-06-17
 
 
