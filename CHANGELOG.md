@@ -33,6 +33,101 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.21.0] — 2026-06-18
+
+### Added
+
+- **Cross-process change notification (notify-not-poll)** ([#515](https://git.frankenbit.de/frankenbit/tmux-tell/issues/515)).
+  The wait/poll surface now wakes sub-second on a best-effort doorbell instead of
+  only on its poll. A committed write rings a per-recipient doorbell file under
+  `$XDG_RUNTIME_DIR/tmux-tell/notify/`; a waiter (the mailman idle loop,
+  `wait-for-reply`, `inbox --watch`, `ping`, `send --wait-for-delivered`,
+  `track --watch`) watches the directory via `fsnotify` and re-reads SQLite on the
+  ring. This closes the gap SQLite's `update_hook` can't — it fires only for the
+  writing connection, but tmux-tell's writer and waiters are separate processes.
+  The notify is strictly an optimization *over* a slow poll, never a replacement:
+  every loop keeps its poll as the correctness fallback, so a dropped ring costs
+  at most one poll interval of latency, never a lost message — no daemon, no
+  durability, no exactly-once machinery. The existing poll-interval defaults are
+  unchanged (they remain the configurable fallback); `tail` deliberately keeps its
+  fast poll rather than write-amplify every send for a rarely-used firehose.
+- **Copy-mode delivery deferral** ([#526](https://git.frankenbit.de/frankenbit/tmux-tell/issues/526)).
+  When a recipient scrolls their pane up into tmux copy-mode, the mailman now
+  holds delivery instead of pasting over the reader's scroll position — a new
+  precedence-0 `AgentState` (`copy-mode`, detected via `#{pane_in_mode}` before
+  the capture-pane snapshots, since `capture-pane` on a scrolled pane reads the
+  historical view and could misclassify as idle). Held messages surface in
+  `inbox` / `status` as `queued (pane-in-copy-mode)` and deliver automatically
+  within ~15s of returning to the live prompt. Unlike other wait-states, copy-mode
+  never delivers-anyway at `MaxWait` (that would paste into the still-scrolled
+  pane); it reverts-and-retries. Exposed as `tmux_tell_copymode_defer_total{agent}`
+  + `tmux_tell_copymode_defer_wait_seconds{agent}`.
+- **golangci-lint starter ruleset** ([#542](https://git.frankenbit.de/frankenbit/tmux-tell/issues/542)).
+  Adds `.golangci.yml` with a conservative five-linter starter set (`errcheck`,
+  `govet`, `ineffassign`, `staticcheck`, `unused`) plus `gofmt`/`goimports`
+  formatters. Replaces the standalone `gofmt -l .` drift check and `go vet ./...`
+  CI steps with a single `golangci-lint run` step. Adds `make lint` target.
+  Baseline-clean sweep fixed six deprecated-API usages (`SetRetryDelaysForTest` →
+  `SetRetrySchedule`), two dead-code clusters (`seedDelivered`, `fakeWalker`,
+  `matchesExact`, `canonicalAliases`), two ineffectual assignments, and one
+  error-string punctuation finding; unchecked `Close` returns annotated throughout.
+
+### Fixed
+
+- **Codex bus-message footer fragmentation** ([#533](https://git.frankenbit.de/frankenbit/tmux-tell/issues/533)).
+  A bus message whose body ended with a blank-line-separated sign-off (`\n\n— Sender`)
+  could have that trailing line split from the main paste and submitted as a
+  separate prompt in a **Codex** pane. Cause: codex collapses an over-threshold
+  bracketed paste into a `[Pasted Content]` placeholder but segments at `\n\n`
+  paragraph boundaries, leaving a short final paragraph as literal composer text
+  outside the placeholder; the submit Enter sends the placeholder, the literal
+  sign-off survives and is submitted later as its own prompt (and the resubmit
+  loop can't catch it — it keys on the collapse marker, not literal text). The
+  delivery path now normalizes a trailing single-line paragraph (strip our
+  appended newline + collapse the final `\n\n` to `\n`) so codex collapses the
+  sign-off with the bulk. Codex-scoped (gated on the paste-collapse marker) — the
+  Claude paste path is byte-identical. Prior art: #446's single-paste already
+  killed the #389 separate-header fragmentation; this closes the within-one-paste
+  variant.
+- **lint: collapse redundant HasSuffix guard around TrimSuffix in `parseRetrySeconds`** ([#547](https://git.frankenbit.de/frankenbit/tmux-tell/pulls/547)).
+  Pre-existing finding in `internal/tmuxio/state.go:537-539` from #541's
+  `parseRetrySeconds` parser: `strings.TrimSuffix` is a no-op when the suffix isn't
+  present, so the surrounding `if strings.HasSuffix(s, "s")` guard is structurally
+  redundant. Staticcheck S1017 caught it once the lint gate from #542 went live
+  against post-#541 main — exactly the substrate-discipline-working-as-intended
+  shape (n=1 instance of "lagged-base baseline-clean misses dormant findings,
+  steady-state gate catches them"). Folded into #547's docs PR to keep
+  substrate-of-record single-PR-clean.
+
+### Documentation
+
+- **Audited the 12 pre-Arc42 doc surfaces against the Arc42 spine** ([#530](https://git.frankenbit.de/frankenbit/tmux-tell/issues/530), #386 follow-up).
+  Confirmed every architectural fact has one canonical home and there is no drift. The
+  Arc42 sections were already link-first-correct (a synthesis that links the living doc
+  for depth, per [ADR-0015](docs/adr/0015-adopt-arc42-architecture-spine.md)), so nothing
+  was folded *into* them — that would have manufactured the double-canonical the audit
+  exists to remove. The gap was the reverse direction: added Arc42-spine cross-references
+  from the walkthrough/scattered docs (operator-manual → §2, agent-manual → §8.1, why.md
+  → §2/§3, asciinema-capture → `observe-gate.md` as the canonical home of the F6 sentinel
+  finding), flipped `operator-ux.md`'s stale "DRAFT" banner to "Historical (v0.2.1)",
+  flagged `chamber-dispatch.md` as intentionally outside the substrate spine (ADR-0005
+  project-overlay), and corrected the README's Arc42 description (full 12-section spine,
+  not "Phase 1 partial"). No content was outdated or deleted.
+- **Chamber-launch auto-register convention** ([#532](https://git.frankenbit.de/frankenbit/tmux-tell/issues/532)).
+  New "Surviving reboot" section in `docs/operator-manual.md` documents the
+  convention for chamber-launch scripts: call `register --force` on every
+  launch + restart the mailman, so the bus registry self-heals after the
+  predictable post-reboot pane-id renumber. Implementation surface lives on
+  the alcatraz-infra side (`chamber-claude.sh`); this is the substrate-of-
+  record convention-note for operators authoring their own wrappers.
+- **CONTRIBUTING note for CI workflow context renames** ([#546](https://git.frankenbit.de/frankenbit/tmux-tell/issues/546)).
+  Adds a brief "CI workflow context renames" subsection to `CONTRIBUTING.md`
+  documenting that branch-protection required-status-check names must be updated
+  in lockstep when a CI workflow job is renamed. Includes the one-call PATCH
+  recipe + the worked instance (#544 golangci-lint adoption / #546 follow-up).
+  Substrate-of-record discipline: salience over machine-enforcement, exactly the
+  shape the operator surface needs.
+
 ## [0.20.0] — 2026-06-18
 
 
