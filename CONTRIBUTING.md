@@ -147,6 +147,32 @@ A one-time cleanup like #391 is distinct from ongoing drift: if later releases l
 PR-body-mirror prose creep back, file a sibling tracker rather than folding the fix
 into an unrelated change.
 
+### CI workflow context renames
+
+When you rename a CI workflow job (the `name:` field of a `jobs.<id>` block in
+`.forgejo/workflows/*.yml`), the **branch-protection required-status-check name
+for `main` must be updated to match the new context** in the same change. Forgejo
+matches required status checks by **exact name**; the old name will no longer
+appear among completed checks and every future PR will trip `HTTP 405: not all
+required status checks successful` even when CI is substantively green — clearable
+only via `force_merge: true`, which bypasses the matcher rather than fixing it
+(substrate-honest but not the steady-state we want).
+
+Update the rule with one PATCH:
+
+```bash
+curl -s -X PATCH -H "Authorization: token $FORGEJO_TOKEN" -H "Content-Type: application/json" \
+  -d '{"status_check_contexts": ["<new context name>"]}' \
+  "http://127.0.0.1:3000/api/v1/repos/frankenbit/tmux-tell/branch_protections/main"
+```
+
+(Token needs `write:repository` scope; chamber-side `FORGEJO_TOKEN_QUARTERMASTER`
+works. Idempotent — safe to re-apply.)
+
+Worked instance: #544 (golangci-lint adoption renamed `test / go vet + build + test`
+→ `test / lint + build + test`); branch-protection drift caught at merge-gate and
+cleared via #546.
+
 ## Release cuts
 
 **Pre-flight.** If the cut driver works from a shared host checkout (on

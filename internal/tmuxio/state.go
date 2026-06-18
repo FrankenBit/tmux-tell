@@ -534,9 +534,7 @@ func parseRetrySeconds(s string) (time.Duration, error) {
 	if d, err := time.ParseDuration(s); err == nil {
 		return d, nil
 	}
-	if strings.HasSuffix(s, "s") {
-		s = strings.TrimSuffix(s, "s")
-	}
+	s = strings.TrimSuffix(s, "s")
 	f, err := strconv.ParseFloat(s, 64)
 	if err != nil {
 		return 0, err
