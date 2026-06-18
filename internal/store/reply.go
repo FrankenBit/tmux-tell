@@ -66,9 +66,14 @@ func (s *Store) FindReply(ctx context.Context, caller, askID string, sinceID int
 // can't bridge that gap; true cross-process push would need new IPC. So this
 // seam is poll-backed at the substrate side (the operator's chosen option (b),
 // "sql-based polling at the substrate side", 2026-06-09): the poll lives here
-// behind one reusable blocking call, and callers never see it. If the cost ever
-// bites, the implementation can be promoted to a real IPC wakeup (a notify
-// socket / fs-watch on the WAL) without changing a single caller.
+// behind one reusable blocking call, and callers never see it.
+//
+// #515 made good on the documented escape hatch: when a SetWatcher hook is
+// installed (the CLI wires it to the fs-watch doorbell layer), this seam wakes
+// on the reply-insert ring instead of waiting out pollInterval — and not a
+// single caller changed, exactly as promised. The poll remains as the
+// best-effort fallback: a dropped ring just costs one poll interval, never a
+// lost reply (the answer always still comes from FindReply against SQLite).
 //
 // Returns (reply, nil) on a reply, (nil, ctx.Err()) on timeout/cancel.
 //
@@ -79,8 +84,14 @@ func (s *Store) WaitForReply(ctx context.Context, caller, askID string, sinceID 
 	if pollInterval <= 0 {
 		pollInterval = defaultReplyPollInterval
 	}
+	// #515: a reply is a message addressed to caller, so the reply-insert rings
+	// caller's doorbell. Subscribe once for the wait's lifetime; nil when no
+	// watcher is wired → the select below is pure poll, unchanged.
+	notifyCh := watchKey(ctx, caller)
 	for {
-		// Check first — a reply may already be waiting (no wasted sleep).
+		// Check first — a reply may already be waiting (no wasted sleep). This
+		// also closes the subscribe-vs-insert race: a ring that landed between
+		// watchKey and here is caught by this read, not lost.
 		m, err := s.FindReply(ctx, caller, askID, sinceID)
 		if err != nil {
 			return nil, err
@@ -91,6 +102,9 @@ func (s *Store) WaitForReply(ctx context.Context, caller, askID string, sinceID 
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
+		case <-notifyCh:
+			// Fast wake on the reply ring; loop re-reads. nil channel never
+			// fires, so this case is inert when no watcher is wired.
 		case <-time.After(pollInterval):
 		}
 	}

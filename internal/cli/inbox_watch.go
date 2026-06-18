@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
 
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/notify"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
@@ -33,6 +34,12 @@ import (
 // registered it, so it would never observe those writes. A bubbletea tea.Tick
 // re-runs ListMessages(state=queued) each interval; cross-process arrivals show
 // up on the next tick.
+//
+// #515 closes the cross-process gap that motivated the poll: a doorbell-file
+// watch (internal/notify) wakes the model on insert/promote for this agent, so
+// new mail surfaces sub-second instead of on the next 2s tick. The tick stays as
+// the best-effort fallback — a dropped ring just waits out one interval, never
+// loses a row (the list always still comes from ListMessages).
 //
 // The ack action composes with #221: `space` calls store.MarkAcknowledged
 // (queued→acknowledged), the same transition `inbox --ack` drives. There is no
@@ -72,6 +79,12 @@ type inboxActionMsg struct {
 // inboxTickMsg fires on the poll interval; its handler launches the next poll.
 type inboxTickMsg time.Time
 
+// inboxNotifyMsg fires when this agent's #515 doorbell rings (a message was
+// inserted/promoted for it). Its handler polls once and re-arms the wait. It is
+// a SEPARATE one-shot chain from the tick (each inboxNotifyMsg arms exactly one
+// new wait), so it never interacts with the tick's sole-rescheduler invariant.
+type inboxNotifyMsg struct{}
+
 // --- model ------------------------------------------------------------------
 
 // inboxWatchModel is the bubbletea model. It holds the store directly: the
@@ -83,6 +96,7 @@ type inboxWatchModel struct {
 	ctx      context.Context
 	agent    string
 	interval time.Duration
+	notifyCh <-chan struct{} // #515 doorbell; nil → tick-poll only
 
 	msgs     []store.Message // queued mail, oldest-first (ListMessages ASC)
 	cursor   int             // selected row
@@ -101,8 +115,28 @@ func (m inboxWatchModel) Init() tea.Cmd {
 	// Poll immediately (first frame shows real state) AND start the single tick
 	// chain. The tick is the sole rescheduler (see Update): poll results never
 	// re-arm a tick, so an action-triggered one-shot refresh can't spawn a
-	// second timer chain.
-	return tea.Batch(m.pollCmd(), inboxTickCmd(m.interval))
+	// second timer chain. The #515 notify-wait is a separate self-re-arming chain
+	// (nil-safe when no doorbell is wired).
+	return tea.Batch(m.pollCmd(), inboxTickCmd(m.interval), m.notifyWaitCmd())
+}
+
+// notifyWaitCmd blocks until the agent's #515 doorbell rings, then emits
+// inboxNotifyMsg so Update can poll immediately instead of waiting for the next
+// tick. Returns nil (no command) when no doorbell is wired. The wait also
+// selects on ctx.Done so the goroutine never outlives the program — on shutdown
+// it returns a nil msg, which arms nothing and ends the chain.
+func (m inboxWatchModel) notifyWaitCmd() tea.Cmd {
+	if m.notifyCh == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		select {
+		case <-m.notifyCh:
+			return inboxNotifyMsg{}
+		case <-m.ctx.Done():
+			return nil
+		}
+	}
 }
 
 // pollCmd reads the queued list once. It does not sleep — the tick owns
@@ -143,6 +177,12 @@ func (m inboxWatchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// loop rescheduled on every poll, so each ack — which re-polls — leaked an
 		// extra timer; #268 fix).
 		return m, tea.Batch(m.pollCmd(), inboxTickCmd(m.interval))
+
+	case inboxNotifyMsg:
+		// Doorbell rang: poll once now AND re-arm the notify-wait. This is the
+		// notify chain's sole rescheduler (mirrors the tick invariant) — exactly
+		// one wait is re-armed per ring, so the chain can't leak a second waiter.
+		return m, tea.Batch(m.pollCmd(), m.notifyWaitCmd())
 
 	case inboxPollMsg:
 		if msg.err != nil {
@@ -431,7 +471,13 @@ func runInboxWatch(ctx context.Context, s *store.Store, agent string, interval t
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	m := inboxWatchModel{store: s, ctx: ctx, agent: agent, interval: interval}
+	// #515: subscribe to this agent's doorbell for sub-second new-mail wakes; the
+	// 2s tick remains the best-effort fallback. Best-effort — a nil channel on
+	// setup failure degrades to tick-only.
+	notifyCh, stopNotify := notify.WatchOrNil(ctx, agent)
+	defer stopNotify()
+
+	m := inboxWatchModel{store: s, ctx: ctx, agent: agent, interval: interval, notifyCh: notifyCh}
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
 	final, err := p.Run()
 	if err != nil {

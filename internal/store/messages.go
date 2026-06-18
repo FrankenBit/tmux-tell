@@ -127,6 +127,12 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 	if err := tx.Commit(); err != nil {
 		return InsertResult{}, err
 	}
+	// Ring the recipient's doorbell post-commit (#515) — but only for a row that
+	// is actually queued. A deferred insert is staged, not deliverable; it rings
+	// later, when PromoteDeferred moves it to queued.
+	if p.DeliverAfter == "" {
+		fireNotify(p.ToAgent)
+	}
 	return res, nil
 }
 
@@ -170,6 +176,9 @@ func (s *Store) InsertNotice(ctx context.Context, p InsertParams) (InsertResult,
 	if err := tx.Commit(); err != nil {
 		return InsertResult{}, err
 	}
+	// Notices are always immediate (cap-bypassed, never deferred), so ring
+	// unconditionally post-commit (#515).
+	fireNotify(p.ToAgent)
 	return res, nil
 }
 
@@ -240,6 +249,12 @@ func (s *Store) InsertMessagePair(ctx context.Context, p1, p2 InsertParams, link
 	}
 	if err := tx.Commit(); err != nil {
 		return InsertResult{}, InsertResult{}, err
+	}
+	// p1 and p2 share ToAgent (enforced above). Ring once post-commit (#515),
+	// unless p1 is staged for later delivery — a deferred pair head rings at
+	// promotion, like a deferred single insert.
+	if p1.DeliverAfter == "" {
+		fireNotify(p1.ToAgent)
 	}
 	return res1, res2, nil
 }
@@ -531,6 +546,12 @@ func (s *Store) MarkDeliveredInInputBox(ctx context.Context, publicID string) er
 // markDelivered is the shared core: transition delivering → delivered, stamp
 // delivered_at, and write the verified bit. The verified value is the only
 // difference between the confirmed and unverified paths.
+//
+// Does NOT ring a #515 doorbell: this transition is keyed by publicID and
+// carries no recipient without an extra fetch. The mailman caller holds its
+// serving agent, so it rings notify.Notify(opts.Agent) after a delivery outcome
+// — D2's no-extra-query split. Waiters woken: a sender's waitForDelivery and
+// track --watch, both keyed on the recipient.
 func (s *Store) markDelivered(ctx context.Context, publicID string, verified int) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE messages
@@ -549,6 +570,10 @@ func (s *Store) markDelivered(ctx context.Context, publicID string, verified int
 
 // MarkFailed transitions a delivering message to 'failed', recording the
 // reason in the error column. Same not-found semantics as MarkDelivered.
+//
+// Like markDelivered, does NOT ring a #515 doorbell (publicID-keyed, no
+// recipient without a fetch); the mailman rings notify.Notify(opts.Agent) after
+// the failure so a waiting sender's waitForDelivery wakes promptly.
 func (s *Store) MarkFailed(ctx context.Context, publicID, reason string) error {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE messages
@@ -595,7 +620,18 @@ func (s *Store) PromoteDeferred(ctx context.Context, toAgent, trigger string) (i
 	if err != nil {
 		return 0, fmt.Errorf("store: promote deferred: %w", err)
 	}
-	return res.RowsAffected()
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	// A promoted row is now queued and deliverable. flush_deferred runs in the
+	// agent's own process (e.g. the post-/compact resume routine), separate from
+	// the recipient's idle mailman — ring its doorbell so the newly-queued work
+	// is delivered without waiting for the slow fallback poll (#515).
+	if n > 0 {
+		fireNotify(toAgent)
+	}
+	return n, nil
 }
 
 // RecipientQueueDepth returns the number of queued messages addressed to

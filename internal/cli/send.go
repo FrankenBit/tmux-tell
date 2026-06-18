@@ -305,7 +305,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		if timeout <= 0 {
 			timeout = defaultDeliveredWaitTimeout
 		}
-		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, timeout, pingPollInterval)
+		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, p.To, timeout, pingPollInterval)
 	}
 	renderSendResult(stdout, resp, p.To, p.Format)
 	return exitOK
@@ -462,7 +462,7 @@ func sendOneRecipient(ctx context.Context, s *store.Store, p sendParams) (SendRe
 		if timeout <= 0 {
 			timeout = defaultDeliveredWaitTimeout
 		}
-		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, timeout, pingPollInterval)
+		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, p.To, timeout, pingPollInterval)
 	}
 	return resp, nil
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/notify"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
@@ -201,6 +202,11 @@ func pollPingTerminal(ctx context.Context, s *store.Store, id, agent string, tim
 	if pollInterval <= 0 {
 		pollInterval = pingPollInterval
 	}
+	// #515: the mailman rings the pinged agent's doorbell on the ping's
+	// delivered/failed transition. Wake on it instead of waiting out pollInterval;
+	// nil channel (best-effort setup failed) degrades to poll-only.
+	notifyCh, stopNotify := notify.WatchOrNil(ctx, agent)
+	defer stopNotify()
 	start := time.Now()
 	deadline := start.Add(timeout)
 	for {
@@ -241,6 +247,8 @@ func pollPingTerminal(ctx context.Context, s *store.Store, id, agent string, tim
 				ElapsedMs: time.Since(start).Milliseconds(),
 				Error:     ctx.Err().Error(),
 			}, nil
+		case <-notifyCh:
+			// Fast wake on the delivery ring; loop re-reads the row.
 		case <-time.After(pollInterval):
 		}
 	}

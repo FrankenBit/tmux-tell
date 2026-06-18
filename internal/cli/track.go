@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/notify"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
@@ -192,6 +193,20 @@ func runTrackWatch(
 		defer tcancel()
 	}
 
+	// #515: wake on the tracked message's recipient doorbell (rung by the
+	// mailman on each delivery transition) instead of waiting out interval. The
+	// recipient isn't known until the first doTrack read, so the watch is
+	// established lazily below, reusing that fetch — no extra query. A ring in
+	// the brief window before the watch is established just falls back to the
+	// poll (best-effort). nil channel = poll-only.
+	var notifyCh <-chan struct{}
+	var stopNotify func()
+	defer func() {
+		if stopNotify != nil {
+			stopNotify()
+		}
+	}()
+
 	var lastState string
 	first := true
 	for {
@@ -201,6 +216,9 @@ func runTrackWatch(
 				return writeJSONError(stdout, stderr, err.Error(), exitUnavailable)
 			}
 			return writeJSONError(stdout, stderr, err.Error(), exitInternal)
+		}
+		if notifyCh == nil && stopNotify == nil && res.To != "" {
+			notifyCh, stopNotify = notify.WatchOrNil(ctx, res.To)
 		}
 		if first || res.State != lastState {
 			renderTrackResult(stdout, stderr, res, format)
@@ -218,6 +236,10 @@ func runTrackWatch(
 				return exitOK
 			}
 			return exitOK
+		case <-notifyCh:
+			// Fast wake on a transition ring; loop re-reads. nil until the
+			// watch is established, and a nil channel never fires.
+			continue
 		case <-time.After(interval):
 			continue
 		}

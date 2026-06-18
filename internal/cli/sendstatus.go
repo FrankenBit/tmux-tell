@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/notify"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
@@ -245,11 +246,17 @@ const defaultDeliveredWaitTimeout = 10 * time.Second
 // waitForDelivery polls the inserted row until it reaches a store-terminal
 // state (delivered/failed) or timeout elapses, returning the DeliveryStatus.
 // Mirrors ping's pollPingTerminal shape (reuses pingPollInterval) but builds
-// the send-schema type. ctx cancellation reports as timeout.
-func waitForDelivery(ctx context.Context, s *store.Store, id string, timeout, pollInterval time.Duration) *DeliveryStatus {
+// the send-schema type. ctx cancellation reports as timeout. recipient is the
+// message's to-agent — the #515 doorbell the recipient's mailman rings on the
+// delivery transition (an empty recipient just means poll-only).
+func waitForDelivery(ctx context.Context, s *store.Store, id, recipient string, timeout, pollInterval time.Duration) *DeliveryStatus {
 	if pollInterval <= 0 {
 		pollInterval = pingPollInterval
 	}
+	// #515: wake on the recipient's delivery ring instead of waiting out
+	// pollInterval; nil channel degrades to poll-only.
+	notifyCh, stopNotify := notify.WatchOrNil(ctx, recipient)
+	defer stopNotify()
 	start := time.Now()
 	deadline := start.Add(timeout)
 	for {
@@ -267,6 +274,8 @@ func waitForDelivery(ctx context.Context, s *store.Store, id string, timeout, po
 		select {
 		case <-ctx.Done():
 			return &DeliveryStatus{State: pingStateTimeout, VerifyMs: time.Since(start).Milliseconds()}
+		case <-notifyCh:
+			// Fast wake on the delivery ring; loop re-reads the row.
 		case <-time.After(pollInterval):
 		}
 	}

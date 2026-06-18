@@ -16,6 +16,7 @@ import (
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/discover"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/metrics"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/notify"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/render"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/sdnotify"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
@@ -957,6 +958,16 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		usageLimitedSince = time.Time{}
 	}
 
+	// #515: ring-aware idle wake. Watch this mailman's own recipient doorbell so
+	// the no-work idle waits below return sub-second when a message is inserted
+	// or promoted for opts.Agent, instead of waiting out the full
+	// IdlePollInterval. Best-effort: WatchOrNil yields a nil channel on any
+	// fsnotify setup failure, and a nil channel never fires in the select, so the
+	// loop falls back to the (still-present) poll. The poll stays the correctness
+	// path; this only lowers steady-state latency.
+	idleNotifyCh, stopIdleNotify := notify.WatchOrNil(opCtx, opts.Agent)
+	defer stopIdleNotify()
+
 	for {
 		if stopCtx.Err() != nil {
 			return exitOK
@@ -1050,13 +1061,13 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		msg, err := s.ClaimNextWithStrategy(opCtx, opts.Agent, opts.PriorityStrategy)
 		if err != nil {
 			logger.Printf("claim_failed err=%v", err)
-			if stopOrSleep(stopCtx, opts.IdlePollInterval) {
+			if stopSleepOrNotify(stopCtx, opts.IdlePollInterval, idleNotifyCh) {
 				return exitOK
 			}
 			continue
 		}
 		if msg == nil {
-			if stopOrSleep(stopCtx, opts.IdlePollInterval) {
+			if stopSleepOrNotify(stopCtx, opts.IdlePollInterval, idleNotifyCh) {
 				return exitOK
 			}
 			continue
@@ -1084,6 +1095,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		// or load their context. That is the whole point of the kind.
 		if msg.Kind == store.KindPing {
 			handlePing(opCtx, s, logger, opts.Agent, a.PaneID, msg)
+			// #515: the ping's delivered/failed transition is publicID-keyed;
+			// ring the recipient doorbell so a ping --watch (pollPingTerminal,
+			// keyed on the pinged agent) wakes promptly.
+			notify.Notify(opts.Agent)
 			if stopOrSleep(stopCtx, opts.InterMessageDelay) {
 				return exitOK
 			}
@@ -1666,6 +1681,15 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				opts.NotifyOnFailed, opts.Agent, msg, "failed", derr.Error())
 		}
 
+		// #515: a delivery outcome (delivered / input-box / failed) just landed
+		// on a publicID-keyed transition the store can't ring (no recipient
+		// without a fetch). The mailman holds its serving agent, so ring here —
+		// this wakes a sender blocked in waitForDelivery and a track --watch, both
+		// keyed on the recipient. Fires before the cooldown sleep, but the
+		// cooldown uses plain stopOrSleep (not notify-aware), so this mailman's own
+		// ring can't shorten the recipient's ingest window.
+		notify.Notify(opts.Agent)
+
 		// #449 post-deliver cooldown: after a true delivery, hold the longer of
 		// the inter-message delay and the cooldown so the recipient gets an
 		// ingest window before the next paste. Non-deliveries use the plain delay.
@@ -2134,6 +2158,31 @@ func stopOrSleep(stopCtx context.Context, d time.Duration) bool {
 	select {
 	case <-stopCtx.Done():
 		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// stopSleepOrNotify is stopOrSleep plus an early wake on a #515 doorbell: it
+// returns false (keep going) the moment notifyCh fires, so an idle mailman
+// re-checks its queue sub-second instead of waiting out the full fallback poll.
+// A nil notifyCh (best-effort setup failed) makes that select case block
+// forever, degrading cleanly to plain poll-only.
+//
+// Use ONLY where an early wake is correct — the no-work idle waits. The
+// post-deliver cooldown and inter-message delay deliberately stay on plain
+// stopOrSleep: there the timer IS the point (the recipient's ingest window,
+// #449), and a doorbell ring — including this mailman's own delivery ring —
+// must not cut it short.
+func stopSleepOrNotify(stopCtx context.Context, d time.Duration, notifyCh <-chan struct{}) bool {
+	if d <= 0 {
+		return stopCtx.Err() != nil
+	}
+	select {
+	case <-stopCtx.Done():
+		return true
+	case <-notifyCh:
+		return false
 	case <-time.After(d):
 		return false
 	}

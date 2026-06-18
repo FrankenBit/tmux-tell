@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"path/filepath"
 	"time"
 
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/notify"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/version"
 )
@@ -103,6 +106,26 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 	// one adapter for its lifetime, so a single install at entry mirrors the
 	// `active` Profile global above.
 	tmuxio.SetActivePaneProfile(p.Pane)
+	// Install the cross-process post-commit notification hook (#515) once at
+	// entry, beside the pane-profile global above. Every store opened by any
+	// subcommand inherits it, so a committed write rings the recipient's
+	// doorbell and a waiting mailman / wait_for_reply / inbox --watch wakes
+	// sub-second instead of on the slow fallback poll. notify.Notify is
+	// best-effort (swallows errors), so this is pure latency-polish with no new
+	// failure mode. Keeping it a func value preserves internal/store as a leaf.
+	store.SetNotifier(notify.Notify)
+	// Consumer-side half (#515): the read hook a store-resident blocking poll
+	// (WaitForReply) uses to wake on a recipient's doorbell. Per call it opens a
+	// best-effort watch (nil channel on failure → poll-only) and tears it down
+	// when the wait's ctx is done, so a long-lived MCP server doing many asks
+	// leaks no watches.
+	store.SetWatcher(func(ctx context.Context, key string) <-chan struct{} {
+		ch, stop := notify.WatchOrNil(ctx, key)
+		if ch != nil {
+			go func() { <-ctx.Done(); stop() }()
+		}
+		return ch
+	})
 	warnIfDeprecatedName(argv0, stderr)
 	warnIfDeprecatedEnv(stderr)
 	warnIfLegacyDataPath(stderr)

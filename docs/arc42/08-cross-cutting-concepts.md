@@ -68,3 +68,23 @@ only control-command boundary (#24/#25/#28). Depth:
 Structured `WARN`/log lines (fail-loud, never fail-silent) + a Prometheus surface
 (`tmux_tell_*`, `internal/metrics`) make the substrate legible. Depth:
 [docs/diagnostic-playbook.md](../diagnostic-playbook.md), the README Observability section.
+
+## §8.9 Cross-process change notification (notify-not-poll)
+
+Every "did something change?" surface — the mailman idle loop, `wait-for-reply`,
+`inbox --watch`, `ping`, `send --wait-for-delivered`, `track --watch` — is
+poll-based, because SQLite's `update_hook` fires only for the writing connection
+and tmux-tell's writer and waiters are separate processes (§8.6). `internal/notify`
+(#515) adds a best-effort cross-process wake *on top of* the poll: a committed
+write rings a per-recipient doorbell file under `$XDG_RUNTIME_DIR/tmux-tell/notify/`,
+and a waiter watches that directory via `fsnotify`, re-reading SQLite on the ring.
+
+The load-bearing contract is that notify is an **optimization over a slow poll,
+never a replacement** — the payload always still comes from SQLite, so the layer
+needs no durability, exactly-once, or daemon-crash handling. A missed ring costs
+at most one poll interval of latency, never a lost message; this is what keeps a
+notify a contained feature rather than a distributed-systems project, and why the
+poll stays as the correctness fallback. `internal/store` stays a leaf: the write
+hook (`SetNotifier`) and read hook (`SetWatcher`) are injected func values, wired
+to `internal/notify` once by the CLI at startup. Depth: `internal/notify`,
+[docs/observe-gate.md](../observe-gate.md) (delivery-path interaction).

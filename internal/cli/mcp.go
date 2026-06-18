@@ -679,7 +679,7 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		if timeout <= 0 {
 			timeout = defaultDeliveredWaitTimeout
 		}
-		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, timeout, pingPollInterval)
+		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, p.To, timeout, pingPollInterval)
 	}
 	return resp, nil
 }
