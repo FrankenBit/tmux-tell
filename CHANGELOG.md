@@ -45,14 +45,16 @@ when there's something waiting.
 
 Headlines:
 
-- **Hit a rate limit or usage cap? The bus waits it out and resumes**
+- **Teach the bus your provider's rate-limit, and it waits the limit out and resumes**
   ([#504](https://git.frankenbit.de/frankenbit/tmux-tell/issues/504),
-  [#540](https://git.frankenbit.de/frankenbit/tmux-tell/issues/540)). When a Claude
-  or Codex agent runs into a provider rate-limit, delivery backs off and retries
-  when the provider says it's safe (reading the "retry after" hint when there is
-  one). When an account hits its usage quota, the agent waits until the quota window
-  resets instead of knocking on a closed door. Either way nothing is lost and you
-  don't have to babysit it — `inbox` and `status` show what's waiting and why.
+  [#540](https://git.frankenbit.de/frankenbit/tmux-tell/issues/540)). Give it a small
+  pattern that matches the text your provider shows when it rate-limits you or caps an
+  account — a regex you set; none ship by default, so it matches *your* provider
+  exactly. Once it knows what to watch for: a rate-limit makes delivery back off and
+  retry when the provider says it's safe (reading the "retry after" hint when there is
+  one); a usage cap makes the agent wait until the quota window resets instead of
+  knocking on a closed door. Either way nothing is lost and you don't have to babysit
+  it — `inbox` and `status` show what's waiting and why.
 - **Faster wake-ups** ([#515](https://git.frankenbit.de/frankenbit/tmux-tell/issues/515)).
   Messages, replies, and `--watch` views now react in well under a second instead of
   waiting for the next poll — a quiet bus feels instant again. The steady polling
@@ -79,11 +81,13 @@ dead and deprecated code along the way
 
 - **Rate-limit and usage-limit handling** ([#504](https://git.frankenbit.de/frankenbit/tmux-tell/issues/504), [#540](https://git.frankenbit.de/frankenbit/tmux-tell/issues/540), [#541](https://git.frankenbit.de/frankenbit/tmux-tell/issues/541), [#548](https://git.frankenbit.de/frankenbit/tmux-tell/issues/548)).
   A Claude or Codex agent that runs into a provider **rate-limit** or an account
-  **usage-limit** no longer fails or spins — the bus detects the condition and waits
-  it out. A rate-limit triggers a reactive defer: delivery backs off and retries,
-  reading a `retry-after` hint from the provider when one is present (an
-  operator-configurable regex with a `retry_seconds` capture group) and falling back
-  to exponential backoff otherwise. A usage-limit parks the agent until its quota
+  **usage-limit** can be made to wait it out rather than fail or spin — the bus
+  detects the condition via **a regex the operator supplies** (none ship by default,
+  so the pattern matches the specific provider's pane text — the #539/#541/#548
+  "ship no guessed literals" discipline). Once detected, a rate-limit triggers a
+  reactive defer: delivery backs off and retries, reading a `retry-after` hint from
+  the provider when one is present (a `retry_seconds` capture group in the same
+  pattern) and falling back to exponential backoff otherwise. A usage-limit parks the agent until its quota
   window resets — a steady 30s recheck rather than backoff, since the quota resets on
   a boundary, not progressively. The two are distinct agent states (`StateRateLimited`,
   `StateUsageLimited`) with live gauges (`tmux_tell_chamber_rate_limited_seconds`,
