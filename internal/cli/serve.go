@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -70,6 +71,12 @@ const (
 	// once per this interval — the 100/s storm that wedged tmux is capped
 	// at 1/60s well before parking.
 	stuckBackoffCap = 60 * time.Second
+	// rateLimitBackoffCap bounds the exponential fallback when the regex
+	// does not surface a parseable retry_seconds hint.
+	rateLimitBackoffCap = 60 * time.Second
+	// rateLimitMetricsTick refreshes the standing rate-limit gauges while the
+	// mailman is sleeping in the defer window so scrapes see live values.
+	rateLimitMetricsTick = 50 * time.Millisecond
 )
 
 // stuckBackoffBase is the unit for paneNotFoundBackoff's exponential schedule.
@@ -106,6 +113,62 @@ func paneNotFoundBackoff(consecutive int) time.Duration {
 		return stuckBackoffCap
 	}
 	return d
+}
+
+// rateLimitBackoff returns the delay before the next retry after a
+// rate-limited observation when the banner did not expose a parseable
+// retry_seconds hint.
+func rateLimitBackoff(consecutive int) time.Duration {
+	if consecutive < 1 {
+		consecutive = 1
+	}
+	shift := uint(consecutive - 1)
+	if shift >= 63 {
+		return rateLimitBackoffCap
+	}
+	d := time.Second << shift
+	if d < 0 || d > rateLimitBackoffCap {
+		return rateLimitBackoffCap
+	}
+	return d
+}
+
+// stopOrSleepWithUpdates waits for d or until stopCtx is cancelled, invoking
+// onTick immediately and then at least every tick while the wait is active.
+// It returns true when the caller should exit because stopCtx was cancelled.
+func stopOrSleepWithUpdates(stopCtx context.Context, d, tick time.Duration, onTick func(time.Time)) bool {
+	if d <= 0 {
+		onTick(time.Now())
+		return stopCtx.Err() != nil
+	}
+	if tick <= 0 {
+		tick = d
+	}
+	deadline := time.Now().Add(d)
+	for {
+		now := time.Now()
+		onTick(now)
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		wait := tick
+		if remaining < wait {
+			wait = remaining
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-stopCtx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return true
+		case <-timer.C:
+		}
+	}
 }
 
 // serveOpts is the resolved configuration for runServeWithStore.
@@ -448,6 +511,13 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%v\n", serr)
 		return exitUsage
 	}
+	rateLimitPattern := config.ResolveString(cfg, *agent, "rate-limit-pattern", "")
+	if rateLimitPattern != "" {
+		if _, perr := regexp.Compile(rateLimitPattern); perr != nil {
+			fmt.Fprintf(stderr, "WARN config: rate-limit-pattern %q: %v\n", rateLimitPattern, perr)
+			return exitUsage
+		}
+	}
 	configDeliveryMode := config.ResolveString(cfg, *agent, "delivery-mode", "")
 	// Resolve the verify-retry budget (#153). Stored as a duration string
 	// in TOML; CLI flag overrides per the standard precedence chain. A
@@ -468,6 +538,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	// effectively applies the per-agent verify-retry-budget to the right
 	// scope without per-call plumbing through DeliverParams.
 	tmuxio.SetRetrySchedule(tmuxio.DeriveRetrySchedule(*verifyRetryBudget))
+	current := tmuxio.ActivePaneProfile()
+	current.RateLimitPattern = rateLimitPattern
+	tmuxio.SetActivePaneProfile(current)
 	// Resolve the paste→Enter settle delay (#360), same precedence chain as
 	// the verify-retry budget: TOML per-agent value unless the CLI flag was
 	// set; a malformed value WARNs and keeps the flag value (default 500ms).
@@ -820,6 +893,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	// idiom, #531). Unconditional — copy-mode defer is independent of the
 	// provider cap.
 	m.InitCopyModeDefer(opts.Agent)
+	if m != nil && tmuxio.ActivePaneProfile().RateLimitPattern != "" {
+		m.SetChamberRateLimited(opts.Agent, active.Provider, 0)
+		m.SetChamberRateLimitRetryAfter(opts.Agent, active.Provider, 0)
+	}
 
 	// #507: per-message first-defer timestamps (publicID → first time the
 	// provider cap deferred it this serve run). Stamped on the first defer,
@@ -831,6 +908,25 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	// the gate; external queue removals are pruned before the next claim, and
 	// process exit drops any remaining runtime entries.
 	deferStart := make(map[string]time.Time)
+	var (
+		rateLimitedMsgID    string
+		rateLimitedSince    time.Time
+		rateLimitedRetryAt  time.Time
+		rateLimitedAttempts int
+	)
+	clearRateLimitState := func() {
+		if rateLimitedMsgID == "" {
+			return
+		}
+		if m != nil {
+			m.SetChamberRateLimited(opts.Agent, active.Provider, 0)
+			m.SetChamberRateLimitRetryAfter(opts.Agent, active.Provider, 0)
+		}
+		rateLimitedMsgID = ""
+		rateLimitedSince = time.Time{}
+		rateLimitedRetryAt = time.Time{}
+		rateLimitedAttempts = 0
+	}
 
 	for {
 		if stopCtx.Err() != nil {
@@ -940,6 +1036,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		// A claimed message (ping or delivery) is real work — mark progress so
 		// the spin guard resets on the next iteration's top-of-loop check (#496).
 		progressedLastIter = true
+
+		if rateLimitedMsgID != "" && rateLimitedMsgID != msg.PublicID {
+			clearRateLimitState()
+		}
 
 		// kind=ping: substrate-only reachability probe (#144). The mere
 		// fact that this mailman claimed the row already proves the
@@ -1182,6 +1282,47 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				case errors.Is(gerr, context.Canceled):
 					// SIGTERM during the observe loop — exit cleanly.
 					return exitOK
+				case errors.Is(gerr, tmuxio.ErrRateLimited):
+					// #504: the pane is visibly rate-limited. Revert the claim
+					// and defer the retry using the parsed retry hint when
+					// available; otherwise fall back to exponential backoff.
+					if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
+						logger.Printf("WARN gate_ratelimited_recover_failed id=%s err=%v", msg.PublicID, rerr)
+					}
+					if rateLimitedMsgID != msg.PublicID {
+						rateLimitedMsgID = msg.PublicID
+						rateLimitedSince = time.Now()
+						rateLimitedAttempts = 0
+					}
+					rateLimitedAttempts++
+					backoff := outcome.RetryAfter
+					if backoff <= 0 {
+						backoff = rateLimitBackoff(rateLimitedAttempts)
+					}
+					rateLimitedRetryAt = time.Now().Add(backoff)
+					logger.Printf("WARN gate_ratelimited id=%s pane=%s iter=%d retry_after=%s — reverting to queued for retry",
+						msg.PublicID, paneForDelivery, outcome.Iterations, backoff)
+					if m != nil {
+						refreshRateLimitMetrics := func(now time.Time) {
+							age := now.Sub(rateLimitedSince).Seconds()
+							if age < 0 {
+								age = 0
+							}
+							remaining := rateLimitedRetryAt.Sub(now).Seconds()
+							if remaining < 0 {
+								remaining = 0
+							}
+							m.SetChamberRateLimited(opts.Agent, active.Provider, age)
+							m.SetChamberRateLimitRetryAfter(opts.Agent, active.Provider, remaining)
+						}
+						refreshRateLimitMetrics(time.Now())
+						if stopOrSleepWithUpdates(stopCtx, backoff, rateLimitMetricsTick, refreshRateLimitMetrics) {
+							return exitOK
+						}
+					} else if stopOrSleep(stopCtx, backoff) {
+						return exitOK
+					}
+					continue
 				case errors.Is(gerr, tmuxio.ErrCopyModeUnsafe):
 					// #526: pane still scrolled at MaxWait. Do NOT deliver-
 					// anyway — that pastes into a scrolled pane and reproduces
@@ -1204,6 +1345,9 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					logger.Printf("WARN gate_err id=%s err=%v — delivering anyway",
 						msg.PublicID, gerr)
 				}
+			}
+			if rateLimitedMsgID == msg.PublicID {
+				clearRateLimitState()
 			}
 			// (c) primary path: when the operator had stable content in
 			// the input row past InputStaleThreshold, archive the

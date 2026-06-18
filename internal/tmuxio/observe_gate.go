@@ -129,6 +129,10 @@ type GateOutcome struct {
 	// across cycles via a serve-side per-publicID map (the #507 deferStart
 	// shape) — deferred; per-cycle is the honest grain for v1.
 	CopyModeWait time.Duration
+	// RetryAfter is the parsed retry hint surfaced by the rate-limit regex.
+	// Zero means the banner did not expose a parseable retry_seconds capture;
+	// the caller falls back to exponential backoff.
+	RetryAfter time.Duration
 }
 
 // ErrMaxWaitExceeded is returned when ObserveGate's safety cap fires
@@ -145,6 +149,11 @@ var ErrMaxWaitExceeded = errors.New("tmuxio: observe-gate MaxWait exceeded")
 // within-gate poll detects copy-mode exit within one interval (~3-15s), so a
 // retry delivers promptly once the operator returns to the live prompt.
 var ErrCopyModeUnsafe = errors.New("tmuxio: observe-gate copy-mode persisted past MaxWait")
+
+// ErrRateLimited is returned when the pane is visibly rate-limited. The caller
+// should revert the message to queued and retry after the parsed retry hint or
+// an exponential backoff.
+var ErrRateLimited = errors.New("tmuxio: observe-gate rate-limited")
 
 // sinceIfSet returns the elapsed time since t, or 0 when t is the zero value
 // (the event never happened). Used to populate GateOutcome.CopyModeWait only
@@ -179,8 +188,10 @@ func sinceIfSet(t time.Time) time.Duration {
 //     If the hash remains stable for at least InputStaleThreshold,
 //     return Stale=true with InputContent populated so the caller can
 //     archive + Ctrl+U + paste.
-//  3. On StateWorking / StateAtRestInCompaction / StateUnknown, treat
-//     as a safer-default wait — defer and re-poll.
+//  3. On StateWorking / StateRateLimited / StateAtRestInCompaction /
+//     StateUnknown, treat as a safer-default wait or reactive defer
+//     — defer and re-poll, or for rate-limited return ErrRateLimited so the
+//     caller can back off with the parsed retry hint.
 //  4. On each non-idle iteration, sleep PollInterval (starting at
 //     PollIntervalMin, growing by BackoffFactor up to PollIntervalMax)
 //     before the next poll. Reset to PollIntervalMin when the
@@ -310,6 +321,13 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 				}, nil
 			}
 			// Safer-default wait. The agent is busy; defer + re-poll.
+		case StateRateLimited:
+			return GateOutcome{
+				Reason:     "rate-limited: " + ev.Reason,
+				State:      state,
+				Iterations: iterations,
+				RetryAfter: ev.RetryAfter,
+			}, ErrRateLimited
 		case StateInCopyMode:
 			// #526: operator scrolled the pane up into copy-mode. Safer-
 			// default wait — defer + re-poll; a paste here is consumed as

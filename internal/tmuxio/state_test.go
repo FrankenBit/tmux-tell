@@ -67,14 +67,14 @@ func TestState_String_AllValues(t *testing.T) {
 	}
 }
 
-func TestAgentState_RateLimitedMarkerWinsOverWorking(t *testing.T) {
+func TestAgentState_RateLimitedPatternWinsOverWorking(t *testing.T) {
 	fastTemporalDelta(t)
 	setActivePaneProfileForTest(t, PaneProfile{
 		PromptSentinel:   PromptSentinel,
-		RateLimitMarkers: []string{"SYNTHETIC RATE LIMIT"},
+		RateLimitPattern: `SYNTHETIC RATE LIMIT(?:.*?retry\s+after\s+(?P<retry_seconds>\d+(?:\.\d+)?s))?`,
 	})
-	paneA := "history\nSYNTHETIC RATE LIMIT\nretry countdown 10s\n❯\u00a0\n"
-	paneB := "history\nSYNTHETIC RATE LIMIT\nretry countdown 9s\n❯\u00a0\n"
+	paneA := "history\nSYNTHETIC RATE LIMIT retry after 10s\n❯\u00a0\n"
+	paneB := "history\nSYNTHETIC RATE LIMIT retry after 9s\n❯\u00a0\n"
 	fr := newFakeProbeRunner([]string{paneA, paneB})
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })
@@ -84,14 +84,17 @@ func TestAgentState_RateLimitedMarkerWinsOverWorking(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if state != StateRateLimited {
-		t.Errorf("state = %v, want StateRateLimited (marker must beat working animation)", state)
+		t.Errorf("state = %v, want StateRateLimited (pattern must beat working animation)", state)
 	}
-	if ev.Marker != "SYNTHETIC RATE LIMIT" {
-		t.Errorf("Evidence.Marker = %q, want synthetic rate-limit marker", ev.Marker)
+	if !strings.Contains(ev.Marker, "SYNTHETIC RATE LIMIT") {
+		t.Errorf("Evidence.Marker = %q, want synthetic rate-limit text", ev.Marker)
+	}
+	if ev.RetryAfter != 9*time.Second {
+		t.Errorf("Evidence.RetryAfter = %s, want 9s", ev.RetryAfter)
 	}
 }
 
-func TestAgentState_RateLimitMarkerDisabledWhenProfileEmpty(t *testing.T) {
+func TestAgentState_RateLimitPatternDisabledWhenProfileEmpty(t *testing.T) {
 	fastTemporalDelta(t)
 	setActivePaneProfileForTest(t, PaneProfile{PromptSentinel: PromptSentinel})
 	pane := "history\nSYNTHETIC RATE LIMIT\n❯\u00a0\n"
@@ -104,7 +107,7 @@ func TestAgentState_RateLimitMarkerDisabledWhenProfileEmpty(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if state == StateRateLimited {
-		t.Fatal("state = StateRateLimited with empty profile markers — production literals must remain sample-gated")
+		t.Fatal("state = StateRateLimited with empty profile pattern — production literals must remain sample-gated")
 	}
 }
 
@@ -740,6 +743,7 @@ func TestIsPasteUnsafe(t *testing.T) {
 		StateUnknown:            true,  // popup-as-Unknown failure mode
 		StateAwaitingOperator:   true,  // operator typing or popup
 		StateAtRestInCompaction: true,  // /compact slash-command parser destruction
+		StateRateLimited:        true,  // upstream retry-after / cooldown
 		StateIdle:               false, // safe by definition
 		StateWorking:            false, // Claude Code buffers mid-turn keystrokes
 	}

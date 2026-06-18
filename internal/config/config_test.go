@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+func strPtr(s string) *string { return &s }
+
 func TestLoadFrom_MissingFileReturnsEmptyNoError(t *testing.T) {
 	f, err := LoadFrom("/nonexistent/path/config.toml")
 	if err != nil {
@@ -34,10 +36,12 @@ func TestLoadFrom_HappyPathParsesDefaultsAndAgent(t *testing.T) {
 [defaults]
 notify-on-failed = false
 input-stale-threshold = "45s"
+rate-limit-pattern = "limit reached"
 
 [agent.surveyor]
 notify-on-failed = true
 input-stale-threshold = "90s"
+rate-limit-pattern = "retry after (?P<retry_seconds>\\d+s)"
 `
 	if err := os.WriteFile(tmp, []byte(content), 0644); err != nil {
 		t.Fatalf("write: %v", err)
@@ -54,11 +58,17 @@ input-stale-threshold = "90s"
 		t.Errorf("Defaults.InputStaleThreshold = %v, want 45s",
 			f.Defaults.InputStaleThreshold)
 	}
+	if f.Defaults.RateLimitPattern == nil || *f.Defaults.RateLimitPattern != "limit reached" {
+		t.Errorf("Defaults.RateLimitPattern = %v, want limit reached", f.Defaults.RateLimitPattern)
+	}
 	if f.Agent == nil || f.Agent["surveyor"].NotifyOnFailed == nil {
 		t.Fatalf("agent.surveyor.NotifyOnFailed missing")
 	}
 	if !*f.Agent["surveyor"].NotifyOnFailed {
 		t.Errorf("agent.surveyor.NotifyOnFailed should be true; got false")
+	}
+	if f.Agent["surveyor"].RateLimitPattern == nil || *f.Agent["surveyor"].RateLimitPattern != "retry after (?P<retry_seconds>\\d+s)" {
+		t.Errorf("agent.surveyor.RateLimitPattern = %v, want retry after (?P<retry_seconds>\\d+s)", f.Agent["surveyor"].RateLimitPattern)
 	}
 }
 
@@ -83,6 +93,24 @@ func TestResolveBool_PrecedenceChain(t *testing.T) {
 	// Hardcoded wins when neither agent nor defaults set.
 	if !ResolveBool(file, "admin", "drift-soft-fail", true) {
 		t.Errorf("hardcoded should win when both layers unset; got false")
+	}
+}
+
+func TestResolveString_PrecedenceChain_RateLimitPattern(t *testing.T) {
+	file := &File{
+		Defaults: Block{RateLimitPattern: strPtr("defaults pattern")},
+		Agent: map[string]Block{
+			"surveyor": {RateLimitPattern: strPtr("agent pattern")},
+		},
+	}
+	if got := ResolveString(file, "surveyor", "rate-limit-pattern", "hardcoded"); got != "agent pattern" {
+		t.Fatalf("agent override resolve = %q, want agent pattern", got)
+	}
+	if got := ResolveString(file, "other", "rate-limit-pattern", "hardcoded"); got != "defaults pattern" {
+		t.Fatalf("defaults resolve = %q, want defaults pattern", got)
+	}
+	if got := ResolveString(&File{}, "other", "rate-limit-pattern", "hardcoded"); got != "hardcoded" {
+		t.Fatalf("hardcoded resolve = %q, want hardcoded", got)
 	}
 }
 

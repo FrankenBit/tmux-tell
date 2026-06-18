@@ -14,8 +14,8 @@ import (
 func setActivePaneProfileForTest(t *testing.T, p PaneProfile) {
 	t.Helper()
 	prev := activeProfile
-	activeProfile = p
-	t.Cleanup(func() { activeProfile = prev })
+	SetActivePaneProfile(p)
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
 }
 
 // syntheticCodexLikeProfile is a deliberately non-Claude profile used to prove
@@ -56,6 +56,9 @@ func TestClaudePaneProfile_MatchesConsts(t *testing.T) {
 	if p.StatusLineMarker != StatusLineMarker {
 		t.Errorf("StatusLineMarker = %q, want const %q", p.StatusLineMarker, StatusLineMarker)
 	}
+	if p.RateLimitPattern != "" {
+		t.Errorf("RateLimitPattern = %q, want empty by default", p.RateLimitPattern)
+	}
 }
 
 // TestCodexPromptSentinel_Bytes pins the byte-level encoding of the Codex
@@ -83,6 +86,9 @@ func TestCodexPaneProfile_Shape(t *testing.T) {
 	if p.CompactionMarker != "" || p.AwaitingOperatorMarker != "" || p.StatusLineMarker != "" {
 		t.Errorf("Codex marker fields should be empty pending characterization; got compaction=%q awaiting=%q status=%q",
 			p.CompactionMarker, p.AwaitingOperatorMarker, p.StatusLineMarker)
+	}
+	if p.RateLimitPattern != "" {
+		t.Errorf("Codex RateLimitPattern = %q, want empty pending characterization", p.RateLimitPattern)
 	}
 }
 

@@ -384,9 +384,9 @@ compaction / awaiting-operator / status-line snippets. Claude's is `ClaudePanePr
 correctly and the observe-gate defers paste-and-enter while a Codex operator is typing —
 the read side of the substrate-vs-adapter pane-observation contract is adapter-uniform.
 
-`PaneProfile.RateLimitMarkers` is the #504 hook for future reactive rate-limit
-detection: markers are matched in captured pane content after compaction and before
-working/idle classification. Production adapter marker lists intentionally stay empty
+`PaneProfile.RateLimitPattern` is the #504 hook for future reactive rate-limit
+detection: it is matched in captured pane content after compaction and before
+working/idle classification. Production adapter patterns intentionally stay empty
 until real Claude/Codex rate-limit pane output is captured; guessed literals would
 compile but silently fail to detect the real UI.
 

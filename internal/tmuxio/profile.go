@@ -1,5 +1,7 @@
 package tmuxio
 
+import "regexp"
+
 // PaneProfile carries the per-adapter pane-observation snippets the substrate's
 // pane-observation layer (AgentState, ObserveGate, extractInputContent) reads
 // instead of historically-hardcoded Claude Code constants. It is the #322
@@ -53,18 +55,17 @@ package tmuxio
 //     (Enter-on-empty is a safe no-op, operator + Lookout confirmed). Empty
 //     disables both — correct for Claude, which submits a collapsed paste on the
 //     first Enter and needs no resubmit.
-//   - RateLimitMarkers: empirically-captured substrings that identify an
-//     adapter's rate-limit pane (#504). Empty disables rate-limit detection for
-//     the adapter. These MUST stay empty until real pane output is captured for
-//     that adapter; guessed literals are worse than no detector because they
-//     silently never fire in production.
+//   - RateLimitPattern: operator-configurable regex that identifies an
+//     adapter's rate-limit pane (#504). Empty parks the detector. The regex is
+//     validated at startup and may use named capture groups `retry_seconds`
+//     (load-bearing in #504) plus future-extensible fields such as `retry_at`.
 type PaneProfile struct {
 	PromptSentinel         string
 	CompactionMarker       string
 	AwaitingOperatorMarker string
 	StatusLineMarker       string
 	PasteCollapseMarker    string
-	RateLimitMarkers       []string
+	RateLimitPattern       string
 }
 
 // ClaudePaneProfile returns the Claude Code pane-observation profile — the
@@ -123,7 +124,7 @@ const CodexPasteCollapseMarker = "[Pasted Content"
 //     unreachable while Codex is PasteCapable=false — so the gap is moot until
 //     the verify-token-robustness work makes Codex paste-capable. Named here so
 //     it is not a silent gap.
-//   - RateLimitMarkers: empty pending empirical Codex rate-limit captures
+//   - RateLimitPattern: empty pending empirical Codex rate-limit captures
 //     (#504). Do not add production literals without a real pane sample.
 func CodexPaneProfile() PaneProfile {
 	return PaneProfile{
@@ -141,6 +142,7 @@ func CodexPaneProfile() PaneProfile {
 // exercise AgentState / ObserveGate directly without going through cli.Run,
 // observe the historical behavior unchanged.
 var activeProfile = ClaudePaneProfile()
+var activeRateLimitRE *regexp.Regexp
 
 // SetActivePaneProfile installs the active pane-observation profile. Called once
 // from cli.Run at process start with the adapter's Profile.Pane. Callers should
@@ -149,7 +151,22 @@ var activeProfile = ClaudePaneProfile()
 // install, not a runtime toggle: it is NOT safe for concurrent use with the
 // pane-observation readers, which is fine because Run sets it before any mailman
 // goroutine starts observing.
-func SetActivePaneProfile(p PaneProfile) { activeProfile = p }
+func SetActivePaneProfile(p PaneProfile) {
+	activeProfile = p
+	if p.RateLimitPattern == "" {
+		activeRateLimitRE = nil
+		return
+	}
+	re, err := regexp.Compile(p.RateLimitPattern)
+	if err != nil {
+		// The serve startup path validates the pattern before installing it.
+		// Direct test callers that bypass validation should not inherit a stale
+		// matcher from a previous profile.
+		activeRateLimitRE = nil
+		return
+	}
+	activeRateLimitRE = re
+}
 
 // ActivePaneProfile returns the installed pane-observation profile — a read-only
 // accessor for callers and tests that need to inspect the active snippets.

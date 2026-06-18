@@ -277,7 +277,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpUnregisterHandler(s))
 
 	srv.RegisterTool("tmux-tell.agent_state",
-		"Probe an agent's agent-state via read-only capture-pane (#71). Returns one of five states: idle / working / at-rest-in-compaction / awaiting-operator / unknown. 'Knock at the door without waking the inhabitant' — exactly two capture-pane calls, zero pane mutation, ~200ms latency. Consumers should treat 'unknown' as advisory-not-authoritative per #65's substrate-class-of-claim convention (don't silently roll up an unknown classification to a known state). v1 detects idle/working/unknown reliably; at-rest-in-compaction and awaiting-operator land when #70's empirical capture populates the marker constants.",
+		"Probe an agent's agent-state via read-only capture-pane (#71). Returns one of six states: idle / working / rate-limited / at-rest-in-compaction / awaiting-operator / unknown. 'Knock at the door without waking the inhabitant' — exactly two capture-pane calls, zero pane mutation, ~200ms latency. Consumers should treat 'unknown' as advisory-not-authoritative per #65's substrate-class-of-claim convention (don't silently roll up an unknown classification to a known state). v1 detects idle/working/unknown reliably; at-rest-in-compaction, awaiting-operator, and rate-limited land when their empirical pane patterns are configured.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {

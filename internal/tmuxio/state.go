@@ -92,12 +92,12 @@ const (
 	// a scroll-read (#448 cap counts it as not-working, self-healing on
 	// exit).
 	StateInCopyMode
-	// StateRateLimited means the adapter pane shows an empirically-captured
-	// provider rate-limit marker (#504). Detection is marker-in-capture, same
-	// precedence family as CompactionMarker (not copy-mode's pre-capture
-	// pane_in_mode query): the pane content is still live, but it may be static
-	// or animate a countdown, so the marker must win before working/idle
-	// heuristics. Paste-unsafe until the reactive layer decides when to retry.
+	// StateRateLimited means the adapter pane matches the operator-configured
+	// rate-limit regex (#504). Detection is marker-in-capture, same precedence
+	// family as CompactionMarker (not copy-mode's pre-capture pane_in_mode
+	// query): the pane content is still live, but it may be static or animate a
+	// countdown, so the pattern must win before working/idle heuristics.
+	// Paste-unsafe until the reactive layer decides when to retry.
 	StateRateLimited
 )
 
@@ -149,10 +149,10 @@ func (s State) String() string {
 //     failure. The observe-gate defers it, but this also covers the
 //     post-gate-pass race where the operator scrolls up in the window
 //     between an idle gate-pass and the actual paste.
-//   - StateRateLimited: the adapter is showing a provider rate-limit marker
-//     (#504). Pasting more work at this point deepens provider pressure and
-//     risks losing the delivery behind an upstream cooldown; the reactive
-//     layer decides when to retry.
+//   - StateRateLimited: the adapter is showing a provider rate-limit banner
+//     matched by the operator-configured regex (#504). Pasting more work at
+//     this point deepens provider pressure and risks losing the delivery
+//     behind an upstream cooldown; the reactive layer decides when to retry.
 //
 // StateIdle and StateWorking are paste-safe (idle by definition;
 // working buffers mid-turn keystrokes per Claude Code TUI behavior).
@@ -182,6 +182,10 @@ type Evidence struct {
 	// ChangedLineCount is the number of differing lines between the two
 	// temporal-delta captures, populated for StateWorking.
 	ChangedLineCount int `json:"changed_line_count,omitempty"`
+	// RetryAfter is the parsed relative retry delay from the rate-limit regex,
+	// when the adapter exposes a retry_seconds capture. Zero means no parseable
+	// retry hint was available in the matched text.
+	RetryAfter time.Duration `json:"retry_after,omitempty"`
 	// Marker is the matched substring for StateAtRestInCompaction or
 	// StateAwaitingOperator.
 	Marker string `json:"marker,omitempty"`
@@ -286,10 +290,10 @@ func SetAgentStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //     is animating (spinner glyph cycles, percentage ticks) so capA
 //     != capB; without the marker check firing first, the agent
 //     would mis-classify as Working.
-//  3. If any RateLimitMarkers entry is non-empty AND found in capture B →
-//     StateRateLimited. The markers are adapter-profile-owned and MUST come
-//     from real pane captures (#504). This runs before Working because a
-//     rate-limit pane may animate a countdown; it runs after compaction because
+//  3. If the active RateLimitPattern matches capture B → StateRateLimited.
+//     The regex is adapter-profile-owned and MUST be validated against a
+//     real pane sample (#504). This runs before Working because a rate-limit
+//     pane may animate a countdown; it runs after compaction because
 //     compaction is a more specific local TUI mode.
 //  4. If capture A != capture B → StateWorking. Any substantive change
 //     across the temporal-delta window means the agent is painting.
@@ -395,14 +399,15 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 			}, nil
 	}
 
-	// Precedence 2: empirical rate-limit marker (#504). Profile-owned markers
-	// stay empty until real adapter pane output is captured; synthetic tests can
-	// still exercise the mechanism without guessing production literals.
-	if m := firstRateLimitMarker(capBStr); m != "" {
+	// Precedence 2: empirical rate-limit regex (#504). The configured pattern
+	// stays empty until real adapter pane output is captured; synthetic tests
+	// can still exercise the mechanism without guessing production literals.
+	if m, retryAfter := firstRateLimitMatch(capBStr); m != "" {
 		return StateRateLimited,
 			Evidence{
-				Reason: fmt.Sprintf("rate-limit marker found: %q", m),
-				Marker: m,
+				Reason:     fmt.Sprintf("rate-limit pattern matched: %q", m),
+				Marker:     m,
+				RetryAfter: retryAfter,
 			}, nil
 	}
 
@@ -504,13 +509,39 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 		nil
 }
 
-func firstRateLimitMarker(capture string) string {
-	for _, m := range activeProfile.RateLimitMarkers {
-		if m != "" && strings.Contains(capture, m) {
-			return m
+func firstRateLimitMatch(capture string) (string, time.Duration) {
+	if activeRateLimitRE == nil {
+		return "", 0
+	}
+	matches := activeRateLimitRE.FindStringSubmatch(capture)
+	if len(matches) == 0 {
+		return "", 0
+	}
+	matched := matches[0]
+	if idx := activeRateLimitRE.SubexpIndex("retry_seconds"); idx >= 0 && idx < len(matches) {
+		if d, err := parseRetrySeconds(matches[idx]); err == nil {
+			return matched, d
 		}
 	}
-	return ""
+	return matched, 0
+}
+
+func parseRetrySeconds(s string) (time.Duration, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, errors.New("empty retry_seconds")
+	}
+	if d, err := time.ParseDuration(s); err == nil {
+		return d, nil
+	}
+	if strings.HasSuffix(s, "s") {
+		s = strings.TrimSuffix(s, "s")
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(f * float64(time.Second)), nil
 }
 
 // PaneInCopyMode reports whether the pane is currently in a tmux mode

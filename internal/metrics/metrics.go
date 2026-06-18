@@ -63,19 +63,21 @@ var verifyBuckets = []float64{0.1, 0.25, 0.5, 1, 1.5, 2, 3, 4, 5, 6, 8, 10}
 type Metrics struct {
 	reg *prometheus.Registry
 
-	messagesTotal             *prometheus.CounterVec
-	deliveryLatency           *prometheus.HistogramVec
-	deliveryLatencyByPriority *prometheus.HistogramVec
-	verifyAttempt             *prometheus.HistogramVec
-	queueDepth                *prometheus.GaugeVec
-	loopIterations            *prometheus.CounterVec
-	pasteUnsafeAborts         *prometheus.CounterVec
-	mailmanStuck              *prometheus.GaugeVec
-	providerDefer             *prometheus.CounterVec
-	providerDeferInflight     *prometheus.GaugeVec
-	providerDeferWait         *prometheus.HistogramVec
-	copymodeDefer             *prometheus.CounterVec
-	copymodeDeferWait         *prometheus.HistogramVec
+	messagesTotal              *prometheus.CounterVec
+	deliveryLatency            *prometheus.HistogramVec
+	deliveryLatencyByPriority  *prometheus.HistogramVec
+	verifyAttempt              *prometheus.HistogramVec
+	queueDepth                 *prometheus.GaugeVec
+	loopIterations             *prometheus.CounterVec
+	pasteUnsafeAborts          *prometheus.CounterVec
+	mailmanStuck               *prometheus.GaugeVec
+	providerDefer              *prometheus.CounterVec
+	providerDeferInflight      *prometheus.GaugeVec
+	providerDeferWait          *prometheus.HistogramVec
+	chamberRateLimited         *prometheus.GaugeVec
+	chamberRateLimitRetryAfter *prometheus.GaugeVec
+	copymodeDefer              *prometheus.CounterVec
+	copymodeDeferWait          *prometheus.HistogramVec
 }
 
 // New builds the collector set, registers it against a fresh private
@@ -134,6 +136,14 @@ func New() *Metrics {
 			Help:    "Wall-clock a cap-deferred message waited from its first #448 provider-cap deferral until the cap slot reopened and it was delivered (#507), by provider.",
 			Buckets: latencyBuckets,
 		}, []string{"provider"}),
+		chamberRateLimited: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tmux_tell_chamber_rate_limited_seconds",
+			Help: "Live age of a chamber's rate-limited state, by agent and provider. Present-at-zero when rate-limit detection is configured; zero means not currently rate-limited.",
+		}, []string{"agent", "provider"}),
+		chamberRateLimitRetryAfter: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tmux_tell_chamber_rate_limit_retry_after_seconds",
+			Help: "Live seconds remaining until the next retry after the chamber's last rate-limit observation, by agent and provider. Zero means the banner did not expose a parseable retry_seconds capture or the retry window has elapsed.",
+		}, []string{"agent", "provider"}),
 		copymodeDefer: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tmux_tell_copymode_defer_total",
 			Help: "Total delivery cycles deferred because the recipient pane was scrolled up in tmux copy-mode (#526), by agent. One increment per gate cycle that observed copy-mode (delivered-on-exit or reverted-at-MaxWait).",
@@ -156,6 +166,8 @@ func New() *Metrics {
 		m.providerDefer,
 		m.providerDeferInflight,
 		m.providerDeferWait,
+		m.chamberRateLimited,
+		m.chamberRateLimitRetryAfter,
 		m.copymodeDefer,
 		m.copymodeDeferWait,
 	)
@@ -256,6 +268,26 @@ func (m *Metrics) SetProviderDeferInflight(provider string, count float64) {
 		return
 	}
 	m.providerDeferInflight.WithLabelValues(provider).Set(count)
+}
+
+// SetChamberRateLimited sets the current age of a chamber's rate-limited state
+// (#504 PR2). Callers should refresh it while the rate-limit wait is active;
+// zero means not currently rate-limited.
+func (m *Metrics) SetChamberRateLimited(agent, provider string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.chamberRateLimited.WithLabelValues(agent, provider).Set(seconds)
+}
+
+// SetChamberRateLimitRetryAfter sets the live seconds remaining until the next
+// retry surfaced by the rate-limit regex. Zero means the banner did not expose
+// a parseable retry_seconds capture or the retry window has elapsed.
+func (m *Metrics) SetChamberRateLimitRetryAfter(agent, provider string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.chamberRateLimitRetryAfter.WithLabelValues(agent, provider).Set(seconds)
 }
 
 // ObserveProviderDeferWait records how long a cap-deferred message waited

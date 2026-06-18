@@ -227,6 +227,11 @@ type Block struct {
 	// tmux_tell_delivery_verify_attempt_seconds histogram to inform
 	// per-agent tuning.
 	VerifyRetryBudget *string `toml:"verify-retry-budget"`
+	// RateLimitPattern is the operator-configurable regex that identifies an
+	// adapter's rate-limit pane (#504). Empty parks the detector. The startup
+	// path validates the regex and installs it into the active pane profile;
+	// malformed patterns fail loud rather than quietly disabling the feature.
+	RateLimitPattern *string `toml:"rate-limit-pattern"`
 	// Retention is the per-agent message retention window (#245). The mailman
 	// runs a background sweep that deletes delivered + failed rows older than
 	// this window. "infinite" (the default) disables the sweep entirely —
@@ -483,6 +488,8 @@ func blockStringField(b *Block, field string) *string {
 		return b.MetricsAddr
 	case "verify-retry-budget":
 		return b.VerifyRetryBudget
+	case "rate-limit-pattern":
+		return b.RateLimitPattern
 	case "retention":
 		return b.Retention
 	}
