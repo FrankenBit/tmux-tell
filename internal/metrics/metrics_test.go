@@ -165,6 +165,35 @@ func TestSetMailmanStuck(t *testing.T) {
 	}
 }
 
+// TestCopyModeDeferMetrics pins #526's metric surface: InitCopyModeDefer
+// materializes the counter at 0 (the present-at-zero idiom from #531), Inc
+// bumps it, ObserveCopyModeDeferWait records a wait sample, and series are
+// per-agent independent.
+func TestCopyModeDeferMetrics(t *testing.T) {
+	m := New()
+
+	// present-at-zero: the series exists at 0 before any deferral, so the
+	// dashboard shows a flat 0 line rather than "no data".
+	m.InitCopyModeDefer("bob")
+	if got := testutil.ToFloat64(m.copymodeDefer.WithLabelValues("bob")); got != 0 {
+		t.Errorf("copymode_defer after init = %v, want 0 (present-at-zero)", got)
+	}
+
+	m.IncCopyModeDefer("bob")
+	m.IncCopyModeDefer("bob")
+	if got := testutil.ToFloat64(m.copymodeDefer.WithLabelValues("bob")); got != 2 {
+		t.Errorf("copymode_defer after 2 inc = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(m.copymodeDefer.WithLabelValues("alice")); got != 0 {
+		t.Errorf("untouched agent copymode_defer = %v, want 0", got)
+	}
+
+	m.ObserveCopyModeDeferWait("bob", 3.5)
+	if got := testutil.CollectAndCount(m.copymodeDeferWait); got == 0 {
+		t.Error("copymode_defer_wait histogram has no series after Observe")
+	}
+}
+
 // TestNilMetrics_AllNoOp pins the load-bearing nil-safety ergonomic: a
 // disabled mailman holds a nil *Metrics and calls every method without a
 // guard. None may panic, and the nil Handler must 503 rather than crash.
@@ -180,6 +209,9 @@ func TestNilMetrics_AllNoOp(t *testing.T) {
 	m.IncProviderDefer("anthropic")
 	m.SetProviderDeferInflight("anthropic", 1)
 	m.ObserveProviderDeferWait("anthropic", 1)
+	m.InitCopyModeDefer("b")
+	m.IncCopyModeDefer("b")
+	m.ObserveCopyModeDeferWait("b", 1)
 	if m.Registry() != nil {
 		t.Error("nil Metrics Registry() should be nil")
 	}

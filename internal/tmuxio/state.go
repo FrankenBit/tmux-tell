@@ -78,6 +78,20 @@ const (
 	// and state_test.go protect the substring against Claude Code UI
 	// drift.
 	StateAwaitingOperator
+	// StateInCopyMode means the operator has scrolled the pane up into
+	// tmux copy-mode / view-mode (#526). Detected by `display-message
+	// '#{pane_in_mode}'` at precedence 0 — BEFORE the capture-pane
+	// snapshots — because `capture-pane -p` on a scrolled pane reads the
+	// HISTORICAL view, not the live bottom: an old `❯ ` prompt scrolled
+	// into frame would otherwise misclassify as StateIdle and the mailman
+	// would paste into a scrolled pane (the 83b3 incident, 2026-06-17).
+	// Paste-unsafe (see IsPasteUnsafe): a paste/Enter into copy-mode is
+	// consumed as copy-mode navigation, and the underlying working/idle
+	// state is genuinely UNOBSERVABLE while scrolled — so this state is
+	// also what the `observed_state` self-probe honestly publishes during
+	// a scroll-read (#448 cap counts it as not-working, self-healing on
+	// exit).
+	StateInCopyMode
 )
 
 // String returns the wire-format name of the state — the same string
@@ -94,6 +108,8 @@ func (s State) String() string {
 		return "at-rest-in-compaction"
 	case StateAwaitingOperator:
 		return "awaiting-operator"
+	case StateInCopyMode:
+		return "copy-mode"
 	default:
 		return "unknown"
 	}
@@ -118,6 +134,12 @@ func (s State) String() string {
 //     UNRELATED reason (operator-initiated /compact). Returning true
 //     here gives defense-in-depth at the safety-check layer per
 //     Surveyor PR #134 S2.
+//   - StateInCopyMode: the operator has scrolled the pane up (#526). A
+//     paste/Enter is consumed as copy-mode navigation, not input, and
+//     the verify-token can't surface from the scrolled view — the 83b3
+//     failure. The observe-gate defers it, but this also covers the
+//     post-gate-pass race where the operator scrolls up in the window
+//     between an idle gate-pass and the actual paste.
 //
 // StateIdle and StateWorking are paste-safe (idle by definition;
 // working buffers mid-turn keystrokes per Claude Code TUI behavior).
@@ -126,7 +148,8 @@ func (s State) String() string {
 // the observe-gate decides to flush, a final state probe before the
 // actual paste-and-Enter aborts the delivery when this returns true.
 func IsPasteUnsafe(s State) bool {
-	return s == StateAwaitingOperator || s == StateUnknown || s == StateAtRestInCompaction
+	return s == StateAwaitingOperator || s == StateUnknown ||
+		s == StateAtRestInCompaction || s == StateInCopyMode
 }
 
 // Evidence carries the observation that led to the State classification.
@@ -291,6 +314,19 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 			errors.New("tmuxio: pane required")
 	}
 
+	// Precedence 0: copy-mode / scroll-back (#526). Query pane_in_mode BEFORE
+	// the capture-pane snapshots — capture-pane on a scrolled pane reads the
+	// HISTORICAL view, so the heuristic below would read stale content (an old
+	// `❯ ` scrolled into frame misclassifies as Idle → paste into a scrolled
+	// pane, the 83b3 bug). The display-message query is cheap + authoritative
+	// and reflects the live pane regardless of scroll position. A query error
+	// is non-fatal: fall through to the capture-based classification (degrade
+	// to prior behavior rather than block delivery on a tmux hiccup).
+	if inMode, merr := PaneInCopyMode(ctx, pane); merr == nil && inMode {
+		return StateInCopyMode,
+			Evidence{Reason: "pane in copy-mode / scrolled up (pane_in_mode=1)"}, nil
+	}
+
 	capA, err := tmuxRun(ctx, nil, "capture-pane", "-p", "-t", pane)
 	if err != nil {
 		return StateUnknown,
@@ -424,6 +460,30 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 	return StateUnknown,
 		Evidence{Reason: "pane stable; prompt sentinel not found in any row + no recognized marker" + cursorNote},
 		nil
+}
+
+// PaneInCopyMode reports whether the pane is currently in a tmux mode
+// (copy-mode / view-mode) — i.e. the operator has scrolled up off the live
+// prompt (#526). Queries `display-message -p '#{pane_in_mode}'`, which tmux
+// renders as "1" when the pane is in ANY mode and "0" otherwise; the boolean
+// covers copy-mode, copy-mode-vi, and view-mode without enumerating
+// mode-name variants that differ by tmux config. Read-only: one
+// display-message call, zero pane mutation.
+//
+// Used at AgentState precedence 0 (it MUST run before the capture-pane
+// snapshots — capture-pane on a scrolled pane reads the historical view) and
+// by the inbox/status surface to live-derive the pane_in_copy_mode deferral
+// reason.
+func PaneInCopyMode(ctx context.Context, pane string) (bool, error) {
+	if pane == "" {
+		return false, errors.New("tmuxio: pane required")
+	}
+	out, err := tmuxRun(ctx, nil, "display-message", "-p", "-t", pane, "#{pane_in_mode}")
+	if err != nil {
+		return false, fmt.Errorf("tmuxio: pane-in-mode query: %w: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimSpace(string(out)) == "1", nil
 }
 
 // agentCursor queries the tmux cursor position for the pane. Returns

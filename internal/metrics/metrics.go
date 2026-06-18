@@ -74,6 +74,8 @@ type Metrics struct {
 	providerDefer             *prometheus.CounterVec
 	providerDeferInflight     *prometheus.GaugeVec
 	providerDeferWait         *prometheus.HistogramVec
+	copymodeDefer             *prometheus.CounterVec
+	copymodeDeferWait         *prometheus.HistogramVec
 }
 
 // New builds the collector set, registers it against a fresh private
@@ -132,6 +134,15 @@ func New() *Metrics {
 			Help:    "Wall-clock a cap-deferred message waited from its first #448 provider-cap deferral until the cap slot reopened and it was delivered (#507), by provider.",
 			Buckets: latencyBuckets,
 		}, []string{"provider"}),
+		copymodeDefer: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tmux_tell_copymode_defer_total",
+			Help: "Total delivery cycles deferred because the recipient pane was scrolled up in tmux copy-mode (#526), by agent. One increment per gate cycle that observed copy-mode (delivered-on-exit or reverted-at-MaxWait).",
+		}, []string{"agent"}),
+		copymodeDeferWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "tmux_tell_copymode_defer_wait_seconds",
+			Help:    "Wall-clock from the first copy-mode observation in a gate cycle until the gate resolved (delivered on return-to-live, or reverted at MaxWait), by agent (#526).",
+			Buckets: latencyBuckets,
+		}, []string{"agent"}),
 	}
 	reg.MustRegister(
 		m.messagesTotal,
@@ -145,6 +156,8 @@ func New() *Metrics {
 		m.providerDefer,
 		m.providerDeferInflight,
 		m.providerDeferWait,
+		m.copymodeDefer,
+		m.copymodeDeferWait,
 	)
 	return m
 }
@@ -255,6 +268,39 @@ func (m *Metrics) ObserveProviderDeferWait(provider string, seconds float64) {
 		return
 	}
 	m.providerDeferWait.WithLabelValues(provider).Observe(seconds)
+}
+
+// InitCopyModeDefer materializes the copy-mode deferral counter series for the
+// agent at 0 so the metric is present in exposition from mailman startup,
+// before any scroll-read event (the present-at-zero idiom, #531/#526). Add(0)
+// touches the labeled series without incrementing it; without this the
+// dashboard shows "no data" instead of a flat 0 until the first deferral.
+func (m *Metrics) InitCopyModeDefer(agent string) {
+	if m == nil {
+		return
+	}
+	m.copymodeDefer.WithLabelValues(agent).Add(0)
+}
+
+// IncCopyModeDefer bumps the copy-mode deferral counter (#526) for the agent
+// whose pane was scrolled up when a delivery cycle observed copy-mode. Fed
+// once per gate cycle that saw copy-mode, complementing ObserveCopyModeDeferWait.
+func (m *Metrics) IncCopyModeDefer(agent string) {
+	if m == nil {
+		return
+	}
+	m.copymodeDefer.WithLabelValues(agent).Inc()
+}
+
+// ObserveCopyModeDeferWait records how long a gate cycle waited on copy-mode
+// (seconds) from its first copy-mode observation until the gate resolved —
+// delivered on return-to-live or reverted at MaxWait (#526). Fed from
+// GateOutcome.CopyModeWait, by agent.
+func (m *Metrics) ObserveCopyModeDeferWait(agent string, seconds float64) {
+	if m == nil {
+		return
+	}
+	m.copymodeDeferWait.WithLabelValues(agent).Observe(seconds)
 }
 
 // IncPasteUnsafeAbort bumps the paste-unsafe-abort counter for the agent

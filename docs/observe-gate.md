@@ -30,7 +30,7 @@ actively typing.) The gate classifies the pane into one of five states,
 and either delivers immediately or waits and re-checks. Typical latency
 on an idle pane is **~3–5s**; the old gate's single backoff cycle was ~72s.
 
-## How it decides: the five agent states
+## How it decides: the six agent states
 
 Each poll classifies the recipient into one `AgentState`
 (`internal/tmuxio/state.go`), checked in **precedence order** — the first rule that
@@ -38,6 +38,7 @@ matches wins:
 
 | # | State | How it's detected | Gate decision |
 |---|---|---|---|
+| 0 | **copy-mode** | `display-message '#{pane_in_mode}'` returns `1` — you've scrolled the pane up into tmux copy-mode (#526) | wait (revert-and-retry; never delivers into a scrolled pane) |
 | 1 | **at-rest-in-compaction** | the `Compacting conversation…` marker is in the pane (#70) | wait |
 | 2 | **working** | the two snapshots differ across a 200ms window (streaming output, a spinner, any paint) | wait — *or* **deliver now** when `working-deliver-immediately` is on (#106) |
 | 3 | **idle** | cursor sits *at* the `❯ ` prompt sentinel — empty prompt *or* an auto-suggestion ghost-text (you haven't engaged) | **deliver now** |
@@ -50,6 +51,34 @@ check, it would look like ordinary working — the marker check at precedence 1 
 that. The cursor-position distinction (at-sentinel vs past-sentinel) is what lets
 the gate tell an *idle prompt with ghost-text* apart from *you actively drafting* —
 the two cases the older heuristic conflated.
+
+**Copy-mode is precedence 0 — it runs *before* the capture-pane snapshots — for a
+structural reason** (#526): `capture-pane -p` on a scrolled pane reads the
+**historical view**, not the live bottom. If the gate captured first, an old `❯ `
+prompt scrolled into frame would misclassify as *idle* and the mailman would paste
+into a scrolled pane (the operator's reading position clobbered, the verify-token
+unable to surface — the 2026-06-17 "83b3" incident). The cheap, authoritative
+`#{pane_in_mode}` query reflects the live pane regardless of scroll position, so it
+short-circuits ahead of the captures.
+
+## When you've scrolled up to read: copy-mode deferral (#526)
+
+Scroll a chamber pane up (tmux copy-mode / view-mode, e.g. `Ctrl-b [` or a mouse
+wheel) and the mailman **holds** delivery while you read — it will not paste over
+your scroll position. The held message stays queued; `inbox` / `status` shows it as
+`queued (pane-in-copy-mode)` so you can see *why* it isn't draining. When you exit
+copy-mode (`q`, or scroll back to the bottom), the next poll classifies the pane
+normally and delivery resumes within ~15s — no resend needed.
+
+Because copy-mode persists until *you* exit it (unlike a busy pane, which becomes
+deliverable on its own), the gate does **not** fall back to deliver-anyway at its
+5-minute `MaxWait` the way the other wait-states do — that would paste into the
+still-scrolled pane and reproduce the very bug this prevents. Instead it reverts the
+message to queued and retries; the within-gate poll catches your exit promptly. For
+a *deliberately* long read, the planned `reading-mode` flag (deferred — issue #526
+option D) will let you hold delivery explicitly. Deferral count + wait time are
+exported as `tmux_tell_copymode_defer_total{agent}` and
+`tmux_tell_copymode_defer_wait_seconds{agent}`.
 
 > **Note on the markers.** The three substrings the gate keys on — the prompt
 > sentinel `❯ ` (NBSP), the compaction phrase, and the popup footer — are

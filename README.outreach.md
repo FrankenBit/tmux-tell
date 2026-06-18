@@ -89,6 +89,11 @@ I'd rather you hear this from me than discover it:
   your input line to tell you something's queued), but it's coordinating with a live TUI,
   not a clean API. Occasionally a message lands marked **"unverified"** — it's in your
   pane, the tool just couldn't 100% confirm it submitted. Glance at it when you see that.
+- **Scrolling up pauses delivery.** If you scroll a pane up to read back through it (tmux
+  copy-mode), the tool holds messages for that pane until you return to the bottom — it
+  won't paste over your reading position. Nothing is lost; `inbox` shows the held message
+  as `queued (pane-in-copy-mode)`, and it delivers within a few seconds of you scrolling
+  back down.
 - **Linux + systemd only.** The background helpers are systemd *user* services. No native
   macOS/Windows. And if you skip the `enable-linger` step, the helpers stop when you log
   out and messages just queue until you're back.

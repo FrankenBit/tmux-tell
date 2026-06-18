@@ -56,6 +56,7 @@ func TestState_String_AllValues(t *testing.T) {
 		{StateWorking, "working"},
 		{StateAtRestInCompaction, "at-rest-in-compaction"},
 		{StateAwaitingOperator, "awaiting-operator"},
+		{StateInCopyMode, "copy-mode"},
 		{State(99), "unknown"}, // out-of-range defaults to "unknown" (safer)
 	}
 	for _, c := range cases {
@@ -192,8 +193,8 @@ func TestAgentState_NoPaneMutation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(fr.calls) != 3 {
-		t.Errorf("tmux call count = %d, want 3 (read-only-observe = 2 capture-pane + 1 display-message)", len(fr.calls))
+	if len(fr.calls) != 4 {
+		t.Errorf("tmux call count = %d, want 4 (read-only-observe = 1 pane_in_mode + 2 capture-pane + 1 cursor display-message)", len(fr.calls))
 	}
 	capturePaneCount := 0
 	displayMessageCount := 0
@@ -210,8 +211,95 @@ func TestAgentState_NoPaneMutation(t *testing.T) {
 	if capturePaneCount != 2 {
 		t.Errorf("capture-pane count = %d, want 2", capturePaneCount)
 	}
-	if displayMessageCount != 1 {
-		t.Errorf("display-message count = %d, want 1", displayMessageCount)
+	if displayMessageCount != 2 {
+		t.Errorf("display-message count = %d, want 2 (pane_in_mode + cursor)", displayMessageCount)
+	}
+}
+
+// TestAgentState_CopyModeDetectedSkipsCaptures pins the #526 load-bearing
+// property: when pane_in_mode=1 (operator scrolled up), AgentState returns
+// StateInCopyMode at precedence 0 and SKIPS the capture-pane snapshots — they
+// would read the historical scrolled view and could misclassify as Idle (the
+// 83b3 bug). Exactly one tmux call (the pane_in_mode query), zero capture-pane.
+func TestAgentState_CopyModeDetectedSkipsCaptures(t *testing.T) {
+	fastTemporalDelta(t)
+	// A scrolled view that, if captured, shows an old `❯ ` prompt at top —
+	// the exact shape that would misclassify as Idle without precedence-0.
+	scrolled := "❯ \nhistory line\nmore history\n"
+	fr := newAgentStateRunner([]string{scrolled, scrolled}, 2, 0)
+	fr.inCopyMode = true
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateInCopyMode {
+		t.Errorf("state = %v, want StateInCopyMode (pane_in_mode=1)", state)
+	}
+	if !strings.Contains(ev.Reason, "copy-mode") {
+		t.Errorf("Evidence.Reason = %q, want it to mention copy-mode", ev.Reason)
+	}
+	if len(fr.calls) != 1 {
+		t.Fatalf("tmux call count = %d, want 1 (only the pane_in_mode query; captures skipped)", len(fr.calls))
+	}
+	for _, call := range fr.calls {
+		if strings.HasPrefix(call, "capture-pane") {
+			t.Errorf("capture-pane was called in copy-mode (%q) — MUST be skipped (it reads the scrolled view → 83b3)", call)
+		}
+	}
+}
+
+// TestAgentState_LivePaneNotCopyMode confirms pane_in_mode=0 (live prompt)
+// falls through to the normal capture-based classification — a live idle pane
+// is NOT deferred as copy-mode.
+func TestAgentState_LivePaneNotCopyMode(t *testing.T) {
+	fastTemporalDelta(t)
+	pane := "history\n──── Agent ──\n❯ \n────────\n  status\n"
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 2) // cursor at sentinel
+	fr.inCopyMode = false
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state == StateInCopyMode {
+		t.Fatal("state = StateInCopyMode for a live pane (pane_in_mode=0) — false defer")
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (live, stable, cursor at sentinel)", state)
+	}
+}
+
+// TestPaneInCopyMode_Parsing pins the helper's read of `#{pane_in_mode}`:
+// "1" → true (in a mode), "0"/anything-else → false, runner error → error.
+func TestPaneInCopyMode_Parsing(t *testing.T) {
+	cases := []struct {
+		out  string
+		want bool
+	}{
+		{"1\n", true},
+		{"1", true},
+		{"0\n", false},
+		{"0", false},
+		{"", false},
+	}
+	for _, c := range cases {
+		fr := func(_ context.Context, _ io.Reader, _ ...string) ([]byte, error) {
+			return []byte(c.out), nil
+		}
+		prev := SetTmuxRunner(fr)
+		got, err := PaneInCopyMode(context.Background(), "%5")
+		SetTmuxRunner(prev)
+		if err != nil {
+			t.Errorf("PaneInCopyMode(out=%q) unexpected error: %v", c.out, err)
+		}
+		if got != c.want {
+			t.Errorf("PaneInCopyMode(out=%q) = %v, want %v", c.out, got, c.want)
+		}
 	}
 }
 
@@ -223,6 +311,10 @@ type agentStateRunner struct {
 	*fakeProbeRunner
 	cursorX int
 	cursorY int
+	// inCopyMode is what the #526 precedence-0 `#{pane_in_mode}` query
+	// returns: false → "0" (live prompt, the default for all pre-#526
+	// tests), true → "1" (scrolled into copy-mode).
+	inCopyMode bool
 }
 
 func newAgentStateRunner(captures []string, cursorX, cursorY int) *agentStateRunner {
@@ -240,6 +332,15 @@ func (c *agentStateRunner) run(ctx context.Context, stdin io.Reader, args ...str
 	c.calls = append(c.calls, strings.Join(args, " "))
 	c.mu.Unlock()
 	if args[0] == "display-message" {
+		// #526: AgentState makes TWO display-message calls — the
+		// precedence-0 pane_in_mode query (before the captures) and the
+		// cursor query. Distinguish them by the format arg.
+		if strings.Contains(args[len(args)-1], "pane_in_mode") {
+			if c.inCopyMode {
+				return []byte("1\n"), nil
+			}
+			return []byte("0\n"), nil
+		}
 		return []byte(fmt.Sprintf("%d/%d\n", c.cursorX, c.cursorY)), nil
 	}
 	// Re-dispatch but skip the call-recording in the underlying runner
@@ -439,10 +540,11 @@ func TestAgentState_ContextCancelledDuringTemporalDelta(t *testing.T) {
 	if state != StateUnknown {
 		t.Errorf("state = %v, want StateUnknown when ctx cancelled mid-wait", state)
 	}
-	// Exactly one capture should have happened — the cancellation cuts
-	// the temporal-delta short before the second capture.
-	if len(fr.calls) != 1 {
-		t.Errorf("tmux call count = %d, want 1 (cancellation aborts before the second capture-pane)", len(fr.calls))
+	// Two calls should have happened — the #526 precedence-0 pane_in_mode
+	// query, then the first capture-pane; the cancellation cuts the
+	// temporal-delta short before the second capture.
+	if len(fr.calls) != 2 {
+		t.Errorf("tmux call count = %d, want 2 (pane_in_mode + first capture-pane; cancellation aborts before the second capture)", len(fr.calls))
 	}
 }
 

@@ -815,6 +815,12 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	}
 	var lastObservedWrite time.Time
 
+	// #526: materialize the copy-mode deferral counter at 0 from startup so the
+	// metric is present in exposition before any scroll-read (present-at-zero
+	// idiom, #531). Unconditional — copy-mode defer is independent of the
+	// provider cap.
+	m.InitCopyModeDefer(opts.Agent)
+
 	// #507: per-message first-defer timestamps (publicID → first time the
 	// provider cap deferred it this serve run). Stamped on the first defer,
 	// observed + cleared at the gate-pass that ends the deferral, feeding the
@@ -1164,11 +1170,33 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			gateCtx, gcancel := context.WithTimeout(stopCtx, gateBudget+5*time.Second)
 			outcome, gerr := tmuxio.ObserveGate(gateCtx, paneForDelivery, gateOpts)
 			gcancel()
+			// #526: record the copy-mode deferral wait for any cycle that
+			// observed copy-mode — the delivered-on-exit path AND the
+			// reverted-at-MaxWait path both populate CopyModeWait.
+			if outcome.CopyModeWait > 0 {
+				m.IncCopyModeDefer(opts.Agent)
+				m.ObserveCopyModeDeferWait(opts.Agent, outcome.CopyModeWait.Seconds())
+			}
 			if gerr != nil {
 				switch {
 				case errors.Is(gerr, context.Canceled):
 					// SIGTERM during the observe loop — exit cleanly.
 					return exitOK
+				case errors.Is(gerr, tmuxio.ErrCopyModeUnsafe):
+					// #526: pane still scrolled at MaxWait. Do NOT deliver-
+					// anyway — that pastes into a scrolled pane and reproduces
+					// the 83b3 bug. Revert to queued and retry; the next cycle
+					// delivers promptly once the operator exits copy-mode (the
+					// gate poll catches the exit within one interval).
+					logger.Printf("WARN gate_copymode_persist id=%s pane=%s iter=%d — pane scrolled past MaxWait; reverting to queued for retry (not pasting into a scrolled pane)",
+						msg.PublicID, paneForDelivery, outcome.Iterations)
+					if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
+						logger.Printf("WARN gate_copymode_recover_failed id=%s err=%v", msg.PublicID, rerr)
+					}
+					if stopOrSleep(stopCtx, opts.InterMessageDelay) {
+						return exitOK
+					}
+					continue
 				case errors.Is(gerr, tmuxio.ErrMaxWaitExceeded):
 					logger.Printf("WARN gate_max_wait id=%s pane=%s iter=%d — delivering anyway (%s)",
 						msg.PublicID, paneForDelivery, outcome.Iterations, outcome.Reason)

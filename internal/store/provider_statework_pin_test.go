@@ -31,3 +31,22 @@ func TestObservedStateWorkingMatchesTmuxioStateWorking(t *testing.T) {
 			observedStateWorking, got)
 	}
 }
+
+// TestStateInCopyModeIsNotWorkingSentinel pins the #526 D3 invariant (the
+// #510 discipline applied to the new copy-mode state). The mailman writes
+// AgentState().String() into observed_state (serve.go), so "copy-mode" is now
+// a persisted wire value. A scroll-read pane's working-ness is UNOBSERVABLE by
+// construction, so it must count as NOT-working: StateInCopyMode.String() must
+// never collide with the cap's working sentinel. If a rename made them equal, a
+// scroll-read chamber would wrongly count toward #448's concurrency cap.
+func TestStateInCopyModeIsNotWorkingSentinel(t *testing.T) {
+	if got := tmuxio.StateInCopyMode.String(); got == observedStateWorking {
+		t.Fatalf("tmuxio.StateInCopyMode renders %q == observedStateWorking %q — a scroll-read "+
+			"pane would wrongly count toward the #448 cap (#526 D3). Keep them distinct.",
+			got, observedStateWorking)
+	}
+	if got := tmuxio.StateInCopyMode.String(); got != "copy-mode" {
+		t.Fatalf("tmuxio.StateInCopyMode.String() = %q, want \"copy-mode\" (the persisted "+
+			"observed_state value the inbox surface + docs reference).", got)
+	}
+}

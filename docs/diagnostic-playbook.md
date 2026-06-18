@@ -400,6 +400,34 @@ message was in `delivering`) to any of those modes would leave rows orphaned
 permanently until the agent flipped back to paste-and-enter and serve
 restarted. Tracked in [#357](https://git.frankenbit.de/frankenbit/tmux-tell/issues/357).
 
+## `pane_in_copy_mode` deferral — "my messages stopped landing" (#526)
+
+A recipient's queue that won't drain — with `inbox` / `status` showing the head
+message as `queued (pane-in-copy-mode)` — means the recipient's pane is **scrolled
+up** in tmux copy-mode (or view-mode). The mailman deliberately holds delivery while
+the pane is scrolled so a paste can't clobber the reader's position or land
+unverified (the 2026-06-17 "83b3" failure this guard fixes). This is **expected
+behavior, not a fault** — nothing is lost.
+
+**Detect.** Check the pane's mode directly:
+
+```bash
+tmux display-message -p -t <pane-id> '#{pane_in_mode}'   # 1 = in copy-mode, 0 = live
+```
+
+`1` confirms the deferral cause. The message stays `queued` throughout (it is reverted
+each gate cycle, never stranded).
+
+**Resolve.** Have the operator of that pane exit copy-mode — press `q`, or scroll back
+to the bottom. Delivery resumes on the next gate poll (within ~15s); no resend needed.
+
+**Note.** The gate does NOT deliver-anyway at its 5-minute `MaxWait` for copy-mode (it
+would paste into the still-scrolled pane). It reverts-and-retries instead, so a pane
+left scrolled for a long time simply holds its queue — each cycle logs
+`WARN gate_copymode_persist` and increments `tmux_tell_copymode_defer_total{agent}`.
+That is the signature in the mailman log + metrics if you're diagnosing from outside
+the pane.
+
 ## See also
 
 - [#59](https://git.frankenbit.de/frankenbit/tmux-tell/issues/59)

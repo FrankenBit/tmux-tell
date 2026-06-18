@@ -180,10 +180,12 @@ Metrics exposed (all prefixed `tmux_tell_`):
 | `tmux_tell_delivery_verify_attempt_seconds` | histogram | `recipient` | time in the post-Enter verify-token retry loop |
 | `tmux_tell_queue_depth` | gauge | `agent` | current queued (undelivered) depth, sampled each loop |
 | `tmux_tell_mailman_loop_iterations_total` | counter | `agent` | serve-loop iterations (liveness + cadence) |
-| `tmux_tell_paste_unsafe_aborts_total` | counter | `agent`, `reason` | deliveries aborted because the pane was paste-unsafe; `reason` ∈ `awaiting_operator` / `compaction` / `unknown` / `probe_failed` |
+| `tmux_tell_paste_unsafe_aborts_total` | counter | `agent`, `reason` | deliveries aborted because the pane was paste-unsafe; `reason` ∈ `awaiting_operator` / `compaction` / `copy_mode` / `unknown` / `probe_failed` |
 | `tmux_tell_provider_defer_total` | counter | `provider` | deliveries deferred by the #448 per-provider concurrency cap (too many same-provider chambers working) |
 | `tmux_tell_provider_defer_inflight` | gauge | `provider` | current count of messages held by the #448 per-provider concurrency cap in this mailman process |
 | `tmux_tell_provider_defer_wait_seconds` | histogram | `provider` | wall-clock wait from a message's first provider-cap deferral until the cap slot reopens |
+| `tmux_tell_copymode_defer_total` | counter | `agent` | delivery cycles deferred because the recipient pane was scrolled up in copy-mode (#526) |
+| `tmux_tell_copymode_defer_wait_seconds` | histogram | `agent` | wall-clock a delivery waited on copy-mode, from first observation until the gate resolved (delivered on return-to-live, or reverted at MaxWait) (#526) |
 | `tmux_tell_delivery_latency_by_priority_seconds` | histogram | `priority` | queued→delivered latency by message priority (#449) — low / normal / high |
 
 Provider-cap metrics are emitted per mailman process. For

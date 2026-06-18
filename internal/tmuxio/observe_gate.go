@@ -113,11 +113,40 @@ type GateOutcome struct {
 	// to return. Non-empty only when Stale=true. The hash of this
 	// content is what stayed stable across InputStaleThreshold.
 	InputContent string
+	// CopyModeWait is the wall-clock from the FIRST StateInCopyMode
+	// observation in this gate cycle until the gate returned (#526).
+	// Zero when the pane was never in copy-mode. The caller feeds it to
+	// the tmux_tell_copymode_defer_wait_seconds histogram — semantics
+	// mirror #507's first-defer-to-resolution wait. Populated on every
+	// return path that saw copy-mode (the idle delivery path AND the
+	// ErrCopyModeUnsafe revert path).
+	CopyModeWait time.Duration
 }
 
 // ErrMaxWaitExceeded is returned when ObserveGate's safety cap fires
 // without reaching either the idle path or the stale-flush path.
 var ErrMaxWaitExceeded = errors.New("tmuxio: observe-gate MaxWait exceeded")
+
+// ErrCopyModeUnsafe is returned when the gate's MaxWait fires while the pane
+// is STILL in copy-mode (#526). Unlike ErrMaxWaitExceeded — whose caller
+// delivers-anyway because the blocking state (working/awaiting) resolves into
+// a deliverable pane — copy-mode persists until the operator exits scroll
+// mode, so delivering-anyway would paste into a still-scrolled pane and
+// reproduce the 83b3 bug this gate exists to prevent. The caller must NOT
+// deliver on this error: revert the message to queued and retry. The
+// within-gate poll detects copy-mode exit within one interval (~3-15s), so a
+// retry delivers promptly once the operator returns to the live prompt.
+var ErrCopyModeUnsafe = errors.New("tmuxio: observe-gate copy-mode persisted past MaxWait")
+
+// sinceIfSet returns the elapsed time since t, or 0 when t is the zero value
+// (the event never happened). Used to populate GateOutcome.CopyModeWait only
+// when the pane was actually observed in copy-mode during the cycle.
+func sinceIfSet(t time.Time) time.Duration {
+	if t.IsZero() {
+		return 0
+	}
+	return time.Since(t)
+}
 
 // ObserveGate observes the receiver pane via repeated read-only
 // AgentState calls until the agent is ready to receive a paste
@@ -192,6 +221,7 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 		iterations       int
 		lastState        State
 		notifiedOfTyping bool
+		firstCopyModeAt  time.Time // #526: first StateInCopyMode this cycle (zero = never)
 	)
 
 	for {
@@ -212,9 +242,10 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 		switch state {
 		case StateIdle:
 			return GateOutcome{
-				Reason:     "idle: " + ev.Reason,
-				State:      state,
-				Iterations: iterations,
+				Reason:       "idle: " + ev.Reason,
+				State:        state,
+				Iterations:   iterations,
+				CopyModeWait: sinceIfSet(firstCopyModeAt),
 			}, nil
 
 		case StateAwaitingOperator:
@@ -264,12 +295,24 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 				// doc-comment for why AwaitingOperator / Compaction /
 				// Unknown stay hard-deferred.
 				return GateOutcome{
-					Reason:     "working: immediate delivery (opt-in)",
-					State:      state,
-					Iterations: iterations,
+					Reason:       "working: immediate delivery (opt-in)",
+					State:        state,
+					Iterations:   iterations,
+					CopyModeWait: sinceIfSet(firstCopyModeAt),
 				}, nil
 			}
 			// Safer-default wait. The agent is busy; defer + re-poll.
+		case StateInCopyMode:
+			// #526: operator scrolled the pane up into copy-mode. Safer-
+			// default wait — defer + re-poll; a paste here is consumed as
+			// copy-mode navigation and the verify-token can't surface from
+			// the scrolled view (the 83b3 bug). Stamp the first observation
+			// so CopyModeWait measures the full hold. The MaxWait branch
+			// below returns ErrCopyModeUnsafe (NOT deliver-anyway) when the
+			// pane is still scrolled at the cap.
+			if firstCopyModeAt.IsZero() {
+				firstCopyModeAt = time.Now()
+			}
 		case StateAtRestInCompaction, StateUnknown:
 			// Safer-default wait. The agent is compacting / in an
 			// unrecognized state; defer + re-poll.
@@ -277,6 +320,21 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 
 		// Check the safety cap before sleeping for the next iteration.
 		if time.Now().After(deadline) {
+			// #526: copy-mode is the one state where deliver-anyway is NOT
+			// safe — the pane is still scrolled, so a paste reproduces the
+			// 83b3 bug. Return ErrCopyModeUnsafe (no Stale) so the caller
+			// reverts to queued and retries instead of delivering. The
+			// within-gate poll catches the operator's exit within one
+			// interval, so the retry delivers promptly on return-to-live.
+			if lastState == StateInCopyMode {
+				return GateOutcome{
+					Reason: fmt.Sprintf("copy-mode active past MaxWait %s; reverting to queued (not pasting into a scrolled pane)",
+						opts.MaxWait),
+					State:        StateInCopyMode,
+					Iterations:   iterations,
+					CopyModeWait: sinceIfSet(firstCopyModeAt),
+				}, ErrCopyModeUnsafe
+			}
 			return GateOutcome{
 				Reason: fmt.Sprintf("MaxWait %s exceeded; last state=%s",
 					opts.MaxWait, lastState),
@@ -284,6 +342,7 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 				Iterations:   iterations,
 				Stale:        true,
 				InputContent: lastContent,
+				CopyModeWait: sinceIfSet(firstCopyModeAt),
 			}, ErrMaxWaitExceeded
 		}
 

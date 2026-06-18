@@ -9,6 +9,7 @@ import (
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // ackResult is the JSON response shape for --ack and --ack-all.
@@ -174,6 +175,25 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 		}
 	}
 
+	// #526: copy-mode deferral, live-derived from the recipient's CURRENT tmux
+	// pane state. Unlike backlog_fenced / provider_cap_deferred (both DB-
+	// derived), this is a read-only tmux query (`pane_in_mode`): when the
+	// recipient has scrolled their pane up into copy-mode, the mailman holds
+	// delivery, so its queued, claimable backlog is surfaced as pane-in-copy-
+	// mode — the operator's answer to "why isn't my queue draining". Any
+	// GetAgent / pane-query error (no pane registered, tmux unreachable from
+	// this process) degrades gracefully to false — a display nuance, never a
+	// gate change. Ordered after capDeferred so a single message reports one
+	// dominant reason.
+	copyModeDeferred := func(store.Message) bool { return false }
+	if a, gerr := s.GetAgent(ctx, agent); gerr == nil && a.PaneID != "" {
+		if inMode, merr := tmuxio.PaneInCopyMode(ctx, a.PaneID); merr == nil && inMode {
+			copyModeDeferred = func(m store.Message) bool {
+				return m.State == store.StateQueued && !fenced(m) && !capDeferred(m)
+			}
+		}
+	}
+
 	switch format {
 	case "json":
 		out := make([]map[string]any, 0, len(msgs))
@@ -187,6 +207,9 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 			// Always emitted (true/false) so consumers can distinguish a
 			// cap-held message from a merely-waiting-its-turn one.
 			mm["provider_cap_deferred"] = capDeferred(m)
+			// #526: pane_in_copy_mode — queued-but-held because the recipient
+			// scrolled their pane up into copy-mode. Always emitted (true/false).
+			mm["pane_in_copy_mode"] = copyModeDeferred(m)
 			out = append(out, mm)
 		}
 		_ = writeJSONResult(stdout, out)
@@ -201,6 +224,8 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 				state = "queued (backlog-fenced)"
 			} else if capDeferred(m) {
 				state = "queued (provider-cap)"
+			} else if copyModeDeferred(m) {
+				state = "queued (pane-in-copy-mode)"
 			}
 			rows = append(rows, []string{
 				m.PublicID,

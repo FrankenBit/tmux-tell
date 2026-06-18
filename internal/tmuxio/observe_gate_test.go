@@ -29,6 +29,10 @@ type observeStep struct {
 	paneA, paneB     string
 	cursorX, cursorY int
 	inputContent     string
+	// inCopyMode is what the #526 precedence-0 `#{pane_in_mode}` query
+	// returns for this step: true → "1" (AgentState returns StateInCopyMode
+	// and SKIPS the captures), false → "0" (normal capture-based path).
+	inCopyMode bool
 }
 
 func newObserveGateRunner(steps []observeStep) *observeGateRunner {
@@ -76,6 +80,21 @@ func (r *observeGateRunner) run(ctx context.Context, stdin io.Reader, args ...st
 			return []byte(out), nil
 		}
 	case "display-message":
+		// #526: distinguish the precedence-0 pane_in_mode query from the
+		// cursor query by the format arg.
+		if strings.Contains(args[len(args)-1], "pane_in_mode") {
+			if step.inCopyMode {
+				// AgentState returns StateInCopyMode on this call and skips
+				// the captures, so advance the step HERE (the capture-driven
+				// advance in the capture-pane case won't run this iteration).
+				if len(r.steps) > 1 {
+					r.steps = r.steps[1:]
+				}
+				r.cursor = 0
+				return []byte("1\n"), nil
+			}
+			return []byte("0\n"), nil
+		}
 		return []byte(formatCursor(step.cursorX, step.cursorY)), nil
 	}
 	return nil, nil
@@ -149,6 +168,76 @@ func TestObserveGate_FastPathIdle(t *testing.T) {
 	}
 	if outcome.Iterations != 1 {
 		t.Errorf("Iterations = %d, want 1 (fast-path idle)", outcome.Iterations)
+	}
+}
+
+// TestObserveGate_CopyModePersistReverts pins the #526 amended-D4 core:
+// when the pane stays in copy-mode past MaxWait, the gate returns
+// ErrCopyModeUnsafe WITHOUT Stale=true — so the caller reverts to queued
+// rather than delivering into a scrolled pane (which would reproduce 83b3).
+// CopyModeWait is populated for the metric.
+func TestObserveGate_CopyModePersistReverts(t *testing.T) {
+	fastObserveDelta(t)
+	runner := newObserveGateRunner([]observeStep{
+		{inCopyMode: true}, // single step persists (runner keeps the last step)
+	})
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     time.Microsecond,
+		PollIntervalMax:     time.Microsecond,
+		InputStaleThreshold: time.Minute,
+		MaxWait:             20 * time.Millisecond,
+	})
+	if !errors.Is(err, ErrCopyModeUnsafe) {
+		t.Fatalf("err = %v, want ErrCopyModeUnsafe", err)
+	}
+	if outcome.State != StateInCopyMode {
+		t.Errorf("State = %v, want StateInCopyMode", outcome.State)
+	}
+	if outcome.Stale {
+		t.Error("Stale = true, want false — copy-mode must NOT trigger deliver-anyway (would paste into a scrolled pane)")
+	}
+	if outcome.CopyModeWait <= 0 {
+		t.Errorf("CopyModeWait = %v, want > 0 (the metric needs the hold duration)", outcome.CopyModeWait)
+	}
+}
+
+// TestObserveGate_CopyModeExitDelivers pins the transition AC: copy-mode on
+// the first poll, then the operator exits to a live idle prompt → the gate
+// delivers (StateIdle, not Stale) and reports CopyModeWait > 0. This is the
+// "fires automatically on return-to-live" behavior, for free via the poll.
+func TestObserveGate_CopyModeExitDelivers(t *testing.T) {
+	fastObserveDelta(t)
+	idle := "history\n" + PromptSentinel + "\nfooter\n"
+	runner := newObserveGateRunner([]observeStep{
+		{inCopyMode: true}, // scrolled up
+		{paneA: idle, paneB: idle, cursorX: 2, cursorY: 1}, // exited → idle
+	})
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     time.Microsecond,
+		PollIntervalMax:     time.Microsecond,
+		InputStaleThreshold: time.Minute,
+		MaxWait:             5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if outcome.State != StateIdle {
+		t.Errorf("State = %v, want StateIdle after copy-mode exit", outcome.State)
+	}
+	if outcome.Stale {
+		t.Error("Stale = true, want false — clean delivery on return-to-live")
+	}
+	if outcome.CopyModeWait <= 0 {
+		t.Errorf("CopyModeWait = %v, want > 0 (waited on copy-mode before delivering)", outcome.CopyModeWait)
+	}
+	if outcome.Iterations < 2 {
+		t.Errorf("Iterations = %d, want >= 2 (copy-mode poll then idle poll)", outcome.Iterations)
 	}
 }
 
