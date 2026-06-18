@@ -182,7 +182,14 @@ Metrics exposed (all prefixed `tmux_tell_`):
 | `tmux_tell_mailman_loop_iterations_total` | counter | `agent` | serve-loop iterations (liveness + cadence) |
 | `tmux_tell_paste_unsafe_aborts_total` | counter | `agent`, `reason` | deliveries aborted because the pane was paste-unsafe; `reason` ∈ `awaiting_operator` / `compaction` / `unknown` / `probe_failed` |
 | `tmux_tell_provider_defer_total` | counter | `provider` | deliveries deferred by the #448 per-provider concurrency cap (too many same-provider chambers working) |
+| `tmux_tell_provider_defer_inflight` | gauge | `provider` | current count of messages held by the #448 per-provider concurrency cap in this mailman process |
+| `tmux_tell_provider_defer_wait_seconds` | histogram | `provider` | wall-clock wait from a message's first provider-cap deferral until the cap slot reopens |
 | `tmux_tell_delivery_latency_by_priority_seconds` | histogram | `priority` | queued→delivered latency by message priority (#449) — low / normal / high |
+
+Provider-cap metrics are emitted per mailman process. For
+`tmux_tell_provider_defer_inflight{provider}`, a single series is that scrape
+target's local standing count; use `sum by(provider)` across mailman instances
+for provider-wide inventory.
 
 The endpoint is standard Prometheus text exposition, so any compatible scraper works —
 point its scrape config at the per-agent `host:port/metrics`. The alcatraz Alloy scrape

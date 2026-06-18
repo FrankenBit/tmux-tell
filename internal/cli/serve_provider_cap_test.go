@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/metrics"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
@@ -93,4 +94,119 @@ func TestServe_ProviderCap_DeliversUnderCap(t *testing.T) {
 	}, "expected delivery under the provider cap within 2s")
 	stop()
 	wait()
+}
+
+func TestServe_ProviderCap_MetricsInflightGaugeInitializesZero(t *testing.T) {
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	if err := s.UpsertAgent(ctx, "bob", "%9"); err != nil {
+		t.Fatalf("upsert bob: %v", err)
+	}
+
+	m := metrics.New()
+	opts := capOpts("bob", 1)
+	opts.Metrics = m
+
+	stop, wait, _ := runServeInBackground(t, s, opts)
+	t.Cleanup(func() { stop(); wait() })
+
+	waitFor(t, time.Second, func() bool {
+		families, err := m.Registry().Gather()
+		if err != nil {
+			t.Fatalf("gather: %v", err)
+		}
+		for _, fam := range families {
+			if fam.GetName() != "tmux_tell_provider_defer_inflight" {
+				continue
+			}
+			for _, metric := range fam.GetMetric() {
+				if labelsMatch(metric.GetLabel(), map[string]string{"provider": "anthropic"}) {
+					return metric.GetGauge().GetValue() == 0
+				}
+			}
+		}
+		return false
+	}, "expected provider-cap inflight gauge series to initialize at 0")
+}
+
+func TestServe_ProviderCap_MetricsInflightGaugeTracksDeferredMessages(t *testing.T) {
+	withSuccessfulDelivery(t)
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	if err := s.UpsertAgent(ctx, "bob", "%9"); err != nil {
+		t.Fatalf("upsert bob: %v", err)
+	}
+	seedWorkers(t, s, "anthropic", "w1") // 1 working == cap
+	if _, err := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "hi"}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	m := metrics.New()
+	opts := capOpts("bob", 1)
+	opts.Metrics = m
+
+	stop, wait, _ := runServeInBackground(t, s, opts)
+	t.Cleanup(func() { stop(); wait() })
+
+	waitFor(t, time.Second, func() bool {
+		return gatherCounter(t, m, "tmux_tell_provider_defer_total",
+			map[string]string{"provider": "anthropic"}) >= 2
+	}, "expected repeat provider-cap deferrals within 1s")
+	if got := gatherGauge(t, m, "tmux_tell_provider_defer_inflight",
+		map[string]string{"provider": "anthropic"}); got != 1 {
+		t.Fatalf("inflight gauge while repeatedly deferred = %v, want 1", got)
+	}
+
+	if err := s.SetObservedState(ctx, "w1", "idle", time.Now()); err != nil {
+		t.Fatalf("release worker: %v", err)
+	}
+	waitDelivered(t, s, "bob")
+
+	if got := gatherGauge(t, m, "tmux_tell_provider_defer_inflight",
+		map[string]string{"provider": "anthropic"}); got != 0 {
+		t.Errorf("inflight gauge after cap pass = %v, want 0", got)
+	}
+	if got := gatherHistCount(t, m, "tmux_tell_provider_defer_wait_seconds",
+		map[string]string{"provider": "anthropic"}); got != 1 {
+		t.Errorf("provider defer-wait samples = %d, want 1", got)
+	}
+}
+
+func TestServe_ProviderCap_MetricsInflightGaugePrunesExternalQueueRemoval(t *testing.T) {
+	withSuccessfulDelivery(t)
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	if err := s.UpsertAgent(ctx, "bob", "%9"); err != nil {
+		t.Fatalf("upsert bob: %v", err)
+	}
+	seedWorkers(t, s, "anthropic", "w1") // 1 working == cap
+	res, err := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "hi"})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	m := metrics.New()
+	opts := capOpts("bob", 1)
+	opts.Metrics = m
+
+	stop, wait, _ := runServeInBackground(t, s, opts)
+	t.Cleanup(func() { stop(); wait() })
+
+	waitFor(t, time.Second, func() bool {
+		return gatherGauge(t, m, "tmux_tell_provider_defer_inflight",
+			map[string]string{"provider": "anthropic"}) == 1
+	}, "expected provider-cap inflight gauge to reach 1")
+
+	if _, err := s.DB().ExecContext(ctx, `UPDATE messages SET state = ? WHERE public_id = ?`,
+		store.StateAcknowledged, res.PublicID); err != nil {
+		t.Fatalf("externally acknowledge deferred row: %v", err)
+	}
+
+	waitFor(t, time.Second, func() bool {
+		return gatherGauge(t, m, "tmux_tell_provider_defer_inflight",
+			map[string]string{"provider": "anthropic"}) == 0
+	}, "expected provider-cap inflight gauge to prune externally acknowledged row")
 }

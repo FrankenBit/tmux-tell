@@ -811,6 +811,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		if perr := s.SetProviderCap(opCtx, opts.Agent, opts.MaxConcurrentPerProvider); perr != nil {
 			logger.Printf("set_provider_cap_failed err=%v", perr)
 		}
+		m.SetProviderDeferInflight(active.Provider, 0)
 	}
 	var lastObservedWrite time.Time
 
@@ -819,7 +820,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	// observed + cleared at the gate-pass that ends the deferral, feeding the
 	// tmux_tell_provider_defer_wait_seconds histogram. Mailman-local runtime
 	// state (a restart resets it — an acceptable loss for a wait histogram); it
-	// never needs to outlive the process, so it stays out of the DB.
+	// never needs to outlive the process, so it stays out of the DB. Growth is
+	// bounded by queued messages that were cap-deferred and have not yet passed
+	// the gate; external queue removals are pruned before the next claim, and
+	// process exit drops any remaining runtime entries.
 	deferStart := make(map[string]time.Time)
 
 	for {
@@ -910,6 +914,8 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			obsCancel()
 		}
 
+		pruneProviderDeferStart(opCtx, s, m, active.Provider, deferStart)
+
 		msg, err := s.ClaimNextWithStrategy(opCtx, opts.Agent, opts.PriorityStrategy)
 		if err != nil {
 			logger.Printf("claim_failed err=%v", err)
@@ -967,6 +973,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				// histogram measures the full hold, not just the last recheck.
 				if _, seen := deferStart[msg.PublicID]; !seen {
 					deferStart[msg.PublicID] = time.Now()
+					m.SetProviderDeferInflight(active.Provider, float64(len(deferStart)))
 				}
 				logger.Printf("provider_cap_deferred id=%s provider=%s working=%d cap=%d",
 					msg.PublicID, active.Provider, working, opts.MaxConcurrentPerProvider)
@@ -987,6 +994,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				m.ObserveProviderDeferWait(active.Provider, time.Since(t0).Seconds())
 			}
 			delete(deferStart, msg.PublicID)
+			m.SetProviderDeferInflight(active.Provider, float64(len(deferStart)))
 		}
 
 		logger.Printf("delivering id=%s kind=%s from=%s body_bytes=%d",
@@ -1703,6 +1711,31 @@ func deliveryLatencySeconds(createdAt string) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+func pruneProviderDeferStart(ctx context.Context, s *store.Store, m *metrics.Metrics, provider string, deferStart map[string]time.Time) {
+	if len(deferStart) == 0 {
+		return
+	}
+	changed := false
+	for publicID := range deferStart {
+		msg, err := s.GetMessage(ctx, publicID)
+		if errors.Is(err, store.ErrNotFound) {
+			delete(deferStart, publicID)
+			changed = true
+			continue
+		}
+		if err != nil {
+			continue
+		}
+		if msg.State != store.StateQueued {
+			delete(deferStart, publicID)
+			changed = true
+		}
+	}
+	if changed {
+		m.SetProviderDeferInflight(provider, float64(len(deferStart)))
+	}
 }
 
 // buildCanonicals snapshots the agents registry into the

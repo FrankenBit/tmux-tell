@@ -72,6 +72,7 @@ type Metrics struct {
 	pasteUnsafeAborts         *prometheus.CounterVec
 	mailmanStuck              *prometheus.GaugeVec
 	providerDefer             *prometheus.CounterVec
+	providerDeferInflight     *prometheus.GaugeVec
 	providerDeferWait         *prometheus.HistogramVec
 }
 
@@ -122,6 +123,10 @@ func New() *Metrics {
 			Name: "tmux_tell_provider_defer_total",
 			Help: "Total deliveries deferred by the #448 per-provider concurrency cap (too many same-provider chambers working), by provider.",
 		}, []string{"provider"}),
+		providerDeferInflight: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "tmux_tell_provider_defer_inflight",
+			Help: "Current count of messages held by the #448 per-provider concurrency cap in this mailman process, by provider.",
+		}, []string{"provider"}),
 		providerDeferWait: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "tmux_tell_provider_defer_wait_seconds",
 			Help:    "Wall-clock a cap-deferred message waited from its first #448 provider-cap deferral until the cap slot reopened and it was delivered (#507), by provider.",
@@ -138,6 +143,7 @@ func New() *Metrics {
 		m.pasteUnsafeAborts,
 		m.mailmanStuck,
 		m.providerDefer,
+		m.providerDeferInflight,
 		m.providerDeferWait,
 	)
 	return m
@@ -226,6 +232,17 @@ func (m *Metrics) IncProviderDefer(provider string) {
 		return
 	}
 	m.providerDefer.WithLabelValues(provider).Inc()
+}
+
+// SetProviderDeferInflight sets the standing count of messages currently held
+// by the provider cap in this mailman process (#520). Callers should set it
+// from the serve-loop deferStart map length so the gauge mirrors the gate's
+// actual runtime state.
+func (m *Metrics) SetProviderDeferInflight(provider string, count float64) {
+	if m == nil {
+		return
+	}
+	m.providerDeferInflight.WithLabelValues(provider).Set(count)
 }
 
 // ObserveProviderDeferWait records how long a cap-deferred message waited

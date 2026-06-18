@@ -97,6 +97,19 @@ func TestQueueDepthAndLoopAndAborts(t *testing.T) {
 	}
 }
 
+func TestProviderDeferInflightGauge(t *testing.T) {
+	m := New()
+	m.SetProviderDeferInflight("anthropic", 2)
+	m.SetProviderDeferInflight("anthropic", 1) // gauge: latest wins
+
+	if got := testutil.ToFloat64(m.providerDeferInflight.WithLabelValues("anthropic")); got != 1 {
+		t.Errorf("provider defer inflight = %v, want 1 (latest)", got)
+	}
+	if got := testutil.ToFloat64(m.providerDeferInflight.WithLabelValues("openai")); got != 0 {
+		t.Errorf("untouched provider defer inflight = %v, want 0", got)
+	}
+}
+
 func TestHandler_ServesValidExposition(t *testing.T) {
 	m := New()
 	m.RecordDelivery("alice", "bob", StateDelivered)
@@ -165,6 +178,7 @@ func TestNilMetrics_AllNoOp(t *testing.T) {
 	m.IncPasteUnsafeAbort("b", "unknown")
 	m.SetMailmanStuck("b", "pane-not-found", true)
 	m.IncProviderDefer("anthropic")
+	m.SetProviderDeferInflight("anthropic", 1)
 	m.ObserveProviderDeferWait("anthropic", 1)
 	if m.Registry() != nil {
 		t.Error("nil Metrics Registry() should be nil")
