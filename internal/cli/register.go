@@ -46,6 +46,10 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		"on a delivery_mode flip, ack the messages queued under the prior mode — they were emitted under the old delivery semantics and would not auto-deliver under the new one (#390)")
 	keepStale := fs.Bool("keep-stale-queue", false,
 		"on a delivery_mode flip, leave the prior-mode queued messages in place — they stay backlog-fenced (visible in `inbox`, not auto-delivered; clear later with `inbox --ack-all`) (#390)")
+	keepPane := fs.Bool("keep-pane", false,
+		"update non-pane fields (delivery_mode, alias, etc.) without touching the stored pane_id. "+
+			"Intended for acting-on-behalf scenarios (e.g. Bosun flipping another chamber's delivery_mode) "+
+			"where the caller is NOT the registered pane. Mutually exclusive with --pane. (#403)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -53,14 +57,25 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 	if *name == "" {
 		return writeJSONError(stdout, stderr, "--name required", exitUsage)
 	}
-	resolvedPane := *pane
-	if resolvedPane == "" {
-		resolvedPane = os.Getenv("TMUX_PANE")
-	}
-	if resolvedPane == "" {
+
+	// Track whether --pane was explicit BEFORE env resolution (#403 Fix B).
+	paneExplicit := *pane != ""
+	if *keepPane && paneExplicit {
 		return writeJSONError(stdout, stderr,
-			"pane required: pass --pane or run inside tmux with $TMUX_PANE set",
+			"--keep-pane and --pane are mutually exclusive: --keep-pane means 'don't touch the pane'; pass only one",
 			exitUsage)
+	}
+
+	resolvedPane := *pane
+	if !*keepPane {
+		if resolvedPane == "" {
+			resolvedPane = os.Getenv("TMUX_PANE")
+		}
+		if resolvedPane == "" {
+			return writeJSONError(stdout, stderr,
+				"pane required: pass --pane or run inside tmux with $TMUX_PANE set",
+				exitUsage)
+		}
 	}
 	if !store.ValidDeliveryMode(*deliveryMode) {
 		return writeJSONError(stdout, stderr,
@@ -166,6 +181,32 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 			return writeJSONError(stdout, stderr,
 				fmt.Sprintf("agent %q has %d message(s) queued under the prior delivery_mode (%s) that will NOT auto-deliver after the flip to %s — pass --purge-stale-queue to ack them, or --keep-stale-queue to leave them queued (visible as backlog-fenced in inbox)",
 					*name, stale, existing.DeliveryMode, *deliveryMode),
+				exitDataErr)
+		}
+	}
+
+	// #403 Fix B: refuse to silently rewrite pane_id when $TMUX_PANE differs
+	// from the stored pane and the caller did not explicitly pass --pane or
+	// --keep-pane. This catches the acting-on-behalf case (QM running register
+	// for Lookout while $TMUX_PANE=%7 would clobber Lookout's stored %8) and
+	// the post-crash self-reregister case (where the new pane must be named
+	// explicitly). The refuse path fires only on an existing registration with a
+	// stored pane_id — a first-time registration has nothing to protect.
+	//
+	// COUPLING(alcatraz-infra:scripts/chamber-claude.sh,chamber-codex.sh): Fix B
+	// is bypassed on the #532 auto-register self-heal path because both wrappers
+	// pass --pane "$TMUX_PANE" explicitly (paneExplicit=true). Dropping --pane
+	// from either wrapper would make Fix B refuse the auto-register → silent
+	// self-heal break. (#403)
+	if existing != nil && existing.PaneID != "" && !paneExplicit && !*keepPane {
+		if resolvedPane != existing.PaneID {
+			return writeJSONError(stdout, stderr,
+				fmt.Sprintf(
+					"register: refusing to silently rewrite pane_id %s → %s for agent %q.\n"+
+						"Pass --pane %s to keep the existing pane, --pane %s to actually change it,\n"+
+						"or --keep-pane to update other fields without touching pane_id.",
+					existing.PaneID, resolvedPane, *name,
+					existing.PaneID, resolvedPane),
 				exitDataErr)
 		}
 	}

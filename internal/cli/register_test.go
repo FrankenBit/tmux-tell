@@ -463,3 +463,161 @@ func TestRegister_FlipStaleQueueDisposition(t *testing.T) {
 		}
 	})
 }
+
+// TestRegister_PaneRewriteGuard pins #403 Fix A (--keep-pane) and Fix B
+// (divergence-detection refusal):
+//
+//  1. A chamber re-registers itself with the SAME pane via $TMUX_PANE — no
+//     divergence, no refusal. The common chamber-self-restart case.
+//  2. A chamber re-registers itself with a NEW pane without --pane (post-crash
+//     pane drift) — divergence detected, refused. Operator must pass --pane
+//     explicitly.
+//  3. One chamber registers another without --pane (acting-on-behalf — QM
+//     flipping Lookout's delivery_mode while $TMUX_PANE is QM's pane) —
+//     divergence detected, refused. Pass --keep-pane to update non-pane fields.
+//  4. Explicit --pane always wins: the stored pane is rewritten to whatever the
+//     caller passed, no refusal.
+func TestRegister_PaneRewriteGuard(t *testing.T) {
+	ctx := context.Background()
+
+	// freshDB seeds a DB with agent "lookout" at pane %8 (paste-and-enter).
+	freshDB := func(t *testing.T) string {
+		t.Helper()
+		db := filepath.Join(t.TempDir(), "m.db")
+		s, err := store.Open(db)
+		if err != nil {
+			t.Fatalf("open: %v", err)
+		}
+		defer s.Close() //nolint:errcheck // best-effort close
+		if err := s.UpsertAgent(ctx, "lookout", "%8"); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		return db
+	}
+
+	t.Run("same-pane re-register (no divergence) succeeds", func(t *testing.T) {
+		db := freshDB(t)
+		t.Setenv("TMUX_PANE", "%8") // lookout's own pane
+		var so, se bytes.Buffer
+		exit := runRegisterCLI([]string{
+			"--db", db, "--name", "lookout", "--force", "--start-mailman=false",
+		}, &so, &se)
+		if exit != exitOK {
+			t.Fatalf("exit = %d; out=%s err=%s", exit, so.String(), se.String())
+		}
+		s, _ := store.Open(db)
+		defer s.Close() //nolint:errcheck // best-effort close
+		a, _ := s.GetAgent(ctx, "lookout")
+		if a.PaneID != "%8" {
+			t.Errorf("pane_id = %q, want %%8 preserved", a.PaneID)
+		}
+	})
+
+	t.Run("new pane without --pane (post-crash drift) is refused", func(t *testing.T) {
+		db := freshDB(t)
+		t.Setenv("TMUX_PANE", "%10") // new pane after crash, not the stored %8
+		var so, se bytes.Buffer
+		exit := runRegisterCLI([]string{
+			"--db", db, "--name", "lookout", "--force", "--start-mailman=false",
+		}, &so, &se)
+		if exit != exitDataErr {
+			t.Fatalf("exit = %d, want exitDataErr; out=%s", exit, so.String())
+		}
+		out := so.String()
+		if !strings.Contains(out, "refusing to silently rewrite pane_id") {
+			t.Errorf("expected divergence refusal; got %q", out)
+		}
+		if !strings.Contains(out, "%8") || !strings.Contains(out, "%10") {
+			t.Errorf("error should name stored %%8 and resolved %%10; got %q", out)
+		}
+		if !strings.Contains(out, "--keep-pane") {
+			t.Errorf("error should mention --keep-pane escape; got %q", out)
+		}
+		// Pane must NOT have been rewritten.
+		s, _ := store.Open(db)
+		defer s.Close() //nolint:errcheck // best-effort close
+		a, _ := s.GetAgent(ctx, "lookout")
+		if a.PaneID != "%8" {
+			t.Errorf("pane_id = %q, want %%8 unchanged after refusal", a.PaneID)
+		}
+	})
+
+	t.Run("acting-on-behalf without --keep-pane is refused", func(t *testing.T) {
+		db := freshDB(t)
+		t.Setenv("TMUX_PANE", "%7") // QM's pane, not Lookout's %8
+		var so, se bytes.Buffer
+		// QM flipping Lookout's delivery_mode without naming the pane
+		exit := runRegisterCLI([]string{
+			"--db", db, "--name", "lookout",
+			"--delivery-mode", "mailbox-only",
+			"--force", "--start-mailman=false",
+		}, &so, &se)
+		if exit != exitDataErr {
+			t.Fatalf("exit = %d, want exitDataErr; out=%s", exit, so.String())
+		}
+		if !strings.Contains(so.String(), "refusing to silently rewrite pane_id") {
+			t.Errorf("expected divergence refusal; got %q", so.String())
+		}
+	})
+
+	t.Run("--keep-pane updates delivery_mode without touching pane_id", func(t *testing.T) {
+		db := freshDB(t)
+		t.Setenv("TMUX_PANE", "%7") // QM's pane — would clobber without --keep-pane
+		var so, se bytes.Buffer
+		exit := runRegisterCLI([]string{
+			"--db", db, "--name", "lookout",
+			"--delivery-mode", "mailbox-only",
+			"--keep-pane",
+			"--force", "--start-mailman=false",
+		}, &so, &se)
+		if exit != exitOK {
+			t.Fatalf("exit = %d; out=%s err=%s", exit, so.String(), se.String())
+		}
+		s, _ := store.Open(db)
+		defer s.Close() //nolint:errcheck // best-effort close
+		a, _ := s.GetAgent(ctx, "lookout")
+		if a.PaneID != "%8" {
+			t.Errorf("pane_id = %q, want %%8 preserved by --keep-pane", a.PaneID)
+		}
+		if a.DeliveryMode != store.DeliveryModeMailboxOnly {
+			t.Errorf("delivery_mode = %q, want mailbox-only", a.DeliveryMode)
+		}
+	})
+
+	t.Run("explicit --pane always wins over stored value", func(t *testing.T) {
+		db := freshDB(t)
+		t.Setenv("TMUX_PANE", "%7")
+		var so, se bytes.Buffer
+		exit := runRegisterCLI([]string{
+			"--db", db, "--name", "lookout",
+			"--pane", "%10", // explicit new pane
+			"--force", "--start-mailman=false",
+		}, &so, &se)
+		if exit != exitOK {
+			t.Fatalf("exit = %d; out=%s err=%s", exit, so.String(), se.String())
+		}
+		s, _ := store.Open(db)
+		defer s.Close() //nolint:errcheck // best-effort close
+		a, _ := s.GetAgent(ctx, "lookout")
+		if a.PaneID != "%10" {
+			t.Errorf("pane_id = %q, want %%10 (explicit --pane wins)", a.PaneID)
+		}
+	})
+
+	t.Run("--keep-pane and --pane are mutually exclusive", func(t *testing.T) {
+		db := freshDB(t)
+		t.Setenv("TMUX_PANE", "%7")
+		var so, se bytes.Buffer
+		exit := runRegisterCLI([]string{
+			"--db", db, "--name", "lookout",
+			"--pane", "%8", "--keep-pane",
+			"--force", "--start-mailman=false",
+		}, &so, &se)
+		if exit != exitUsage {
+			t.Fatalf("exit = %d, want exitUsage; out=%s", exit, so.String())
+		}
+		if !strings.Contains(so.String(), "mutually exclusive") {
+			t.Errorf("expected mutual-exclusion error; got %q", so.String())
+		}
+	})
+}

@@ -159,6 +159,42 @@ it via MCP (`register … delivery_mode=mailbox-only`), CLI (`register --name yo
 **per-agent block > `[defaults]` > the DB column > compiled default (`paste-and-enter`)**.
 `tmux-tell-claude config show` prints the resolved value per agent.
 
+### Acting-on-behalf: updating another agent's registration (#403)
+
+`register` resolves the pane from `--pane` if given, otherwise from `$TMUX_PANE`. That
+default is correct when a chamber registers *itself* — `$TMUX_PANE` is that chamber's own
+pane. It is wrong when one chamber registers another: QM running
+`register --name lookout --delivery-mode mailbox-only --force` from pane `%7` would
+silently overwrite Lookout's stored `pane_id=%8` with `%7`, corrupting the bus identity.
+
+Two flags protect against this:
+
+| flag | effect |
+|---|---|
+| `--keep-pane` | Update non-pane fields (delivery_mode, alias, etc.) **without touching** the stored `pane_id`. Use this for acting-on-behalf calls. Mutually exclusive with `--pane`. |
+| `--pane <id>` | Explicit pane — always wins, no refusal. Use to deliberately change the pane. |
+
+**Divergence detection (Fix B):** When updating an existing registration that has a stored
+`pane_id`, if the pane resolved from `$TMUX_PANE` **differs** from the stored pane *and*
+neither `--pane` nor `--keep-pane` was passed, the register **refuses** with an actionable
+error:
+
+```
+register: refusing to silently rewrite pane_id %8 → %7 for agent "lookout".
+Pass --pane %8 to keep the existing pane, --pane %7 to actually change it,
+or --keep-pane to update other fields without touching pane_id.
+```
+
+This also catches the post-crash self-register case: if Engineer's pane was `%4` and after a
+crash the new pane is `%10`, a plain `register --name engineer --force` is refused — the new
+pane must be explicit: `register --name engineer --pane %10 --force`.
+
+**Acting-on-behalf example (QM flipping Lookout's delivery_mode):**
+
+```bash
+tmux-tell-codex register --name lookout --delivery-mode mailbox-only --keep-pane --force
+```
+
 ### Flipping delivery_mode (pre-flip queued messages, #390)
 
 Re-running `register --name <agent> --delivery-mode <new>` on an agent that already

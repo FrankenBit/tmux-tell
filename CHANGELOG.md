@@ -35,6 +35,23 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ### Added
 
+- **`register --keep-pane`** (#403). New flag for acting-on-behalf scenarios: updates
+  non-pane fields (delivery_mode, alias, etc.) **without touching the stored `pane_id`**.
+  Intended for operator or broker calls where the registering chamber is not the
+  registered pane (e.g. QM flipping Lookout's delivery_mode). Mutually exclusive with
+  `--pane`.
+
+### Fixed
+
+- **`register` no longer silently rewrites `pane_id` from `$TMUX_PANE`** (#403). When
+  updating an existing registration that has a stored `pane_id`, if the pane resolved
+  from `$TMUX_PANE` differs from the stored pane and neither `--pane` nor `--keep-pane`
+  was passed, `register` now **refuses** with an actionable error naming both panes and
+  the escape flag. This catches the acting-on-behalf case (QM clobbering Lookout's pane)
+  and the post-crash self-register case (new pane must be named explicitly via `--pane`).
+
+### Added
+
 - **Chamber-asserted pane display names** (#556). A chamber can now assert its
   own tmux pane title on demand via the new `tmux-tell.set_pane_name(name)` MCP
   tool, or the matching `set-pane-name <name>` CLI subcommand (both adapters).
