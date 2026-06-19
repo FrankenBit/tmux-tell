@@ -51,10 +51,13 @@ const (
 	// plain DB read — so a tight-ish cadence costs nothing.
 	defaultStuckPollInterval = 5 * time.Second
 	// defaultSpinGuardThreshold + defaultSpinGuardWindow bound the serve-loop
-	// spin guard (#496). At the 250ms default idle-poll, a healthy idle loop
-	// does ~40 no-progress iterations in 10s — two orders of magnitude under
+	// spin guard (#496). At the 2s default idle-poll (#550), a healthy idle loop
+	// does ~5 no-progress iterations in 10s — over two orders of magnitude under
 	// 1000 — so the guard only trips on a genuine spin (a path looping without
-	// sleeping at thousands/sec).
+	// sleeping at thousands/sec). The threshold is interval-independent by
+	// construction (spinGuard.record decides on count-within-window, not on the
+	// poll cadence; TestSpinGuard_IdleLoopNeverTrips pins this), so #550's
+	// idle-poll raise only widens the headroom — the threshold stays 1000.
 	defaultSpinGuardThreshold = 1000
 	defaultSpinGuardWindow    = 10 * time.Second
 	// #448 provider-cap defaults. The cap counts same-provider chambers that
@@ -437,8 +440,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	agent := fs.String("agent", "", "agent name to serve (required)")
 	interMsg := fs.Duration("inter-message-delay", 200*time.Millisecond,
 		"pause between successive deliveries")
-	idlePoll := fs.Duration("idle-poll", 250*time.Millisecond,
-		"queue-empty sleep before re-checking")
+	idlePoll := fs.Duration("idle-poll", 2*time.Second,
+		"queue-empty sleep before re-polling; the #515 doorbell carries delivery latency sub-second, so this is the slow correctness fallback (raised 250ms→2s in #550, matching the 2s self-observe throttle so the #448 provider-cap freshness margin is unchanged)")
 	pausePoll := fs.Duration("pause-poll", time.Second,
 		"interval to re-check the paused flag")
 	deliverTimeout := fs.Duration("deliver-timeout", 30*time.Second,
