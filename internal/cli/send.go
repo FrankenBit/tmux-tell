@@ -35,10 +35,15 @@ type sendParams struct {
 	// Priority is the #449 scheduling weight (store.PriorityLow/Normal/High),
 	// already parsed from the --priority flag / MCP field. Zero defaults to
 	// normal at insert.
-	Priority     int
-	MaxRecipient int
-	MaxSender    int
-	MaxBody      int
+	Priority int
+	// ForceRateLimited is the #558 operator escape-hatch: when true the
+	// recipient's mailman bypasses the rate-limit / usage-limit defer gates for
+	// this message (but NOT copy-mode / popup / unknown / compaction
+	// paste-unsafety). Default false = normal deferral.
+	ForceRateLimited bool
+	MaxRecipient     int
+	MaxSender        int
+	MaxBody          int
 
 	// Multi-recipient spam guard (#158). 0 = no cap.
 	MaxRecipientsPerSend int
@@ -85,6 +90,8 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		"signal that you'd like a reply — sets the expects_reply marker WITHOUT invoking ask/wait_for_reply machinery (#270). Use for lightweight intent-signaling when you're not blocking on the answer. Sender's unanswered sends appear under `sent --awaiting-reply`; recipient's owed replies appear under `inbox --unanswered`.")
 	priorityFlag := fs.String("priority", "",
 		"delivery priority for cross-channel scheduling (#449): low | normal | high. Default normal. Within a sender→recipient channel order is always FIFO; priority only decides which channel's head the recipient's mailman delivers next when several are queued. Trust-based — no urgent-spam.")
+	forceRateLimited := fs.Bool("force-rate-limited", false,
+		"bypass the recipient's rate-limit / usage-limit defer for this message, delivering even when the pane shows a rate-/usage-limit banner (#558). Escape-hatch for a false-positive pattern or a known-cleared limit. Does NOT bypass copy-mode / popup / unknown / compaction paste-safety.")
 	format := fs.String("format", "json", "json|text")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
@@ -121,6 +128,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		DeliverAfter:         *deliverAfter,
 		ExpectsReply:         *expectsReply,
 		Priority:             priority,
+		ForceRateLimited:     *forceRateLimited,
 		MaxRecipient:         *maxRecipient,
 		MaxSender:            *maxSender,
 		MaxBody:              *maxBody,
@@ -272,6 +280,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		DeliverAfter:      p.DeliverAfter,
 		ExpectsReply:      p.ExpectsReply,
 		Priority:          p.Priority,
+		ForceRateLimited:  p.ForceRateLimited,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})
@@ -343,6 +352,14 @@ func runMultiSendWithStore(ctx context.Context, s *store.Store, p sendParams, st
 	if p.DeliverAfter != "" {
 		return writeJSONError(stdout, stderr,
 			"--deliver-after is single-recipient only (v1, #227): cannot defer a multi-recipient send", exitUsage)
+	}
+	// #558: the force-rate-limited override is single-recipient only. The
+	// per-message marker isn't carried on the fan-out InsertParams, so accepting
+	// it here would silently drop a deliberate operator escape-hatch (Lookout
+	// #574 review). Fail loud rather than no-op, matching --deliver-after.
+	if p.ForceRateLimited {
+		return writeJSONError(stdout, stderr,
+			"--force-rate-limited is single-recipient only (#558): cannot force a multi-recipient send", exitUsage)
 	}
 	if _, err := s.GetAgent(ctx, p.From); err != nil {
 		if errors.Is(err, store.ErrNotFound) {

@@ -59,6 +59,13 @@ type InsertParams struct {
 	// site that doesn't set it gets the default unchanged.
 	Priority int
 
+	// ForceRateLimited is the #558 operator escape-hatch (`send --force-rate-limited`).
+	// true → the recipient's mailman bypasses the rate-limit / usage-limit defer
+	// gates for this message, delivering even when the pane is visibly rate-/usage-
+	// limited. It does NOT bypass other paste-unsafe states (copy-mode, awaiting-
+	// operator, unknown, compaction). Default false = normal deferral behavior.
+	ForceRateLimited bool
+
 	MaxRecipientQueue int // 0 = no cap check
 	MaxSenderBacklog  int // 0 = no cap check
 }
@@ -393,10 +400,15 @@ func insertOneInTx(ctx context.Context, tx *sql.Tx, p InsertParams) (InsertResul
 		if priority == 0 {
 			priority = PriorityNormal
 		}
+		// #558: force-rate-limited escape-hatch, stored as 0/1.
+		frl := 0
+		if p.ForceRateLimited {
+			frl = 1
+		}
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, quick, replay_of, replay_of_at, state, deliver_after, expects_reply, priority)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, q, replayOfArg, replayOfAtArg, state, deliverAfterArg, er, priority)
+			`INSERT INTO messages (public_id, from_agent, to_agent, reply_to, body, kind, no_reply_expected, quick, replay_of, replay_of_at, state, deliver_after, expects_reply, priority, force_rate_limited)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			candidate, p.FromAgent, p.ToAgent, replyToArg, p.Body, kind, nre, q, replayOfArg, replayOfAtArg, state, deliverAfterArg, er, priority, frl)
 		if err == nil {
 			publicID = candidate
 			break
@@ -498,20 +510,24 @@ func (s *Store) ClaimNextWithStrategy(ctx context.Context, toAgent string, strat
 	// Fetch the full chosen row + claim it, same tx (it is still queued — the
 	// IMMEDIATE write lock is held, so no other writer changed it since the scan).
 	var m Message
-	var nre, q, er int
+	var nre, q, er, frl int
 	err = tx.QueryRowContext(ctx,
 		`SELECT id, public_id, from_agent, to_agent, reply_to, body, kind,
-		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply, priority
+		        no_reply_expected, quick, state, created_at, delivered_at, error, replay_of, replay_of_at, verified, deliver_after, expects_reply, priority, force_rate_limited
 		 FROM messages WHERE id = ?`,
 		chosenID).Scan(
 		&m.ID, &m.PublicID, &m.FromAgent, &m.ToAgent, &m.ReplyTo, &m.Body, &m.Kind,
-		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er, &m.Priority)
+		&nre, &q, &m.State, &m.CreatedAt, &m.DeliveredAt, &m.Error, &m.ReplayOf, &m.ReplayOfAt, &m.Verified, &m.DeliverAfter, &er, &m.Priority, &frl)
 	if err != nil {
 		return nil, fmt.Errorf("store: fetch chosen message: %w", err)
 	}
 	m.NoReplyExpected = nre != 0
 	m.Quick = q != 0
 	m.ExpectsReply = er != 0
+	// #558: force-rate-limited is scanned only on this claim path — it is consumed
+	// solely by the mailman's delivery decision (serve.go gate + pre-paste check),
+	// not surfaced in any listing, so the other message-row reads leave it false.
+	m.ForceRateLimited = frl != 0
 
 	if _, err := tx.ExecContext(ctx,
 		`UPDATE messages SET state = ? WHERE id = ?`,

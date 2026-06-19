@@ -121,6 +121,13 @@ type Message struct {
 	// (low=10 / normal=20 / high=30) that the cross-channel scheduler uses.
 	// Default PriorityNormal (20). Render with PriorityName.
 	Priority int
+	// ForceRateLimited mirrors the #558 `force_rate_limited` column — the
+	// operator escape-hatch set by `send --force-rate-limited`. true → the
+	// mailman bypasses the rate-limit / usage-limit defer gates for this message
+	// (but NOT copy-mode / awaiting-operator / unknown / compaction paste-unsafety).
+	// Populated only on the ClaimNextWithStrategy delivery read path (the sole
+	// consumer); other message-row reads leave it false. Default false.
+	ForceRateLimited bool
 }
 
 // Agent mirrors a row in the agents table.

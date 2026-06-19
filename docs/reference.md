@@ -443,6 +443,21 @@ decentralised: each per-agent mailman computes its own wake delay from its messa
 priority and the shared per-provider working-count — there is no central wake-orderer, and
 the spreading lives in the backoff computation, not the cross-channel scheduler.
 
+**Operator override — `send --force-rate-limited` (#558, completes #504 AC8).** The escape-hatch
+for the rare case where the rate-limit / usage-limit pattern fires but delivery should happen
+anyway: a false-positive match, a limit the operator knows has cleared, or substrate-empirical
+testing. The flag persists on the message; the recipient's mailman then bypasses the rate-limit
+and usage-limit defer for that one message — at **both** enforcement points: the observe-gate's
+`ErrRateLimited` / `ErrUsageLimited` defer, and the pre-paste safety re-probe (#105), which reads
+the same banner as paste-unsafe and would otherwise re-block what the gate waved through. The
+override is **narrow**: it removes *exactly* the rate-limit family (`StateRateLimited`,
+`StateUsageLimited`) from the paste-unsafe set. Copy-mode, operator-typing/popup, unknown, and
+compaction remain paste-unsafe even under force (the `IsPasteUnsafeForced` predicate) — so a
+forced message still never pastes into a scrolled pane or over a popup. Single-recipient sends
+only: a multi-recipient (comma-separated) send rejects `--force-rate-limited` fail-loud rather
+than silently dropping the marker (the fan-out `InsertParams` doesn't carry it, and a silently
+ignored escape-hatch is worse than an error). The `control` surface is a tracked fast-follow.
+
 This is what unblocked `PasteCapable = true` (#360). The historical blocker was **verify-token
 robustness**, not pane-reading: both adapters collapse a pasted message to a `[Pasted …]`
 placeholder (Codex by size ~1KB, Claude by line-count), hiding the verify token until the

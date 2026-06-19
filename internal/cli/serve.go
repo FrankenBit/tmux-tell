@@ -1406,6 +1406,16 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					// SIGTERM during the observe loop — exit cleanly.
 					return exitOK
 				case errors.Is(gerr, tmuxio.ErrUsageLimited):
+					if msg.ForceRateLimited {
+						// #558: the operator forced this message through the
+						// usage-limit defer. Skip the park; break out of the gate
+						// switch to fall through to the pre-paste safety check —
+						// which still aborts on copy-mode / popup / unknown /
+						// compaction (IsPasteUnsafeForced) — and then deliver.
+						logger.Printf("WARN gate_forced_usagelimited id=%s pane=%s — --force-rate-limited bypassing usage-limit defer",
+							msg.PublicID, paneForDelivery)
+						break
+					}
 					// #540: the pane is visibly usage-limited. Revert the
 					// claim and park until quota resets; this is a hard-stop
 					// sibling to rate-limit, not a retryable throttle.
@@ -1435,6 +1445,16 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					}
 					continue
 				case errors.Is(gerr, tmuxio.ErrRateLimited):
+					if msg.ForceRateLimited {
+						// #558: the operator forced this message through the
+						// rate-limit defer. Skip the backoff; break out of the
+						// gate switch to fall through to the pre-paste safety
+						// check — which still aborts on copy-mode / popup /
+						// unknown / compaction (IsPasteUnsafeForced) — and deliver.
+						logger.Printf("WARN gate_forced_ratelimited id=%s pane=%s — --force-rate-limited bypassing rate-limit defer",
+							msg.PublicID, paneForDelivery)
+						break
+					}
 					// #504: the pane is visibly rate-limited. Revert the claim
 					// and defer the retry using the parsed retry hint when
 					// available; otherwise fall back to exponential backoff.
@@ -1587,7 +1607,17 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			// catch it, but the explicit `perr != nil ||` keeps the
 			// codification symmetric with the doc-comment and avoids
 			// depending on AgentState's internal contract.
-			if perr != nil || tmuxio.IsPasteUnsafe(probeState) {
+			// #558: a --force-rate-limited message uses the narrower predicate
+			// that still aborts on content-corrupting states (copy-mode, popup,
+			// unknown, compaction) but NOT on the rate-/usage-limit banner the
+			// operator chose to push past. Without this, this re-probe would
+			// re-block the forced message on the very rate-limit state the gate
+			// bypass above just waved through (IsPasteUnsafe lists both).
+			pasteUnsafe := tmuxio.IsPasteUnsafe(probeState)
+			if msg.ForceRateLimited {
+				pasteUnsafe = tmuxio.IsPasteUnsafeForced(probeState)
+			}
+			if perr != nil || pasteUnsafe {
 				reason := probeState.String()
 				if perr != nil {
 					reason = fmt.Sprintf("probe-failed (%v)", perr)

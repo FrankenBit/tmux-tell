@@ -170,10 +170,31 @@ func (s State) String() string {
 // Used by the mailman's pre-paste safety check (#105 Half 2): even if
 // the observe-gate decides to flush, a final state probe before the
 // actual paste-and-Enter aborts the delivery when this returns true.
+//
+// The set splits into two groups (#558): the rate-limit family
+// (StateRateLimited, StateUsageLimited) is an operator-overridable
+// *throttle/quota* signal, whereas the rest (awaiting-operator, unknown,
+// compaction, copy-mode) is *content-corrupting* paste-unsafety that is NEVER
+// overridable. IsPasteUnsafeForced is the second group alone — the predicate
+// the #558 `--force-rate-limited` path uses so a forced delivery skips only the
+// rate-limit family while every content-corrupting state still aborts the paste.
 func IsPasteUnsafe(s State) bool {
+	return IsPasteUnsafeForced(s) || s == StateRateLimited || s == StateUsageLimited
+}
+
+// IsPasteUnsafeForced reports paste-unsafety with the rate-limit family
+// (StateRateLimited / StateUsageLimited) EXCLUDED — the content-corrupting
+// states only. It is the pre-paste predicate for a #558 `--force-rate-limited`
+// message: the operator chose to push past a rate-/usage-limit banner, but a
+// paste into copy-mode, a popup/operator-typing, an unknown state, or an active
+// compaction still corrupts operator-visible content and must abort regardless
+// of the force flag. Keeping IsPasteUnsafe defined in terms of this function
+// guarantees the two stay in lockstep: any future content-corrupting state
+// added here is force-safe by construction; only the literal rate-limit family
+// is ever forced through.
+func IsPasteUnsafeForced(s State) bool {
 	return s == StateAwaitingOperator || s == StateUnknown ||
-		s == StateAtRestInCompaction || s == StateInCopyMode ||
-		s == StateRateLimited || s == StateUsageLimited
+		s == StateAtRestInCompaction || s == StateInCopyMode
 }
 
 // Evidence carries the observation that led to the State classification.

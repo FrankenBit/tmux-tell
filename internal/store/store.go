@@ -208,6 +208,12 @@ var migrations = []string{
 	// lowercase) — display_name is render-only, never a routing key. Empty
 	// default: an agent that never asserted one falls back to its name in the UI.
 	`ALTER TABLE agents ADD COLUMN display_name TEXT NOT NULL DEFAULT ''`,
+	// #558: operator --force-rate-limited override. 1 = the mailman bypasses the
+	// rate-limit / usage-limit defer gates for this one message (escape-hatch for
+	// a false-positive pattern, or when the operator knows the limit cleared);
+	// paste-unsafe states OTHER than rate/usage (copy-mode, awaiting-operator,
+	// unknown, compaction) are still honored. Default 0 = normal deferral.
+	`ALTER TABLE messages ADD COLUMN force_rate_limited INTEGER NOT NULL DEFAULT 0`,
 }
 
 // Close releases the underlying database handle.
