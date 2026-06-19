@@ -1896,29 +1896,46 @@ func pingHealthy(ctx context.Context, pane string) (reason string, ok bool) {
 }
 
 // errControlUnsupported is returned by deliverOne when a KindControl command
-// targets an adapter that lacks the corresponding slash command (#419). The
-// serve loop's outcome switch logs a structured WARN and marks the message
+// targets an adapter that lacks the corresponding slash command (#419, #420).
+// The serve loop's outcome switch logs a structured WARN and marks the message
 // delivered — the command is consumed (recognised-but-skipped), not pasted —
-// mirroring the ErrUnverifiedDelivery soft-outcome shape. Currently only the
-// codex `/mcp` case triggers it; the broader per-(command, adapter) compat map
-// is #420, into which this sentinel composes (carry a command-name field, or
-// split per-variant).
+// mirroring the ErrUnverifiedDelivery soft-outcome shape. Which commands trigger
+// it is per-adapter: the active profile's SupportedControlCommands allowlist
+// (#420 generalized #419's narrow codex-`/mcp`-only case to cover `/cost` and
+// any future adapter-incompatible command). adapterSupportsControl is the gate.
 var errControlUnsupported = errors.New("cli: control command unsupported by this adapter")
 
-// isMCPControlCommand reports whether a control message body is an `/mcp …`
-// slash command — `/mcp disable|enable|restart …`, or a bare `/mcp`. The
-// restart macro synthesises `/mcp disable tmux-tell` + `/mcp enable tmux-tell`
-// rows, both of which this catches.
+// controlCommandToken extracts the leading whitespace-delimited token of a
+// control-command body — the identifier the per-adapter capability map keys on
+// ("/mcp" for "/mcp disable tmux-tell", "/compact" for "/compact"). Returns ""
+// for an all-whitespace body. #420 generalizes #419's `/mcp`-only detector.
 //
-// Matches the FIRST whitespace-delimited token via strings.Fields rather than a
-// literal-space prefix: the meaning is "any `/mcp` command", not "a `/mcp`
+// Splits on the FIRST whitespace run via strings.Fields rather than a
+// literal-space prefix: the meaning is "the command family", not "a command
 // followed by exactly the space separator we happen to emit today". Fields
 // splits on any whitespace run (space / tab / newline / multi-space), so a
-// peer-constructed or future control row using a tab/newline separator is still
-// caught (Lookout #421 review). `/mcpfoo` stays false — a different first token.
-func isMCPControlCommand(body string) bool {
+// peer-constructed or future control row using a tab/newline separator keys the
+// same as a space-separated one (Lookout #421 review). `/mcpfoo` keys as
+// `/mcpfoo` — a distinct token — so the substring match never over-fires.
+func controlCommandToken(body string) string {
 	f := strings.Fields(body)
-	return len(f) > 0 && f[0] == "/mcp"
+	if len(f) == 0 {
+		return ""
+	}
+	return f[0]
+}
+
+// adapterSupportsControl reports whether the active adapter's CLI implements the
+// control command in body (#420). A nil SupportedControlCommands set means the
+// adapter supports every control command (the reference-adapter convention —
+// Claude); otherwise the body's leading token must be present in the explicit
+// allowlist (codex). An unsupported command is skipped by deliverOne (returns
+// errControlUnsupported) rather than pasted as literal prompt-polluting text.
+func adapterSupportsControl(body string) bool {
+	if active.SupportedControlCommands == nil {
+		return true
+	}
+	return active.SupportedControlCommands[controlCommandToken(body)]
 }
 
 // deliverOne dispatches a single message to a pane based on its Kind:
@@ -1930,11 +1947,12 @@ func isMCPControlCommand(body string) bool {
 // callback (#146); it never fires for control messages (no verification).
 func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarkerThreshold int, onVerify func(time.Duration, bool)) error {
 	if msg.Kind == store.KindControl {
-		// #419: a `/mcp …` control command sent to an adapter that lacks the
-		// `/mcp` slash command (codex) would land as literal text in the prompt
-		// and break the session. Skip the paste; the serve-loop outcome switch
-		// logs a WARN and marks it delivered (the command is consumed).
-		if isMCPControlCommand(msg.Body) && !active.SupportsMCPSlashCommand {
+		// #419/#420: a control command this adapter's CLI doesn't implement (codex
+		// has no `/mcp …` and no `/cost`) would land as literal text in the prompt
+		// and break the session. Skip the paste; the serve-loop outcome switch logs
+		// a WARN and marks it delivered (the command is consumed). The per-adapter
+		// allowlist (active.SupportedControlCommands) decides; nil = supports all.
+		if !adapterSupportsControl(msg.Body) {
 			return errControlUnsupported
 		}
 		return tmuxio.SendKeys(ctx, pane, msg.Body)

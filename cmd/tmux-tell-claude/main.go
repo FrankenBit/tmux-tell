@@ -35,9 +35,11 @@ func claudeProfile() cli.Profile {
 		// defer paste-and-enter during operator-typing (internal/tmuxio), so
 		// this adapter is paste-capable.
 		PasteCapable: true,
-		// Claude Code has the `/mcp` slash command, so `/mcp …` control
-		// deliveries paste normally (#419).
-		SupportsMCPSlashCommand: true,
+		// SupportedControlCommands left nil (#420): Claude is the reference
+		// adapter — its CLI implements the full slash surface (everything in
+		// internal/control.Allowed, including `/mcp …` and `/cost`), so nil
+		// ("supports all") is correct and future-command-proof. The explicit
+		// allowlist exists for the narrower codex surface; see tmux-tell-codex.
 		// Pane-observation snippets the tmuxio classifier reads (#322): the ❯
 		// prompt sentinel + compaction / awaiting-operator / status-line
 		// markers, empirically pinned by the canary tests in

@@ -52,14 +52,31 @@ func codexProfile() cli.Profile {
 		// CROSS-ADAPTER — Claude collapses multi-line too and is paste-capable —
 		// so it is inherited, not a Codex-specific gate.
 		PasteCapable: true,
-		// Codex has NO `/mcp` slash command (only a `--verbose` flag; an MCP
-		// restart needs a full session restart — #411). So a `/mcp …` control
-		// delivery is SKIPPED (logged + marked delivered) rather than pasted as
-		// literal text that pollutes the prompt and breaks the session — the
-		// breakage witnessed on Lookout after a refresh-all-mcps cascade (#419).
-		// Explicit false (not relying on the zero value) so the capability
-		// statement is visible. Broader per-command compat is #420.
-		SupportsMCPSlashCommand: false,
+		// Per-(command, adapter) control-command compat allowlist (#420,
+		// generalizing #419's narrow `/mcp`-only bool). Codex's CLI implements
+		// only these four slash commands; a control delivery for anything else
+		// (notably `/mcp …` — codex has only a `--verbose` flag, an MCP restart
+		// needs a full session restart, #411 — and `/cost`, for which `/status` is
+		// the closest equivalent) is SKIPPED (logged + marked delivered) rather
+		// than pasted as literal text that pollutes the prompt and breaks the
+		// session (the breakage witnessed on Lookout after a refresh-all-mcps
+		// cascade, #419). Keyed on the leading command token; the explicit set
+		// (vs Claude's nil = supports-all) makes codex's narrower surface visible.
+		//
+		// Provenance of the four-command set: the operator-clarified codex
+		// slash-command surface captured in #420 (2026-06-14) — `/compact`,
+		// `/rename`, `/clear`, `/help` EXIST; `/cost` (use `/status`) and `/mcp …`
+		// are MISSING. `/compact` is additionally test-load-bearing (codex chambers
+		// sleep via the bus `sleep` verb → `/compact`). Per the ship-no-guessed-
+		// literals discipline (#504): an over-broad inclusion would re-open the
+		// #419 false-paste pollution, so the set is grounded in that operator
+		// characterization rather than assumed.
+		SupportedControlCommands: map[string]bool{
+			"/compact": true,
+			"/rename":  true,
+			"/clear":   true,
+			"/help":    true,
+		},
 		// Pane-observation snippets the tmuxio classifier reads (#322). Codex's
 		// `› ` sentinel (U+203A + space) is substrate-verified; marker fields are
 		// empty pending characterization of Codex's compaction / popup / status

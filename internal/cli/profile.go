@@ -49,19 +49,25 @@ type Profile struct {
 	// explicitly assert paste-capability is force-deferred rather than risking
 	// a clobber on a pane the observe-gate can't read (#323).
 	PasteCapable bool
-	// SupportsMCPSlashCommand reports whether this adapter's CLI has the `/mcp`
-	// slash command (disable/enable/restart of MCP servers). Claude Code does;
-	// codex does NOT — it has only a `--verbose` flag, and an MCP restart needs
-	// a full session restart (#411). When false, the mailman SKIPS delivering a
-	// `/mcp …` control command (marks it delivered + logs a WARN) rather than
-	// letting it land as literal text in the recipient's prompt and break the
-	// session (#419, witnessed on Lookout after a refresh-all-mcps cascade).
+	// SupportedControlCommands is the per-adapter allowlist of control-command
+	// leading tokens (the first whitespace-delimited field of the command body —
+	// "/mcp" for "/mcp disable tmux-tell", "/compact" for "/compact") this
+	// adapter's CLI actually implements. A KindControl delivery whose leading
+	// token is NOT in the set is SKIPPED: the mailman marks it delivered + logs a
+	// WARN rather than typing it as literal text that would pollute the prompt and
+	// break the session (the breakage witnessed on Lookout after a refresh-all-mcps
+	// cascade, #419). This is #420 generalizing #419's narrow `/mcp`-only bool into
+	// the per-(command, adapter) compat surface.
 	//
-	// Zero value (false) is the safe default — an adapter that doesn't assert
-	// `/mcp` support has the command skipped rather than pasted blind. Claude
-	// asserts true explicitly. This is the narrow Option-A seam; the broader
-	// per-(command, adapter) compat map is #420, into which this bool folds.
-	SupportsMCPSlashCommand bool
+	// nil means "supports all control commands" — the reference-adapter
+	// convention. Claude Code implements the full slash surface (everything in
+	// internal/control.Allowed), so its profile leaves this nil; that also keeps
+	// the default `active` profile (Claude) + in-package tests historical-behavior-
+	// unchanged. A non-nil set is an explicit allowlist: codex, whose CLI lacks
+	// `/mcp …` (only a `--verbose` flag; an MCP restart needs a full session
+	// restart, #411) AND `/cost` (`/status` is the closest equivalent), declares
+	// the four commands it does honor — `/compact`, `/rename`, `/clear`, `/help`.
+	SupportedControlCommands map[string]bool
 	// Pane carries the adapter's pane-observation snippets (prompt sentinel,
 	// compaction / awaiting-operator / status-line markers) that the
 	// internal/tmuxio classifier reads via its process-global activeProfile.
@@ -86,12 +92,14 @@ type Profile struct {
 // exercise handlers directly without going through Run, observe the historical
 // behavior unchanged.
 var active = Profile{
-	BinaryName:              "tmux-tell-claude",
-	DisplayLabel:            "Claude Code",
-	DeprecatedAliases:       []string{"claude-msg", "tmux-msg-claude"},
-	DeprecatedRemoval:       "v1.0",
-	PasteCapable:            true,
-	SupportsMCPSlashCommand: true,
-	Pane:                    tmuxio.ClaudePaneProfile(),
-	Provider:                "anthropic",
+	BinaryName:        "tmux-tell-claude",
+	DisplayLabel:      "Claude Code",
+	DeprecatedAliases: []string{"claude-msg", "tmux-msg-claude"},
+	DeprecatedRemoval: "v1.0",
+	PasteCapable:      true,
+	// SupportedControlCommands left nil: Claude is the reference adapter and
+	// implements the full slash surface, so nil ("supports all", #420) is correct
+	// and future-command-proof.
+	Pane:     tmuxio.ClaudePaneProfile(),
+	Provider: "anthropic",
 }

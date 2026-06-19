@@ -76,6 +76,20 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   being debugged from first principles. Pure detection over the listing — no new
   query, no hot path.
 
+### Changed
+
+- **Per-(command, adapter) control-command compat map** (#420). Generalizes
+  #419's narrow codex-`/mcp`-only skip into a per-adapter allowlist of the
+  control commands an adapter's CLI actually implements (`Profile.
+  SupportedControlCommands`, keyed on the leading command token). A `KindControl`
+  delivery whose command the adapter doesn't support is now SKIPPED (marked
+  delivered + a `control_command_unsupported` WARN) instead of pasted as literal
+  prompt-polluting text — closing the same land-mine #419 closed for `/mcp`, but
+  now also for `/cost` (codex has only `/status`) and any future
+  adapter-incompatible command. Codex's set is `/compact`, `/rename`, `/clear`,
+  `/help`; Claude (the reference adapter, which implements the full slash
+  surface) leaves the set nil = "supports all", so its behavior is unchanged.
+
 ## [0.21.0] — 2026-06-18
 
 

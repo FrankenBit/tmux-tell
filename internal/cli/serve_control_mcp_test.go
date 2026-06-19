@@ -14,43 +14,74 @@ import (
 )
 
 // codexPasteCapableProfile mirrors the post-#360 codex Profile: paste-capable
-// (so the mailman serves its pane and reaches deliverOne) but WITHOUT the `/mcp`
-// slash command — the #419 case. Distinct from serve_paste_capability_test.go's
-// codexLikeProfile, which is PasteCapable=false (the #323 force-defer case).
+// (so the mailman serves its pane and reaches deliverOne) with the #420
+// per-(command, adapter) control-command allowlist — codex implements only
+// /compact, /rename, /clear, /help; /mcp … and /cost are unsupported and skip.
+// Distinct from serve_paste_capability_test.go's codexLikeProfile, which is
+// PasteCapable=false (the #323 force-defer case).
 var codexPasteCapableProfile = Profile{
-	BinaryName:              "tmux-tell-codex",
-	DisplayLabel:            "Codex",
-	PasteCapable:            true,
-	SupportsMCPSlashCommand: false,
-	Pane:                    tmuxio.CodexPaneProfile(),
+	BinaryName:   "tmux-tell-codex",
+	DisplayLabel: "Codex",
+	PasteCapable: true,
+	SupportedControlCommands: map[string]bool{
+		"/compact": true,
+		"/rename":  true,
+		"/clear":   true,
+		"/help":    true,
+	},
+	Pane: tmuxio.CodexPaneProfile(),
 }
 
-// TestIsMCPControlCommand pins the #419 detector: every `/mcp …` variant
-// (disable/enable/restart + bare) is caught, whitespace-tolerant, leading-token
-// only (so a non-/mcp body that merely contains the substring is not caught).
-func TestIsMCPControlCommand(t *testing.T) {
+// TestControlCommandToken pins the #420 token extractor: the leading
+// whitespace-delimited field, whitespace-tolerant, leading-token only (so a
+// non-leading occurrence or a longer first token keys distinctly).
+func TestControlCommandToken(t *testing.T) {
 	cases := []struct {
 		body string
-		want bool
+		want string
 	}{
-		{"/mcp disable tmux-tell", true},
-		{"/mcp enable tmux-tell", true},
-		{"/mcp restart tmux-tell", true},
-		{"/mcp", true},
-		{"  /mcp disable tmux-tell  ", true}, // whitespace-tolerant
-		{"/mcp\tdisable tmux-msg", true},     // tab separator (Lookout #421 review)
-		{"/mcp\ndisable tmux-msg", true},     // newline separator
-		{"/mcp\t\n  disable tmux-msg", true}, // mixed whitespace run
-		{"/compact", false},
-		{"/cost", false},
-		{"/help", false},
-		{"", false},
-		{"/mcpfoo", false},             // word boundary — not `/mcp`
-		{"please /mcp disable", false}, // not leading
+		{"/mcp disable tmux-tell", "/mcp"},
+		{"/mcp", "/mcp"},
+		{"  /mcp disable tmux-tell  ", "/mcp"}, // whitespace-tolerant
+		{"/mcp\tdisable tmux-msg", "/mcp"},     // tab separator (Lookout #421 review)
+		{"/mcp\ndisable tmux-msg", "/mcp"},     // newline separator
+		{"/mcp\t\n  disable tmux-msg", "/mcp"}, // mixed whitespace run
+		{"/compact", "/compact"},
+		{"/cost", "/cost"},
+		{"/help", "/help"},
+		{"", ""},                          // blank → empty token
+		{"   \t ", ""},                    // all-whitespace → empty token
+		{"/mcpfoo", "/mcpfoo"},            // word boundary — a distinct token, not "/mcp"
+		{"please /mcp disable", "please"}, // not leading — keys on the real first token
 	}
 	for _, tc := range cases {
-		if got := isMCPControlCommand(tc.body); got != tc.want {
-			t.Errorf("isMCPControlCommand(%q) = %v, want %v", tc.body, got, tc.want)
+		if got := controlCommandToken(tc.body); got != tc.want {
+			t.Errorf("controlCommandToken(%q) = %q, want %q", tc.body, got, tc.want)
+		}
+	}
+}
+
+// TestAdapterSupportsControl pins the #420 capability gate on BOTH adapters:
+// Claude's nil set = supports-all; codex's explicit allowlist gates per token.
+func TestAdapterSupportsControl(t *testing.T) {
+	// Claude default (active is the package-default Claude profile, nil set).
+	for _, body := range []string{"/mcp disable tmux-tell", "/cost", "/compact", "/anything-future"} {
+		if !adapterSupportsControl(body) {
+			t.Errorf("claude (nil set) should support every control command; %q reported unsupported", body)
+		}
+	}
+
+	withActiveProfile(t, codexPasteCapableProfile)
+	supported := []string{"/compact", "/rename", "/clear", "/help", "  /compact  ", "/rename to Bob"}
+	for _, body := range supported {
+		if !adapterSupportsControl(body) {
+			t.Errorf("codex should support %q (leading token in its allowlist)", body)
+		}
+	}
+	unsupported := []string{"/mcp disable tmux-tell", "/mcp enable tmux-tell", "/cost", "/compactfoo", ""}
+	for _, body := range unsupported {
+		if adapterSupportsControl(body) {
+			t.Errorf("codex should NOT support %q (leading token absent from its allowlist)", body)
 		}
 	}
 }
@@ -74,57 +105,64 @@ func recordSendKeysLiteral(t *testing.T) *[]string {
 	return &lits
 }
 
-// TestDeliverOne_Codex_SkipsMCPControl: a `/mcp …` control message to the codex
-// adapter returns errControlUnsupported and is NOT typed into the pane.
-func TestDeliverOne_Codex_SkipsMCPControl(t *testing.T) {
+// TestDeliverOne_Codex_SkipsUnsupportedControl: control commands codex's CLI
+// lacks (#420 covers /cost in addition to #419's /mcp …) return
+// errControlUnsupported and are NOT typed into the pane. ≥2 unsupported per AC.
+func TestDeliverOne_Codex_SkipsUnsupportedControl(t *testing.T) {
 	withActiveProfile(t, codexPasteCapableProfile)
-	lits := recordSendKeysLiteral(t)
-
-	msg := &store.Message{Kind: store.KindControl, Body: "/mcp disable tmux-tell", PublicID: "abc1"}
-	err := deliverOne(context.Background(), "%3", msg, 0, nil)
-	if !errors.Is(err, errControlUnsupported) {
-		t.Fatalf("codex /mcp control: err = %v, want errControlUnsupported", err)
-	}
-	if len(*lits) != 0 {
-		t.Errorf("codex /mcp control must NOT be typed; got send-keys -l %q", *lits)
-	}
-}
-
-// TestDeliverOne_Claude_PastesMCPControl: the same `/mcp …` control message to
-// the Claude adapter (which has /mcp) is typed normally and returns nil.
-func TestDeliverOne_Claude_PastesMCPControl(t *testing.T) {
-	// active defaults to the Claude profile (SupportsMCPSlashCommand=true).
-	lits := recordSendKeysLiteral(t)
-
-	msg := &store.Message{Kind: store.KindControl, Body: "/mcp disable tmux-tell", PublicID: "abc2"}
-	if err := deliverOne(context.Background(), "%3", msg, 0, nil); err != nil {
-		t.Fatalf("claude /mcp control: err = %v, want nil", err)
-	}
-	if len(*lits) != 1 || (*lits)[0] != "/mcp disable tmux-tell" {
-		t.Errorf("claude /mcp control should type the body; got send-keys -l %q", *lits)
+	for _, body := range []string{"/mcp disable tmux-tell", "/cost"} {
+		lits := recordSendKeysLiteral(t)
+		msg := &store.Message{Kind: store.KindControl, Body: body, PublicID: "abc1"}
+		err := deliverOne(context.Background(), "%3", msg, 0, nil)
+		if !errors.Is(err, errControlUnsupported) {
+			t.Fatalf("codex %q control: err = %v, want errControlUnsupported", body, err)
+		}
+		if len(*lits) != 0 {
+			t.Errorf("codex %q control must NOT be typed; got send-keys -l %q", body, *lits)
+		}
 	}
 }
 
-// TestDeliverOne_Codex_PastesNonMCPControl: Option A is `/mcp`-only — a non-/mcp
-// control command (`/compact`) on codex is still typed normally. (When #420's
-// broader compat map lands, this test changes — surfacing the scope expansion.)
-func TestDeliverOne_Codex_PastesNonMCPControl(t *testing.T) {
+// TestDeliverOne_Codex_PastesSupportedControl: control commands codex's CLI DOES
+// implement are typed normally and return nil. ≥2 supported per AC. /compact is
+// load-bearing — codex chambers sleep via the bus `sleep` verb → /compact Text.
+func TestDeliverOne_Codex_PastesSupportedControl(t *testing.T) {
 	withActiveProfile(t, codexPasteCapableProfile)
-	lits := recordSendKeysLiteral(t)
-
-	msg := &store.Message{Kind: store.KindControl, Body: "/compact", PublicID: "abc3"}
-	if err := deliverOne(context.Background(), "%3", msg, 0, nil); err != nil {
-		t.Fatalf("codex /compact control: err = %v, want nil (Option A is /mcp-only)", err)
-	}
-	if len(*lits) != 1 || (*lits)[0] != "/compact" {
-		t.Errorf("codex /compact control should type the body; got send-keys -l %q", *lits)
+	for _, body := range []string{"/compact", "/rename"} {
+		lits := recordSendKeysLiteral(t)
+		msg := &store.Message{Kind: store.KindControl, Body: body, PublicID: "abc2"}
+		if err := deliverOne(context.Background(), "%3", msg, 0, nil); err != nil {
+			t.Fatalf("codex %q control: err = %v, want nil (in codex allowlist)", body, err)
+		}
+		if len(*lits) != 1 || (*lits)[0] != body {
+			t.Errorf("codex %q control should type the body; got send-keys -l %q", body, *lits)
+		}
 	}
 }
 
-// TestServe_Codex_MCPControl_SkippedDeliveredWithWarn is the serve-loop
-// integration: a `/mcp …` control row for a codex agent is marked delivered
+// TestDeliverOne_Claude_PastesAllControl: the Claude adapter (nil set =
+// supports-all, #420) types every control command — including the ones codex
+// skips — and returns nil.
+func TestDeliverOne_Claude_PastesAllControl(t *testing.T) {
+	// active defaults to the Claude profile (SupportedControlCommands == nil).
+	for _, body := range []string{"/mcp disable tmux-tell", "/cost"} {
+		lits := recordSendKeysLiteral(t)
+		msg := &store.Message{Kind: store.KindControl, Body: body, PublicID: "abc3"}
+		if err := deliverOne(context.Background(), "%3", msg, 0, nil); err != nil {
+			t.Fatalf("claude %q control: err = %v, want nil", body, err)
+		}
+		if len(*lits) != 1 || (*lits)[0] != body {
+			t.Errorf("claude %q control should type the body; got send-keys -l %q", body, *lits)
+		}
+	}
+}
+
+// TestServe_Codex_UnsupportedControl_SkippedDeliveredWithWarn is the serve-loop
+// integration: an unsupported control row for a codex agent is marked delivered
 // (consumed, not pasted) and logs a structured control_command_unsupported WARN.
-func TestServe_Codex_MCPControl_SkippedDeliveredWithWarn(t *testing.T) {
+// Uses /cost — a #420 addition over #419's /mcp — so the integration path is
+// pinned on the generalized gate, not just the original narrow case.
+func TestServe_Codex_UnsupportedControl_SkippedDeliveredWithWarn(t *testing.T) {
 	withActiveProfile(t, codexPasteCapableProfile)
 	var (
 		mu   sync.Mutex
@@ -151,7 +189,7 @@ func TestServe_Codex_MCPControl_SkippedDeliveredWithWarn(t *testing.T) {
 	_ = s.UpsertAgent(ctx, "lookout", "%3")
 	if _, err := s.InsertMessage(ctx, store.InsertParams{
 		FromAgent: "alice", ToAgent: "lookout",
-		Body: "/mcp disable tmux-tell", Kind: store.KindControl,
+		Body: "/cost", Kind: store.KindControl,
 	}); err != nil {
 		t.Fatalf("insert: %v", err)
 	}
@@ -174,7 +212,7 @@ func TestServe_Codex_MCPControl_SkippedDeliveredWithWarn(t *testing.T) {
 		ToAgent: "lookout", State: store.StateDelivered, Limit: 10,
 	})
 	if len(delivered) != 1 {
-		t.Fatalf("delivered = %d, want 1 (skipped /mcp marked delivered); log=%s", len(delivered), logbuf.String())
+		t.Fatalf("delivered = %d, want 1 (skipped /cost marked delivered); log=%s", len(delivered), logbuf.String())
 	}
 	if !strings.Contains(logbuf.String(), "control_command_unsupported") {
 		t.Errorf("expected control_command_unsupported WARN; log=%s", logbuf.String())
@@ -182,8 +220,8 @@ func TestServe_Codex_MCPControl_SkippedDeliveredWithWarn(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	for _, l := range lits {
-		if strings.Contains(l, "/mcp") {
-			t.Errorf("codex /mcp must NOT be typed into the pane; got send-keys -l %q", l)
+		if strings.Contains(l, "/cost") {
+			t.Errorf("codex /cost must NOT be typed into the pane; got send-keys -l %q", l)
 		}
 	}
 }
