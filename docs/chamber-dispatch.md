@@ -85,6 +85,56 @@ least mechanism. Two weaker signals cover cases it doesn't fit:
 Prefer the assignee. Reach for a label or comment only when the assignee field
 genuinely can't carry the claim.
 
+## When a crossing happens anyway
+
+Assignee-on-claim avoids collisions on work that *already exists* as an issue. It
+structurally **cannot** cover the other recurring shape: a reviewer surfaces an "X
+needs a follow-up tracker" gap mid-review, and two chambers — the dispatcher and
+whoever's closest to the substrate — both **file the tracker within seconds**.
+There is no assignee to check, because the issue they'd check doesn't exist until
+they both create it. This crossed five-plus times in one day (2026-06-15); it is
+*ambient* in a fast parallel crew, and trying to engineer it away costs more than
+it saves.
+
+So the discipline here is not prevention — it is **making the crossing cheap to
+resolve**. The operator's framing: *better to make conflict resolution a walk in
+the park than to try hard to prevent every conflict at all costs.* The resolution
+norm, which already operates crew-wide and is worth naming so a new chamber
+inherits it rather than re-deriving it:
+
+1. **Verify substrate-state before re-acting.** When you notice a parallel filing
+   (a near-duplicate tracker, a second PR on the same gap), *look at the tracker*
+   first — both issues, both authors, timestamps — instead of assuming yours is
+   canonical.
+2. **Surface the divergence**, briefly, where the other party will see it (a
+   comment on the dup, a bus line) — "this overlaps #N, I think #N is the keeper."
+3. **Defer to merged-reality.** Whichever tracker is further along — has the
+   assignee, the richer body, the downstream references, the in-flight PR — is the
+   keeper. Close the other as a duplicate pointing at it. The tie-break is
+   *whatever is closer to merged*, **not** whoever filed first or who is senior —
+   a later-filed but better-referenced tracker rightly wins.
+4. **Don't re-litigate.** Once the keeper is chosen, the loser's author does not
+   re-argue the framing or re-file. The few seconds of overlap are the whole cost;
+   re-litigating is what would turn an optical overlap into actual rework.
+
+Worked instance (2026-06-15): two chambers filed #461 (22:43) and #462 (22:45)
+two minutes apart during a #454 review, both for the same
+"canonical-substrate-vs-curated-surface ADR" gap. Resolution was the four steps
+above — the **later**-filed #462 was kept because it carried the band/labels and
+the downstream review reference (merged-reality), and the earlier #461 closed
+itself as a duplicate pointing at #462 ("No content lost"). Seconds, zero rework,
+and note the tie-break ran on *closer-to-canonical*, not *filed-first*. That is
+the target state, and it is already how crossings resolve; this section just makes
+it transferable.
+
+**Forward-watch, not dup-rate.** The success metric for this discipline is that
+**resolution stays cheap** (a crossing resolves in seconds, no rework), *not* that
+crossings stop happening. A measurable rise in resolution cost across reviews is
+the signal that something heavier — e.g. a file-time visibility broadcast on the
+bus — is worth building. Until then it isn't: a mandated "announce every filing"
+step adds friction to chase a gain the cheap-resolution norm already delivers, and
+drifts back toward the prevention posture this discipline deliberately retired.
+
 ## Out of scope
 
 - Tracker schema changes (multi-assignee tiers, custom fields) — work within the
@@ -93,3 +143,9 @@ genuinely can't carry the claim.
   convention only; dispatchers keep discretion.
 - Mid-work handoffs between agents — this convention assumes one agent holds an
   issue end-to-end. Re-assignment handoffs are a separate shape.
+- **Preventing crossings.** A file-time title-prefix lock, a "only the reviewer
+  files" rule, or a mandated file-time bus broadcast were all considered and
+  declined: at this crew's cadence crossings are ambient and cheap to resolve, so
+  prevention costs more friction than the overlap it removes. Cheap resolution (the
+  section above) is the chosen posture; the broadcast re-opens only if forward-watch
+  shows resolution cost rising.

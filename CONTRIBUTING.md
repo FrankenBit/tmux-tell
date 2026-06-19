@@ -99,7 +99,12 @@ reads safe concurrent with mailman writes.
   Quartermaster) read the `assignees` field on the target issue *before* dispatching
   — if non-empty, route through the current assignee on the bus first rather than
   re-dispatching. The convention is **forward-only**: historical issues without an
-  assignee aren't backfilled; new work claims as it picks up.
+  assignee aren't backfilled; new work claims as it picks up. Assignee-on-claim
+  can't cover the other shape — two chambers filing the *same follow-up tracker*
+  within seconds mid-review, before either issue exists to check — so when a
+  crossing happens anyway, resolve it cheaply (verify substrate-state → surface the
+  divergence → defer to merged-reality → don't re-litigate) per
+  [`docs/chamber-dispatch.md`](docs/chamber-dispatch.md) §When a crossing happens anyway.
 
 ### CHANGELOG entries
 
