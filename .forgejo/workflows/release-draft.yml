@@ -132,6 +132,73 @@ jobs:
           server = os.environ['SERVER'].rstrip('/')
           repo = os.environ['REPO']
 
+          def fold_continuation_lines(text):
+              """Fold hard-wrapped continuation lines within list items into
+              single lines. Forgejo's Markdown renderer doesn't fold them
+              the way CommonMark suggests — the result is visible line
+              breaks + broken indentation on the rendered release body
+              (#561, anchored on v0.21.0 cut where operator hand-edited
+              the draft body to collapse continuations).
+
+              Algorithm:
+              - `- ` or `* ` at column 0: list item bullet, emit verbatim
+              - 2-space-indented `  X` line while inside a list item:
+                accumulate as continuation
+              - Blank line OR anything non-indented: flush accumulated
+                continuation as a single 2-space-indented long line,
+                then emit the current line verbatim
+              - Fenced code blocks (```): pass through verbatim, never
+                fold inside (preserves multi-line code examples)
+
+              Preserves standalone paragraphs (Forgejo renders those
+              correctly), section breaks (`---`), and the bullet's own
+              line. Only the 2-space-indented continuation lines under
+              a list item get collapsed into a single long line.
+
+              Manual round-trip test 2026-06-19: v0.21.0 prelude through
+              this folder produces operator-publishable output (5 list
+              items folded to bullet+single-continuation pairs;
+              standalone prose + 'Headlines:' + 'Under the hood'
+              paragraph preserved).
+              """
+              lines = text.split('\n')
+              out = []
+              buf = []
+              in_list_item = False
+              in_code_block = False
+
+              def flush():
+                  if buf:
+                      out.append('  ' + ' '.join(s.strip() for s in buf))
+                      buf.clear()
+
+              for line in lines:
+                  if line.lstrip().startswith('```'):
+                      flush()
+                      in_list_item = False
+                      in_code_block = not in_code_block
+                      out.append(line)
+                      continue
+                  if in_code_block:
+                      out.append(line)
+                      continue
+                  if re.match(r'^[-*] ', line):
+                      flush()
+                      out.append(line)
+                      in_list_item = True
+                  elif in_list_item and re.match(r'^  [^ ]', line):
+                      buf.append(line[2:])
+                  elif line.strip() == '':
+                      flush()
+                      in_list_item = False
+                      out.append(line)
+                  else:
+                      flush()
+                      in_list_item = False
+                      out.append(line)
+              flush()
+              return '\n'.join(out)
+
           with open('CHANGELOG.md') as f:
               content = f.read()
 
@@ -168,6 +235,13 @@ jobs:
                   f"v0.16.0 / v0.16.1 sections for the convention.\n"
               )
               sys.exit(1)
+
+          # Fold hard-wrapped list-item continuation lines into single
+          # lines (#561). Forgejo's Markdown renderer doesn't fold them
+          # the way CommonMark suggests; without this, the rendered
+          # release body has visible line breaks + broken indentation
+          # inside each Headlines bullet.
+          section = fold_continuation_lines(section)
 
           # Link to CHANGELOG.md at the tag — no fragment anchor (Lookout
           # 67721 finding). Browser fragment matching is exact, and Forgejo's
