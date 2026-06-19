@@ -237,6 +237,13 @@ type Block struct {
 	// distinct hard-stop sibling to rate-limit, so operators can configure
 	// park-until-reset behavior separately from temporary throttling.
 	UsageLimitPattern *string `toml:"usage-limit-pattern"`
+	// CodexSessionRestartCommand is the wrapper command refresh-all-mcps uses
+	// for Codex agents (#411). Codex has no in-session MCP restart slash
+	// command; refreshing its MCP substrate means respawning the Codex chamber
+	// through the same wrapper that launched it so cgroup/title/register/mailman
+	// side effects stay intact. Empty falls back to the compiled host default
+	// when present.
+	CodexSessionRestartCommand *string `toml:"codex-session-restart-command"`
 	// Retention is the per-agent message retention window (#245). The mailman
 	// runs a background sweep that deletes delivered + failed rows older than
 	// this window. "infinite" (the default) disables the sweep entirely —
@@ -497,6 +504,8 @@ func blockStringField(b *Block, field string) *string {
 		return b.RateLimitPattern
 	case "usage-limit-pattern":
 		return b.UsageLimitPattern
+	case "codex-session-restart-command":
+		return b.CodexSessionRestartCommand
 	case "retention":
 		return b.Retention
 	}

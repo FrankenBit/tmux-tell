@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"reflect"
 	"strings"
 	"testing"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
 // newRefreshTestStore opens an in-memory store and seeds it with the
@@ -94,6 +97,9 @@ func TestRefreshAllMcps_HappyPath(t *testing.T) {
 	if got.Queued != 3 {
 		t.Errorf("queued = %d, want 3", got.Queued)
 	}
+	if got.Restarted != 0 {
+		t.Errorf("restarted = %d, want 0", got.Restarted)
+	}
 	if got.Failed != 0 {
 		t.Errorf("failed = %d, want 0", got.Failed)
 	}
@@ -109,6 +115,10 @@ func TestRefreshAllMcps_HappyPath(t *testing.T) {
 		}
 		if !c.OK {
 			t.Errorf("agents[%d] (%s) ok = false: %s", i, c.Name, c.Error)
+		}
+		if c.Method != refreshMethodControlMacro {
+			t.Errorf("agents[%d] (%s) method = %q, want %q",
+				i, c.Name, c.Method, refreshMethodControlMacro)
 		}
 		if c.DisableID == "" || c.EnableID == "" {
 			t.Errorf("agents[%d] (%s) missing macro public_ids: disable=%q enable=%q",
@@ -202,6 +212,9 @@ func TestRefreshAllMcps_PartialFailure(t *testing.T) {
 	if got.Queued != 2 {
 		t.Errorf("queued = %d, want 2 (alice + carol succeed; bob fails)", got.Queued)
 	}
+	if got.Restarted != 0 {
+		t.Errorf("restarted = %d, want 0", got.Restarted)
+	}
 
 	// Find bob's entry and verify it carries the Error string and
 	// missing public_ids.
@@ -249,8 +262,121 @@ func TestRefreshAllMcps_TextFormat(t *testing.T) {
 	if !strings.Contains(out, "queued=2") {
 		t.Errorf("text output missing queued count: %s", out)
 	}
+	if !strings.Contains(out, "restarted=0") {
+		t.Errorf("text output missing restarted count: %s", out)
+	}
 	if !strings.Contains(out, "alice") || !strings.Contains(out, "bob") {
 		t.Errorf("text output missing per-agent rows: %s", out)
+	}
+}
+
+func TestRefreshAllMcps_CodexProviderRespawnsPane(t *testing.T) {
+	s := newRefreshTestStore(t, "carpenter")
+	ctx := context.Background()
+	if err := s.SetProvider(ctx, "carpenter", "openai"); err != nil {
+		t.Fatalf("set provider: %v", err)
+	}
+
+	var calls [][]string
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		calls = append(calls, append([]string(nil), args...))
+		switch args[0] {
+		case "display-message":
+			want := []string{"display-message", "-p", "-t", "%1", "#{pane_current_path}"}
+			if !reflect.DeepEqual(args, want) {
+				t.Fatalf("display args = %#v, want %#v", args, want)
+			}
+			return []byte("/srv/codex/carp enter\n"), nil
+		case "respawn-pane":
+			want := []string{
+				"respawn-pane", "-k", "-t", "%1",
+				"cd '/srv/codex/carp enter' && exec '/tmp/chamber codex.sh' 'carpenter'",
+			}
+			if !reflect.DeepEqual(args, want) {
+				t.Fatalf("respawn args = %#v, want %#v", args, want)
+			}
+			return nil, nil
+		default:
+			t.Fatalf("unexpected tmux command: %#v", args)
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	var stdout, stderr bytes.Buffer
+	exit := runRefreshAllMcpsWithStoreOptions(ctx, s, "bosun", "json", refreshOptions{
+		CodexSessionRestartCmd:    "/tmp/chamber codex.sh",
+		CodexSessionRestartCmdSet: true,
+	}, &stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d, want %d; stderr=%q stdout=%q",
+			exit, exitOK, stderr.String(), stdout.String())
+	}
+
+	var got refreshResult
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, stdout.String())
+	}
+	if got.Queued != 0 {
+		t.Errorf("queued = %d, want 0 (codex restart queues no control rows)", got.Queued)
+	}
+	if got.Restarted != 1 {
+		t.Errorf("restarted = %d, want 1", got.Restarted)
+	}
+	if len(got.Agents) != 1 {
+		t.Fatalf("agents = %d, want 1", len(got.Agents))
+	}
+	entry := got.Agents[0]
+	if !entry.OK {
+		t.Fatalf("entry ok = false: %s", entry.Error)
+	}
+	if entry.Method != refreshMethodCodexSessionRestart {
+		t.Errorf("method = %q, want %q", entry.Method, refreshMethodCodexSessionRestart)
+	}
+	if entry.DisableID != "" || entry.EnableID != "" {
+		t.Errorf("codex restart should not expose macro ids: disable=%q enable=%q",
+			entry.DisableID, entry.EnableID)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("tmux calls = %d, want 2", len(calls))
+	}
+
+	depth, err := s.RecipientQueueDepth(ctx, "carpenter")
+	if err != nil {
+		t.Fatalf("queue depth: %v", err)
+	}
+	if depth != 0 {
+		t.Errorf("carpenter queue depth = %d, want 0 (no /mcp control rows)", depth)
+	}
+}
+
+func TestRefreshAllMcps_EmptyProviderUsesMacroWithWarning(t *testing.T) {
+	s := newRefreshTestStore(t, "legacy")
+	ctx := context.Background()
+
+	var stdout, stderr bytes.Buffer
+	exit := runRefreshAllMcpsWithStore(ctx, s, "bosun", "json", &stdout, &stderr)
+	if exit != exitOK {
+		t.Fatalf("exit = %d, want %d; stderr=%q stdout=%q",
+			exit, exitOK, stderr.String(), stdout.String())
+	}
+
+	var got refreshResult
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v\n%s", err, stdout.String())
+	}
+	if len(got.Agents) != 1 {
+		t.Fatalf("agents = %d, want 1", len(got.Agents))
+	}
+	entry := got.Agents[0]
+	if entry.Method != refreshMethodControlMacro {
+		t.Errorf("method = %q, want %q", entry.Method, refreshMethodControlMacro)
+	}
+	if !strings.Contains(entry.Warning, "provider empty") {
+		t.Errorf("warning = %q, want provider-empty ambiguity", entry.Warning)
+	}
+	if got.Queued != 1 || got.Restarted != 0 {
+		t.Errorf("queued/restarted = %d/%d, want 1/0", got.Queued, got.Restarted)
 	}
 }
 

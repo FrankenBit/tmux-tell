@@ -7,9 +7,18 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
+)
+
+const (
+	refreshMethodControlMacro        = "control-macro"
+	refreshMethodCodexSessionRestart = "codex-session-restart"
+	defaultCodexSessionRestartCmd    = "/srv/scripts/chamber-codex.sh"
 )
 
 // refreshResult is the structured return shape for the
@@ -21,12 +30,13 @@ import (
 // same struct as an aligned table. Don't reconstruct this shape by
 // hand in either path or the two outputs will drift.
 type refreshResult struct {
-	OK     bool                `json:"ok"`
-	Sender string              `json:"sender"`
-	Total  int                 `json:"total"`
-	Queued int                 `json:"queued"`
-	Failed int                 `json:"failed"`
-	Agents []refreshAgentEntry `json:"agents"`
+	OK        bool                `json:"ok"`
+	Sender    string              `json:"sender"`
+	Total     int                 `json:"total"`
+	Queued    int                 `json:"queued"`
+	Restarted int                 `json:"restarted"`
+	Failed    int                 `json:"failed"`
+	Agents    []refreshAgentEntry `json:"agents"`
 }
 
 // refreshAgentEntry is one row of refreshResult.agents — a single
@@ -37,9 +47,17 @@ type refreshResult struct {
 type refreshAgentEntry struct {
 	Name      string `json:"name"`
 	OK        bool   `json:"ok"`
+	Method    string `json:"method"`
 	DisableID string `json:"disable_id,omitempty"`
 	EnableID  string `json:"enable_id,omitempty"`
+	Warning   string `json:"warning,omitempty"`
 	Error     string `json:"error,omitempty"`
+}
+
+type refreshOptions struct {
+	Config                    *config.File
+	CodexSessionRestartCmd    string
+	CodexSessionRestartCmdSet bool
 }
 
 // runRefreshAllMcpsCLI parses the refresh-all-mcps flags and dispatches.
@@ -69,6 +87,8 @@ func runRefreshAllMcpsCLI(args []string, stdout, stderr io.Writer) int {
 	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	from := fs.String("from", "", "sender agent name (env: TMUX_AGENT_NAME; auto-resolved from $TMUX_PANE if registered)")
 	format := fs.String("format", "text", "text|json")
+	codexRestartCmd := fs.String("codex-session-restart-command", "",
+		"wrapper command used to respawn Codex chambers during refresh-all-mcps (TOML: codex-session-restart-command; default /srv/scripts/chamber-codex.sh when present)")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -91,7 +111,16 @@ func runRefreshAllMcpsCLI(args []string, stdout, stderr io.Writer) int {
 				os.Getenv("TMUX_PANE")), exitUnavailable)
 	}
 
-	return runRefreshAllMcpsWithStore(ctx, s, sender, *format, stdout, stderr)
+	cfg, cfgErr := config.Load()
+	if cfgErr != nil {
+		return writeJSONError(stdout, stderr,
+			fmt.Sprintf("load config: %v", cfgErr), exitDataErr)
+	}
+	return runRefreshAllMcpsWithStoreOptions(ctx, s, sender, *format, refreshOptions{
+		Config:                    cfg,
+		CodexSessionRestartCmd:    *codexRestartCmd,
+		CodexSessionRestartCmdSet: flagWasSet(fs, "codex-session-restart-command"),
+	}, stdout, stderr)
 }
 
 // runRefreshAllMcpsWithStore is the testable core. Takes a resolved
@@ -100,6 +129,12 @@ func runRefreshAllMcpsCLI(args []string, stdout, stderr io.Writer) int {
 // renders the aggregated result.
 func runRefreshAllMcpsWithStore(ctx context.Context, s *store.Store,
 	sender, format string, stdout, stderr io.Writer,
+) int {
+	return runRefreshAllMcpsWithStoreOptions(ctx, s, sender, format, refreshOptions{}, stdout, stderr)
+}
+
+func runRefreshAllMcpsWithStoreOptions(ctx context.Context, s *store.Store,
+	sender, format string, opts refreshOptions, stdout, stderr io.Writer,
 ) int {
 	agents, err := s.ListAgents(ctx)
 	if err != nil {
@@ -141,7 +176,35 @@ func runRefreshAllMcpsWithStore(ctx context.Context, s *store.Store,
 	maxSenderForFanout := 2*len(agents) + capSenderBacklog
 
 	for _, a := range agents {
-		entry := refreshAgentEntry{Name: a.Name}
+		entry := refreshAgentEntry{Name: a.Name, Method: refreshMethodControlMacro}
+		provider, _, providerErr := s.ProviderCapConfig(ctx, a.Name)
+		if providerErr != nil {
+			entry.OK = false
+			entry.Error = fmt.Sprintf("read provider config: %v", providerErr)
+			result.Failed++
+			result.OK = false
+			result.Agents = append(result.Agents, entry)
+			continue
+		}
+
+		if provider == "openai" {
+			entry.Method = refreshMethodCodexSessionRestart
+			if err := refreshCodexSession(ctx, a, opts); err != nil {
+				entry.OK = false
+				entry.Error = err.Error()
+				result.Failed++
+				result.OK = false
+			} else {
+				entry.OK = true
+				result.Restarted++
+			}
+			result.Agents = append(result.Agents, entry)
+			continue
+		}
+
+		if provider == "" {
+			entry.Warning = "provider empty; used legacy control macro, which may be a no-op for Codex adapters"
+		}
 		ctrlRes, ctrlErr := doControl(ctx, s, controlParams{
 			From:         sender,
 			To:           a.Name,
@@ -187,22 +250,77 @@ func runRefreshAllMcpsWithStore(ctx context.Context, s *store.Store,
 	return exitOK
 }
 
+func refreshCodexSession(ctx context.Context, a store.Agent, opts refreshOptions) error {
+	if a.PaneID == "" {
+		return fmt.Errorf("codex session restart for %s: no pane registered", a.Name)
+	}
+	restartCmd, err := resolveCodexSessionRestartCommand(a.Name, opts)
+	if err != nil {
+		return err
+	}
+	cwd, err := tmuxio.PaneCurrentPath(ctx, a.PaneID)
+	if err != nil {
+		return fmt.Errorf("codex session restart for %s: %w", a.Name, err)
+	}
+	// The chamber wrappers take the Codex resume session name. The canonical
+	// routing name is the stable v1 key; display_name is render-only and can
+	// diverge from the actual Codex resume target.
+	cmd := fmt.Sprintf("cd %s && exec %s %s",
+		shellQuote(cwd), shellQuote(restartCmd), shellQuote(a.Name))
+	if err := tmuxio.RespawnPane(ctx, a.PaneID, cmd); err != nil {
+		return fmt.Errorf("codex session restart for %s: %w", a.Name, err)
+	}
+	return nil
+}
+
+func resolveCodexSessionRestartCommand(agent string, opts refreshOptions) (string, error) {
+	if opts.CodexSessionRestartCmdSet {
+		if opts.CodexSessionRestartCmd == "" {
+			return "", fmt.Errorf("codex session restart command is empty")
+		}
+		return opts.CodexSessionRestartCmd, nil
+	}
+	if cfgCmd := config.ResolveString(opts.Config, agent, "codex-session-restart-command", ""); cfgCmd != "" {
+		return cfgCmd, nil
+	}
+	if _, err := os.Stat(defaultCodexSessionRestartCmd); err == nil {
+		return defaultCodexSessionRestartCmd, nil
+	}
+	return "", fmt.Errorf("codex session restart command not configured; set --codex-session-restart-command or TOML codex-session-restart-command")
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
 // renderRefreshText emits an operator-readable summary + per-agent
 // table to stdout. Mirrors the JSON shape's fields so the two outputs
 // stay legible side-by-side during diagnostic comparisons.
 func renderRefreshText(w io.Writer, r refreshResult) {
-	fmt.Fprintf(w, "refresh-all-mcps from=%s total=%d queued=%d failed=%d\n",
-		r.Sender, r.Total, r.Queued, r.Failed)
+	fmt.Fprintf(w, "refresh-all-mcps from=%s total=%d queued=%d restarted=%d failed=%d\n",
+		r.Sender, r.Total, r.Queued, r.Restarted, r.Failed)
 	if len(r.Agents) == 0 {
 		fmt.Fprintln(w, "  (no agents registered)")
 		return
 	}
 	for _, c := range r.Agents {
 		if c.OK {
-			fmt.Fprintf(w, "  %-16s ok disable=%s enable=%s\n",
-				c.Name, c.DisableID, c.EnableID)
+			switch c.Method {
+			case refreshMethodCodexSessionRestart:
+				fmt.Fprintf(w, "  %-16s ok method=%s\n", c.Name, c.Method)
+			default:
+				fmt.Fprintf(w, "  %-16s ok method=%s disable=%s enable=%s",
+					c.Name, c.Method, c.DisableID, c.EnableID)
+				if c.Warning != "" {
+					fmt.Fprintf(w, " warning=%q", c.Warning)
+				}
+				fmt.Fprintln(w)
+			}
 		} else {
-			fmt.Fprintf(w, "  %-16s FAILED %s\n", c.Name, c.Error)
+			fmt.Fprintf(w, "  %-16s FAILED method=%s %s\n", c.Name, c.Method, c.Error)
 		}
 	}
 }
