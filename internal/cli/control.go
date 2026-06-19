@@ -16,13 +16,24 @@ import (
 // controlParams is the resolved input to doControl. Mirrors the MCP
 // tool's input plus the cap budget (so unit tests can tighten them).
 type controlParams struct {
-	From         string
-	To           string
-	Command      string
-	ResumeWith   string
-	MaxRecipient int
-	MaxSender    int
-	MaxBody      int
+	From       string
+	To         string
+	Command    string
+	ResumeWith string
+	// ForceRateLimited is the #573 control-surface arm of the #558 operator
+	// escape-hatch: when true, every row the macro emits carries the
+	// force_rate_limited marker, so the recipient's mailman bypasses the
+	// rate-limit / usage-limit defer gates for the whole control macro (but
+	// NOT copy-mode / popup / unknown / compaction — those still defer per
+	// IsPasteUnsafeForced). Applied to BOTH rows of the restart / sleep+resume
+	// InsertMessagePair, not just the primary: a forced restart whose enable
+	// row deferred would re-create the half-actioned state #29's atomic insert
+	// prevents; a forced sleep whose resume row deferred would leave the
+	// chamber slept-but-dormant. Default false = normal deferral.
+	ForceRateLimited bool
+	MaxRecipient     int
+	MaxSender        int
+	MaxBody          int
 }
 
 // controlResult is the structured return from doControl. Both the MCP
@@ -116,12 +127,17 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 		disableP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
 			Body: "/mcp disable tmux-tell", Kind: store.KindControl,
+			ForceRateLimited:  p.ForceRateLimited,
 			MaxRecipientQueue: p.MaxRecipient,
 			MaxSenderBacklog:  p.MaxSender,
 		}
 		enableP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
 			Body: "/mcp enable tmux-tell", Kind: store.KindControl,
+			// Both rows forced: a deferred enable would leave the recipient
+			// MCP-disabled-but-never-re-enabled — the half-actioned state #29's
+			// atomic insert prevents, re-created at delivery time. See #573.
+			ForceRateLimited: p.ForceRateLimited,
 		}
 		disableRes, enableRes, err := s.InsertMessagePair(ctx, disableP, enableP, true)
 		if err != nil {
@@ -151,12 +167,17 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 		compactP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
 			Body: text, Kind: store.KindControl,
+			ForceRateLimited:  p.ForceRateLimited,
 			MaxRecipientQueue: p.MaxRecipient,
 			MaxSenderBacklog:  p.MaxSender,
 		}
 		resumeP := store.InsertParams{
 			FromAgent: p.From, ToAgent: p.To,
 			Body: p.ResumeWith, Kind: store.KindMessage,
+			// Both rows forced: a deferred resume would leave the chamber
+			// slept-but-dormant, the failure resume_with exists to prevent.
+			// See #573.
+			ForceRateLimited: p.ForceRateLimited,
 		}
 		compactRes, resumeRes, err := s.InsertMessagePair(ctx, compactP, resumeP, true)
 		if err != nil {
@@ -174,6 +195,7 @@ func doControl(ctx context.Context, s *store.Store, p controlParams) (*controlRe
 	res, err := s.InsertMessage(ctx, store.InsertParams{
 		FromAgent: p.From, ToAgent: p.To,
 		Body: text, Kind: store.KindControl,
+		ForceRateLimited:  p.ForceRateLimited,
 		MaxRecipientQueue: p.MaxRecipient,
 		MaxSenderBacklog:  p.MaxSender,
 	})
@@ -201,6 +223,8 @@ func runControlCLI(args []string, stdout, stderr io.Writer) int {
 			strings.Join(control.Names(), ", ")))
 	resumeWith := fs.String("resume-with", "",
 		"optional continuation prompt; only valid with --command sleep on self")
+	forceRateLimited := fs.Bool("force-rate-limited", false,
+		"bypass the recipient's rate-limit / usage-limit defer for this control macro, delivering even when the pane shows a rate-/usage-limit banner (#573, control arm of #558). Applies to BOTH rows of the restart / sleep+resume macros. Does NOT bypass copy-mode / popup / unknown / compaction paste-safety.")
 	maxRecipient := fs.Int("max-recipient-queue", capRecipientQueue,
 		"reject when the recipient's queue depth would exceed this")
 	maxSender := fs.Int("max-sender-backlog", capSenderBacklog,
@@ -244,13 +268,14 @@ func runControlCLI(args []string, stdout, stderr io.Writer) int {
 	}
 
 	res, err := doControl(ctx, s, controlParams{
-		From:         fromName,
-		To:           *to,
-		Command:      *command,
-		ResumeWith:   *resumeWith,
-		MaxRecipient: *maxRecipient,
-		MaxSender:    *maxSender,
-		MaxBody:      *maxBody,
+		From:             fromName,
+		To:               *to,
+		Command:          *command,
+		ResumeWith:       *resumeWith,
+		ForceRateLimited: *forceRateLimited,
+		MaxRecipient:     *maxRecipient,
+		MaxSender:        *maxSender,
+		MaxBody:          *maxBody,
 	})
 	if err != nil {
 		// Cap rejections route via sentinel (post-#29), not string

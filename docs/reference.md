@@ -456,7 +456,20 @@ compaction remain paste-unsafe even under force (the `IsPasteUnsafeForced` predi
 forced message still never pastes into a scrolled pane or over a popup. Single-recipient sends
 only: a multi-recipient (comma-separated) send rejects `--force-rate-limited` fail-loud rather
 than silently dropping the marker (the fan-out `InsertParams` doesn't carry it, and a silently
-ignored escape-hatch is worse than an error). The `control` surface is a tracked fast-follow.
+ignored escape-hatch is worse than an error).
+
+**Control surface — `control --force-rate-limited` / MCP `force_rate_limited` (#573, fast-follow
+of #558).** The same override on the control channel: the CLI `control` subcommand's
+`--force-rate-limited` flag and the `tmux-tell.control` MCP tool's `force_rate_limited` input both
+mark the control row(s) for force, reusing the #558 enforcement (gate + #105) verbatim — no new
+paste-unsafe behavior. It applies to **both** rows of the multi-row macros: the restart macro's
+disable **and** enable, and the sleep+resume macro's `/compact` **and** resume-prompt. Forcing
+only the primary would defeat the macro's atomicity (#29): a deferred re-enable leaves the
+recipient MCP-disabled-but-never-re-enabled, and a deferred resume leaves the chamber
+slept-but-dormant — the exact half-actioned states the atomic insert prevents, re-created at
+delivery time. Narrowness is inherited unchanged: copy-mode / popup / unknown / compaction still
+defer for every forced control row. (Unlike `send`, `control` is single-recipient by construction,
+so there is no multi-recipient fail-loud guard to mirror.)
 
 This is what unblocked `PasteCapable = true` (#360). The historical blocker was **verify-token
 robustness**, not pane-reading: both adapters collapse a pasted message to a `[Pasted …]`

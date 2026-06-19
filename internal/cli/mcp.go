@@ -277,7 +277,8 @@ func newMCPServer(s *store.Store) *mcp.Server {
 			"properties": {
 				"to":          {"type": "string", "description": "Recipient agent name; set to your own name for self-invocation"},
 				"command":     {"type": "string", "description": "Whitelisted command (e.g. 'sleep'); leading slash optional"},
-				"resume_with": {"type": "string", "description": "Optional continuation prompt delivered after the sleep (/compact) settles. Only valid with command=sleep on self-invocation."}
+				"resume_with": {"type": "string", "description": "Optional continuation prompt delivered after the sleep (/compact) settles. Only valid with command=sleep on self-invocation."},
+				"force_rate_limited": {"type": "boolean", "description": "Bypass the recipient's rate-limit / usage-limit defer for this control macro, delivering even when the pane shows a rate-/usage-limit banner (#573, control arm of #558). Applies to BOTH rows of the restart / sleep+resume macros. Does NOT bypass copy-mode / popup / unknown / compaction paste-safety."}
 			},
 			"required": ["to", "command"]
 		}`),
@@ -1112,9 +1113,10 @@ func mcpGetHandler(s *store.Store) mcp.ToolHandler {
 
 func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
-		To         string `json:"to"`
-		Command    string `json:"command"`
-		ResumeWith string `json:"resume_with"`
+		To               string `json:"to"`
+		Command          string `json:"command"`
+		ResumeWith       string `json:"resume_with"`
+		ForceRateLimited bool   `json:"force_rate_limited"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
@@ -1126,13 +1128,14 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 		res, err := doControl(ctx, s, controlParams{
-			From:         from,
-			To:           in.To,
-			Command:      in.Command,
-			ResumeWith:   in.ResumeWith,
-			MaxRecipient: capRecipientQueue,
-			MaxSender:    capSenderBacklog,
-			MaxBody:      capBodyBytes,
+			From:             from,
+			To:               in.To,
+			Command:          in.Command,
+			ResumeWith:       in.ResumeWith,
+			ForceRateLimited: in.ForceRateLimited,
+			MaxRecipient:     capRecipientQueue,
+			MaxSender:        capSenderBacklog,
+			MaxBody:          capBodyBytes,
 		})
 		if err != nil {
 			return nil, err
