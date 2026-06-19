@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"os/signal"
 	"regexp"
 	"strings"
@@ -138,6 +139,81 @@ func rateLimitBackoff(consecutive int) time.Duration {
 		return rateLimitBackoffCap
 	}
 	return d
+}
+
+// #543 Layer-3 priority-biased wake-jitter windows, expressed as a fraction of
+// the base rate-limit backoff. A NARROWER window means the chamber wakes nearer
+// the backoff floor (sooner); a wider window spreads it later. Higher-priority
+// chambers get the narrow window so they cluster just past the floor and wake
+// first; lower-priority chambers spread furthest. The jitter is additive and
+// non-negative — a chamber never wakes EARLIER than the provider's backoff floor.
+const (
+	rateLimitJitterFracHigh   = 0.25
+	rateLimitJitterFracNormal = 0.5
+	rateLimitJitterFracLow    = 1.0
+)
+
+// rateLimitJitterSource yields a uniform sample in [0.0, 1.0) for the #543 wake
+// jitter. A package var so tests can pin it deterministically (the wake-stagger
+// test injects a stepping source; a mutation pins the collision the jitter
+// prevents). Production uses math/rand/v2's per-process auto-seeded source, so
+// independent mailman processes draw independent sequences — that cross-process
+// independence is what actually desynchronises simultaneously-limited chambers.
+var rateLimitJitterSource = rand.Float64
+
+// setRateLimitJitterSourceForTest swaps the jitter source and returns the
+// previous value so the caller can restore it.
+func setRateLimitJitterSourceForTest(f func() float64) func() float64 {
+	prev := rateLimitJitterSource
+	rateLimitJitterSource = f
+	return prev
+}
+
+// jitterFractionForPriority maps a #449 priority weight to its wake-jitter
+// window fraction. Monotone in priority: at-or-above High gets the narrowest
+// window, at-or-below Low the widest, the normal band in between. The >=/<=
+// bounds (not ==) keep a future tier (e.g. an "urgent" weight above High)
+// mapping to the tightest window rather than silently falling to the default.
+func jitterFractionForPriority(priority int) float64 {
+	switch {
+	case priority >= store.PriorityHigh:
+		return rateLimitJitterFracHigh
+	case priority <= store.PriorityLow:
+		return rateLimitJitterFracLow
+	default:
+		return rateLimitJitterFracNormal
+	}
+}
+
+// rateLimitWakeJitter returns a non-negative jitter to add to the base
+// rate-limit backoff, drawn uniformly from [0, frac(priority)*base]. Additive
+// and non-negative by construction: jitter only spreads wakes later, never
+// earlier than the provider's backoff floor.
+func rateLimitWakeJitter(base time.Duration, priority int) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	frac := jitterFractionForPriority(priority)
+	return time.Duration(rateLimitJitterSource() * frac * float64(base))
+}
+
+// rateLimitWakeDelay computes the #543 Layer-3 wake delay for a rate-limited
+// chamber: the base backoff (the provider's Retry-After hint or the exponential
+// fallback) plus a priority-biased jitter that desynchronises simultaneous wakes
+// and orders chambers by priority, plus a cap-aware extension when the provider
+// is already saturated by other working chambers — so the chamber does not wake
+// straight into a #448 cap-defer spin. providerCap <= 0 disables the cap-aware
+// read (the cap gate is off, or this agent has no provider). The #448 cap gate
+// remains the authoritative admission backstop; this layer only reduces the
+// thundering-herd pressure on it.
+func rateLimitWakeDelay(ctx context.Context, s *store.Store, base time.Duration, priority int, provider string, providerCap int, ttl, recheck time.Duration) time.Duration {
+	backoff := base + rateLimitWakeJitter(base, priority)
+	if providerCap > 0 {
+		if working, err := s.CountWorkingOnProvider(ctx, provider, ttl, time.Now()); err == nil && working >= providerCap {
+			backoff += recheck
+		}
+	}
+	return backoff
 }
 
 // stopOrSleepWithUpdates waits for d or until stopCtx is cancelled, invoking
@@ -1371,10 +1447,22 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 						rateLimitedAttempts = 0
 					}
 					rateLimitedAttempts++
-					backoff := outcome.RetryAfter
-					if backoff <= 0 {
-						backoff = rateLimitBackoff(rateLimitedAttempts)
+					base := outcome.RetryAfter
+					if base <= 0 {
+						base = rateLimitBackoff(rateLimitedAttempts)
 					}
+					// #543 Layer-3: spread the wake by priority and extend it
+					// when the provider is already saturated, so chambers
+					// rate-limited on the same tick don't all wake together and
+					// thunder the provider (the residue the #448 cap gate, which
+					// still runs on the next iteration, cannot itself fix).
+					providerCapForWake := 0
+					if capOn {
+						providerCapForWake = opts.MaxConcurrentPerProvider
+					}
+					backoff := rateLimitWakeDelay(opCtx, s, base, msg.Priority,
+						active.Provider, providerCapForWake,
+						opts.ProviderCapTTL, opts.ProviderCapRecheckInterval)
 					rateLimitedRetryAt = time.Now().Add(backoff)
 					logger.Printf("WARN gate_ratelimited id=%s pane=%s iter=%d retry_after=%s — reverting to queued for retry",
 						msg.PublicID, paneForDelivery, outcome.Iterations, backoff)

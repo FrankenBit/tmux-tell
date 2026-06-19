@@ -427,6 +427,22 @@ and before working/idle classification. Production adapter patterns intentionall
 stay empty until real Claude/Codex pane output is captured; guessed literals
 would compile but silently fail to detect the real UI.
 
+**Rate-limited wake-ordering (#543, completes #504 Layer 3).** When a `RateLimitPattern`
+match defers delivery, the mailman backs off — reading the `Retry-After` hint when the
+pane exposes one, else an exponential fallback (1s → 60s). On top of that base delay the
+retry is **spread** so chambers rate-limited on the same tick don't all wake together and
+re-thunder the provider: a *priority-biased jitter* (window narrows with #449 priority —
+higher priority wakes nearer the backoff floor, lower priority spreads later) is added,
+and the delay is extended by one provider-cap recheck interval when the #448 per-provider
+working-cap (`--max-concurrent-per-provider`) is already saturated, so the chamber doesn't
+wake straight into a cap-defer spin. The jitter is additive and non-negative — a chamber
+never wakes *earlier* than the provider's backoff floor. The **#448 cap gate stays the
+authoritative admission backstop** (it still runs before the observe-gate on the next
+delivery attempt); this layer only *reduces thundering-herd pressure* on it. It is
+decentralised: each per-agent mailman computes its own wake delay from its message
+priority and the shared per-provider working-count — there is no central wake-orderer, and
+the spreading lives in the backoff computation, not the cross-channel scheduler.
+
 This is what unblocked `PasteCapable = true` (#360). The historical blocker was **verify-token
 robustness**, not pane-reading: both adapters collapse a pasted message to a `[Pasted …]`
 placeholder (Codex by size ~1KB, Claude by line-count), hiding the verify token until the
