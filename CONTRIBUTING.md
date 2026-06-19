@@ -252,6 +252,57 @@ Deprecation-policy hygiene per ADR-0008 (the two-minor floor + the structured
 derive-script is the operator's surface for "which surfaces did I promise
 two cycles ago, and is this the cut where they come off?".
 
+### Amending a release after Publish
+
+Clicking **Publish** creates the tag and makes the release public, so the clean
+fix for a bad prelude is to **catch it before Publish** — the draft sits in the
+releases UI precisely so it can be reviewed, and the prelude gate (a reviewer
+reading the draft body) is where a register or accuracy problem should be caught.
+Treat post-Publish amendment as **rare**.
+
+Worked precedent: the **v0.17.2** cut (2026-06-15), where a published prelude was
+flagged as cryptic and rewritten in place — see
+[#472](https://git.frankenbit.de/frankenbit/tmux-tell/issues/472) for the full
+incident and the ad-hoc path it took. Contrast the **v0.21.0** cut, where the same
+class of problem (an over-claiming prelude) was caught at the draft gate *before*
+Publish ([#560](https://git.frankenbit.de/frankenbit/tmux-tell/pulls/560)) — the
+outcome you want.
+
+**First, decide what kind of change it is.** Readability rewrites, factual
+corrections, and broken-link fixes are in scope. **New content is not** — if you
+want to *add* something that shipped, file a follow-up PR and reference it from the
+next release's CHANGELOG; don't retro-stuff a published release.
+
+**Then amend, least-destructive surface first:**
+
+1. **The release body — always, and always safe.** Edit the release body in the
+   Forgejo releases UI (or via the API). The body is just text attached to the
+   release; editing it touches nothing in git history and is the operator's
+   hand-edit surface. This alone makes the **public release page** correct.
+2. **`CHANGELOG.md` on `main` — always.** Open a PR that brings the `[<X.Y.Z>]`
+   section in line with the corrected body, so HEAD and every future reader see the
+   right text. Normal review applies; for an operator-authorized consistency fix the
+   operator may waive the PR ceremony and have an admin (Bosun) force-merge, with
+   the reviewer's approval landing post-merge as a correctness confirmation —
+   reserve that for genuine consistency fixes, not as a routine shortcut.
+3. **The tag — the operator's call.** After steps 1–2 the body and `main` are
+   correct, but `CHANGELOG.md` **at the tagged commit** still shows the old text (a
+   tag is a frozen snapshot). Two honest options:
+   - **Leave the tag frozen** (default, non-destructive). The published body and
+     `main` carry the correction; the tag's snapshot stays as it was cut. Nothing
+     anyone already fetched changes.
+   - **Force-move the tag** to the corrected commit so `CHANGELOG@<tag>` matches the
+     body — and update the release's `target_commitish` to match. This is **mildly
+     destructive**: anyone who already fetched the tag sees it move on their next
+     fetch. Only do it when (a) the operator authorizes it, (b) the deploy has
+     already happened (so the move doesn't disturb a release in flight), and (c)
+     nothing downstream relies on stable tag SHAs (today, nothing does). Otherwise
+     prefer leaving it frozen.
+
+The bias is the least-destructive surface that makes the public release honest: the
+body edit is free and always correct; the tag-move is the rare, operator-authorized
+step you take only when `CHANGELOG@tag` consistency is worth the force-move.
+
 ## The external contract (downstream consumers)
 
 tmux-tell is consumed as a standalone module by downstream projects — notably
