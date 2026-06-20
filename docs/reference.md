@@ -496,6 +496,26 @@ delivery time. Narrowness is inherited unchanged: copy-mode / popup / unknown / 
 defer for every forced control row. (Unlike `send`, `control` is single-recipient by construction,
 so there is no multi-recipient fail-loud guard to mirror.)
 
+**Two rate-limit layers — internal fan-out vs external provider (#580).** Everything
+above is the **external** layer: it reacts to a provider's rate-/usage-limit *after* a
+paste, at delivery time, per recipient. There is a second, **internal** layer that acts
+at *send* time, before any paste: the per-pool fan-out throttle. When one sender fans a
+message to N recipients (the `to:[array]` multi-send, #158), each recipient's insert fires
+a doorbell that wakes its mailman and triggers an LLM call; N recipients in the same usage
+pool waking in one token-quota window cascade into provider rate-limiting at the recipient
+layer (the 2026-06-19 jam-wrap 8-chamber broadcast). The internal throttle **spaces the
+inserts** (and thus the wakes) on the multi-send path so at most a pool's sustainable burst
+wakes simultaneously, the rest staggered by a per-pool delay. Both layers share **one pool
+key — the agent's `provider` (#448)** — so they group recipients identically and can't
+drift: a separate manually-declared pool tag was rejected for exactly that coherence reason.
+They differ only in *when* they act (send-time stagger vs delivery-time backoff) and in
+direction (prevent the burst vs react to the limit). Pools are asymmetric: the large shared
+Anthropic subscription bursts wide, the small OpenAI-Codex per-account pool narrow, and a
+single-user Ollama GPU never throttles (its back-pressure is GPU time, not a token window);
+an unset provider falls to the tightest `unknown` pool (fail-safe). The internal stagger is
+synchronous and bounded (a pathological fan-out caps its total stagger); single-recipient
+and below-threshold sends are untouched (zero added latency).
+
 This is what unblocked `PasteCapable = true` (#360). The historical blocker was **verify-token
 robustness**, not pane-reading: both adapters collapse a pasted message to a `[Pasted …]`
 placeholder (Codex by size ~1KB, Claude by line-count), hiding the verify token until the

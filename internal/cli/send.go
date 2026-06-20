@@ -391,7 +391,13 @@ func runMultiSendWithStore(ctx context.Context, s *store.Store, p sendParams, st
 
 	results := make([]MultiSendResult, 0, len(p.ToRecipients))
 	anyFailed := false
-	for _, to := range p.ToRecipients {
+	// #580: per-pool fan-out stagger — space same-pool inserts so the recipients
+	// don't all wake into the same token-quota window (the internal rate-limit
+	// layer). Below a pool's threshold this is a no-op (offset 0).
+	staggerStart := fanoutNow()
+	staggerOffsets := resolveFanoutOffsets(ctx, s, p.ToRecipients)
+	for i, to := range p.ToRecipients {
+		fanoutStaggerWait(ctx, staggerStart, staggerOffsets[i])
 		sp := p
 		sp.To = to
 		resp, err := sendOneRecipient(ctx, s, sp)
