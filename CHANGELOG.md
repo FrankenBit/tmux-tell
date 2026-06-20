@@ -168,6 +168,17 @@ CI step `check-changelog-placement` (#471): fails any PR that adds lines to a se
   staggered by the pool's delay (anthropic 5/400ms, openai-codex 2/1.5s, unknown
   1/1.5s fail-safe, ollama never), and the aggregate cost is max-across-pools, not
   sum-across-recipients. Single-recipient and below-threshold sends are unchanged.
+- **Codex pane respawn on `mcp-restart-tmux-tell`** ([#411](https://git.frankenbit.de/frankenbit/tmux-tell/issues/411)).
+  The `mcp-restart-tmux-tell` control macro now handles Codex chambers
+  (provider: `openai`) by *respawning* the tmux pane rather than pasting
+  `/mcp restart` — a slash command CodexCLI does not implement. The respawn
+  re-executes the chamber's startup command in the same working directory
+  (`cd <cwd> && exec <cmd> <name>`), cycling the MCP process while keeping
+  the Codex session's working context. Pasting-based fallback (unrecognised
+  provider) remains with an honest "may be a no-op for Codex" warning. Closes
+  the MCP-refresh gap that `refresh-all-mcps` exposed for Codex adapters,
+  alongside [#410](https://git.frankenbit.de/frankenbit/tmux-tell/issues/410)'s
+  mailman-restart sibling. *(Retroactive amendment per [#472](https://git.frankenbit.de/frankenbit/tmux-tell/issues/472) — omitted from the initial v0.22.0 cut.)*
 
 ### Changed
 
