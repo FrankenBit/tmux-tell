@@ -361,6 +361,51 @@ func TestAgentState_LivePaneNotCopyMode(t *testing.T) {
 	}
 }
 
+// TestAgentState_CopyModeQueryError_DegradesAndFlags pins the #537 signal: a
+// pane_in_mode query *error* must NOT abort AgentState — it degrades to the
+// capture-based classifier (here a clean live idle pane) AND stamps
+// Evidence.CopyModeQueryFailed so the gate loop can count consecutive failures.
+// The classification is unchanged (StateIdle); only the flag rides along.
+func TestAgentState_CopyModeQueryError_DegradesAndFlags(t *testing.T) {
+	fastTemporalDelta(t)
+	pane := "history\n" + PromptSentinel + "\nfooter\n"   // sentinel row, empty past it → Idle
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 1) // cursor at sentinel position
+	fr.copyModeQueryErr = true
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v — a pane_in_mode query error must degrade, not abort", err)
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (degraded to the capture classifier)", state)
+	}
+	if !ev.CopyModeQueryFailed {
+		t.Error("Evidence.CopyModeQueryFailed = false, want true (the gate needs this signal to bias a persistent failure toward defer)")
+	}
+}
+
+// TestAgentState_CopyModeQueryOK_NoFlag is the negative companion: when the
+// pane_in_mode query succeeds, CopyModeQueryFailed stays false so a single
+// clean read resets the gate's consecutive-failure run.
+func TestAgentState_CopyModeQueryOK_NoFlag(t *testing.T) {
+	fastTemporalDelta(t)
+	pane := "history\n" + PromptSentinel + "\nfooter\n"
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 1)
+	fr.inCopyMode = false // query succeeds, pane_in_mode=0
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	_, ev, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ev.CopyModeQueryFailed {
+		t.Error("Evidence.CopyModeQueryFailed = true on a successful query, want false")
+	}
+}
+
 // TestPaneInCopyMode_Parsing pins the helper's read of `#{pane_in_mode}`:
 // "1" → true (in a mode), "0"/anything-else → false, runner error → error.
 func TestPaneInCopyMode_Parsing(t *testing.T) {
@@ -402,6 +447,10 @@ type agentStateRunner struct {
 	// returns: false → "0" (live prompt, the default for all pre-#526
 	// tests), true → "1" (scrolled into copy-mode).
 	inCopyMode bool
+	// copyModeQueryErr makes the precedence-0 pane_in_mode query return an
+	// error (#537), so AgentState degrades to the capture path and stamps
+	// Evidence.CopyModeQueryFailed. The cursor query still succeeds.
+	copyModeQueryErr bool
 }
 
 func newAgentStateRunner(captures []string, cursorX, cursorY int) *agentStateRunner {
@@ -423,6 +472,9 @@ func (c *agentStateRunner) run(ctx context.Context, stdin io.Reader, args ...str
 		// precedence-0 pane_in_mode query (before the captures) and the
 		// cursor query. Distinguish them by the format arg.
 		if strings.Contains(args[len(args)-1], "pane_in_mode") {
+			if c.copyModeQueryErr {
+				return []byte("display-message error"), fmt.Errorf("tmuxio-test: pane_in_mode boom")
+			}
 			if c.inCopyMode {
 				return []byte("1\n"), nil
 			}

@@ -151,6 +151,20 @@ var ErrMaxWaitExceeded = errors.New("tmuxio: observe-gate MaxWait exceeded")
 // retry delivers promptly once the operator returns to the live prompt.
 var ErrCopyModeUnsafe = errors.New("tmuxio: observe-gate copy-mode persisted past MaxWait")
 
+// ErrCopyModeQueryFailed is returned when the precedence-0 `#{pane_in_mode}`
+// query failed on copyModeQueryFailDeferThreshold consecutive polls within a
+// single gate cycle (#537). A failed query means AgentState fell through to the
+// capture-based classifier, which on a scrolled pane reads the historical view
+// and can misclassify a scrolled pane as Idle (the 83b3 bug) — so a *persistent*
+// failure means the pane's copy-mode state genuinely can't be read, and
+// delivering on the capture classification would be unsafe. Like
+// ErrCopyModeUnsafe the caller must NOT deliver: revert the message to queued
+// and retry. It is a *distinct* error from ErrCopyModeUnsafe so logs/operators
+// can tell "pane confirmed scrolled (pane_in_mode=1)" apart from "pane_in_mode
+// unreadable" — the cause differs even though the deliver-deferring response is
+// the same.
+var ErrCopyModeQueryFailed = errors.New("tmuxio: observe-gate pane_in_mode query failed persistently")
+
 // ErrRateLimited is returned when the pane is visibly rate-limited. The caller
 // should revert the message to queued and retry after the parsed retry hint or
 // an exponential backoff.
@@ -159,6 +173,22 @@ var ErrRateLimited = errors.New("tmuxio: observe-gate rate-limited")
 // ErrUsageLimited is returned when the pane is visibly usage-limited. The
 // caller should revert the message to queued and park until quota reset.
 var ErrUsageLimited = errors.New("tmuxio: observe-gate usage-limited")
+
+// copyModeQueryFailDeferThreshold is how many CONSECUTIVE polls within one gate
+// cycle must report Evidence.CopyModeQueryFailed (a `#{pane_in_mode}` query
+// error, #537) before the gate stops deferring-within-the-cycle and returns
+// ErrCopyModeQueryFailed so the caller reverts to queued for a fresh retry.
+//
+// Below the threshold a failed query suppresses this poll's deliver-paths and
+// re-polls (a transient display-message hiccup gets a chance to recover and
+// deliver normally on the next clean read); at the threshold the pane is treated
+// as genuinely unreadable and the message reverts. 3 spans roughly the first
+// three poll intervals (~3s+4.5s+6.75s ≈ 14s) — long enough to ride out a single
+// transient tmux hiccup, short enough to revert well within MaxWait (5m). A const
+// rather than an ObserveGateOpts field for the same reason as clearPressesPerLine:
+// it is an internal correctness threshold, not an operational tunable; promoting
+// it to opts is a trivial follow-up if a pane ever needs a different value.
+const copyModeQueryFailDeferThreshold = 3
 
 // sinceIfSet returns the elapsed time since t, or 0 when t is the zero value
 // (the event never happened). Used to populate GateOutcome.CopyModeWait only
@@ -248,6 +278,7 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 		lastState        State
 		notifiedOfTyping bool
 		firstCopyModeAt  time.Time // #526: first StateInCopyMode this cycle (zero = never)
+		copyModeFailRun  int       // #537: consecutive pane_in_mode query failures this cycle
 	)
 
 	for {
@@ -256,7 +287,6 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 			opts.Ping()
 		}
 		state, ev, err := AgentState(ctx, pane)
-		lastState = state
 		if err != nil {
 			return GateOutcome{
 				Reason:     fmt.Sprintf("AgentState error: %v", err),
@@ -264,6 +294,37 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 				Iterations: iterations,
 			}, fmt.Errorf("tmuxio: observe-gate: %w", err)
 		}
+
+		// #537: a precedence-0 pane_in_mode query error (Evidence.CopyModeQueryFailed)
+		// makes THIS poll's copy-mode determination unreliable — AgentState fell
+		// through to the capture classifier, which on a scrolled pane reads the
+		// historical view and can misclassify it as Idle (the 83b3 bug). Count
+		// consecutive failures within this cycle: at the threshold the pane is
+		// genuinely unreadable, so revert to queued for a fresh retry (a *distinct*
+		// signal from ErrCopyModeUnsafe — see its doc); below it, downgrade this
+		// poll to StateUnknown so NO deliver-path fires and the gate re-polls (a
+		// transient display-message hiccup recovers and delivers on a later clean
+		// read). Any clean read resets the run. A run that STARTS late in the
+		// cycle can hit MaxWait before climbing to the threshold (the sleep clamps
+		// to the remaining deadline); the MaxWait branch below has a sibling guard
+		// (`copyModeFailRun > 0`) that reverts in that case too, so a persistent
+		// failure never reaches the deliver-anyway path regardless of when it began.
+		if ev.CopyModeQueryFailed {
+			copyModeFailRun++
+			if copyModeFailRun >= copyModeQueryFailDeferThreshold {
+				return GateOutcome{
+					Reason: fmt.Sprintf("pane_in_mode query failed %d consecutive polls; pane unreadable, reverting to queued (not delivering on an untrusted copy-mode classification)",
+						copyModeFailRun),
+					State:        StateUnknown,
+					Iterations:   iterations,
+					CopyModeWait: sinceIfSet(firstCopyModeAt),
+				}, ErrCopyModeQueryFailed
+			}
+			state = StateUnknown
+		} else {
+			copyModeFailRun = 0
+		}
+		lastState = state
 
 		switch state {
 		case StateIdle:
@@ -373,6 +434,27 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 					Iterations:   iterations,
 					CopyModeWait: sinceIfSet(firstCopyModeAt),
 				}, ErrCopyModeUnsafe
+			}
+			// #537 (Surveyor #579 review): a pane_in_mode failure-run that began
+			// LATE in the cycle (within the last few poll-intervals before
+			// MaxWait) reaches the cap before climbing to
+			// copyModeQueryFailDeferThreshold — the per-iteration sleep clamps to
+			// the remaining deadline, so the streak stalls at ~2 and never
+			// escalates. Falling through to deliver-anyway below would paste into
+			// a pane whose copy-mode state is STILL unconfirmed (the same 83b3
+			// risk the threshold-escalation closes). The lastState guard above
+			// can't catch it — a failed query yields StateUnknown, never
+			// StateInCopyMode. So any in-progress failure-run reverts here too,
+			// making the "persistent failure never delivers" invariant
+			// unconditional rather than default-cadence-dependent.
+			if copyModeFailRun > 0 {
+				return GateOutcome{
+					Reason: fmt.Sprintf("pane_in_mode query failing (%d consecutive) at MaxWait %s; reverting to queued (copy-mode state unconfirmed)",
+						copyModeFailRun, opts.MaxWait),
+					State:        StateUnknown,
+					Iterations:   iterations,
+					CopyModeWait: sinceIfSet(firstCopyModeAt),
+				}, ErrCopyModeQueryFailed
 			}
 			return GateOutcome{
 				Reason: fmt.Sprintf("MaxWait %s exceeded; last state=%s",

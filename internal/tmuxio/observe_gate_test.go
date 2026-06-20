@@ -33,6 +33,13 @@ type observeStep struct {
 	// returns for this step: true → "1" (AgentState returns StateInCopyMode
 	// and SKIPS the captures), false → "0" (normal capture-based path).
 	inCopyMode bool
+	// copyModeQueryErr makes the precedence-0 `#{pane_in_mode}` query return an
+	// ERROR for this step (#537). AgentState then degrades to the capture path
+	// and stamps Evidence.CopyModeQueryFailed; the gate downgrades the poll to a
+	// safer-default wait. Like inCopyMode it advances the step (the captures that
+	// follow are ignored by the downgraded poll), so a script can sequence
+	// failure→recovery.
+	copyModeQueryErr bool
 }
 
 func newObserveGateRunner(steps []observeStep) *observeGateRunner {
@@ -83,6 +90,17 @@ func (r *observeGateRunner) run(ctx context.Context, stdin io.Reader, args ...st
 		// #526: distinguish the precedence-0 pane_in_mode query from the
 		// cursor query by the format arg.
 		if strings.Contains(args[len(args)-1], "pane_in_mode") {
+			if step.copyModeQueryErr {
+				// #537: simulate a pane_in_mode query failure. Advance the step
+				// here (like inCopyMode) — the captures that follow this call are
+				// ignored by a poll the gate downgrades to a safer-default wait —
+				// so a multi-step script can sequence failure→recovery.
+				if len(r.steps) > 1 {
+					r.steps = r.steps[1:]
+				}
+				r.cursor = 0
+				return []byte("pane_in_mode query failed"), errors.New("tmuxio-test: display-message boom")
+			}
 			if step.inCopyMode {
 				// AgentState returns StateInCopyMode on this call and skips
 				// the captures, so advance the step HERE (the capture-driven
@@ -238,6 +256,116 @@ func TestObserveGate_CopyModeExitDelivers(t *testing.T) {
 	}
 	if outcome.Iterations < 2 {
 		t.Errorf("Iterations = %d, want >= 2 (copy-mode poll then idle poll)", outcome.Iterations)
+	}
+}
+
+// TestObserveGate_CopyModeQueryPersistReverts pins the #537 close: when the
+// precedence-0 pane_in_mode query fails on copyModeQueryFailDeferThreshold
+// consecutive polls, the gate stops delivering on the (untrusted) capture
+// classification and returns ErrCopyModeQueryFailed WITHOUT Stale=true — so the
+// caller reverts to queued rather than risking a paste into a pane it can't
+// confirm is live. Distinct from ErrCopyModeUnsafe (which means confirmed-scrolled).
+func TestObserveGate_CopyModeQueryPersistReverts(t *testing.T) {
+	fastObserveDelta(t)
+	// A single persistent-failure step: len==1 never advances, so every poll
+	// hits the query error and the consecutive-failure run climbs to the threshold.
+	runner := newObserveGateRunner([]observeStep{
+		{copyModeQueryErr: true},
+	})
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     time.Microsecond,
+		PollIntervalMax:     time.Microsecond,
+		InputStaleThreshold: time.Minute,
+		MaxWait:             5 * time.Second, // far larger than the ~3-poll streak
+	})
+	if !errors.Is(err, ErrCopyModeQueryFailed) {
+		t.Fatalf("err = %v, want ErrCopyModeQueryFailed", err)
+	}
+	if outcome.State != StateUnknown {
+		t.Errorf("State = %v, want StateUnknown (pane unreadable, not confirmed-scrolled)", outcome.State)
+	}
+	if outcome.Stale {
+		t.Error("Stale = true, want false — an unreadable pane must NOT trigger deliver-anyway")
+	}
+	if outcome.Iterations != copyModeQueryFailDeferThreshold {
+		t.Errorf("Iterations = %d, want %d (escalate at the threshold, not before/after)",
+			outcome.Iterations, copyModeQueryFailDeferThreshold)
+	}
+}
+
+// TestObserveGate_CopyModeQueryFailAtMaxWaitReverts pins the Surveyor #579
+// should-fix: a pane_in_mode failure-run that hits MaxWait BEFORE climbing to
+// copyModeQueryFailDeferThreshold (because it started late in the cycle, so the
+// sleep clamps to the remaining deadline and the streak stalls below 3) must
+// STILL revert — the MaxWait branch's sibling guard returns ErrCopyModeQueryFailed
+// rather than falling through to the deliver-anyway ErrMaxWaitExceeded path (which
+// would paste into a pane whose copy-mode state is unconfirmed: the 83b3 risk).
+//
+// Forced by MaxWait < pollInterval: the cap fires after ~1 poll, well under the
+// threshold. Without the guard this returns ErrMaxWaitExceeded with Stale=true.
+func TestObserveGate_CopyModeQueryFailAtMaxWaitReverts(t *testing.T) {
+	fastObserveDelta(t)
+	runner := newObserveGateRunner([]observeStep{
+		{copyModeQueryErr: true},
+	})
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     20 * time.Millisecond,
+		PollIntervalMax:     20 * time.Millisecond,
+		InputStaleThreshold: time.Minute,
+		MaxWait:             5 * time.Millisecond, // < pollInterval → cap fires before the streak reaches threshold
+	})
+	if !errors.Is(err, ErrCopyModeQueryFailed) {
+		t.Fatalf("err = %v, want ErrCopyModeQueryFailed (sub-threshold run at MaxWait must revert, not deliver-anyway)", err)
+	}
+	if outcome.Iterations >= copyModeQueryFailDeferThreshold {
+		t.Errorf("Iterations = %d, want < %d (the point is the run did NOT reach the threshold before MaxWait)",
+			outcome.Iterations, copyModeQueryFailDeferThreshold)
+	}
+	if outcome.Stale {
+		t.Error("Stale = true, want false — a sub-threshold failure-run must not deliver-anyway into an unconfirmed pane")
+	}
+}
+
+// TestObserveGate_CopyModeQueryTransientRecovers pins the transient-vs-persistent
+// distinction: a sub-threshold run of pane_in_mode failures must NOT defer-to-
+// queued. Below the threshold each failure downgrades the poll to a safer-default
+// wait (no deliver-path fires on an untrusted classification), and once the query
+// recovers to a clean idle read the gate delivers normally — the failure run reset.
+func TestObserveGate_CopyModeQueryTransientRecovers(t *testing.T) {
+	fastObserveDelta(t)
+	idle := "history\n" + PromptSentinel + "\nfooter\n"
+	// Two failures (below threshold 3), then a clean idle read.
+	runner := newObserveGateRunner([]observeStep{
+		{copyModeQueryErr: true},
+		{copyModeQueryErr: true},
+		{paneA: idle, paneB: idle, cursorX: 2, cursorY: 1},
+	})
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     time.Microsecond,
+		PollIntervalMax:     time.Microsecond,
+		InputStaleThreshold: time.Minute,
+		MaxWait:             5 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v (transient failures must recover, not defer)", err)
+	}
+	if outcome.State != StateIdle {
+		t.Errorf("State = %v, want StateIdle (recovered to a clean read)", outcome.State)
+	}
+	if outcome.Stale {
+		t.Error("Stale = true, want false — clean delivery after transient recovery")
+	}
+	if outcome.Iterations != 3 {
+		t.Errorf("Iterations = %d, want 3 (two failed polls then the clean idle poll)", outcome.Iterations)
 	}
 }
 

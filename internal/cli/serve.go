@@ -1525,6 +1525,24 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 						return exitOK
 					}
 					continue
+				case errors.Is(gerr, tmuxio.ErrCopyModeQueryFailed):
+					// #537: the pane_in_mode query failed on N consecutive polls,
+					// so the pane's copy-mode state is genuinely unreadable. Like
+					// the copy-mode-persist case, do NOT deliver-anyway (the capture
+					// classification could be a stale scrolled-view Idle → the 83b3
+					// bug). Revert to queued and retry; a later cycle gets a clean
+					// query once the transient tmux condition clears. Logged
+					// distinctly from gate_copymode_persist so it reads as
+					// "unreadable", not "confirmed scrolled".
+					logger.Printf("WARN gate_copymode_query_failed id=%s pane=%s iter=%d — pane_in_mode unreadable across polls; reverting to queued for retry (not delivering on an untrusted copy-mode classification)",
+						msg.PublicID, paneForDelivery, outcome.Iterations)
+					if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
+						logger.Printf("WARN gate_copymode_query_recover_failed id=%s err=%v", msg.PublicID, rerr)
+					}
+					if stopOrSleep(stopCtx, opts.InterMessageDelay) {
+						return exitOK
+					}
+					continue
 				case errors.Is(gerr, tmuxio.ErrMaxWaitExceeded):
 					logger.Printf("WARN gate_max_wait id=%s pane=%s iter=%d — delivering anyway (%s)",
 						msg.PublicID, paneForDelivery, outcome.Iterations, outcome.Reason)

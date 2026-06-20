@@ -220,6 +220,14 @@ type Evidence struct {
 	// Marker is the matched substring for StateAtRestInCompaction or
 	// StateAwaitingOperator.
 	Marker string `json:"marker,omitempty"`
+	// CopyModeQueryFailed is true when the precedence-0 `#{pane_in_mode}`
+	// query (PaneInCopyMode) returned an *error* and AgentState degraded to
+	// the capture-based classifier (#537). It does NOT change the returned
+	// State — the classification still reflects the captures — but it tells
+	// the gate loop that this poll's copy-mode determination is unreliable,
+	// so the gate can bias a PERSISTENT run of such failures toward defer
+	// rather than delivering on a possibly-stale capture (observe_gate.go).
+	CopyModeQueryFailed bool `json:"copy_mode_query_failed,omitempty"`
 }
 
 // CompactionMarker is the substring that identifies a agent in
@@ -367,11 +375,24 @@ func SetAgentStateTemporalDeltaForTest(d time.Duration) time.Duration {
 // Cursor query failures are non-fatal (the heuristic gracefully
 // degrades to the cursor-less path); only capture-pane failures bubble
 // up as errors.
-func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
+func AgentState(ctx context.Context, pane string) (state State, ev Evidence, err error) {
 	if pane == "" {
 		return StateUnknown, Evidence{Reason: "pane required"},
 			errors.New("tmuxio: pane required")
 	}
+
+	// #537: capture a precedence-0 pane_in_mode query *error* and stamp it onto
+	// whatever Evidence the classification ultimately returns, via this deferred
+	// decorator. Doing it once here — rather than at each of the ~7 classification
+	// return sites — means every path (current and future) carries the flag
+	// without a return site having to remember to set it. The named return `ev`
+	// is what `return State, ev, nil` assigns to before this defer runs.
+	var copyModeQueryFailed bool
+	defer func() {
+		if copyModeQueryFailed {
+			ev.CopyModeQueryFailed = true
+		}
+	}()
 
 	// Precedence 0: copy-mode / scroll-back (#526). Query pane_in_mode BEFORE
 	// the capture-pane snapshots — capture-pane on a scrolled pane reads the
@@ -380,20 +401,23 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 	// pane, the 83b3 bug). The display-message query is cheap + authoritative
 	// and reflects the live pane regardless of scroll position.
 	//
-	// RESIDUAL RISK (Surveyor #535 review): a query *error* falls through to
-	// the capture-based path, which is the pre-#526 83b3-susceptible classifier
-	// — AND because the returned state is not StateInCopyMode, the IsPasteUnsafe
-	// belt doesn't catch it either. So both defense layers depend on this query
-	// succeeding. The risk is low (display-message is reliable, and reproducing
-	// 83b3 needs a 4-way conjunction: scrolled pane + query error + an old `❯ `
-	// scrolled into frame + a stable two-capture window), so v1 degrades to
-	// prior behavior on a hiccup rather than blocking delivery. The architectural
-	// close, if the error path ever bites: track *consecutive* pane_in_mode query
-	// failures (in the gate loop, where per-poll state lives) and bias a
-	// PERSISTENT failure toward defer — distinguishing a transient tmux hiccup
-	// (degrade) from a pane the query genuinely can't read (defer). Deferred as a
-	// follow-up; not built here.
-	if inMode, merr := PaneInCopyMode(ctx, pane); merr == nil && inMode {
+	// QUERY ERROR (Surveyor #535 review, closed by #537): a query *error* here
+	// falls through to the capture-based path, which is the pre-#526
+	// 83b3-susceptible classifier — AND because the returned state is not
+	// StateInCopyMode, the IsPasteUnsafe belt doesn't catch it either. So both
+	// defense layers depend on this query succeeding. A *single* transient
+	// display-message hiccup still degrades to that path (acceptable — the pane
+	// is almost always fine, and reproducing 83b3 needs a 4-way conjunction:
+	// scrolled pane + query error + an old `❯ ` scrolled into frame + a stable
+	// two-capture window). The close for a *persistent* failure: stamp
+	// Evidence.CopyModeQueryFailed (via the deferred decorator above) so the
+	// gate loop can count *consecutive* failures and bias a genuinely-unreadable
+	// pane toward defer — distinguishing a transient hiccup (degrade) from a pane
+	// the query truly can't read (defer). See observe_gate.go's
+	// copyModeQueryFailDeferThreshold.
+	if inMode, merr := PaneInCopyMode(ctx, pane); merr != nil {
+		copyModeQueryFailed = true
+	} else if inMode {
 		return StateInCopyMode,
 			Evidence{Reason: "pane in copy-mode / scrolled up (pane_in_mode=1)"}, nil
 	}
@@ -489,14 +513,14 @@ func AgentState(ctx context.Context, pane string) (State, Evidence, error) {
 					// classify as Idle because the operator hasn't
 					// engaged (cursor would have moved past content
 					// if they had been typing).
-					ev := Evidence{
+					idleEv := Evidence{
 						Reason:      "cursor at prompt sentinel position; pane stable",
 						PromptEmpty: strings.TrimSpace(rest) == "",
 					}
-					if !ev.PromptEmpty {
-						ev.Reason = fmt.Sprintf("cursor at prompt sentinel position with auto-suggestion ghost-text (%q); pane stable", strings.TrimSpace(rest))
+					if !idleEv.PromptEmpty {
+						idleEv.Reason = fmt.Sprintf("cursor at prompt sentinel position with auto-suggestion ghost-text (%q); pane stable", strings.TrimSpace(rest))
 					}
-					return StateIdle, ev, nil
+					return StateIdle, idleEv, nil
 				case cursorX > sentinelCol:
 					// Cursor past the sentinel — operator is mid-
 					// typing. Agent is blocked on operator finishing
