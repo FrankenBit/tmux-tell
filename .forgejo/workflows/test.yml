@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # full history required by check-changelog-placement's three-dot diff
 
       - name: go version
         run: go version
@@ -46,3 +48,23 @@ jobs:
         # a CONTRIBUTING convention + reviewer check, like the legacy
         # CHANGELOG-entry rule it replaces).
         run: go run ./tools/changelog-assemble -check
+
+      - name: check-changelog-placement (#471 — guard sealed-section injection)
+        # On pull-request events, fails if any added line in CHANGELOG.md falls
+        # under a sealed ## [X.Y.Z] section instead of ## [Unreleased]. This
+        # catches the rebase-past-cut misplacement edge: a PR rebased over a
+        # release cut shifts the diff anchor from [Unreleased] to the new sealed
+        # section, silently injecting PR content into a published release record.
+        #
+        # Release-cut branches (i/v*) legitimately touch CHANGELOG.md; they are
+        # skipped. On push-to-main the check is skipped too — that's the merge
+        # commit and the gate already ran on the PR.
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          if echo "$HEAD_REF" | grep -qE '^i/v[0-9]'; then
+            echo "release-cut branch — changelog placement check skipped"
+            exit 0
+          fi
+          go run ./tools/check-changelog-placement/ -base=origin/${{ github.base_ref }}

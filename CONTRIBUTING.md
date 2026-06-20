@@ -73,7 +73,10 @@ reads safe concurrent with mailman writes.
   release-prep (`tools/changelog-assemble`), so **parallel PRs never collide on
   `CHANGELOG.md`** — that collision tax (the structural reason for this convention) is
   what the fragment pattern removes. See [CHANGELOG entries](#changelog-entries) for the
-  density convention + the per-release prelude shape.
+  density convention + the per-release prelude shape. CI enforces this: on every PR,
+  `check-changelog-placement` (#471) fails if any added line in `CHANGELOG.md` falls under
+  a sealed `## [X.Y.Z]` section — if CI flags this, move your entry to `## [Unreleased]`
+  or, better, switch to a `changelog.d/` fragment so the issue can't recur.
 - **ADRs.** Architectural decisions are recorded in [`docs/adr/`](docs/adr/) (see its
   `README.md` for the convention and `template.md` for the shape). File an ADR when a
   decision constrains future work, touches an architectural commitment, or has real
