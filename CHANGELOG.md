@@ -35,6 +35,55 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [0.22.0] — 2026-06-20
 
+The release that stops the fleet tripping over itself. v0.21.0 taught the bus to
+ride out rate limits and wake up fast; v0.22.0 makes that waiting *polite*, keeps
+messages to Codex chambers landing cleanly, and helps a busy fleet keep its own
+identities straight — the kind of release you feel as fewer small things going
+wrong.
+
+Headlines:
+
+- **The rate-limit handling from v0.21.0, finished**
+  ([#543](https://git.frankenbit.de/frankenbit/tmux-tell/issues/543),
+  [#558](https://git.frankenbit.de/frankenbit/tmux-tell/issues/558),
+  [#573](https://git.frankenbit.de/frankenbit/tmux-tell/issues/573)). Building on the
+  rate-limit detection you set up last release, the bus now rides a limit out more
+  gracefully: chambers that get rate-limited wake on a staggered, priority-biased
+  schedule instead of all retrying on the same tick and re-tripping the provider; a
+  fan-out to many chambers at once spaces its own sends so a broadcast doesn't
+  rate-limit *itself*
+  ([#580](https://git.frankenbit.de/frankenbit/tmux-tell/issues/580)); and when you
+  know a flagged limit is a false alarm, `send --force-rate-limited` — and the same on
+  `control` — pushes the message through anyway.
+- **Messages to Codex chambers land cleanly**
+  ([#412](https://git.frankenbit.de/frankenbit/tmux-tell/issues/412),
+  [#420](https://git.frankenbit.de/frankenbit/tmux-tell/issues/420)). Codex panes
+  accept messages more slowly than Claude ones, so a burst used to overflow the queue
+  and get rejected — they now get a deeper queue that absorbs the burst instead of
+  dropping it. Control commands a Codex pane can't run are skipped instead of pasted in
+  as stray text, and a stubborn "stuck delivery" case is documented as what it really
+  was — a stale deploy, not a delivery bug
+  ([#414](https://git.frankenbit.de/frankenbit/tmux-tell/issues/414)).
+- **The fleet keeps its own identities straight**
+  ([#556](https://git.frankenbit.de/frankenbit/tmux-tell/issues/556),
+  [#549](https://git.frankenbit.de/frankenbit/tmux-tell/issues/549)). A chamber can set
+  its own pane display name, so a renamed or forked session shows the right title; the
+  `agents` listing now warns when two agents claim the same pane
+  ([#565](https://git.frankenbit.de/frankenbit/tmux-tell/issues/565)); re-registering a
+  pane under a new name cleanly replaces the old binding instead of leaving a ghost;
+  and registering no longer quietly reassigns a pane out from under whoever holds it
+  ([#403](https://git.frankenbit.de/frankenbit/tmux-tell/issues/403)).
+- **A quieter idle bus**
+  ([#550](https://git.frankenbit.de/frankenbit/tmux-tell/issues/550)). Now that
+  delivery rides a sub-second doorbell, an idle mailman polls 8× less often — every 2s
+  instead of every 250ms — so a quiet fleet costs less while staying just as
+  responsive.
+
+Under the hood, the release also documents how to amend a release after it's
+published ([#472](https://git.frankenbit.de/frankenbit/tmux-tell/issues/472)) and
+codifies how chambers resolve crossed messages
+([#470](https://git.frankenbit.de/frankenbit/tmux-tell/issues/470)).
+
 ### Added
 
 
