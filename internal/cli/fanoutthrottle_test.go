@@ -10,8 +10,40 @@ import (
 var (
 	aThr = poolThrottles["anthropic"].threshold
 	aDel = poolThrottles["anthropic"].delay
-	cThr = poolThrottles["openai-codex"].threshold
+	cThr = poolThrottles["openai"].threshold
 )
+
+// TestPoolKeysMatchAdapterProviders is the #597 regression guard: the throttle
+// pool keys MUST be the literal `provider` strings the adapters write, or a
+// pool's recipients silently fall through to unknownThrottle (the bug — codex
+// keyed "openai-codex" matched nothing → unknown throttle instead of its own).
+// There is no shared provider constant to import, so this test hard-codes the
+// adapter literals (from cmd/tmux-tell-{claude,codex}/main.go) as the source of
+// truth and asserts each resolves to its intended, non-unknown throttle. If an
+// adapter's Provider literal changes, or a key drifts, this fails.
+func TestPoolKeysMatchAdapterProviders(t *testing.T) {
+	cases := []struct {
+		provider string // the literal the adapter writes via SetProvider
+		wantThr  int
+		wantDel  time.Duration
+	}{
+		{"anthropic", 5, 400 * time.Millisecond}, // cmd/tmux-tell-claude/main.go
+		{"openai", 2, 1500 * time.Millisecond},   // cmd/tmux-tell-codex/main.go
+	}
+	for _, c := range cases {
+		got, throttled := throttleForPool(normPool(c.provider))
+		if !throttled {
+			t.Errorf("provider %q resolves to no-throttle, want its own throttle", c.provider)
+			continue
+		}
+		if got.threshold == unknownThrottle.threshold && got.delay == unknownThrottle.delay {
+			t.Errorf("provider %q fell through to unknownThrottle — the pool key does not match the adapter literal (the #597 bug)", c.provider)
+		}
+		if got.threshold != c.wantThr || got.delay != c.wantDel {
+			t.Errorf("provider %q throttle = {%d, %v}, want {%d, %v}", c.provider, got.threshold, got.delay, c.wantThr, c.wantDel)
+		}
+	}
+}
 
 // TestFanoutStaggerOffsets_BurstThenStagger pins the core per-pool rule: the
 // first `threshold` recipients in a pool get offset 0 (the sustainable burst),
@@ -41,7 +73,7 @@ func TestFanoutStaggerOffsets_BurstThenStagger(t *testing.T) {
 func TestFanoutStaggerOffsets_BelowThresholdNoStagger(t *testing.T) {
 	pools := make([]string, cThr) // exactly the codex threshold
 	for i := range pools {
-		pools[i] = "openai-codex"
+		pools[i] = "openai"
 	}
 	for i, off := range fanoutStaggerOffsets(pools) {
 		if off != 0 {
@@ -59,7 +91,7 @@ func TestFanoutStaggerOffsets_PoolsIndependent(t *testing.T) {
 	for i := 0; i < aThr+2; i++ {
 		pools = append(pools, "anthropic")
 	}
-	pools = append(pools, "openai-codex") // 1 codex, below its threshold
+	pools = append(pools, "openai") // 1 codex, below its threshold
 	got := fanoutStaggerOffsets(pools)
 
 	// codex recipient (last) is below threshold → 0.
@@ -141,14 +173,14 @@ func TestFanoutStaggerOffsets_AntiCascadeInvariant(t *testing.T) {
 	// The actual jam-wrap recipients: lookout + carpenter are codex, the rest
 	// anthropic.
 	pools := []string{
-		"anthropic",    // engineer
-		"anthropic",    // shipwright
-		"openai-codex", // carpenter
-		"anthropic",    // pilot
-		"anthropic",    // herald
-		"anthropic",    // quartermaster
-		"anthropic",    // surveyor
-		"openai-codex", // lookout
+		"anthropic", // engineer
+		"anthropic", // shipwright
+		"openai",    // carpenter
+		"anthropic", // pilot
+		"anthropic", // herald
+		"anthropic", // quartermaster
+		"anthropic", // surveyor
+		"openai",    // lookout
 	}
 	got := fanoutStaggerOffsets(pools)
 
@@ -163,8 +195,8 @@ func TestFanoutStaggerOffsets_AntiCascadeInvariant(t *testing.T) {
 		t.Errorf("%d anthropic recipients wake simultaneously, want <= threshold %d (cascade not prevented)",
 			zeroByPool["anthropic"], aThr)
 	}
-	if zeroByPool["openai-codex"] > cThr {
-		t.Errorf("%d codex recipients wake simultaneously, want <= threshold %d", zeroByPool["openai-codex"], cThr)
+	if zeroByPool["openai"] > cThr {
+		t.Errorf("%d codex recipients wake simultaneously, want <= threshold %d", zeroByPool["openai"], cThr)
 	}
 	// 6 anthropic > threshold 5 → exactly the 6th is staggered by one delay.
 	staggered := 0

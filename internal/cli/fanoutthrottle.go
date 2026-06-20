@@ -40,10 +40,23 @@ type poolThrottle struct {
 // poolThrottles holds the per-pool defaults. These are v1 sketched values
 // (Bosun-ratified 2026-06-20); tuning is empirical — if a pool's cadence
 // misbehaves, file a follow-up with Loki evidence rather than guessing here.
-// The pool key is the agent's `provider` (#448).
+//
+// The pool key is the agent's `provider` (#448) — it MUST be the literal string
+// each adapter writes via SetProvider, because resolveFanoutOffsets keys on the
+// raw provider with no transform. There is no shared provider constant, so these
+// keys are hand-synced to the adapter literals:
+//   - "anthropic"  ← cmd/tmux-tell-claude/main.go (Provider: "anthropic")
+//   - "openai"     ← cmd/tmux-tell-codex/main.go  (Provider: "openai")
+//
+// A key that doesn't match a real provider literal is dead code: its pool's
+// recipients fall through to unknownThrottle and the intended tuning never
+// applies (the #597 bug — codex was keyed "openai-codex", matched nothing, and
+// silently got the unknown throttle instead of its own). TestPoolKeysMatchAdapterProviders
+// pins the match. The external #448/#543 rate-limit layer keys on the same
+// literals — that shared key is the whole point of design-call-2 (#580).
 var poolThrottles = map[string]poolThrottle{
-	"anthropic":    {threshold: 5, delay: 400 * time.Millisecond},
-	"openai-codex": {threshold: 2, delay: 1500 * time.Millisecond},
+	"anthropic": {threshold: 5, delay: 400 * time.Millisecond},
+	"openai":    {threshold: 2, delay: 1500 * time.Millisecond},
 }
 
 // unknownPool is the fail-safe pool for a recipient whose provider is unset
@@ -55,7 +68,10 @@ var unknownThrottle = poolThrottle{threshold: 1, delay: 1500 * time.Millisecond}
 
 // noThrottlePools never stagger: their back-pressure isn't a token-quota window.
 // Ollama is single-user GPU time — staggering its sends would add latency for no
-// rate-limit gain.
+// rate-limit gain. Forward-declaration: no Ollama adapter exists yet (Cabin Boy,
+// planned), so this key is unverified against a real Provider literal — whoever
+// builds the adapter must set Provider: "ollama" to match (see the poolThrottles
+// adapter-literal note).
 var noThrottlePools = map[string]bool{"ollama": true}
 
 // maxFanoutStagger bounds the total synchronous stagger so a pathological
