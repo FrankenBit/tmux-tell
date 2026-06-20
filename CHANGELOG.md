@@ -33,24 +33,16 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.22.0] — 2026-06-20
+
 ### Added
+
 
 - **`register --keep-pane`** (#403). New flag for acting-on-behalf scenarios: updates
   non-pane fields (delivery_mode, alias, etc.) **without touching the stored `pane_id`**.
   Intended for operator or broker calls where the registering chamber is not the
   registered pane (e.g. QM flipping Lookout's delivery_mode). Mutually exclusive with
   `--pane`.
-
-### Fixed
-
-- **`register` no longer silently rewrites `pane_id` from `$TMUX_PANE`** (#403). When
-  updating an existing registration that has a stored `pane_id`, if the pane resolved
-  from `$TMUX_PANE` differs from the stored pane and neither `--pane` nor `--keep-pane`
-  was passed, `register` now **refuses** with an actionable error naming both panes and
-  the escape flag. This catches the acting-on-behalf case (QM clobbering Lookout's pane)
-  and the post-crash self-register case (new pane must be named explicitly via `--pane`).
-
-### Added
 
 - **Chamber-asserted pane display names** (#556). A chamber can now assert its
   own tmux pane title on demand via the new `tmux-tell.set_pane_name(name)` MCP
@@ -75,8 +67,61 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   `UpsertAgent`, the resulting identity drift shows up at a glance instead of
   being debugged from first principles. Pure detection over the listing — no new
   query, no hot path.
+CI step `check-changelog-placement` (#471): fails any PR that adds lines to a sealed `## [X.Y.Z]` section of `CHANGELOG.md`, catching the rebase-past-cut misplacement edge before it lands.
+- **Priority-biased, cap-aware wake for rate-limited chambers** ([#543](https://git.frankenbit.de/frankenbit/tmux-tell/issues/543), completes [#504](https://git.frankenbit.de/frankenbit/tmux-tell/issues/504) Layer 3).
+  When a chamber backs off a detected rate-limit, the retry delay now gains a
+  **priority-biased jitter** — the window narrows with [#449](https://git.frankenbit.de/frankenbit/tmux-tell/issues/449)
+  priority (higher priority wakes nearer the backoff floor, lower priority spreads
+  later) — so chambers rate-limited on the same tick don't all wake together and
+  re-thunder the provider. The delay also extends by one provider-cap recheck
+  interval when the [#448](https://git.frankenbit.de/frankenbit/tmux-tell/issues/448)
+  per-provider working-cap is already saturated, so a chamber doesn't wake straight
+  into a cap-defer spin. The jitter is additive and non-negative: a chamber never
+  wakes *earlier* than the provider's backoff floor (or its `Retry-After` hint).
+  The #448 cap gate remains the authoritative admission backstop — this layer only
+  reduces thundering-herd pressure on it; it is decentralised (each per-agent
+  mailman computes its own delay from the shared provider working-count), living in
+  the backoff computation rather than the cross-channel scheduler.
+- **`send --force-rate-limited` operator override** ([#558](https://git.frankenbit.de/frankenbit/tmux-tell/issues/558), completes [#504](https://git.frankenbit.de/frankenbit/tmux-tell/issues/504) AC8).
+  An operator escape-hatch for the rare case where the recipient's pane matches a
+  rate-limit / usage-limit pattern but delivery should happen anyway — a
+  false-positive pattern, a limit the operator knows has cleared, or
+  substrate-empirical testing. The flag persists on the message; the recipient's
+  mailman then bypasses the rate-limit and usage-limit defer gates for that one
+  message. It is **narrow**: copy-mode, operator-typing/popup, unknown, and
+  compaction paste-unsafety are all still honored — force removes *exactly* the
+  rate-limit family from the paste-unsafe set, never the content-corrupting
+  states. Single-recipient sends only — a multi-recipient (comma-separated) send
+  **rejects** the flag fail-loud rather than silently dropping a deliberate
+  operator escape-hatch (matching `--deliver-after`). The `control` surface is
+  tracked as a fast-follow.)
+- **`--force-rate-limited` on the control surface** ([#573](https://git.frankenbit.de/frankenbit/tmux-tell/issues/573), fast-follow of [#558](https://git.frankenbit.de/frankenbit/tmux-tell/issues/558)).
+  The #558 operator escape-hatch is now available on the control channel: the
+  CLI `control --force-rate-limited` flag and the `tmux-tell.control` MCP tool's
+  `force_rate_limited` input mark a control macro to bypass the recipient's
+  rate-limit / usage-limit defer, reusing the #558 mailman enforcement (gate +
+  #105 pre-paste) verbatim. It applies to **both** rows of the multi-row macros
+  — the restart macro's disable *and* re-enable, and the sleep+resume macro's
+  `/compact` *and* resume prompt — so a forced macro can never strand the
+  recipient half-actioned (MCP-disabled-but-never-re-enabled, or
+  slept-but-dormant) on a deferred second row. Narrowness is unchanged:
+  copy-mode, popup, unknown, and compaction still defer for every forced control
+  row.
+- **Internal per-pool fan-out throttle** ([#580](https://git.frankenbit.de/frankenbit/tmux-tell/issues/580)).
+  A multi-recipient send (`to:[array]`, #158) now spaces same-pool inserts so the
+  recipients don't all wake into the same token-quota window and cascade into
+  provider rate-limiting at the recipient layer (the symptom an 8-chamber
+  broadcast hit on the 2026-06-19 jam wrap). This is the *internal* (send-time)
+  rate-limit layer, distinct from the *external* (delivery-time) provider-cap +
+  wake-jitter of #448/#543 — both share one pool key, the agent's `provider`
+  (#448), so they group recipients identically. Throttling is **per-pool**: the
+  first `threshold` recipients in a pool burst immediately, each one past that is
+  staggered by the pool's delay (anthropic 5/400ms, openai-codex 2/1.5s, unknown
+  1/1.5s fail-safe, ollama never), and the aggregate cost is max-across-pools, not
+  sum-across-recipients. Single-recipient and below-threshold sends are unchanged.
 
 ### Changed
+
 
 - **Per-(command, adapter) control-command compat map** (#420). Generalizes
   #419's narrow codex-`/mcp`-only skip into a per-adapter allowlist of the
@@ -89,6 +134,121 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
   adapter-incompatible command. Codex's set is `/compact`, `/rename`, `/clear`,
   `/help`; Claude (the reference adapter, which implements the full slash
   surface) leaves the set nil = "supports all", so its behavior is unchanged.
+- **Recipient-queue cap is now per-provider — codex recipients get a deeper queue (20 vs 5)** [#412]. Codex `paste-and-enter` delivery drains ~6× slower than claude (~6s vs ~0.7s per message), so a burst would trip the default 5-deep recipient-queue cap and reject with `store: recipient queue full`. The cap now floors up from the recipient's `provider` (#448) at the single in-transaction enforcement point (`internal/store/recipientcap.go`), trading the rejection (message lost, sender re-sends) for honest delay (slow drain). This does **not** speed codex delivery up: the ≥50% cadence reduction #412 also targeted is **not** delivered here — it is blocked on the codex classifier false-idling mid-turn (#590), which makes the load-bearing #449 post-deliver cooldown unsafe to shrink. The substrate busy-lease that would let it shrink is tracked as #592.
+- **Mailman idle-poll default raised 250ms → 2s** ([#550](https://git.frankenbit.de/frankenbit/tmux-tell/issues/550), follow-up to [#515](https://git.frankenbit.de/frankenbit/tmux-tell/issues/515)).
+  Now that the #515 cross-process doorbell carries delivery latency sub-second,
+  the queue-empty poll is a slow correctness fallback rather than the latency
+  path — so an idle mailman re-polls 8× less often. 2s is the deliberate ceiling:
+  it matches the existing 2s self-observe throttle, so the #448 provider-cap
+  freshness margin (vs the 6s TTL) is unchanged, and the #496 spin-guard threshold
+  is interval-independent by construction so it stays 1000 (the slower cadence only
+  widens its headroom). Interactive waits (`ping`, `wait-for-reply`,
+  `send --wait-for-delivered`) and `tail` keep their fast polls — short-lived, so
+  the saving would be small while a dropped doorbell would stall a blocked caller.
+  Override with `--idle-poll` / the per-agent `idle-poll` TOML knob.
+
+### Fixed
+
+
+- **`register` no longer silently rewrites `pane_id` from `$TMUX_PANE`** (#403). When
+  updating an existing registration that has a stored `pane_id`, if the pane resolved
+  from `$TMUX_PANE` differs from the stored pane and neither `--pane` nor `--keep-pane`
+  was passed, `register` now **refuses** with an actionable error naming both panes and
+  the escape flag. This catches the acting-on-behalf case (QM clobbering Lookout's pane)
+  and the post-crash self-register case (new pane must be named explicitly via `--pane`).
+**`release.yml` Bump-determination backtick rendering (#459):** dropped invalid `\`` escape sequences from the Python f-string PR-body template; the rendered PR body now shows `` `v0.X.Y` `` inline code instead of `\`v0.X.Y\``, and Python no longer emits `SyntaxWarning: invalid escape sequence '\`'` at workflow runtime.
+- **Persistent `pane_in_mode` query failure now biases toward defer** ([#537](https://git.frankenbit.de/frankenbit/tmux-tell/issues/537),
+  closing the #526/#535 residual risk). A `#{pane_in_mode}` query *error* made
+  `AgentState` degrade to the capture-based classifier, which on a scrolled pane
+  reads the historical view and can misclassify it as idle (the 83b3 bug) — and
+  because the state wasn't `StateInCopyMode`, the `IsPasteUnsafe` belt didn't
+  catch it either. `AgentState` now stamps `Evidence.CopyModeQueryFailed` on a
+  query error, and the observe-gate counts *consecutive* failures within a cycle:
+  a single transient hiccup still degrades and re-polls (recovers on the next
+  clean read), but a persistent run (3 consecutive polls) returns the new
+  `ErrCopyModeQueryFailed` so the caller reverts the message to queued rather than
+  delivering on an unreadable pane's classification.
+- **Re-registering a pane to a new name now supersedes the old binding** ([#549](https://git.frankenbit.de/frankenbit/tmux-tell/issues/549)).
+  `register --force <new-name>` on a pane already registered under a *different*
+  name created a **second** agents row pointing at the same pane (the upsert
+  conflict key was the name, not the pane). Because identity resolution lists
+  agents `ORDER BY name` and takes the first pane match, the alphabetically-prior
+  stale name kept winning — the chamber resolved to, and sent bus messages under,
+  its **old** identity until the stale row was removed by hand (the live
+  Shipwright/`%5` drift: `whoami` reported `alice` after re-registering as
+  `shipwright`). `UpsertAgent` now enforces one-pane-one-identity in a single
+  transaction: registering a pane releases any other row holding it (rebound to
+  no pane — non-destructive, preserving that row's queued messages), so a
+  re-register takes effect immediately for both `whoami` and the sender identity.
+  Affects Claude and Codex chambers alike — distinct from, and complementary to,
+  the Codex `$TMUX_AGENT_NAME` env-pin runtime-precedence gap (tracked separately
+  under #549).
+- **release-draft.yml: fold hard-wrapped continuation lines in prelude**
+  ([#561](https://git.frankenbit.de/frankenbit/tmux-tell/issues/561)).
+  Forgejo's Markdown renderer doesn't fold hard-wrapped continuation lines
+  within list items into continuous paragraphs the way CommonMark suggests,
+  so the rendered release body showed visible line breaks + broken
+  indentation under each Headlines bullet. Adds a `fold_continuation_lines`
+  pass in the CHANGELOG-extractor's Python block that collapses 2-space-
+  indented continuation lines under each list item into one long line,
+  preserving standalone paragraphs, section breaks, and fenced code blocks.
+  Manual round-trip against the v0.21.0 prelude (substrate-empirical
+  anchor) produces operator-publishable output; next release cut is the
+  substrate-empirical confirmation.
+- **Fan-out throttle: codex pool key now matches the adapter's real provider**
+  ([#597](https://git.frankenbit.de/frankenbit/tmux-tell/issues/597)). #580 keyed
+  the codex fan-out throttle on `"openai-codex"`, but the codex adapter writes
+  `Provider: "openai"` — so codex recipients silently fell through to the
+  `unknown` throttle (threshold 1) instead of their intended codex throttle
+  (threshold 2), and the codex-specific tuning was dead code. Re-keyed to
+  `"openai"` to match the adapter literal (and the external #448/#543 rate-limit
+  layer, which the internal throttle deliberately shares a pool key with). A new
+  `TestPoolKeysMatchAdapterProviders` pins the key↔adapter-literal match so a
+  future drift fails loud.
+
+### Security
+
+- **Identity resolution prefers a registered pane over a stale `$TMUX_AGENT_NAME` pin** ([#549](https://git.frankenbit.de/frankenbit/tmux-tell/issues/549)).
+  Completes the Codex identity-misattribution fix begun in #553: that change
+  stopped *fresh* installs from baking a global `TMUX_AGENT_NAME` pin, but at
+  **runtime** `identity.Resolve` still consulted the pin *before* the
+  `$TMUX_PANE`→registry lookup, so an existing baked pin kept winning — the
+  chamber sent bus messages under a stale identity until the process restarted.
+  The precedence is now flipped: a **registered pane** (the re-register-reachable
+  truth) outranks the name pin; the pin is used only when the pane is
+  unregistered (its bootstrap role). A pin that disagrees with the resolved pane
+  is surfaced with a loud `identity_mismatch` warning. For Codex MCP children
+  whose own `$TMUX_PANE` is dropped on spawn, the MCP resolver now walks the
+  parent-process chain (bounded, depth 16, cycle-guarded) to find an ancestor
+  that still carries the pane — extending #553's immediate-parent-only read so a
+  shim/wrapper between Codex and the MCP server no longer defeats resolution. A
+  pane carried by an ancestor outranks a name pin; an ancestor pane that is
+  present but unregistered fails loud with register advice rather than silently
+  falling back to a less-trustworthy name pin.
+
+### Documentation
+
+- **Codex delivery: document the deploy-lag root cause behind the "looks like hook-context" symptom** [#414]. `reference.md` (§Codex) + `observe-gate.md` now record that the 2026-06-14 stuck-codex-delivery instance was a stale-binary deploy lag (codex-profile code merged, but the deploy path didn't restart the codex adapter until #436), not a delivery-mechanism gap — the idle-Codex classification is regression-pinned by `TestAgentState_ClassifiesCodexPane`. Captures the substrate-class-of-claim lesson (diagnose against the *deployed* binary, not the source tree) and names the one uncovered case (Codex non-composer UIs → `unknown` → hard-defer) as separately-tracked forward work.
+**ADR-0016 — canonical-substrate-vs-curated-surface routing (#462):** codifies the three-surface release discipline: release UI = publish gate; `CHANGELOG.md`@tag = comprehensive substrate-of-record; release body = curated narrative extracted from the CHANGELOG prelude. Updates `CONTRIBUTING.md` to forward-reference ADR-0016 as architectural authority.
+- **Cross-chamber crossing-resolution discipline codified** ([#470](https://git.frankenbit.de/frankenbit/tmux-tell/issues/470)).
+  `docs/chamber-dispatch.md` gains a *When a crossing happens anyway* section: when
+  two chambers file the same follow-up tracker in parallel mid-review (which
+  assignee-on-claim structurally can't prevent — neither issue exists yet to
+  check), resolve it cheaply — verify substrate-state → surface the divergence →
+  defer to merged-reality → don't re-litigate. Per the operator-greenlit reframe,
+  the target is cheap resolution, not rare crossings; prevention mechanisms
+  (title-prefix lock, file-time broadcast) are recorded as considered-and-declined,
+  re-opening only if forward-watch shows resolution cost rising.
+- **Documented the post-Publish release-amendment procedure** ([#472](https://git.frankenbit.de/frankenbit/tmux-tell/issues/472)).
+  New `CONTRIBUTING.md` §Release cuts subsection ("Amending a release after Publish")
+  covers when a post-Publish amendment is appropriate (readability rewrites, factual
+  corrections, broken-link fixes — **not** new content) and the least-destructive-first
+  ladder: edit the release body (always safe, no git impact), bring `CHANGELOG.md` on
+  `main` in line (always, via PR), and force-move the tag only as the rare,
+  operator-authorized, mildly-destructive last step when `CHANGELOG@tag` consistency is
+  worth it. Worked precedent: the v0.17.2 in-place rewrite; contrast v0.21.0, caught at
+  the draft gate before Publish.
+**`control --command` per-verb help (#583):** the `--command` flag now lists each verb's receiver-side effect in `--help` output; `sleep` is explicitly described as self-compaction (context summarise + drop, continues morning-fresh — NOT a suspend).
 
 ## [0.21.0] — 2026-06-18
 
