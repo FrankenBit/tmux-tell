@@ -1329,6 +1329,23 @@ reason, 200-char preview). These bypass the queue caps so they're never dropped,
 a notice that itself fails does not generate another (no wedged-pane cascade). Both
 `--notify-on-failed` and `--notify-on-delivered-in-input-box` default on.
 
+**Recipient-queue cap (per-provider, #412).** Each recipient's queue holds a bounded
+number of `queued` messages (default 5) before a sender's insert is rejected with
+`store: recipient queue full`. The cap **floors up per the recipient's adapter
+provider**: a **codex** recipient (`provider = "openai"`, #448) gets a deeper queue
+(**20**) because codex `paste-and-enter` delivery drains ~6× slower than claude (~6s
+vs ~0.7s per message) — the #449 post-deliver cooldown is load-bearing collision
+protection that cannot be safely shrunk under the current classifier (codex false-idles
+mid-turn, [#590](https://git.frankenbit.de/frankenbit/tmux-tell/issues/590)). A deeper
+queue trades the *rejection* (message lost, sender re-sends) for *honest delay* (the
+message drains slowly) — the right trade for a bus. It does **not** speed codex delivery
+up: that cadence work is the substrate busy-lease tracked separately as
+[#592](https://git.frankenbit.de/frankenbit/tmux-tell/issues/592) (the fix that would
+let the cooldown shrink). The floor is resolved at the single in-transaction
+cap-enforcement point from the `provider` column; an unset/unknown provider keeps the
+passed cap (conservative). Per-provider values are v1-sketched
+(`internal/store/recipientcap.go`); tune empirically with evidence.
+
 **Recovering a flushed paste.** When the observe-gate archives your in-flight
 input before pasting over it (see below), it stores the snapshot as a
 `stranded_draft` bookmark. `tmux-tell-claude stranded list` shows your bookmarks (id,

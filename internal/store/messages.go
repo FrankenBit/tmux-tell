@@ -320,15 +320,35 @@ func (s *Store) validateReplyTo(ctx context.Context, replyTo string) error {
 // the same transaction.
 func checkCapsInTx(ctx context.Context, tx *sql.Tx, p InsertParams, addedRows int) error {
 	if p.MaxRecipientQueue > 0 {
+		// #412: floor the passed cap UP per the recipient's provider — codex
+		// (provider "openai") drains paste-and-enter ~6× slower than claude, so it
+		// gets a deeper queue to avoid spurious recipient-queue-full rejections
+		// under burst. Resolved here, the single cap-enforcement point, from the
+		// provider column written at the recipient's serve start (#448). An
+		// unregistered recipient or empty provider keeps the passed cap (the
+		// conservative default). See recipientcap.go for the per-provider floors.
+		effectiveCap := p.MaxRecipientQueue
+		var provider string
+		switch err := tx.QueryRowContext(ctx,
+			`SELECT provider FROM agents WHERE name = ?`, p.ToAgent).Scan(&provider); {
+		case err == nil:
+			if floor := recipientQueueCapFloor(provider); floor > effectiveCap {
+				effectiveCap = floor
+			}
+		case errors.Is(err, sql.ErrNoRows):
+			// recipient not registered yet — keep the passed cap
+		default:
+			return fmt.Errorf("store: cap check recipient provider: %w", err)
+		}
 		var depth int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT COUNT(*) FROM messages WHERE to_agent = ? AND state = ?`,
 			p.ToAgent, StateQueued).Scan(&depth); err != nil {
 			return fmt.Errorf("store: cap check recipient: %w", err)
 		}
-		if depth+addedRows > p.MaxRecipientQueue {
+		if depth+addedRows > effectiveCap {
 			return fmt.Errorf("%w: %s (%d/%d, need %d slot(s))",
-				ErrRecipientQueueFull, p.ToAgent, depth, p.MaxRecipientQueue, addedRows)
+				ErrRecipientQueueFull, p.ToAgent, depth, effectiveCap, addedRows)
 		}
 	}
 	if p.MaxSenderBacklog > 0 {
