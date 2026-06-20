@@ -88,6 +88,23 @@ exported as `tmux_tell_copymode_defer_total{agent}` and
 > constant gets re-verified. If you ever see agents that should be idle classifying
 > as `unknown` after a Claude Code upgrade, this is the first thing to check.
 
+> **The markers are per-adapter, not Claude-only (#322).** Each adapter supplies
+> its own `PaneProfile` (sentinel + markers); Codex's sentinel is `› ` (U+203A +
+> regular space), installed for the `tmux-tell-codex` mailman. The cursor-aware
+> classification above is adapter-agnostic — it reads the *active* profile's
+> sentinel, so an idle Codex pane classifies as `idle` exactly the way a Claude
+> pane does. **A footgun this creates: a stale binary classifies with the *wrong*
+> adapter's profile.** If a Codex pane that is plainly idle classifies as `unknown`
+> and its messages hard-defer (looking like hook-context — the symptom #414 filed),
+> the first thing to check is whether the **running** codex mailman is current: the
+> 2026-06-14 #414 instance was a deployed-binary lag (the codex-profile code had
+> merged, but the deploy path didn't restart the codex adapter until #436 landed the
+> next day). Verify a delivery diagnosis against the *deployed* binary's behaviour
+> (`tmux-tell-codex state --agent <name>`), not the source tree. Codex's
+> *non-composer* UIs (popups, compaction-equivalent) are not yet characterized and
+> still fall to `unknown` → hard-defer with no self-heal — tracked as forward work
+> pending real pane captures.
+
 ## Latency: fast when idle, patient when busy
 
 - **Idle pane** → delivered on the first poll, ~instant.

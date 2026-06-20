@@ -352,6 +352,31 @@ Codex (the OpenAI CLI) supports **both** delivery modes, like Claude:
   `additionalContext`) matches Claude's, so the same `hook-context` helper presents messages
   unchanged. Choose this when you'd rather not have the mailman paste into the pane.
 
+> **When a `paste-and-enter` Codex chamber *looks* like it switched to hook-context (#414).**
+> A `paste-and-enter` Codex agent whose `delivery_mode` row is correct, mailman running,
+> queue with open slots — yet messages stay queued and the pane shows the `📫` until a manual
+> nudge — *looks* indistinguishable from hook-context from the outside. The 2026-06-14
+> instance that filed #414 was **not** a delivery-mechanism gap: it was a **deploy-lag
+> artifact**. The codex pane-profile classifier (#322 `› ` sentinel + #336 cursor-anchored
+> verify + #360 `PasteCapable=true`) had merged, but the *running* codex mailman was still a
+> stale binary because the deploy path didn't restart the codex adapter until #436 ("deploy +
+> restart the codex adapter, not just claude") landed the next morning. Against the stale
+> binary, a Codex pane was classified with Claude's `❯ ` sentinel — which a `› `-painting
+> Codex pane never matches in **any** state → `unknown` → hard-defer. That state-independence
+> is what makes the deploy lag a **sufficient cause** without depending on the incident's
+> (uncaptured) pane state: the wrong sentinel would have hard-deferred the chamber whether its
+> pane was an idle composer or a non-composer UI, so the original report's "cursor not on the
+> sentinel row" detail — which on its own reads like the #584 non-composer case — does not
+> change the attribution. With #436 deployed, an idle Codex pane classifies as
+> `idle` and delivers normally (regression-pinned by `TestAgentState_ClassifiesCodexPane`).
+> The filed root cause ("verify-floor never confirms") was a *hypothesis*, not a verified
+> diagnosis — the substrate-class-of-claim discipline: confirm a delivery-path diagnosis
+> against the *deployed* binary's behaviour, not the source tree's. The one genuinely
+> uncovered case — Codex *non-composer* UIs (a popup, a compaction-equivalent screen, any
+> state where the cursor isn't on the `› ` composer row) still classify `unknown` → hard-defer
+> with **no self-heal** — is tracked separately (it needs real Codex popup/compaction pane
+> captures before markers are added, not blind literals).
+
 To use `hook-context`, register the agent `hook-context`, then wire a Codex hook in
 `~/.codex/config.toml`:
 
