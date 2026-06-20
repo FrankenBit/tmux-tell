@@ -299,7 +299,7 @@ jobs:
 
           ## Bump determination
 
-          - Previous tag: \`{os.environ['LATEST']}\`
+          - Previous tag: `{os.environ['LATEST']}`
           - Bump: **{os.environ['BUMP']}** ({os.environ['REASON']})
 
           ## {os.environ['NEW']} release notes (moved from [Unreleased])
