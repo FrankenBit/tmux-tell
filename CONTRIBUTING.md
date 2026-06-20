@@ -145,8 +145,9 @@ record â€” the canonical surface a reader consults for "what exactly changed" â€
 the release body is the curated narrative. So recent release sections stay
 comprehensive; only long-ago sections that have aged into archaeology get distilled
 (the boundary #391 drew was v0.16.0). This routing principle (release UI = publish,
-`CHANGELOG.md`@tag = comprehensive, release body = curated) is recorded in #426 /
-#427 and tracked for a full ADR in #462.
+`CHANGELOG.md`@tag = comprehensive, release body = curated) is codified in
+[ADR-0016](docs/adr/0016-canonical-substrate-vs-curated-surface-routing.md);
+the originating discussion lives in #426 / #427.
 
 A one-time cleanup like #391 is distinct from ongoing drift: if later releases let
 PR-body-mirror prose creep back, file a sibling tracker rather than folding the fix
