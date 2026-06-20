@@ -337,3 +337,13 @@ func TestNamesForScope(t *testing.T) {
 		}
 	}
 }
+
+// TestAllowed_DescNonEmpty guards that every whitelisted command has a
+// non-empty Desc, so a future verb can't ship a blank --help row (#583).
+func TestAllowed_DescNonEmpty(t *testing.T) {
+	for name, cmd := range Allowed {
+		if cmd.Desc == "" {
+			t.Errorf("Allowed[%q].Desc is empty — add a receiver-side description", name)
+		}
+	}
+}

@@ -219,8 +219,8 @@ func runControlCLI(args []string, stdout, stderr io.Writer) int {
 	from := fs.String("from", "", "sender agent name (default: identity-resolved)")
 	to := fs.String("to", "", "recipient agent name (required)")
 	command := fs.String("command", "",
-		fmt.Sprintf("whitelisted command (one of: %s)",
-			strings.Join(control.Names(), ", ")))
+		fmt.Sprintf("whitelisted command (#583 — receiver-side effects):\n%s",
+			control.DescTable()))
 	resumeWith := fs.String("resume-with", "",
 		"optional continuation prompt; only valid with --command sleep on self")
 	forceRateLimited := fs.Bool("force-rate-limited", false,

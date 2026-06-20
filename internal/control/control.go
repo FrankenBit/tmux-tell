@@ -60,6 +60,9 @@ type Command struct {
 	Self bool
 	// Peer is true when the command may be invoked on another agent.
 	Peer bool
+	// Desc is a one-line human-readable description of the receiver-side
+	// effect, used in --help output.
+	Desc string
 }
 
 // Allowed lists every recognised command. Keys are the bare name (no
@@ -72,16 +75,31 @@ var Allowed = map[string]Command{
 	// "/compact" — only the bus verb renames; the emitted CLI primitive is
 	// unchanged. Self-only by design (peers can't truncate your context);
 	// `compact` remains a deprecated alias (aliasOf below).
-	"sleep":  {Text: "/compact", Self: true, Peer: false},
-	"rename": {Text: "/rename", Self: true, Peer: true},
-	"cost":   {Text: "/cost", Self: true, Peer: false},
-	"help":   {Text: "/help", Self: true, Peer: true},
+	"sleep": {
+		Text: "/compact", Self: true, Peer: false,
+		Desc: "self-compaction: recipient pastes /compact, summarises + drops accumulated context, continues with cleaned-up context — NOT suspended (morning-fresh after)",
+	},
+	"rename": {
+		Text: "/rename", Self: true, Peer: true,
+		Desc: "recipient pastes /rename to rename its current session",
+	},
+	"cost": {
+		Text: "/cost", Self: true, Peer: false,
+		Desc: "recipient pastes /cost to report its accumulated token spend (self-only)",
+	},
+	"help": {
+		Text: "/help", Self: true, Peer: true,
+		Desc: "recipient pastes /help to display available slash-command help",
+	},
 	// /clear discards all session state. Globally denied (Self: false
 	// because a token-exhausted pane can't reach the MCP to call it
 	// anyway; Peer: false because anyone-to-anyone clearing is a
 	// blast-radius nightmare). The Bosun→Pilot rescue case is allowed
 	// via PeerEdges instead — see #60.
-	"clear": {Text: "/clear", Self: false, Peer: false},
+	"clear": {
+		Text: "/clear", Self: false, Peer: false,
+		Desc: "discard all session state (conversation context, not just scrollback); scope-restricted — globally denied, allowed only via per-edge exceptions (bosun→pilot rescue, #60)",
+	},
 	// MCP-server lifecycle: useful after deploying a new tmux-msg tool
 	// so a running agent can refresh its tool surface without losing
 	// session context.
@@ -92,8 +110,14 @@ var Allowed = map[string]Command{
 	// For the legitimate "peer asks me to restart your MCP" case,
 	// callers use the mcp-restart-tmux-tell macro below, which the
 	// MCP handler synthesises into disable+enable internally.
-	"mcp-disable-tmux-tell": {Text: "/mcp disable tmux-tell", Self: true, Peer: false},
-	"mcp-enable-tmux-tell":  {Text: "/mcp enable tmux-tell", Self: true, Peer: true},
+	"mcp-disable-tmux-tell": {
+		Text: "/mcp disable tmux-tell", Self: true, Peer: false,
+		Desc: "recipient pastes /mcp disable tmux-tell (self-only; peer-disable would silently sever another agent)",
+	},
+	"mcp-enable-tmux-tell": {
+		Text: "/mcp enable tmux-tell", Self: true, Peer: true,
+		Desc: "recipient pastes /mcp enable tmux-tell",
+	},
 	// mcp-restart-tmux-tell is a *macro*. The Text field documents what
 	// the macro represents but is not actually typed into a pane —
 	// Claude Code has no `/mcp restart` slash command. The MCP handler
@@ -102,7 +126,10 @@ var Allowed = map[string]Command{
 	// then `/mcp enable tmux-tell`. Peer-allowed because the synthesised
 	// rows always restore the connection; the raw disable that would
 	// expose the DoS surface is never exposed to peers directly.
-	"mcp-restart-tmux-tell": {Text: "/mcp restart tmux-tell", Self: true, Peer: true},
+	"mcp-restart-tmux-tell": {
+		Text: "/mcp restart tmux-tell", Self: true, Peer: true,
+		Desc: "macro: queues disable then enable (no /mcp restart primitive exists; synthesised as two rows)",
+	},
 }
 
 // aliasOf maps a deprecated control-command name to its canonical replacement
@@ -269,6 +296,25 @@ func Names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// DescTable returns a multi-line string listing every whitelisted command
+// with its receiver-side description, for use in --help output (#583).
+// Format: two-column table aligned on the longest command name.
+func DescTable() string {
+	names := Names()
+	maxLen := 0
+	for _, n := range names {
+		if len(n) > maxLen {
+			maxLen = len(n)
+		}
+	}
+	var sb strings.Builder
+	for _, n := range names {
+		cmd := Allowed[n]
+		fmt.Fprintf(&sb, "  %-*s  — %s\n", maxLen, n, cmd.Desc)
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // NamesForScope returns the subset of whitelisted commands invokable in
