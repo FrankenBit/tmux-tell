@@ -56,14 +56,17 @@ jobs:
         # release cut shifts the diff anchor from [Unreleased] to the new sealed
         # section, silently injecting PR content into a published release record.
         #
-        # Release-cut branches (i/v*) legitimately touch CHANGELOG.md; they are
-        # skipped. On push-to-main the check is skipped too — that's the merge
+        # Release-cut branches legitimately touch CHANGELOG.md; they are
+        # skipped. Two patterns covered: i/v* (manual cuts) and
+        # release-prep/v* (release.yml bot branch — #587 follow-up: the
+        # original regex only covered i/v*, breaking the v0.22.0 CI run).
+        # On push-to-main the check is skipped too — that's the merge
         # commit and the gate already ran on the PR.
         if: ${{ github.event_name == 'pull_request' }}
         env:
           HEAD_REF: ${{ github.head_ref }}
         run: |
-          if echo "$HEAD_REF" | grep -qE '^i/v[0-9]'; then
+          if echo "$HEAD_REF" | grep -qE '^(i/v|release-prep/v)[0-9]'; then
             echo "release-cut branch — changelog placement check skipped"
             exit 0
           fi
