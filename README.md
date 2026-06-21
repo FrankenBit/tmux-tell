@@ -346,6 +346,9 @@ tmux-tell -s user`), `loginctl enable-linger`, and the user-home DB dir
   details, the storage schema, and migrating from `claude-msg`.
 - **[Why tmux-tell?](docs/why.md)** — the longer pitch, and why this over raw
   `tmux send-keys` or a single session with subagents.
+- **[Case study: Coordination in plain sight](docs/case-study-cellblock.md)** — what
+  shared-medium multi-agent looks like at production scale: a nine-agent crew shipping
+  a real game over a weekend.
 - **[The observe-gate](docs/observe-gate.md)** — how safe-moment delivery decides.
 - **[Architecture (Arc42)](docs/arc42/)** — the full 12-section architecture spine. Link-first: each section states the architecture-level synthesis and links the living doc (this README, `observe-gate.md`, `security.md`, `reference.md`, the ADRs) for depth.
 - **[Diagnostic playbook](docs/diagnostic-playbook.md)** — when a message seems to go missing.
