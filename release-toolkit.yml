@@ -1,0 +1,34 @@
+# release-toolkit consumer config - tmux-tell#617 first-integration.
+#
+# tmux-tell adopts frankenbit/release-toolkit for its release-cut machinery,
+# replacing the hand-rolled in-repo workflows. The schema-compatibility scars,
+# the multi-stage operator gate, and the changelog.d/ fragment format all carry
+# over intact - this is an extraction into shared machinery, not a rewrite.
+version: 1
+
+# Go binary: the version is stamped from `git describe --tags` via ldflags
+# (-X .../internal/version.Version=...), so there is NO VERSION file to keep in
+# lockstep -> tag-is-version mode (empty version_files; the tag IS the version).
+release_type: go
+version_files: []
+
+changelog: CHANGELOG.md
+tag_format: 'v{version}'
+
+# tmux-tell's CHANGELOG headings are `## [X.Y.Z] - DATE` with NO `v` prefix in
+# the brackets and an em-dash separator. Match that existing shape so the
+# toolkit's transition is continuous with the hand-rolled history.
+section_format:
+  tag_prefix: ""
+  separator: " — "
+
+# Pre-1.0: a breaking change bumps MINOR, not MAJOR (0.x convention). Matches
+# tmux-tell's documented cadence ("Minor bumps MAY break compatibility while we
+# settle the post-MVP shape"). No-op once tmux-tell crosses 1.0.0.
+pre_v1_breaking_to_minor: true
+
+# Port of the hand-rolled #514 README `--version`-example pin into the toolkit's
+# post_bump_hooks mechanism: on each cut, pin the `tmux-tell-claude vX.Y.Z`
+# example-output line in README.md to the freshly-cut version. Loud-on-miss.
+post_bump_hooks:
+  - scripts/hooks/update-readme-version.sh

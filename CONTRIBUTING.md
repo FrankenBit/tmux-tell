@@ -184,6 +184,16 @@ cleared via #546.
 
 ## Release cuts
 
+> **Superseded by release-toolkit (#617).** Release-cut machinery now consumes
+> [`frankenbit/release-toolkit`](https://git.frankenbit.de/frankenbit/release-toolkit):
+> a release-relevant push to `main` opens a rolling release-prep PR; merging it
+> cuts a **draft** release; the operator clicks **Publish** (which fires
+> `release: published`, chaining `deploy.yml` onto alcatraz-host).
+> `workflow_dispatch` on `release.yml` is retained as an emergency-cut fallback.
+> The detailed manual procedure below describes the RETIRED hand-rolled flow and
+> is kept for reference only; it will be rewritten for the toolkit flow once the
+> first toolkit cut validates it end-to-end (#628).
+
 **Pre-flight.** If the cut driver works from a shared host checkout (on
 alcatraz, `/srv/tmux-msg/` is shared across chambers and read directly by
 host scripts), fast-forward it first so on-disk state matches `origin/main`

@@ -1,342 +1,49 @@
 name: release
 
-# Release-prep workflow for tmux-msg cuts (#394). Mechanical CHANGELOG
-# transition + version determination + release-prep PR creation. Post-merge,
-# #418's four-workflow chain takes over automatically: release-draft.yml
-# creates a draft release, the operator clicks Publish (Forgejo creates the
-# tag), and release-publish.yml chains deploy.yml to install on alcatraz-host.
-# (The v0.17.0 MVP deferred this to a v0.17.1 follow-up; #418/#421/#422 landed
-# it — see #425.)
+# Consumer wrapper for frankenbit/release-toolkit (tmux-tell#617). Replaces the
+# hand-rolled bump + CHANGELOG-transition + release-prep-PR machinery: a
+# release-relevant push to main runs the toolkit's release-decide; a cut-worthy
+# push opens/updates the rolling release-prep PR, and merging that PR cuts the
+# release.
 #
-# Schema-compatibility notes (Forgejo Actions YAML schema, validated against
-# git.frankenbit.de's instance at 2026-06-14, alongside deploy.yml fix):
-# `gitea.*` is not accepted by the schema validator — use `github.*`
-# (Forgejo aliases the namespace). `timeout-minutes`, `run-name`, and
-# top-level `concurrency:` were all rejected by the validator and removed.
-# Concurrency is enforced at the substrate-honest level: only one
-# release-prep/vX.Y.Z branch can exist at a time (the API call fails if
-# the branch already exists from a concurrent dispatch).
-
+# publish_mode: draft preserves tmux-tell's operator-Publish gate (ADR-0003
+# Gate-3): the cut creates a DRAFT release; the operator clicks Publish, Forgejo
+# creates the tag and fires `release: published`, and release-publish.yml chains
+# deploy.yml onto alcatraz-host (unchanged). Switching to immediate would
+# auto-deploy on every rolling-PR merge - a safety regression, not a
+# simplification (tmux-tell#617 D1).
+#
+# workflow_dispatch is retained as an emergency-cut fallback for
+# substrate-critical paths (operator-approved belt-and-suspenders, #617 D2).
+# On a push (no inputs) publish_mode falls back to draft.
 on:
+  push:
+    branches: [main]
+    paths-ignore: ['.release-toolkit-manifest.json']
   workflow_dispatch:
     inputs:
       bump_override:
         description: 'Override version bump (auto / patch / minor / major)'
         required: false
         default: 'auto'
-        # Forgejo Actions UI rejects missing-type as "Invalid input type ''"
-        # (operator-witnessed v0.17.0 cut attempt 2026-06-14); explicit
-        # type: string accepts free-text. Polish to type: choice in a
-        # follow-up if Forgejo's UI supports the dropdown shape cleanly.
         type: string
       dry_run:
-        description: 'Preview only — log proposed CHANGELOG + version, do not push or open PR'
+        description: 'Preview only - skip remote writes, do not push or open PR'
         required: false
         default: 'false'
-        # Same Forgejo UI strictness as bump_override above. Polish to
-        # type: boolean in a follow-up if Forgejo's UI supports the
-        # checkbox shape; the downstream script already string-compares 'true'.
+        type: string
+      publish_mode:
+        description: 'Publish mode (draft | immediate) - draft keeps the operator-Publish deploy gate'
+        required: false
+        default: 'draft'
         type: string
 
 jobs:
-  prep:
-    name: release-prep PR
-    runs-on: go
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - name: checkout main (full history for `git describe`)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: determine target version
-        id: version
-        env:
-          BUMP_OVERRIDE: ${{ inputs.bump_override }}
-          DRY_RUN: ${{ inputs.dry_run }}
-        run: |
-          set -euo pipefail
-
-          # --- Input validation (Lookout c859 hardening note 1) ------------
-          # Reject unknown values up front so an operator typo (`yes` for
-          # dry_run, `mayor` for bump_override) fails loudly at step start
-          # rather than falling through to a silent wrong-mode execution.
-          case "$BUMP_OVERRIDE" in
-              auto|patch|minor|major) ;;
-              *)
-                  echo "::error::invalid bump_override '$BUMP_OVERRIDE' (expected: auto | patch | minor | major)"
-                  exit 1
-                  ;;
-          esac
-          case "$DRY_RUN" in
-              true|false) ;;
-              *)
-                  echo "::error::invalid dry_run '$DRY_RUN' (expected: true | false)"
-                  exit 1
-                  ;;
-          esac
-
-          # --- Latest-tag validation (Lookout c859 hardening note 2) -------
-          # git describe could return a malformed tag (manually pushed bad
-          # tag, or no tags at all). Validate strict vMAJ.MIN.PATCH before
-          # the IFS/arithmetic below so a malformed value doesn't propagate
-          # into the new branch name or the PR body.
-          LATEST=$(git describe --tags --abbrev=0)
-          if ! [[ "$LATEST" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-              echo "::error::latest tag '$LATEST' does not match vMAJ.MIN.PATCH"
-              exit 1
-          fi
-          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
-
-          if [[ "$BUMP_OVERRIDE" != "auto" ]]; then
-              BUMP="$BUMP_OVERRIDE"
-              REASON="override=$BUMP_OVERRIDE"
-          else
-              # Conventional-commit bump determination from titles + bodies.
-              # Pre-v1.0: BREAKING CHANGE is suppressed to minor (the project
-              # is still pre-1.0 settling-shape per CHANGELOG cadence notes).
-              # Here-strings (Lookout c859 note 3) — no echo|grep subshell so
-              # pipefail can't surprise us if grep returns 1 on no-match.
-              TITLES=$(git log --format=%s "$LATEST..HEAD")
-              BODIES=$(git log --format=%B "$LATEST..HEAD")
-              if grep -qE "^BREAKING CHANGE:" <<<"$BODIES"; then
-                  BUMP="minor"
-                  REASON="BREAKING CHANGE footer detected (pre-v1.0 suppressed to minor)"
-              elif grep -qE "^[a-z]+(\([^)]*\))?!:" <<<"$TITLES"; then
-                  BUMP="minor"
-                  REASON="BREAKING CHANGE title shortcut (<type>!:) detected (pre-v1.0 suppressed to minor)"
-              elif grep -qE "^feat(\(.*\))?:" <<<"$TITLES"; then
-                  BUMP="minor"
-                  REASON="feat: commit(s) since $LATEST"
-              else
-                  BUMP="patch"
-                  REASON="no feat: commits since $LATEST"
-              fi
-          fi
-          echo "bump=$BUMP" >> "$GITHUB_OUTPUT"
-          echo "reason=$REASON" >> "$GITHUB_OUTPUT"
-
-          # Compute new version. Tag format is vMAJ.MIN.PATCH (validated above).
-          IFS=. read -r MAJ MIN PATCH <<<"${LATEST#v}"
-          case "$BUMP" in
-              major) MAJ=$((MAJ+1)); MIN=0; PATCH=0 ;;
-              minor) MIN=$((MIN+1)); PATCH=0 ;;
-              patch) PATCH=$((PATCH+1)) ;;
-              *)
-                  # Unreachable — input validation above + override allowlist
-                  # gate this — but defensive guard against a future code path
-                  # that bypasses the validation.
-                  echo "::error::unknown bump '$BUMP'"
-                  exit 1
-                  ;;
-          esac
-          NEW="v${MAJ}.${MIN}.${PATCH}"
-          echo "new=$NEW" >> "$GITHUB_OUTPUT"
-          echo "==> previous tag: $LATEST"
-          echo "==> bump:         $BUMP ($REASON)"
-          echo "==> next version: $NEW"
-
-      - name: assemble changelog fragments (#494)
-        # Fragment-per-PR pattern: PRs drop changelog.d/<issue>.<type>.md
-        # fragments instead of editing CHANGELOG.md's [Unreleased] (no
-        # parallel-PR collision). Assemble them into [Unreleased] BEFORE the
-        # transition below reads it. Merge-aware + idempotent: an empty/absent
-        # changelog.d is a clean no-op (the migration passthrough for a release
-        # whose entries were hand-edited the legacy way). The hand-curated
-        # prelude + Headlines (#427) is untouched — the assembler only fills the
-        # `### Type` bullet blocks. `go run` per the tools/check-pin-slugs/
-        # substrate-fit precedent (no external binary on the release path).
-        run: |
-          set -euo pipefail
-          if compgen -G 'changelog.d/*.md' > /dev/null; then
-              go run ./tools/changelog-assemble -prune
-          else
-              echo "::notice::no changelog fragments — [Unreleased] used as-is (legacy path)"
-          fi
-
-      - name: mechanical CHANGELOG transition + README version pin
-        id: changelog
-        env:
-          NEW: ${{ steps.version.outputs.new }}
-        run: |
-          set -euo pipefail
-          export DATE
-          DATE=$(date -u +%Y-%m-%d)
-          # Quoted heredoc (Lookout c859 hardening note 4) — Python reads
-          # NEW + DATE via os.environ. No shell expansion inside the heredoc
-          # body so literal `$` chars in any future regex/string can't be
-          # eaten by bash.
-          python3 - <<'PYEOF'
-          import os, re, sys
-          from pathlib import Path
-          NEW_NO_V = os.environ["NEW"].lstrip("v")
-          DATE = os.environ["DATE"]
-          p = Path("CHANGELOG.md")
-          text = p.read_text()
-          # Replace first `## [Unreleased]` with two headers: empty new
-          # [Unreleased] + the bumped section header. Preserves the existing
-          # [Unreleased] body as the body of the bumped section.
-          replacement = f"## [Unreleased]\n\n## [{NEW_NO_V}] — {DATE}"
-          new_text, n = re.subn(
-              r"^## \[Unreleased\]",
-              replacement,
-              text,
-              count=1,
-              flags=re.M,
-          )
-          if n == 0:
-              print("::error::CHANGELOG.md has no [Unreleased] section to rename", file=sys.stderr)
-              sys.exit(1)
-          p.write_text(new_text)
-
-          # CONTRIBUTING §Release cuts step 3 — pin the README `--version` example
-          # to the cut version (#514). Anchored regex matches ONLY that line, never
-          # prose. Hard-fail on miss: a verification step that silently falls back
-          # isn't verifying — it re-introduces the 5-cut silent-drift (v0.17.0 →
-          # v0.18.1 all missed step 3 by hand) this automates away. A README
-          # restructure that moves the line breaks the cut LOUDLY (update the regex)
-          # — loud-not-silent by design.
-          r = Path("README.md")
-          rtext = r.read_text()
-          new_rtext, rn = re.subn(
-              r"^(tmux-tell-claude v)\d+\.\d+\.\d+$",
-              rf"\g<1>{NEW_NO_V}",
-              rtext,
-              count=1,
-              flags=re.M,
-          )
-          if rn != 1:
-              print("::error::README.md `--version` example line not found "
-                    "(CONTRIBUTING step 3 auto-pin) — expected a `tmux-tell-claude vX.Y.Z` "
-                    "line; if the README moved it, update the regex in release.yml", file=sys.stderr)
-              sys.exit(1)
-          r.write_text(new_rtext)
-          PYEOF
-
-          # Capture the moved section's content for the PR body (everything
-          # between the new bumped header and the next `## [` header).
-          awk -v ver="${NEW#v}" '
-              $0 ~ "^## \\[" ver "\\]" { in_block=1; next }
-              in_block && $0 ~ "^## \\[" { exit }
-              in_block { print }
-          ' CHANGELOG.md > /tmp/release-notes.md
-
-      - name: dry-run preview
-        if: inputs.dry_run == 'true'
-        run: |
-          set -euo pipefail
-          echo "::notice::DRY RUN — would create release-prep PR for ${{ steps.version.outputs.new }}"
-          echo
-          echo "==> CHANGELOG.md + README.md diff:"
-          git diff --no-color CHANGELOG.md README.md | head -80
-          echo
-          echo "==> release-notes.md (proposed PR body content):"
-          cat /tmp/release-notes.md
-          # Exit 0: workflow_dispatch dry-run completes cleanly without mutation.
-
-      - name: commit on release-prep branch + push + open PR
-        if: inputs.dry_run != 'true'
-        env:
-          # RELEASE_TOKEN (repo-scoped admin PAT, 2026-06-15) rather than
-          # the auto-issued GITHUB_TOKEN. Forgejo Actions' auto-token
-          # honors `contents: write` (the branch push works) but does NOT
-          # propagate `pull-requests: write` to the runtime token — the
-          # PR-create POST hits 403. Witnessed during the first v0.17.0
-          # cut attempt (run 11771, 2026-06-15 00:21). RELEASE_TOKEN is
-          # the master/Bosun PAT stored as a repo secret; it composes
-          # with the canonical-substrate-surface routing per #418 (the
-          # Forgejo UI is the publish surface, the elevated PAT is the
-          # API-side write capability).
-          GITEA_TOKEN: ${{ secrets.RELEASE_TOKEN }}
-          NEW: ${{ steps.version.outputs.new }}
-          LATEST: ${{ steps.version.outputs.latest }}
-          BUMP: ${{ steps.version.outputs.bump }}
-          REASON: ${{ steps.version.outputs.reason }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          # Fail loud at step start if the elevated PAT is missing rather
-          # than letting the PR-create POST below surface as an ambiguous
-          # 401/403 (Lookout 67638 containment fold). The bash
-          # `${var:?msg}` expansion exits non-zero with `msg` on stderr
-          # when GITEA_TOKEN is unset or empty.
-          : "${GITEA_TOKEN:?RELEASE_TOKEN repo secret is required for release API writes (set in repo Settings → Actions → Secrets)}"
-          BRANCH="release-prep/$NEW"
-
-          # release-bot identity for the prep commit. Hand-curated content
-          # (CHANGELOG body) stays attributed via the [Unreleased] entries'
-          # original authorship — this commit only moves the section header.
-          git config user.name "release-bot"
-          git config user.email "release-bot@frankenbit.de"
-          git checkout -b "$BRANCH"
-          # Stage the populated CHANGELOG.md, the pruned changelog.d/ fragments
-          # (#494), and the README --version pin (#514) so the release-prep commit
-          # captures the assembly + deletion + version-pin atomically.
-          # `git add changelog.d` records the removals.
-          git add CHANGELOG.md changelog.d README.md
-          git commit -m "chore(release): $NEW — CHANGELOG transition + README pin (#394, #514)"
-          git push --set-upstream origin "$BRANCH"
-
-          # Build PR body via Python so we can JSON-escape it cleanly.
-          # Quoted heredoc (Lookout c859 hardening note 4) — Python reads
-          # everything it needs via os.environ; no shell expansion wanted
-          # inside the heredoc body (it would only risk eating a literal `$`
-          # in a release-note bullet).
-          python3 - <<'PYEOF' >/tmp/pr-payload.json
-          import json, os
-          notes = open("/tmp/release-notes.md").read()
-          body = f"""## Summary
-
-          Mechanical CHANGELOG transition for {os.environ['NEW']} per #394's release.yml.
-
-          > **Review against the diff, not just this body.** This body is generated at
-          > transition time and is point-in-time-static — any commit cherry-picked onto
-          > this release-prep branch after creation (a prelude fix, a late content edit)
-          > updates the *diff* but not this text (#513 forward-watch).
-
-          ## Bump determination
-
-          - Previous tag: `{os.environ['LATEST']}`
-          - Bump: **{os.environ['BUMP']}** ({os.environ['REASON']})
-
-          ## {os.environ['NEW']} release notes (moved from [Unreleased])
-
-          {notes}
-
-          ## Post-merge automation (via #418's four-workflow chain)
-
-          1. Merge this PR (rebase per repo default) → main advances with the CHANGELOG move
-          2. `release-draft.yml` fires automatically → creates a DRAFT Forgejo release pre-populated with the CHANGELOG section + merge-commit SHA pinned as `target_commitish`
-          3. Review the draft in the Forgejo UI, click **Publish** → Forgejo creates the tag from the draft
-          4. `release-publish.yml` fires on `release:published` → chains `deploy.yml` via `workflow_call` → install + bootstrap on alcatraz-host
-
-          ## Docs-coherence checklist
-
-          Operator-facing surfaces span different review nets — only in-repo docs are caught in this diff. Tick each (N/A if unchanged); verify-commands + rationale in [docs/release-cut-checklist.md](docs/release-cut-checklist.md):
-
-          - [ ] **In-repo docs** (README / `docs/*.md` / CONTRIBUTING / `cmd/*/README.md`) swept for any renamed/retired identifier — ADRs frozen, excluded
-          - [ ] **BookStack** — Service Inventory (p88) + Release & Deploy (p193) + the tmux-tell book (API; not in this diff)
-          - [ ] **alcatraz-infra** — `/srv/CLAUDE.md` (separate repo; separate commit if it drifted)
-          - [ ] **Sister chamber `CLAUDE.md`** — flag/ping the chamber if it drifted (don't edit; each owns its own)
-
-          Salience, not enforcement — see the checklist doc for verify steps.
-
-          — release-bot (workflow #394)
-          """
-          print(json.dumps({
-              "title": f"chore(release): {os.environ['NEW']}",
-              "head": f"release-prep/{os.environ['NEW']}",
-              "base": "main",
-              "body": body,
-          }))
-          PYEOF
-
-          curl -fsS -X POST \
-              -H "Authorization: token $GITEA_TOKEN" \
-              -H "Content-Type: application/json" \
-              --data @/tmp/pr-payload.json \
-              "https://git.frankenbit.de/api/v1/repos/$REPO/pulls" \
-              | python3 -c "import json,sys; d=json.load(sys.stdin); print(f'::notice::release-prep PR opened at {d[\"html_url\"]}')"
+  release:
+    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-release.yml@v0.18.0
+    secrets: inherit
+    with:
+      runs_on:       go
+      bump_override: ${{ inputs.bump_override }}
+      dry_run:       ${{ inputs.dry_run }}
+      publish_mode:  ${{ inputs.publish_mode || 'draft' }}

@@ -1,8 +1,9 @@
 name: release-publish
 
 # Triggered when a Forgejo release transitions to published — operator
-# clicks Publish on the draft created by release-draft.yml (or on a
-# manually-created release). Chains deploy.yml via workflow_call,
+# clicks Publish on the draft created by the release-toolkit cut
+# (reusable-release.yml, publish_mode: draft), or on a manually-created
+# release. Chains deploy.yml via workflow_call,
 # passing the release's tag as the deploy ref. Closes the v0.17.0 cut
 # automation loop.
 #
@@ -14,9 +15,10 @@ name: release-publish
 # release artifact does NOT trigger this workflow — substrate-honest
 # forced-via-UI path.
 #
-# The split (full cut automation loop):
-# - release.yml: workflow_dispatch → release-prep PR creation
-# - release-draft.yml: PR-merge → DRAFT release creation (pre-populated)
+# The split (full cut automation loop, post-#617 release-toolkit adoption):
+# - release.yml: push (or workflow_dispatch) → release-toolkit consumer
+#   wrapper → release-decide → rolling release-prep PR; merging it cuts a
+#   DRAFT release (reusable-release.yml, publish_mode: draft)
 # - release-publish.yml (this file): release-published → deploy chain
 # - deploy.yml: workflow_call invoked above OR workflow_dispatch direct
 #
@@ -31,16 +33,16 @@ on:
 
 jobs:
   # Tag-name validation gate (Lookout 67564 containment finding). The
-  # release-draft.yml path validates `^v[0-9]+\.[0-9]+\.[0-9]+$` via the
-  # head_ref strip before creating the draft, so the auto-path is safe.
+  # release-toolkit cut path validates the version shape before creating the
+  # draft, so the auto-path is safe.
   # But `release: published` ALSO fires when an operator manually creates
-  # a release in the UI without going through release-draft.yml — the
+  # a release in the UI without going through the toolkit cut — the
   # tag-name input there is unconstrained. Re-validate at the trigger
   # boundary before handing the tag to deploy.yml: deploy's `ref` input
   # flows into `actions/checkout`'s ref param, and a malformed tag would
   # produce confusing failures downstream (or succeed against an arbitrary
-  # ref). Defense-in-depth — same regex as release-draft.yml's version
-  # extractor.
+  # ref). Defense-in-depth — same regex as the toolkit cut's version
+  # validation.
   validate-tag:
     name: validate release tag shape
     runs-on: go

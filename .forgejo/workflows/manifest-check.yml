@@ -1,0 +1,16 @@
+name: manifest-check
+
+# PR CI from frankenbit/release-toolkit (tmux-tell#617): on every PR to main,
+# verify the .release-toolkit-manifest.json (last_released_sha / _version) has
+# not drifted from the latest tag - catches a manifest that was hand-edited or
+# left stale, which would mis-seed the next cut's "commits since last release"
+# walk.
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-manifest-check.yml@v0.18.0
+    with:
+      runs_on: go
