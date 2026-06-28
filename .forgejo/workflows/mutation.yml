@@ -29,6 +29,7 @@ jobs:
         run: |
           gremlins unleash \
             --timeout-coefficient=10 \
+            --workers=4 \
             ./internal/render
 
   gremlins-store:
@@ -43,6 +44,7 @@ jobs:
         run: |
           gremlins unleash \
             --timeout-coefficient=10 \
+            --workers=4 \
             ./internal/store
 
   gremlins-tmuxio:
@@ -58,9 +60,14 @@ jobs:
         # 12 remaining TIMED OUT are genuine goroutine-loop mutations being
         # addressed in #522 (loop-guard audit); expect further improvement
         # once that lands.
+        # workers=4 caps concurrent mutant builds at ~1.6 GB peak; without it
+        # the default 12 workers × full-binary-compile-per-mutant peaked at
+        # 9.7 GB on the 2026-06-28 run + triggered a systemd-oomd cascade
+        # that crashed alcatraz. Same shape as gremlins-cli.
         run: |
           gremlins unleash \
             --timeout-coefficient=50 \
+            --workers=4 \
             ./internal/tmuxio
 
   gremlins-cli:
