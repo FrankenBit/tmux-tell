@@ -1,0 +1,136 @@
+{
+  "uid": "tmux-tell-bus-traffic",
+  "title": "tmux-tell Bus Traffic",
+  "tags": ["tmux-tell", "bus", "alcatraz"],
+  "timezone": "browser",
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 10,
+      "title": "Messages delivered per chamber (recipient view)",
+      "description": "Count of messages delivered TO each chamber's mailman over time. Source: mailman log lines matching `delivering` from `tmux-tell-claude-mailman@<chamber>.service`. The `agent` label IS the recipient.",
+      "type": "timeseries",
+      "datasource": { "uid": "loki", "type": "loki" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (agent) (count_over_time({unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"delivering\" [$__interval]))",
+          "legendFormat": "{{agent}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 20, "showPoints": "never", "stacking": { "mode": "normal" } }
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "sum", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 11,
+      "title": "Messages sent per chamber (sender view)",
+      "description": "Count of messages sent BY each chamber. Parsed from `from=<sender>` in the mailman log line. Asymmetries vs. the recipient view above surface broadcast-only or listen-only patterns.",
+      "type": "timeseries",
+      "datasource": { "uid": "loki", "type": "loki" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+      "targets": [
+        {
+          "expr": "sum by (sender) (count_over_time({unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"delivering\" | regexp `from=(?P<sender>\\S+)` [$__interval]))",
+          "legendFormat": "{{sender}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 20, "showPoints": "never", "stacking": { "mode": "normal" } }
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "sum", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 20,
+      "title": "Body bytes delivered per chamber",
+      "description": "Sum of `body_bytes=<N>` per recipient. Distinguishes high-volume-tiny-messages (lots of acks) from low-volume-large-messages (long dispatches).",
+      "type": "timeseries",
+      "datasource": { "uid": "loki", "type": "loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
+      "targets": [
+        {
+          "expr": "sum by (agent) (sum_over_time({unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"delivering\" | regexp `body_bytes=(?P<bytes>\\d+)` | unwrap bytes [$__interval]))",
+          "legendFormat": "{{agent}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes",
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" }
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "sum"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 30,
+      "title": "Warning + abort events",
+      "description": "Mailman-side delivery warnings: `gate_max_wait` (deliver-anyway after 5m gate-state-unknown), `pre_paste_safety_abort` (popup-suspected / probe-failed; re-queue for retry). Rising rates indicate delivery-stall trouble.",
+      "type": "timeseries",
+      "datasource": { "uid": "loki", "type": "loki" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
+      "targets": [
+        {
+          "expr": "sum(count_over_time({unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"gate_max_wait\" [$__interval]))",
+          "legendFormat": "gate_max_wait",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(count_over_time({unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"pre_paste_safety_abort\" [$__interval]))",
+          "legendFormat": "pre_paste_safety_abort",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 60, "showPoints": "never" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "sum"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 40,
+      "title": "Recent traffic tail",
+      "description": "Live log feed of the last ~50 deliveries. Each line: `[mailman/<recipient>] <ts> delivering id=<id> kind=<kind> from=<sender> body_bytes=<N>`. Drill-down companion to the timelines above.",
+      "type": "logs",
+      "datasource": { "uid": "loki", "type": "loki" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 26 },
+      "targets": [
+        {
+          "expr": "{unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"delivering\"",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": false,
+        "showCommonLabels": false,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "dedupStrategy": "none",
+        "sortOrder": "Descending"
+      }
+    }
+  ],
+  "schemaVersion": 39
+}
