@@ -53,8 +53,6 @@ the precautionary cap is free.
 
 Extended the `check-changelog-placement` skip pattern in `.forgejo/workflows/test.yml` to cover `release-prep/rolling` — release-toolkit's auto-opened rolling PR branch name. The previous regex only matched `i/v[0-9]*` (manual-cut convention) and `release-prep/v[0-9]*` (v0.22.0-era release.yml bot branch); release-toolkit (adopted in v0.23.0 via #617) uses the literal branch name `release-prep/rolling`, which wasn't matched, so the placement check would fail on every rolling PR claiming the legitimate cut additions to `## [X.Y.Z]` were rebase-past-cut injections. Caught empirically on the first toolkit-driven cut (#630).
 
-- **mutation**: cap --workers=4 on all gremlins-* jobs (#623)
-
 ## [0.22.0] — 2026-06-20
 
 The release that stops the fleet tripping over itself. v0.21.0 taught the bus to
