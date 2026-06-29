@@ -70,16 +70,22 @@ jobs:
         # section, silently injecting PR content into a published release record.
         #
         # Release-cut branches legitimately touch CHANGELOG.md; they are
-        # skipped. Two patterns covered: i/v* (manual cuts) and
-        # release-prep/v* (release.yml bot branch — #587 follow-up: the
-        # original regex only covered i/v*, breaking the v0.22.0 CI run).
+        # skipped. Three patterns covered:
+        # - i/v[0-9]* (manual cuts via the legacy convention)
+        # - release-prep/v[0-9]* (release.yml bot branch — #587 follow-up:
+        #   the original regex only covered i/v*, breaking the v0.22.0 CI
+        #   run)
+        # - release-prep/rolling (release-toolkit's auto-opened rolling PR
+        #   — added after #617 adopted release-toolkit and v0.23.0 became
+        #   the first toolkit-driven cut on tmux-tell; the toolkit's branch
+        #   name is the literal string "rolling", not "v{version}")
         # On push-to-main the check is skipped too — that's the merge
         # commit and the gate already ran on the PR.
         if: ${{ github.event_name == 'pull_request' }}
         env:
           HEAD_REF: ${{ github.head_ref }}
         run: |
-          if echo "$HEAD_REF" | grep -qE '^(i/v|release-prep/v)[0-9]'; then
+          if echo "$HEAD_REF" | grep -qE '^(i/v[0-9]|release-prep/(v[0-9]|rolling))'; then
             echo "release-cut branch — changelog placement check skipped"
             exit 0
           fi
