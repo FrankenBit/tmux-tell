@@ -1303,26 +1303,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				// ALL panes.
 				newPane, lambig, lerr := walker.LookupByNameWithCanonicals(opCtx, opts.Agent, canonicals)
 				switch {
-				case lerr != nil:
-					// Environmental error (proc/tmux); soft - log + proceed, same
-					// treatment as the err!=nil drift-probe branch.
-					logger.Printf("bareshell_lookup_err id=%s err=%v", msg.PublicID, lerr)
-				case lambig:
-					driftFailReason = "bareshell_lookup_ambiguous"
-					logger.Printf("WARN bareshell_lookup_ambiguous id=%s agent=%s - multiple canonicals match a candidate pane",
-						msg.PublicID, opts.Agent)
-				case newPane == "":
-					// The addressed session is in NO pane. NEVER paste into the
-					// bare-shell registered pane (#626 AC3). This is a safety
-					// invariant, not a drift-policy preference, so it blocks
-					// regardless of --drift-soft-fail (which governs deliver-to-
-					// wrong-agent, a different risk class).
-					noLiveSession = true
-					logger.Printf("WARN no_live_session id=%s agent=%s registered_pane=%s - addressed session not found in any pane; blocking to prevent bare-shell paste (#626)",
-						msg.PublicID, opts.Agent, paneForDelivery)
-				case newPane != paneForDelivery:
-					// Session is alive in a different pane - the registry pane went
-					// bare-shell while the session relocated. Re-route + heal.
+				case lerr == nil && !lambig && newPane != "" && newPane != paneForDelivery:
+					// POSITIVELY found the live session in a DIFFERENT pane: the
+					// registry pane went bare-shell while the session relocated.
+					// Re-route + heal the registry.
 					logger.Printf("session_relocated id=%s agent=%s registered_pane=%s(bare) rediscovered=%s",
 						msg.PublicID, opts.Agent, paneForDelivery, newPane)
 					if uerr := s.UpsertAgent(opCtx, opts.Agent, newPane); uerr != nil {
@@ -1330,10 +1314,27 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					} else {
 						paneForDelivery = newPane
 					}
+				case lerr == nil && !lambig && newPane == paneForDelivery:
+					// The across-pane lookup re-confirmed the addressed agent IS in
+					// the registered pane (the per-pane probe flaked transiently).
+					// Proceed with delivery.
 				default:
-					// newPane == paneForDelivery: the across-pane lookup re-confirmed
-					// the addressed agent IS in the registered pane (the per-pane
-					// probe flaked transiently). Proceed.
+					// The registered pane is CONFIRMED bare (the outer probe read
+					// cleanly: err==nil, running==""), and the across-pane lookup
+					// did NOT positively locate the live session - it errored
+					// (lerr), was ambiguous (lambig), or found nothing
+					// (newPane==""). In EVERY one of these outcomes, pasting into
+					// the registered pane means pasting into a bare shell, where
+					// paste-and-enter executes the body as a shell command. BLOCK
+					// unconditionally (#626 AC3 "NEVER paste to a bare shell").
+					// Surveyor review 3287: the block must cover all non-positive
+					// outcomes, not just newPane=="" - lerr/lambig falling through
+					// to the paste was the safety hole. This bypasses
+					// --drift-soft-fail, which governs the distinct
+					// deliver-to-wrong-agent policy, not this safety invariant.
+					noLiveSession = true
+					logger.Printf("WARN no_live_session id=%s agent=%s registered_pane=%s rediscovered=%q lookup_err=%v ambiguous=%v - addressed session not positively located in any pane; blocking to prevent bare-shell paste (#626)",
+						msg.PublicID, opts.Agent, paneForDelivery, newPane, lerr, lambig)
 				}
 			}
 			if noLiveSession {

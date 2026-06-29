@@ -601,3 +601,165 @@ func TestServe_BareShell_SessionRelocated_Reroutes(t *testing.T) {
 		t.Errorf("expected session_relocated log; got %s", logbuf.String())
 	}
 }
+
+// TestServe_BareShell_LookupError_BlocksUnconditionally is the Surveyor
+// review-3287 regression: reaching running=="" means the registered pane is
+// CONFIRMED bare (outer probe read cleanly). If the across-pane relocation
+// lookup then ERRORS, the addressed session was NOT positively located, so
+// pasting into the registered pane still means pasting into a bare shell.
+// The block must fire here too -- even at DriftSoftFail=false (default),
+// where the pre-fix code only logged and fell through to the paste.
+func TestServe_BareShell_LookupError_BlocksUnconditionally(t *testing.T) {
+	var calls atomic.Int32
+	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		// 1st call (outer drift probe): %4 is a bare shell -> running=="".
+		// Subsequent call (the across-pane relocation lookup): env error.
+		if calls.Add(1) == 1 {
+			return []byte("%4\t400\t\tbash\n"), nil
+		}
+		return nil, errors.New("list-panes failed")
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+	walker := &discover.Walker{
+		CmdlineReader: func(pid int) (string, error) {
+			if pid == 400 {
+				return "bash\x00", nil
+			}
+			return "", errors.New("no fake")
+		},
+		ChildrenReader: func(int) []int { return nil },
+		MaxDepth:       1,
+	}
+
+	var pasted atomic.Bool
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "paste-buffer" {
+			pasted.Store(true)
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "surveyor", "%4")
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "surveyor", Body: "rm -rf important",
+	})
+
+	opts := fastOpts("surveyor")
+	opts.DriftCheckDisabled = false
+	opts.DriftSoftFail = false // default; the pre-fix lerr leak fired even here
+	opts.Walker = walker
+
+	stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		f, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+		})
+		if len(f) >= 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	failed, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+	})
+	if len(failed) != 1 {
+		t.Fatalf("failed = %d, want 1 (lookup-error from a confirmed-bare pane must block); log=%s", len(failed), logbuf.String())
+	}
+	if pasted.Load() {
+		t.Errorf("paste-buffer was called -- lookup-error fell through to a bare-shell paste (the review-3287 hole)")
+	}
+	if !strings.Contains(logbuf.String(), "no_live_session") {
+		t.Errorf("expected no_live_session log; got %s", logbuf.String())
+	}
+}
+
+// TestServe_BareShell_LookupAmbiguous_BlocksUnderSoftFail: registered pane is
+// bare, and the relocation lookup is ambiguous (another pane's --resume value
+// substring-matches >1 canonical). Pre-fix this set an OVERRIDABLE
+// driftFailReason, so --drift-soft-fail bypassed the guard and pasted into the
+// bare shell. A bare-shell paste must never be soft-fail-overridable.
+func TestServe_BareShell_LookupAmbiguous_BlocksUnderSoftFail(t *testing.T) {
+	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		// %4 bare (registered for surveyor); %5 runs `--resume bosun`, which
+		// substring-matches both canonicals "bo" and "bos" -> ambiguous lookup.
+		return []byte("%4\t400\t\tbash\n" +
+			"%5\t500\tbosun\tclaude\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+	walker := &discover.Walker{
+		CmdlineReader: func(pid int) (string, error) {
+			switch pid {
+			case 400:
+				return "bash\x00", nil
+			case 500:
+				return "claude\x00--resume\x00bosun\x00", nil
+			}
+			return "", errors.New("no fake")
+		},
+		ChildrenReader: func(int) []int { return nil },
+		MaxDepth:       1,
+	}
+
+	var pasted atomic.Bool
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "paste-buffer" {
+			pasted.Store(true)
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "surveyor", "%4")
+	_ = s.UpsertAgent(ctx, "bo", "%7")  // canonical; substring of "bosun"
+	_ = s.UpsertAgent(ctx, "bos", "%8") // canonical; substring of "bosun" -> 2 matches = ambiguous
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "surveyor", Body: "rm -rf important",
+	})
+
+	opts := fastOpts("surveyor")
+	opts.DriftCheckDisabled = false
+	opts.DriftSoftFail = true // the escape hatch must NOT bypass the bare-shell block
+	opts.Walker = walker
+
+	stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		f, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+		})
+		if len(f) >= 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	failed, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+	})
+	if len(failed) != 1 {
+		t.Fatalf("failed = %d, want 1 (ambiguous lookup from a bare pane must block even under --drift-soft-fail); log=%s", len(failed), logbuf.String())
+	}
+	if pasted.Load() {
+		t.Errorf("paste-buffer was called -- ambiguous lookup was soft-fail-overridden into a bare-shell paste (the review-3287 hole)")
+	}
+	if !strings.Contains(logbuf.String(), "no_live_session") {
+		t.Errorf("expected no_live_session log; got %s", logbuf.String())
+	}
+}
