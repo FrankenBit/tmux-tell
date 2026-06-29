@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/discover"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
@@ -33,6 +34,7 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	name := fs.String("name", "", "agent name (the new identity); required")
+	sessionIDFlag := fs.String("session-id", "", "explicit session id for exact session-as-addressee routing (#626 Phase 1b); default: self-discovered from the registering pane's process environment")
 	pane := fs.String("pane", "", "pane id like %5 (default: $TMUX_PANE)")
 	deliveryMode := fs.String("delivery-mode", store.DeliveryModePasteAndEnter,
 		"how the mailman delivers to this agent: 'paste-and-enter' (default), 'mailbox-only' (operator-as-bus-participant per #116; messages stay queued, operator polls via inbox), or 'hook-context' (#249; the recipient agent's session pulls pending messages as additionalContext via a SessionStart/UserPromptSubmit hook — no pane paste)")
@@ -241,6 +243,24 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 	if err := s.ClearStuck(ctx, *name); err != nil {
 		// Non-fatal, same rationale as the attention-state clear above.
 		fmt.Fprintf(stderr, "WARN register: clear stuck_reason: %v\n", err)
+	}
+	// #626 Phase 1b: self-discover the intrinsic session identity. An explicit
+	// --session-id wins; otherwise walk the registering pane's process tree for
+	// CLAUDE_CODE_SESSION_ID. When found, store it as the primary exact match
+	// key for delivery resolution. When NOT found (claude not up yet at launch,
+	// a non-Claude CLI, or a bare pane), leave session_id untouched — a prior
+	// value is preserved, and a never-set one stays empty so delivery uses the
+	// name-based fallback (#626 AC6). Non-fatal: registration already succeeded.
+	sessionID := *sessionIDFlag
+	if sessionID == "" && resolvedPane != "" {
+		if sid, ok := discover.New().SessionIDForPane(ctx, resolvedPane); ok {
+			sessionID = sid
+		}
+	}
+	if sessionID != "" {
+		if err := s.SetSessionID(ctx, *name, sessionID); err != nil {
+			fmt.Fprintf(stderr, "WARN register: set session_id: %v\n", err)
+		}
 	}
 	if *alias != "" {
 		if err := s.AddAlias(ctx, *name, *alias); err != nil {

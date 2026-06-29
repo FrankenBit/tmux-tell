@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/discover"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/mcp"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
@@ -1386,6 +1387,17 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		// as the operator-typed CLI does). Best-effort, same rationale as
 		// the ClearStuck above.
 		_ = s.SetAttentionState(ctx, in.Name, store.AttentionStateIdle)
+		// #626 Phase 1b: self-discover the intrinsic session identity from the
+		// registering pane's process tree. This is the path chambers actually use
+		// — register from INSIDE the live session via MCP, where the session env
+		// is reliably present (unlike the wrapper's launch-time CLI register,
+		// which can run before the session starts). Best-effort: when not found
+		// (non-Claude CLI, or a bare pane) session_id is left untouched, so a
+		// prior value is preserved and a never-set one stays empty → name-based
+		// fallback (#626 AC6).
+		if sid, ok := discover.New().SessionIDForPane(ctx, pane); ok && sid != "" {
+			_ = s.SetSessionID(ctx, in.Name, sid)
+		}
 
 		// Optional alias append. AddAlias is idempotent on same-agent
 		// duplicates, but rejects cross-canonical collisions with

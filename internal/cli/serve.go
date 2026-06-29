@@ -1234,6 +1234,51 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 
 		paneForDelivery := a.PaneID
 
+		// #626 Phase 1b: session-id is the PRIMARY, exact resolution key. When
+		// the agent has a self-discovered session-id, resolve the pane hosting
+		// that exact session - it cannot mis-route to a different agent (the
+		// fuzzy name match can). On a positive hit we deliver there and SKIP the
+		// name-based drift-check below (the session-id match is a stronger
+		// liveness guarantee than the name+title resolution). All other outcomes
+		// (no stored session-id, lookup error, or session-id resolves nowhere)
+		// fall through to the name path - which finds a re-resumed same-name
+		// session or blocks a bare shell (Phase-1a) - with a deprecation log so
+		// the legacy/stale registration surfaces (#626 AC6).
+		sessionResolved := false
+		if !opts.DriftCheckDisabled {
+			if walker == nil {
+				walker = discover.New()
+			}
+			if a.SessionID != "" {
+				sidPane, siderr := walker.LookupBySessionID(opCtx, a.SessionID)
+				switch {
+				case siderr != nil:
+					logger.Printf("session_lookup_err id=%s agent=%s err=%v - falling back to name resolution",
+						msg.PublicID, opts.Agent, siderr)
+				case sidPane != "":
+					if sidPane != paneForDelivery {
+						logger.Printf("session_resolved id=%s agent=%s session=%s registered_pane=%s rediscovered=%s (healed)",
+							msg.PublicID, opts.Agent, a.SessionID, paneForDelivery, sidPane)
+						if uerr := s.UpsertAgent(opCtx, opts.Agent, sidPane); uerr != nil {
+							logger.Printf("session_heal_update_failed err=%v", uerr)
+						} else {
+							paneForDelivery = sidPane
+						}
+					}
+					sessionResolved = true
+				default:
+					// Stored session-id resolves nowhere (ended, or re-resumed under a
+					// new id). Fall back to the name-based drift-check - it finds a
+					// re-resumed same-name session, or blocks a bare shell (Phase-1a).
+					logger.Printf("session_stale id=%s agent=%s session=%s - not hosted in any pane; falling back to name resolution (re-register to refresh session-id)",
+						msg.PublicID, opts.Agent, a.SessionID)
+				}
+			} else {
+				logger.Printf("session_id_absent id=%s agent=%s - legacy registration; name-based resolution (re-register from inside the session to enable exact session-id routing, #626)",
+					msg.PublicID, opts.Agent)
+			}
+		}
+
 		// Silent-drift guard (#37). Before the gate or the actual
 		// delivery, verify the registered pane is still running the
 		// expected agent. The 2026-05-31 incident was: tmux restored
@@ -1251,7 +1296,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		// the new pane. If LookupByName can't find the agent either,
 		// we proceed with the registered (drifted) pane — the
 		// existing delivery + auto-heal paths take it from there.
-		if !opts.DriftCheckDisabled {
+		if !opts.DriftCheckDisabled && !sessionResolved {
 			if walker == nil {
 				walker = discover.New()
 			}
