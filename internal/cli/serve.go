@@ -1258,6 +1258,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			canonicals := buildCanonicals(opCtx, s)
 			running, ambiguous, err := walker.PaneAgentNameWithCanonicals(opCtx, paneForDelivery, canonicals)
 			driftFailReason := ""
+			noLiveSession := false
 			switch {
 			case err != nil:
 				// Soft fail: log and proceed with the registered pane.
@@ -1291,6 +1292,66 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					logger.Printf("WARN drift_detected_unrecoverable id=%s agent=%s registered_pane=%s runs=%s — discover couldn't find %s anywhere",
 						msg.PublicID, opts.Agent, paneForDelivery, running, opts.Agent)
 				}
+			case running == "":
+				// #626 Phase 1a - bare-shell-paste safety block. The registered
+				// pane hosts NO recognizable agent session: PaneAgentName resolved
+				// neither opts.Agent nor any other agent there (cmdline + title +
+				// window-name all empty). It is most likely a bare shell left after
+				// the session ended; pasting the message body there would execute
+				// it as a shell command (the operator-surfaced safety gap). Do not
+				// trust the registered pane - look the addressed agent up across
+				// ALL panes.
+				newPane, lambig, lerr := walker.LookupByNameWithCanonicals(opCtx, opts.Agent, canonicals)
+				switch {
+				case lerr != nil:
+					// Environmental error (proc/tmux); soft - log + proceed, same
+					// treatment as the err!=nil drift-probe branch.
+					logger.Printf("bareshell_lookup_err id=%s err=%v", msg.PublicID, lerr)
+				case lambig:
+					driftFailReason = "bareshell_lookup_ambiguous"
+					logger.Printf("WARN bareshell_lookup_ambiguous id=%s agent=%s - multiple canonicals match a candidate pane",
+						msg.PublicID, opts.Agent)
+				case newPane == "":
+					// The addressed session is in NO pane. NEVER paste into the
+					// bare-shell registered pane (#626 AC3). This is a safety
+					// invariant, not a drift-policy preference, so it blocks
+					// regardless of --drift-soft-fail (which governs deliver-to-
+					// wrong-agent, a different risk class).
+					noLiveSession = true
+					logger.Printf("WARN no_live_session id=%s agent=%s registered_pane=%s - addressed session not found in any pane; blocking to prevent bare-shell paste (#626)",
+						msg.PublicID, opts.Agent, paneForDelivery)
+				case newPane != paneForDelivery:
+					// Session is alive in a different pane - the registry pane went
+					// bare-shell while the session relocated. Re-route + heal.
+					logger.Printf("session_relocated id=%s agent=%s registered_pane=%s(bare) rediscovered=%s",
+						msg.PublicID, opts.Agent, paneForDelivery, newPane)
+					if uerr := s.UpsertAgent(opCtx, opts.Agent, newPane); uerr != nil {
+						logger.Printf("relocate_update_failed err=%v", uerr)
+					} else {
+						paneForDelivery = newPane
+					}
+				default:
+					// newPane == paneForDelivery: the across-pane lookup re-confirmed
+					// the addressed agent IS in the registered pane (the per-pane
+					// probe flaked transiently). Proceed.
+				}
+			}
+			if noLiveSession {
+				// Unconditional safety block (#626 AC3) - bypasses --drift-soft-fail.
+				// Surfaces to the sender like any terminal failure so the
+				// stale-registration / ended-session gets noticed instead of
+				// silently eating messages.
+				reason := "no_live_session: addressed session not present in any pane; delivery blocked to prevent bare-shell paste (#626)"
+				if mferr := s.MarkFailed(opCtx, msg.PublicID, reason); mferr != nil {
+					logger.Printf("mark_failed_err id=%s err=%v", msg.PublicID, mferr)
+				}
+				maybeInsertFailureNotice(opCtx, s, logger,
+					opts.NotifyOnFailed, opts.Agent, msg, "failed", reason)
+				m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateFailed)
+				if stopOrSleep(stopCtx, opts.InterMessageDelay) {
+					return exitOK
+				}
+				continue
 			}
 			if driftFailReason != "" && !opts.DriftSoftFail {
 				// Fail-loud default (Surveyor Q(b) review): silent

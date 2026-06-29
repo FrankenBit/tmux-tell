@@ -415,3 +415,189 @@ func TestServe_DriftUnrecoverable_SoftFailEscapeHatch(t *testing.T) {
 		t.Errorf("soft-fail should NOT MarkFailed; got %d failed", len(failed))
 	}
 }
+
+// TestServe_BareShell_NoLiveSession_BlocksUnconditionally is the #626
+// Phase 1a safety regression: the registered pane outlived its session and
+// now hosts a bare shell (no claude process, generic window name). Pasting
+// the message body there would execute it as a shell command. The mailman
+// must BLOCK (MarkFailed, never paste) when the addressed session is found
+// in NO pane -- and unconditionally, even under --drift-soft-fail (the
+// bare-shell block is a safety invariant, distinct from the
+// deliver-to-wrong-agent policy that --drift-soft-fail governs).
+func TestServe_BareShell_NoLiveSession_BlocksUnconditionally(t *testing.T) {
+	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		// %4 is a bare shell: no claude, empty title, generic window name.
+		return []byte("%4\t400\t\tbash\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+	walker := &discover.Walker{
+		CmdlineReader: func(pid int) (string, error) {
+			if pid == 400 {
+				return "bash\x00", nil // bare shell -- no --resume
+			}
+			return "", errors.New("no fake")
+		},
+		ChildrenReader: func(int) []int { return nil },
+		MaxDepth:       1,
+	}
+
+	var pasted atomic.Bool
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "paste-buffer" {
+			pasted.Store(true)
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "surveyor", "%4") // stale: %4 is a bare shell now
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "surveyor", Body: "rm -rf important",
+	})
+
+	opts := fastOpts("surveyor")
+	opts.DriftCheckDisabled = false
+	opts.DriftSoftFail = true // even with the escape hatch, bare-shell blocks
+	opts.Walker = walker
+
+	stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		f, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+		})
+		if len(f) >= 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	failed, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+	})
+	if len(failed) != 1 {
+		t.Fatalf("failed = %d, want 1 (bare shell must block); log=%s", len(failed), logbuf.String())
+	}
+	delivered, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "surveyor", State: store.StateDelivered, Limit: 10,
+	})
+	if len(delivered) != 0 {
+		t.Errorf("delivered = %d, want 0 (NEVER paste to a bare shell)", len(delivered))
+	}
+	if pasted.Load() {
+		t.Errorf("paste-buffer was called -- message was pasted into the bare shell (#626 gap)")
+	}
+	if !strings.Contains(logbuf.String(), "no_live_session") {
+		t.Errorf("expected no_live_session log; got %s", logbuf.String())
+	}
+	if len(failed) > 0 && !strings.Contains(failed[0].Error.String, "no_live_session") {
+		t.Errorf("failed reason should name no_live_session; got %q", failed[0].Error.String)
+	}
+}
+
+// TestServe_BareShell_SessionRelocated_Reroutes: the registered pane went
+// bare-shell, but the addressed session is alive in a DIFFERENT pane
+// (operator restarted it elsewhere). The mailman re-discovers it across
+// panes, reroutes delivery, and heals the registry -- rather than blocking.
+func TestServe_BareShell_SessionRelocated_Reroutes(t *testing.T) {
+	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		// %4 is a bare shell; %5 now runs surveyor.
+		return []byte("%4\t400\t\tbash\n" +
+			"%5\t500\tSurveyor\tclaude\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+	walker := &discover.Walker{
+		CmdlineReader: func(pid int) (string, error) {
+			switch pid {
+			case 400:
+				return "bash\x00", nil
+			case 500:
+				return "claude\x00--resume\x00surveyor\x00", nil
+			}
+			return "", errors.New("no fake")
+		},
+		ChildrenReader: func(int) []int { return nil },
+		MaxDepth:       1,
+	}
+
+	var (
+		bodyMu   sync.Mutex
+		body     string
+		paneSeen atomic.Value
+	)
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "load-buffer":
+			if stdin != nil {
+				b, _ := io.ReadAll(stdin)
+				bodyMu.Lock()
+				body = string(b)
+				bodyMu.Unlock()
+			}
+		case "paste-buffer":
+			for i, a := range args {
+				if a == "-t" && i+1 < len(args) {
+					paneSeen.Store(args[i+1])
+				}
+			}
+		case "capture-pane":
+			bodyMu.Lock()
+			defer bodyMu.Unlock()
+			return []byte(body), nil
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "surveyor", "%4") // stale: %4 bare-shell; surveyor moved to %5
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "surveyor", Body: "hello",
+	})
+
+	opts := fastOpts("surveyor")
+	opts.DriftCheckDisabled = false
+	opts.Walker = walker
+
+	stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		d, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "surveyor", State: store.StateDelivered, Limit: 10,
+		})
+		if len(d) == 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	d, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "surveyor", State: store.StateDelivered, Limit: 10,
+	})
+	if len(d) != 1 {
+		t.Fatalf("delivered = %d, want 1 (should reroute to the relocated session); log=%s", len(d), logbuf.String())
+	}
+	if seen := paneSeen.Load(); seen != "%5" {
+		t.Errorf("paste-buffer pane = %v, want %%5 (relocated)", seen)
+	}
+	agent, _ := s.GetAgent(ctx, "surveyor")
+	if agent == nil || agent.PaneID != "%5" {
+		t.Errorf("registry pane = %v, want %%5 (healed)", agent)
+	}
+	if !strings.Contains(logbuf.String(), "session_relocated") {
+		t.Errorf("expected session_relocated log; got %s", logbuf.String())
+	}
+}
