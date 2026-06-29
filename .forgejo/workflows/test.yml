@@ -5,6 +5,19 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    # Manual re-run trigger for cases where the automatic pull_request /
+    # push triggers didn't fire — e.g., release-toolkit's release-bot
+    # pushes to release-prep/rolling using a system token that doesn't
+    # trigger downstream workflows (Forgejo Actions anti-recursion
+    # safeguard, same shape as GitHub Actions GITHUB_TOKEN rule).
+    # Operator: Actions → test → Run workflow → pick branch → Run.
+    inputs:
+      reason:
+        description: 'Why this manual dispatch (e.g. "release-bot push didn''t trigger CI on PR #630")'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   test:
