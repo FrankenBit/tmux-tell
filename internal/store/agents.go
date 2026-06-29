@@ -118,8 +118,8 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 		deliveryMode string
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -145,6 +145,28 @@ func (s *Store) SetDisplayName(ctx context.Context, name, displayName string) er
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET display_name = ? WHERE name = ?`,
 		displayName, name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
+}
+
+// SetSessionID persists an agent's self-discovered Claude session identity
+// (#626 Phase 1b): CLAUDE_CODE_SESSION_ID, read from the registering pane's
+// process tree. When non-empty it is the primary exact match key for
+// session-as-addressee resolution; "" clears it (back to the name-fallback
+// path). Returns ErrNotFound if no agent with that name is registered.
+//
+// Does not bump updated_at: like SetDisplayName, this rides the register call
+// that already touched the row; it is identity-metadata, not a separate
+// discovery-relevant mutation.
+func (s *Store) SetSessionID(ctx context.Context, name, sessionID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET session_id = ? WHERE name = ?`,
+		sessionID, name)
 	if err != nil {
 		return err
 	}
@@ -205,7 +227,7 @@ func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) e
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +242,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 			aliases      string
 			deliveryMode string
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID); err != nil {
 			return nil, err
 		}
 		if pane.Valid {

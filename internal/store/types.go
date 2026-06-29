@@ -181,6 +181,14 @@ type Agent struct {
 	// from Name (the canonical routing key): render-only, never a routing key.
 	// Empty when the agent never asserted one (the UI falls back to Name).
 	DisplayName string
+	// SessionID is the intrinsic Claude session identity (#626 Phase 1b):
+	// CLAUDE_CODE_SESSION_ID (a UUID), self-discovered from the registering
+	// pane's process tree. When non-empty it is the PRIMARY, exact match key
+	// for resolving which pane currently hosts this agent's session (vs the
+	// fuzzy `claude --resume <name>` argv match). Empty = legacy / not-yet-
+	// discovered -> the resolver falls back to the name-based discover path
+	// and logs a deprecation notice (AC6). Set via SetSessionID at register.
+	SessionID string
 }
 
 // Delivery-mode constants. Constrained string set; see Agent.DeliveryMode
