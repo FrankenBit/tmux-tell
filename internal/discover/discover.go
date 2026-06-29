@@ -11,6 +11,7 @@
 package discover
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -19,6 +20,11 @@ import (
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
+
+// ClaudeSessionIDEnv is the process-env var Claude Code exports carrying the
+// session UUID. Read from /proc/<pid>/environ to resolve a pane's intrinsic
+// session identity, the primary key for session-as-addressee (#626 Phase 1b).
+const ClaudeSessionIDEnv = "CLAUDE_CODE_SESSION_ID"
 
 // Source describes which strategy produced an agent name. Used for tests
 // and so callers can log the resolution path.
@@ -43,11 +49,21 @@ type CmdlineReader func(pid int) (string, error)
 // ChildrenReader returns the direct child PIDs of parent. Swappable for tests.
 type ChildrenReader func(parent int) []int
 
+// EnvironReader reads a single env var (key) from /proc/<pid>/environ.
+// Swappable for tests. Returns ("", false) when the var is absent or the
+// process can't be read. A nil EnvironReader disables session-id discovery
+// (the walker falls back to name-only resolution) — existing callers that
+// build a Walker without one keep working unchanged.
+type EnvironReader func(pid int, key string) (string, bool)
+
 // Walker holds the resolution strategy. Construct with New for production
 // defaults; tests build one with the fields set explicitly.
 type Walker struct {
 	CmdlineReader  CmdlineReader
 	ChildrenReader ChildrenReader
+	// EnvironReader reads /proc/<pid>/environ for a key (#626 Phase 1b
+	// session-id discovery). Nil = session-id discovery disabled.
+	EnvironReader EnvironReader
 	// MaxDepth bounds the descendant walk per pane (0 = pane root only).
 	// Default is 3 — covers bash → claude → MCP-shim style trees.
 	MaxDepth int
@@ -58,8 +74,24 @@ func New() *Walker {
 	return &Walker{
 		CmdlineReader:  DefaultCmdlineReader,
 		ChildrenReader: DefaultChildrenReader,
+		EnvironReader:  DefaultEnvironReader,
 		MaxDepth:       3,
 	}
+}
+
+// DefaultEnvironReader reads /proc/<pid>/environ and returns the value for key.
+func DefaultEnvironReader(pid int, key string) (string, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
+	if err != nil {
+		return "", false
+	}
+	prefix := []byte(key + "=")
+	for _, item := range bytes.Split(data, []byte{0}) {
+		if v, ok := bytes.CutPrefix(item, prefix); ok {
+			return string(v), true
+		}
+	}
+	return "", false
 }
 
 // DefaultCmdlineReader reads /proc/<pid>/cmdline.
@@ -329,6 +361,68 @@ func (w *Walker) cmdlineDescendantSearch(pid, depth int) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// sessionIDDescendantSearch walks pid + descendants up to MaxDepth looking
+// for CLAUDE_CODE_SESSION_ID in the process environ. Returns the first
+// non-empty value. Mirrors cmdlineDescendantSearch but reads environ. A nil
+// EnvironReader (session-id discovery disabled) returns ("", false).
+func (w *Walker) sessionIDDescendantSearch(pid, depth int) (string, bool) {
+	if pid <= 0 || w.EnvironReader == nil {
+		return "", false
+	}
+	if v, ok := w.EnvironReader(pid, ClaudeSessionIDEnv); ok && v != "" {
+		return v, true
+	}
+	if depth >= w.MaxDepth {
+		return "", false
+	}
+	for _, child := range w.ChildrenReader(pid) {
+		if v, ok := w.sessionIDDescendantSearch(child, depth+1); ok {
+			return v, true
+		}
+	}
+	return "", false
+}
+
+// SessionIDForPane resolves the Claude session UUID hosted in a single pane by
+// walking that pane's process tree for CLAUDE_CODE_SESSION_ID. Used at register
+// time for self-discovery (#626 Phase 1b). Returns ("", false) when no live
+// Claude session is found in the pane (bare shell, non-Claude CLI, env unset,
+// or session-id discovery disabled).
+func (w *Walker) SessionIDForPane(ctx context.Context, paneID string) (string, bool) {
+	panes, err := tmuxio.ListPanesWithPID(ctx)
+	if err != nil {
+		return "", false
+	}
+	for _, p := range panes {
+		if p.ID == paneID {
+			return w.sessionIDDescendantSearch(p.PID, 0)
+		}
+	}
+	return "", false
+}
+
+// LookupBySessionID returns the pane id currently hosting the given Claude
+// session UUID, or "" if no pane's process tree carries it. The primary
+// (exact) resolution path for session-as-addressee (#626 Phase 1b): unlike the
+// fuzzy name match it cannot mis-resolve to a different agent, and a bare shell
+// / ended session simply isn't found (so the caller blocks rather than pasting
+// — composes with the Phase-1a bare-shell guard). Empty sessionID returns "".
+func (w *Walker) LookupBySessionID(ctx context.Context, sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", nil
+	}
+	panes, err := tmuxio.ListPanesWithPID(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, p := range panes {
+		if v, ok := w.sessionIDDescendantSearch(p.PID, 0); ok && v == sessionID {
+			return p.ID, nil
+		}
+	}
+	return "", nil
 }
 
 // parseCmdline splits /proc/<pid>/cmdline (NUL-separated) into argv.
