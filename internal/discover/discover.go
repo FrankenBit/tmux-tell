@@ -22,9 +22,24 @@ import (
 )
 
 // ClaudeSessionIDEnv is the process-env var Claude Code exports carrying the
-// session UUID. Read from /proc/<pid>/environ to resolve a pane's intrinsic
-// session identity, the primary key for session-as-addressee (#626 Phase 1b).
+// session UUID — Claude's *native* session identity (#626 Phase 1b).
 const ClaudeSessionIDEnv = "CLAUDE_CODE_SESSION_ID"
+
+// NeutralSessionIDEnv is the adapter-neutral session-id var the chamber launch
+// wrappers inject for CLIs with no native session identity (codex, aichat —
+// #626 Phase 2). The wrapper mints a UUID at launch, passes it to `register
+// --session-id`, and `--setenv`s it into the launched process environ so the
+// delivery-time discover walk reads it the same way it reads Claude's native
+// var. Adapter-neutral name (not tool-prefixed) so one var serves every
+// no-native-id adapter.
+const NeutralSessionIDEnv = "TMUX_TELL_SESSION_ID"
+
+// sessionIDEnvKeys are the process-env vars that carry a chamber's intrinsic
+// session id, in resolution priority order: a CLI's native var first, then the
+// wrapper-injected neutral var. First non-empty wins. A pane hosts one CLI, so
+// in practice only one is ever set; the order only disambiguates the
+// pathological both-set case (prefer the native one).
+var sessionIDEnvKeys = []string{ClaudeSessionIDEnv, NeutralSessionIDEnv}
 
 // Source describes which strategy produced an agent name. Used for tests
 // and so callers can log the resolution path.
@@ -363,16 +378,19 @@ func (w *Walker) cmdlineDescendantSearch(pid, depth int) (string, bool) {
 	return "", false
 }
 
-// sessionIDDescendantSearch walks pid + descendants up to MaxDepth looking
-// for CLAUDE_CODE_SESSION_ID in the process environ. Returns the first
-// non-empty value. Mirrors cmdlineDescendantSearch but reads environ. A nil
-// EnvironReader (session-id discovery disabled) returns ("", false).
+// sessionIDDescendantSearch walks pid + descendants up to MaxDepth looking for
+// a session-id env var (sessionIDEnvKeys, in priority order) in the process
+// environ. Returns the first non-empty value. Mirrors cmdlineDescendantSearch
+// but reads environ. A nil EnvironReader (session-id discovery disabled)
+// returns ("", false).
 func (w *Walker) sessionIDDescendantSearch(pid, depth int) (string, bool) {
 	if pid <= 0 || w.EnvironReader == nil {
 		return "", false
 	}
-	if v, ok := w.EnvironReader(pid, ClaudeSessionIDEnv); ok && v != "" {
-		return v, true
+	for _, key := range sessionIDEnvKeys {
+		if v, ok := w.EnvironReader(pid, key); ok && v != "" {
+			return v, true
+		}
 	}
 	if depth >= w.MaxDepth {
 		return "", false

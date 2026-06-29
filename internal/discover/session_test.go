@@ -129,3 +129,59 @@ func TestSessionID_NilEnvironReader(t *testing.T) {
 		t.Errorf("nil EnvironReader SessionIDForPane = %q,%v; want \"\",false", got, ok)
 	}
 }
+
+// TestLookupBySessionID_NeutralVar: a CLI with no NATIVE session var but the
+// wrapper-injected TMUX_TELL_SESSION_ID (codex/aichat, #626 Phase 2) resolves
+// by the neutral var — same delivery path, different source env var.
+func TestLookupBySessionID_NeutralVar(t *testing.T) {
+	prev := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		return []byte("%8\t800\tlookout\tnode\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prev) })
+
+	w := &Walker{
+		ChildrenReader: func(int) []int { return nil },
+		EnvironReader: func(pid int, key string) (string, bool) {
+			if key == NeutralSessionIDEnv && pid == 800 {
+				return "CODEX-uuid", true
+			}
+			return "", false
+		},
+		MaxDepth: 3,
+	}
+	if got, _ := w.LookupBySessionID(context.Background(), "CODEX-uuid"); got != "%8" {
+		t.Errorf("neutral-var lookup = %q, want %%8", got)
+	}
+	if got, ok := w.SessionIDForPane(context.Background(), "%8"); !ok || got != "CODEX-uuid" {
+		t.Errorf("SessionIDForPane via neutral var = %q,%v; want CODEX-uuid,true", got, ok)
+	}
+}
+
+// TestSessionID_NativeWinsOverNeutral: the pathological both-set case resolves
+// to the native var, per sessionIDEnvKeys priority order.
+func TestSessionID_NativeWinsOverNeutral(t *testing.T) {
+	prev := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		return []byte("%1\t100\tBosun\tclaude\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prev) })
+
+	w := &Walker{
+		ChildrenReader: func(int) []int { return nil },
+		EnvironReader: func(pid int, key string) (string, bool) {
+			if pid != 100 {
+				return "", false
+			}
+			switch key {
+			case ClaudeSessionIDEnv:
+				return "NATIVE-uuid", true
+			case NeutralSessionIDEnv:
+				return "NEUTRAL-uuid", true
+			}
+			return "", false
+		},
+		MaxDepth: 3,
+	}
+	if got, ok := w.SessionIDForPane(context.Background(), "%1"); !ok || got != "NATIVE-uuid" {
+		t.Errorf("both-set should prefer native = %q,%v; want NATIVE-uuid,true", got, ok)
+	}
+}
