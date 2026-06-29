@@ -9,7 +9,7 @@
     {
       "id": 10,
       "title": "Messages delivered per chamber (recipient view)",
-      "description": "Count of messages delivered TO each chamber's mailman over time. Source: mailman log lines matching `delivering` from `tmux-tell-claude-mailman@<chamber>.service`. The `agent` label IS the recipient.",
+      "description": "Count of messages delivered TO each chamber's mailman over time. Source: mailman log lines matching `delivering id=` from `tmux-tell-claude-mailman@<chamber>.service` (tight selector excludes gate_max_wait retry-warnings which also contain the word `delivering`). The `agent` label IS the recipient.",
       "type": "timeseries",
       "datasource": { "uid": "loki", "type": "loki" },
       "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
@@ -110,13 +110,13 @@
     {
       "id": 40,
       "title": "Recent traffic tail",
-      "description": "Live log feed of the last ~50 deliveries. Each line: `[mailman/<recipient>] <ts> delivering id=<id> kind=<kind> from=<sender> body_bytes=<N>`. Drill-down companion to the timelines above.",
+      "description": "Live log feed combining real deliveries + retry warnings. Real deliveries match `delivering id=<id> kind=<kind> from=<sender> body_bytes=<N>`; retry warnings (gate_max_wait, pre_paste_safety_abort) also contain the word `delivering`. The broader `delivering` filter is INTENTIONAL here — surfacing stuck-message retries inline (e.g., a message hitting gate_max_wait every ~5min for hours) gives the \"what's stuck\" view this panel is designed for. The numeric panels above (10/11/20) use the tighter `delivering id=` to exclude these warnings from delivery counts.",
       "type": "logs",
       "datasource": { "uid": "loki", "type": "loki" },
       "gridPos": { "h": 12, "w": 24, "x": 0, "y": 26 },
       "targets": [
         {
-          "expr": "{unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"delivering id=\"",
+          "expr": "{unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"delivering\"",
           "refId": "A"
         }
       ],
