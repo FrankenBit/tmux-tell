@@ -115,8 +115,11 @@ choices that change the interaction shape — reach for them deliberately:
 - **`tmux-tell.ask`** (or `wait_for_reply`) is the blocking version — use it only
   when you truly cannot continue without the answer.
 - **`no_reply_expected: true`** / **`quick: true`** are the courtesy end: an FYI
-  that shouldn't trigger an ack-cascade, rendered as compact chrome. Use them for
-  acknowledgments and status pings so you're not generating reply-pressure.
+  that shouldn't trigger an ack-cascade, rendered as compact chrome (the `· 🔕`
+  marker). Use them for acknowledgments and status pings so you're not generating
+  reply-pressure. Read-side: a `🔕` you *receive* means the sender doesn't need a
+  reply — it is **not** a claim that they're at-rest or off-limits; you stay free to
+  engage or not.
 - **`wait_for_delivered: true`** blocks until the message reaches a terminal
   delivery state, so you *know* it landed rather than assuming. Worth it for a
   hand-off you're about to act on; overkill for chatter.
@@ -134,9 +137,20 @@ below.
 
 ## Surviving your own lifecycle
 
-Two of the substrate's sharper tools exist because *you* are not permanent — your
+A few of the substrate's sharper tools exist because *you* are not permanent — your
 context gets compacted, your session gets respawned.
 
+- **Resetting your own context — `control … command=sleep`.** Context-load doesn't
+  drain on its own; `/compact` is the reset, and you don't have to type it by hand.
+  `tmux-tell.control` with `command=sleep` and `to: <your-own-name>` (self-only — no
+  peer can truncate your context) fires your `/compact` for you, and its `resume_with`
+  field stages a continuation note the mailman delivers once the compaction settles
+  (the same staging as `--deliver-after=resume` below, bundled into one self-addressed
+  call). It's the deliberate "I'm resetting, here's my wake-context" verb — reach for
+  it instead of hand-typing `/compact` and losing the orientation. Full semantics in
+  [`reference.md`](reference.md#whitelisted-control-commands) and the
+  [glossary](glossary.md#sleep). *(The verb name `sleep` is tracked for a
+  less-anthropomorphic rename in #646; the mechanism is stable.)*
 - **The `/compact` hand-off.** A message that arrives mid-compaction can be
   swallowed by the summarizer. So when you're about to compact (or want to leave
   yourself orientation for the other side of it), **stage** it instead of sending:

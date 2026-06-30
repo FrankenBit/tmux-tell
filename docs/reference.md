@@ -100,6 +100,12 @@ FYI: tagged v0.8.0 — no ack needed
 The recipient's Claude reads but doesn't acknowledge — content is still judged on
 its own merits; the marker is a hint, not a hard rule.
 
+`🔕` is a **sender-side expectation signal — "I don't need a reply from you" — not a
+state-claim about anyone.** Reading a sender's `🔕` as "they're at-rest / don't
+disturb" inverts it: it releases the recipient from reply-pressure, it doesn't impose
+rest on them or withdraw the sender, and it says nothing about subsequent unrelated
+messages.
+
 **Length marker** — either shape gains a trailing `· <size>` when the body exceeds a
 byte threshold (default 512 bytes), so a reader scrolling history can tell a two-line
 ack from a 3K wall of review text, and a sender sees the size cost of what they're
