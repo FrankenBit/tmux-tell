@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // UpsertAgent creates or updates an agent registry entry. If paneID is
@@ -111,15 +112,16 @@ func (s *Store) SetPausedAll(ctx context.Context, paused bool) (int64, error) {
 // GetAgent returns the agent by name, or ErrNotFound.
 func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 	var (
-		a            Agent
-		pane         sql.NullString
-		paused       int
-		aliases      string
-		deliveryMode string
+		a               Agent
+		pane            sql.NullString
+		paused          int
+		aliases         string
+		deliveryMode    string
+		metabolismSetAt sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -131,6 +133,9 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 	a.Paused = paused != 0
 	a.Aliases = decodeAliases(aliases)
 	a.DeliveryMode = deliveryMode
+	if metabolismSetAt.Valid {
+		a.MetabolismSetAt = metabolismSetAt.String
+	}
 	return &a, nil
 }
 
@@ -227,7 +232,7 @@ func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) e
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -236,13 +241,14 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	var out []Agent
 	for rows.Next() {
 		var (
-			a            Agent
-			pane         sql.NullString
-			paused       int
-			aliases      string
-			deliveryMode string
+			a               Agent
+			pane            sql.NullString
+			paused          int
+			aliases         string
+			deliveryMode    string
+			metabolismSetAt sql.NullString
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt); err != nil {
 			return nil, err
 		}
 		if pane.Valid {
@@ -251,6 +257,9 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 		a.Paused = paused != 0
 		a.Aliases = decodeAliases(aliases)
 		a.DeliveryMode = deliveryMode
+		if metabolismSetAt.Valid {
+			a.MetabolismSetAt = metabolismSetAt.String
+		}
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -280,6 +289,62 @@ func (s *Store) SetAttentionState(ctx context.Context, name, state string) error
 		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
 	}
 	return nil
+}
+
+// SetMetabolism records a chamber's self-reported metabolism (#621): one of
+// MetabolismWarming / MetabolismSaturating / MetabolismCompactPending, or "" to
+// clear the self-report. Validated against ValidMetabolism (empty is valid — the
+// clear path). A non-empty value stamps metabolism_set_at = now so consumers can
+// discount a stale self-report; clearing nulls the stamp, keeping the invariant
+// metabolism == "" ⟺ metabolism_set_at IS NULL. Returns ErrNotFound if no agent
+// with that name is registered.
+//
+// Does not bump updated_at: like SetAttentionState, this is an operational
+// self-signal from the chamber, not a discovery-relevant change.
+//
+// The store does not enforce WHO calls this — self-only is enforced at the
+// surface (set_metabolism resolves the caller's own identity and exposes no
+// target parameter; see internal/cli/set_metabolism.go). A third-party write
+// would clobber the target's real signal, the failure #621 AC#2 guards against.
+func (s *Store) SetMetabolism(ctx context.Context, name, value string) error {
+	if !ValidMetabolism(value) {
+		return fmt.Errorf("store: invalid metabolism %q (want %q, %q, %q, or empty)",
+			value, MetabolismWarming, MetabolismSaturating, MetabolismCompactPending)
+	}
+	var res sql.Result
+	var err error
+	if value == "" {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE agents SET metabolism = '', metabolism_set_at = NULL WHERE name = ?`,
+			name)
+	} else {
+		res, err = s.db.ExecContext(ctx,
+			`UPDATE agents SET metabolism = ?, metabolism_set_at = ? WHERE name = ?`,
+			value, time.Now().UTC().Format(sqliteTimeFormat), name)
+	}
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
+}
+
+// ClearMetabolismIfPending clears a chamber's metabolism ONLY when it is
+// currently MetabolismCompactPending (#621). Called from the mailman's
+// self-observation path once it observes the chamber actually at-rest-in-
+// compaction: observed-truth now carries the ground state, so the
+// compact-pending self-report has done its job and is cleared to avoid lingering
+// stale after the chamber resumes. The WHERE-guard makes it a no-op against any
+// other value (a warming/saturating self-report is NOT clobbered) and against a
+// missing agent — so, unlike SetMetabolism, zero rows affected is not an error.
+func (s *Store) ClearMetabolismIfPending(ctx context.Context, name string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET metabolism = '', metabolism_set_at = NULL
+		 WHERE name = ? AND metabolism = ?`,
+		name, MetabolismCompactPending)
+	return err
 }
 
 // SetStuck parks an agent's mailman with the given non-empty reason (#291).

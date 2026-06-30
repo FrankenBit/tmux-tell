@@ -189,6 +189,18 @@ type Agent struct {
 	// discovered -> the resolver falls back to the name-based discover path
 	// and logs a deprecation notice (AC6). Set via SetSessionID at register.
 	SessionID string
+	// Metabolism is the chamber's self-reported context-throughput state (#621):
+	// "" (no self-report; default) | warming | saturating | compact-pending. The
+	// layer-3 self-report axis — orthogonal to AttentionState (operator-flag,
+	// #224) and the auto-observed agent_state probe (#448). Set ONLY by the
+	// chamber itself via set_metabolism (a third-party write would clobber the
+	// target's real signal — #621 AC#2). Advisory: never gates delivery.
+	Metabolism string
+	// MetabolismSetAt is the RFC3339/SQLite-format stamp of when Metabolism was
+	// last set, so a consumer can discount a stale self-report. Empty when
+	// Metabolism is empty (the cleared state stores NULL). Mirrors how
+	// observed_state_at stamps the auto-observed axis (#448).
+	MetabolismSetAt string
 }
 
 // Delivery-mode constants. Constrained string set; see Agent.DeliveryMode
@@ -246,6 +258,53 @@ func ValidAttentionState(s string) bool {
 	return s == AttentionStateIdle ||
 		s == AttentionStateBusy ||
 		s == AttentionStateAwaitingOperator
+}
+
+// Metabolism constants (#621): the chamber's self-reported, intentional
+// context-throughput state — the layer-3 self-report that complements the
+// auto-observed agent_state (the 7-state pane probe) and the operator-flag
+// attention_state (#224). These three are EXACTLY the states the auto-observer
+// cannot infer from pane chrome; the overlapping states the body originally
+// proposed (warm/at-rest/rate-limited/awaiting-operator) already exist as
+// observed states, so they are deliberately NOT re-invented here.
+const (
+	// MetabolismWarming: just resumed (e.g. post-/compact), not yet at full
+	// context throughput. Distinct from observed "idle" — the chamber IS
+	// reachable but self-reports it is still spinning up.
+	MetabolismWarming = "warming"
+	// MetabolismSaturating: context-load is approaching the /compact-need —
+	// not yet idle, not yet at-rest-in-compaction. The early-warning the
+	// auto-observer can't see (load is internal, not visible in chrome).
+	MetabolismSaturating = "saturating"
+	// MetabolismCompactPending: intent-to-/compact stated but not yet executed
+	// — the stall seam between "I'll /compact" and the reset firing. Auto-clears
+	// once the mailman OBSERVES the chamber actually at-rest-in-compaction
+	// (observed-truth supersedes the now-redundant self-report; see
+	// ClearMetabolismIfPending).
+	MetabolismCompactPending = "compact-pending"
+)
+
+// MetabolismEmoji is the single-source legend (#621 AC#4) mapping each
+// self-reported metabolism state to its bus-convention emoji (composes with
+// #620's emoji conventions). One map so a swap touches exactly one place; the
+// reference.md legend points here as canonical rather than re-deriving it.
+// Ratified Bosun-side 2026-06-30 (operator may override the glyphs).
+var MetabolismEmoji = map[string]string{
+	MetabolismWarming:        "🌱",
+	MetabolismSaturating:     "🌡️",
+	MetabolismCompactPending: "💤",
+}
+
+// ValidMetabolism reports whether s is a settable metabolism value. UNLIKE
+// ValidAttentionState, the empty string is VALID here: "" is the no-self-report
+// default AND the explicit-clear value passed to set_metabolism (a chamber
+// retracting its self-report). The three non-empty values are the #621
+// vocabulary.
+func ValidMetabolism(s string) bool {
+	return s == "" ||
+		s == MetabolismWarming ||
+		s == MetabolismSaturating ||
+		s == MetabolismCompactPending
 }
 
 // Stuck-reason constants (#291). The empty string is the healthy default

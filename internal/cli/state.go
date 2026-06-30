@@ -28,6 +28,17 @@ type agentStateResult struct {
 	State      string          `json:"state"`
 	Evidence   tmuxio.Evidence `json:"evidence"`
 	CapturedAt string          `json:"captured_at"`
+	// Metabolism is the chamber's self-reported metabolism (#621): "" |
+	// warming | saturating | compact-pending. ORTHOGONAL to State — State is
+	// the auto-observed pane probe (alive/working/at-rest/…), Metabolism is the
+	// layer-3 self-report the observer cannot infer. Both are surfaced so a
+	// consumer sees the full picture (observed-truth AND stated-intent). Empty
+	// omitted so pre-#621 consumers see no schema-shape change.
+	Metabolism string `json:"metabolism,omitempty"`
+	// MetabolismSetAt stamps when Metabolism was set, so a consumer can discount
+	// a stale self-report against the fresher CapturedAt observation. Empty when
+	// there is no self-report.
+	MetabolismSetAt string `json:"metabolism_set_at,omitempty"`
 }
 
 // resolveAgentState looks up the agent's pane and probes the agent
@@ -57,6 +68,13 @@ func resolveAgentState(ctx context.Context, s *store.Store, agent string) (agent
 		res.CapturedAt = nowRFC3339()
 		return res, fmt.Errorf("get_agent: %w", err)
 	}
+	// #621: the self-reported metabolism rides along with every state result,
+	// independent of the observed-state probe below. It is stored, not probed —
+	// so it surfaces even when the pane probe can't substantiate an observed
+	// state (no-pane / mailbox-only / capture error). Orthogonal axes, both
+	// surfaced.
+	res.Metabolism = a.Metabolism
+	res.MetabolismSetAt = a.MetabolismSetAt
 	if a.PaneID == "" {
 		res.State = tmuxio.StateUnknown.String()
 		res.Evidence = tmuxio.Evidence{Reason: fmt.Sprintf("agent %q has no pane registered — run '%s discover'", agent, active.BinaryName)}

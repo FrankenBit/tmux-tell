@@ -43,6 +43,7 @@ Subcommands:
   agents  List registered agents with pane liveness
   whoami  Show this session's registration (auto-resolves identity)
   set-pane-name  Assert this pane's display-name title (mirrors tmux-tell.set_pane_name; #556)
+  set-metabolism Self-report this chamber's metabolism (mirrors tmux-tell.set_metabolism; #621)
   register   Register this (or another) pane on the bus (mirrors tmux-tell.register; #116)
   unregister Remove an agent from the registry + stop its mailman (mirrors tmux-tell.unregister; #289)
   serve   Run the mailman daemon for one agent
@@ -187,6 +188,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runWhoamiCLI(args[1:], stdout, stderr)
 	case "set-pane-name":
 		return runSetPaneNameCLI(args[1:], stdout, stderr)
+	case "set-metabolism":
+		return runSetMetabolismCLI(args[1:], stdout, stderr)
 	case "register":
 		return runRegisterCLI(args[1:], stdout, stderr)
 	case "unregister":

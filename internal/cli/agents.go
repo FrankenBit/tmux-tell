@@ -54,6 +54,17 @@ type agentView struct {
 	// ("idle" / "busy" / "awaiting_operator"). Empty omitted from JSON so
 	// pre-#224 callers see no schema-shape change.
 	AttentionState string `json:"attention_state,omitempty"`
+	// Metabolism surfaces the #621 chamber self-reported metabolism ("warming"
+	// / "saturating" / "compact-pending"). A sibling chamber→operator signal to
+	// AttentionState, on a distinct axis (intentional context-throughput, not
+	// operator-action-pending). Empty (no self-report) omitted from JSON so
+	// pre-#621 callers see no schema-shape change; the text formatter shows it
+	// in the METABOLISM column ("-" when unset).
+	Metabolism string `json:"metabolism,omitempty"`
+	// MetabolismSetAt stamps when Metabolism was set (#621), so a listing
+	// consumer can discount a stale self-report. Empty when there is no
+	// self-report; JSON-wire only (not shown in the text table).
+	MetabolismSetAt string `json:"metabolism_set_at,omitempty"`
 	// Stuck surfaces the #291 mailman park reason ("pane-not-found" when the
 	// mailman has stopped probing tmux for this agent after N consecutive
 	// pane-probe failures). Empty (healthy) omitted from JSON so existing
@@ -157,6 +168,21 @@ func mailmanIdleHuman(last string, now time.Time) string {
 	}
 }
 
+// metabolismCell renders the agents-table METABOLISM column: the chamber's
+// self-reported state prefixed with its #621 legend emoji (from
+// store.MetabolismEmoji, the single-source legend), or "-" when there is no
+// active self-report. The table is tab-joined (renderTextTable), so the
+// double-width emoji does not disturb column alignment.
+func metabolismCell(m string) string {
+	if m == "" {
+		return "-"
+	}
+	if e, ok := store.MetabolismEmoji[m]; ok {
+		return e + " " + m
+	}
+	return m
+}
+
 func runAgentsWithStore(ctx context.Context, s *store.Store,
 	live map[string]bool, availableOnly bool, format string,
 	stdout, stderr io.Writer,
@@ -170,14 +196,16 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 	rows := make([]agentView, 0, len(agents))
 	for _, a := range agents {
 		v := agentView{
-			Name:           a.Name,
-			Pane:           a.PaneID,
-			Paused:         a.Paused,
-			AttentionState: a.AttentionState,
-			Stuck:          a.StuckReason,
-			DeliveryMode:   a.DeliveryMode,
-			DisplayName:    a.DisplayName,
-			PaneConflict:   len(conflicts[a.PaneID]) > 0,
+			Name:            a.Name,
+			Pane:            a.PaneID,
+			Paused:          a.Paused,
+			AttentionState:  a.AttentionState,
+			Metabolism:      a.Metabolism,
+			MetabolismSetAt: a.MetabolismSetAt,
+			Stuck:           a.StuckReason,
+			DeliveryMode:    a.DeliveryMode,
+			DisplayName:     a.DisplayName,
+			PaneConflict:    len(conflicts[a.PaneID]) > 0,
 		}
 		switch {
 		case a.PaneID == "":
@@ -211,7 +239,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 		return exitOK
 	case "text", "":
 		now := time.Now()
-		header := []string{"NAME", "PANE", "STATUS", "PAUSED", "QUEUED", "ATTENTION", "STUCK", "MAILMAN", "DISPLAY"}
+		header := []string{"NAME", "PANE", "STATUS", "PAUSED", "QUEUED", "ATTENTION", "METABOLISM", "STUCK", "MAILMAN", "DISPLAY"}
 		out := make([][]string, 0, len(rows))
 		for _, r := range rows {
 			pane := r.Pane
@@ -225,6 +253,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 			if attention == "" {
 				attention = "idle"
 			}
+			metabolism := metabolismCell(r.Metabolism)
 			stuck := r.Stuck
 			if stuck == "" {
 				stuck = "-"
@@ -234,7 +263,7 @@ func runAgentsWithStore(ctx context.Context, s *store.Store,
 				display = "-"
 			}
 			out = append(out, []string{
-				r.Name, pane, r.PaneStatus, yesNo(r.Paused), itoa(r.Queued), attention, stuck,
+				r.Name, pane, r.PaneStatus, yesNo(r.Paused), itoa(r.Queued), attention, metabolism, stuck,
 				mailmanIdleHuman(r.MailmanLastDelivered, now), display,
 			})
 		}

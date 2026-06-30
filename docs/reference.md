@@ -870,6 +870,66 @@ The reserved-recipient convention is enforced: `flag_operator` fails-loud if
 `operator-attention` is not registered — substrate-honest about the setup
 prerequisite rather than silently swallowing the attention request.
 
+## Chamber self-reported metabolism (#621)
+
+The live `agent_state` probe already returns **seven auto-observed states** —
+`idle` / `working` / `rate-limited` / `usage-limited` / `at-rest-in-compaction`
+/ `awaiting-operator` / `unknown` — read from the pane's rendered chrome. But
+some states are *intentional* and live only inside the chamber's own context;
+the pane-observer cannot infer them. **Metabolism** is the self-reported,
+layer-3 axis that captures exactly those:
+
+| state | meaning | why the observer can't see it |
+|-------|---------|-------------------------------|
+| `warming` | just resumed (e.g. post-`/compact`), not yet at full context throughput | the pane reads `idle`; "still spinning up" is internal |
+| `saturating` | context-load approaching the `/compact`-need; not yet idle nor at-rest | load is internal, invisible in chrome |
+| `compact-pending` | intent-to-`/compact` stated but not yet fired — the stall seam | nothing renders "about to compact" |
+
+These three are the **only** new vocabulary: the states the original framing
+also proposed (`warm`, `at-rest`, `rate-limited`, `awaiting-operator`) already
+exist as auto-observed states and are deliberately not re-invented.
+
+**Three orthogonal axes.** Metabolism sits alongside — never replaces — the
+other two per-agent signals:
+
+- **observed** `agent_state` (#448 probe): what the pane *looks like* now.
+- **`attention_state`** (#224): operator-action-pending (`awaiting_operator`).
+- **`metabolism`** (#621): the chamber's stated context-throughput intent.
+
+`agent_state` surfaces both the observed `state` and the self-reported
+`metabolism` (plus `metabolism_set_at`) so a consumer sees observed-truth AND
+stated-intent at once. The self-report is **advisory**: it never gates delivery
+(`IsPasteUnsafe` reads the observed state only).
+
+**Chamber side.** A chamber self-reports via the MCP tool
+`tmux-tell.set_metabolism` (value ∈ `warming` / `saturating` / `compact-pending`,
+or `""` to clear) or the CLI `tmux-tell-claude set-metabolism <value>` /
+`--clear`. It is **self-only**: the call resolves the caller's own identity (the
+same path as `whoami`) and exposes *no* target parameter — a chamber can only set
+its own metabolism. A third-party write would clobber the target's real signal,
+so the API makes it unexpressible rather than guarding it at runtime.
+
+**Auto-clear.** `compact-pending` clears itself once the chamber's mailman
+*observes* it actually `at-rest-in-compaction` — observed-truth supersedes the
+now-redundant self-report, so it doesn't linger stale after the chamber resumes.
+`warming` / `saturating` are not auto-cleared (the observer can't tell when they
+end); the chamber clears them explicitly, or a consumer ages them out via
+`metabolism_set_at`. (Unlike `attention_state`, metabolism is **not**
+auto-cleared on `register` — `warming` is set *after* a resume's register, so
+clearing it there would erase the signal the moment it's reported.)
+
+**Operator side.** `tmux-tell-claude agents` includes a `METABOLISM` column
+showing each chamber's self-report with its legend emoji ("-" when none).
+
+**Emoji legend** (composes with #620's bus-emoji conventions; the canonical
+single source is `store.MetabolismEmoji`, so a glyph swap touches one place):
+
+| state | emoji |
+|-------|-------|
+| `warming` | 🌱 |
+| `saturating` | 🌡️ |
+| `compact-pending` | 💤 |
+
 ## Recovering a stuck mailman (#291)
 
 A mailman delivers by probing the recipient's tmux pane before each paste. When
@@ -1663,7 +1723,10 @@ CREATE TABLE agents (
   delivery_mode    TEXT NOT NULL DEFAULT 'paste-and-enter',  -- 'paste-and-enter' or 'mailbox-only' (#116/#132)
   backlog_epoch_id INTEGER,                       -- #204 claim-floor (NULL = no epoch)
   attention_state  TEXT NOT NULL DEFAULT 'idle',  -- 'idle' | 'busy' | 'awaiting_operator' (#224)
-  stuck_reason     TEXT NOT NULL DEFAULT ''       -- '' = healthy; 'pane-not-found' = mailman parked (#291)
+  stuck_reason     TEXT NOT NULL DEFAULT '',       -- '' = healthy; 'pane-not-found' = mailman parked (#291)
+  metabolism        TEXT NOT NULL DEFAULT '',      -- '' | 'warming' | 'saturating' | 'compact-pending' — chamber self-report (#621)
+  metabolism_set_at TEXT                           -- stamp of the current metabolism; NULL when metabolism is '' (#621)
+  -- … later additive columns (provider/observed_state #448, display_name #556, session_id #626) omitted for brevity
 );
 
 CREATE TABLE presence (

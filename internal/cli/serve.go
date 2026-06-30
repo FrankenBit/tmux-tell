@@ -1130,6 +1130,16 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				if werr := s.SetObservedState(opCtx, opts.Agent, st.String(), time.Now()); werr != nil {
 					logger.Printf("observed_state_write_failed err=%v", werr)
 				}
+				// #621: observed-truth supersedes the compact-pending self-report.
+				// Once we actually observe ourselves at-rest-in-compaction, the
+				// "I'm about to /compact" self-report has done its job (the
+				// observed_state now carries the ground truth), so clear it — it
+				// would otherwise linger stale after the chamber resumes. Rides
+				// this existing throttled self-probe rather than adding a separate
+				// tmux capture (substrate-fit).
+				if cerr := maybeAutoClearMetabolism(opCtx, s, opts.Agent, st); cerr != nil {
+					logger.Printf("metabolism_autoclear_failed err=%v", cerr)
+				}
 				lastObservedWrite = time.Now()
 			}
 			obsCancel()

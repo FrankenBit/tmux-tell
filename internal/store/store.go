@@ -221,6 +221,21 @@ var migrations = []string{
 	// argv match). Empty default = a legacy / not-yet-discovered registration
 	// -> delivery falls back to the name-based discover path (#626 AC6).
 	`ALTER TABLE agents ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
+	// #621: first-class self-reported metabolism. A chamber self-reports an
+	// intentional context-throughput state that the auto-observer (observed_state,
+	// #448) CANNOT infer from pane chrome: "warming" (just resumed, not yet at
+	// full context throughput), "saturating" (context-load approaching the
+	// /compact-need, not yet idle nor at-rest), "compact-pending" (intent-to-
+	// /compact stated but not yet executed — the chamber-stall seam Bosun's
+	// metabolism-judgment pin addresses). Orthogonal to attention_state (#224, the
+	// operator-flag axis) and observed_state (#448, the auto-observed axis): a
+	// self-report the chamber owns and only it can set. Empty default = no
+	// self-report. metabolism_set_at stamps when the current value was set so a
+	// consumer can discount a stale self-report; NULL whenever metabolism is empty
+	// (the cleared state). Advisory only — NEVER gates delivery (IsPasteUnsafe
+	// stays observed-state-only).
+	`ALTER TABLE agents ADD COLUMN metabolism TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE agents ADD COLUMN metabolism_set_at TEXT`,
 }
 
 // Close releases the underlying database handle.

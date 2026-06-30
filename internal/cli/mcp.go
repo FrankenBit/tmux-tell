@@ -337,6 +337,17 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpSetPaneNameHandler(s))
 
+	srv.RegisterTool("tmux-tell.set_metabolism",
+		"Self-report THIS chamber's metabolism (#621) — an intentional context-throughput state the auto-observed agent_state probe CANNOT infer. Three values: \"warming\" (just resumed, not yet at full throughput), \"saturating\" (context-load approaching the /compact-need), \"compact-pending\" (intent-to-/compact stated but not yet fired — the stall seam). Pass \"\" to clear the self-report. SELF-ONLY: the calling chamber sets its OWN metabolism (resolved like whoami); there is no target parameter — a third-party write would clobber the target's real signal. ADVISORY only: never gates delivery. compact-pending auto-clears once the mailman observes this chamber actually at-rest-in-compaction. Surfaces in agent_state (alongside the observed state) and the agents listing. Returns {ok, agent, metabolism, metabolism_set_at}.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"value": {"type": "string", "enum": ["warming", "saturating", "compact-pending", ""], "description": "The metabolism to self-report, or \"\" to clear the current self-report"}
+			},
+			"required": ["value"]
+		}`),
+		mcpSetMetabolismHandler(s))
+
 	return srv
 }
 
@@ -419,6 +430,33 @@ func mcpSetPaneNameHandler(s *store.Store) mcp.ToolHandler {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
 		res, err := setPaneName(ctx, s, "", in.Name)
+		if err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
+}
+
+// mcpSetMetabolismHandler returns the handler for the tmux-tell.set_metabolism
+// MCP tool (#621). Always self-report — the caller's identity is resolved via
+// resolveMCPIdentity (the same path as whoami), and there is no target field in
+// the input, so a chamber can only ever set its OWN metabolism (AC#2). Shares
+// the setMetabolism core with the CLI subcommand for a byte-identical result
+// shape.
+func mcpSetMetabolismHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		Value string `json:"value"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		caller, err := resolveMCPIdentity(ctx, s)
+		if err != nil {
+			return nil, err
+		}
+		res, err := setMetabolism(ctx, s, caller, in.Value)
 		if err != nil {
 			return nil, err
 		}
