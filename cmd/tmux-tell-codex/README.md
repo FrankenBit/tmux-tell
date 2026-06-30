@@ -7,7 +7,8 @@ adapter-agnostic core as `tmux-tell-claude`; the two adapters coexist and share 
 ## Install
 
 ```bash
-sudo -A ./install.sh --adapter=codex   # installs tmux-tell-codex + mailman unit template
+./install.sh --adapter=codex           # user-space install (no root) of tmux-tell-codex + mailman unit template
+# add --system for the root-owned /usr/local install
 ```
 
 Coexists with the Claude adapter; each adapter gets its own

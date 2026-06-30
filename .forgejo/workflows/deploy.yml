@@ -67,10 +67,18 @@ jobs:
           echo "origin:     $(git config --get remote.origin.url)"
 
       - name: deploy via wrapper (claude adapter, bootstrap + prune orphans)
+        # --system (#636): since the user-space install became the default,
+        # alcatraz's system-wide deploy (root-owned binary in /usr/local/bin — the
+        # existing deploy contract) must opt in explicitly, because install.sh now
+        # REJECTS running as root without --system. PREREQUISITE: the alcatraz-infra
+        # deploy-tmux-tell.sh argument allowlist must already permit --system, or
+        # the wrapper rejects this arg before exec'ing install.sh. That allowlist
+        # change must land BEFORE this ref deploys (see PR #636 cross-repo note).
         run: |
           sudo /srv/scripts/deploy-tmux-tell.sh \
             "$GITHUB_WORKSPACE" \
             --adapter=claude \
+            --system \
             --prune-orphans
 
       - name: deploy via wrapper (codex adapter, binary + mailman restart)
@@ -89,6 +97,7 @@ jobs:
           sudo /srv/scripts/deploy-tmux-tell.sh \
             "$GITHUB_WORKSPACE" \
             --adapter=codex \
+            --system \
             --no-bootstrap
 
       - name: post-deploy smoke

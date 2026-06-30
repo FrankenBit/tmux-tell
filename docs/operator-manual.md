@@ -26,9 +26,14 @@ From inside a tmux session:
 
 ```bash
 git clone https://github.com/FrankenBit/tmux-tell && cd tmux-tell
-make build && sudo ./install.sh     # builds tmux-tell-claude + installs the systemd user unit
-systemctl --user daemon-reload      # so the mailman unit becomes visible
+make build && sudo ./install.sh --system   # alcatraz uses the system-wide install (root-owned /usr/local/bin)
+systemctl --user daemon-reload             # so the mailman unit becomes visible
 ```
+
+> Since #636 a bare `./install.sh` (no flags) is a **user-space** install (no
+> root, binary under `~/.local/bin`) — the adopter-friendly default. Alcatraz
+> keeps the `--system` install: the chambers + the deploy chain expect
+> `tmux-tell-claude` on the system `PATH` at `/usr/local/bin`.
 
 Three things now exist, and it's worth knowing what each is — they're the whole
 system:
@@ -288,9 +293,10 @@ free:
   lost message. If the sender swears it's queued and the recipient sees an empty
   queue, suspect two files before you suspect a bug.
 
-Upgrades, in general: rebuild (`make build && sudo ./install.sh`), restart the
-mailmen, and `refresh-all-mcps` so the MCP servers pick up the new binary. The
-mailmen come back on their own; the MCP servers need the nudge.
+Upgrades, in general: rebuild (`make build && sudo ./install.sh --system` on
+alcatraz), restart the mailmen, and `refresh-all-mcps` so the MCP servers pick
+up the new binary. The mailmen come back on their own; the MCP servers need the
+nudge.
 
 ---
 

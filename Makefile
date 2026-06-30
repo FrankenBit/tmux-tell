@@ -53,12 +53,15 @@ lint:
 test:
 	$(GO) test -race -count=1 ./...
 
-# install runs install.sh — needs root, so the user invokes:
-#   make build && sudo PREFIX=$(PREFIX) ./install.sh
-# This target is a convenience wrapper that uses sudo -A so the alcatraz
-# tmux-popup askpass surfaces the prompt cleanly.
+# install runs the SYSTEM install (root-owned binary under $(PREFIX)/bin, the
+# historical behavior) — that needs root, so this convenience target uses sudo -A
+# (the alcatraz tmux-popup askpass surfaces the prompt cleanly) and passes
+# --system. Since #636 `./install.sh` with no flags is a user-space install that
+# needs no root; for that, run it directly without this target:
+#   ./install.sh            # user-space, no sudo
+#   make build && sudo PREFIX=$(PREFIX) ./install.sh --system   # system-wide
 install: build
-	sudo -A PREFIX=$(PREFIX) ./install.sh
+	sudo -A PREFIX=$(PREFIX) ./install.sh --system
 
 clean:
 	rm -rf bin/

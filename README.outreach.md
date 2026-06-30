@@ -58,22 +58,24 @@ tmux session:
 ```bash
 git clone https://github.com/FrankenBit/tmux-tell && cd tmux-tell
 make build
-sudo ./install.sh
+./install.sh             # no root, no sudo
 ```
 
-Then, **as your normal user (not root)**:
+Then, to keep the helpers running across logouts/reboots:
 
 ```bash
-sudo loginctl enable-linger "$USER"   # keeps the helpers running across logouts/reboots
+loginctl enable-linger "$USER"        # one-time; may prompt for a password
 systemctl --user daemon-reload        # makes the mailman service visible
 ```
 
 That's it — then `register` two panes as above.
 
-**About that `sudo`:** the only thing it does as root is copy one binary to
-`/usr/local/bin`. Everything else — the build, the background helpers, the little
-database — runs as you. The installer is a plain shell script you can read top to
-bottom before you run it; that's deliberate.
+**No sudo required.** The install writes only to *your* home — `~/.local/bin` and
+your user systemd dir — and runs entirely as you. You can clone an unfamiliar repo
+and run `./install.sh` to see what it does without handing root to a binary you
+haven't read yet. The installer is a plain shell script you can read top to bottom
+first; that's deliberate. (Want it on the system `PATH` for every user on the box?
+`sudo ./install.sh --system` — an explicit opt-in, never the default.)
 
 The "database" is just a **SQLite file** in your home dir
 (`~/.local/share/tmux-tell/messages.db`). No server, no cloud, no account, nothing

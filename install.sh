@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
-# Idempotent installer for tmux-msg on alcatraz-like Linux hosts.
+# Idempotent installer for tmux-tell on alcatraz-like Linux hosts.
 #
-# Run as root (sudo -A ./install.sh [--adapter=claude]). The script:
+# Default is a USER-SPACE install — no root, no sudo (#636, the
+# adopter-trust default): run `./install.sh [--adapter=claude]` as your
+# normal user. It installs the tmux-tell-<adapter> binary to ${PREFIX}/bin/
+# (default ${HOME}/.local/bin, owned by you) and drops the systemd user
+# template into ~/.config/systemd/user/. Reverting is a plain `rm` of the
+# user-space binary + template (see README → uninstall). The whole point:
+# a stranger can clone + `./install.sh` to see what the tool does without
+# granting root to an unfamiliar binary.
+#
+# Pass `--system` for the historical root install — binary root-owned
+# under /usr/local/bin, in the system PATH for all users (sudo -A
+# ./install.sh --system). That mode is byte-for-byte the old behavior and
+# is what alcatraz's deploy chain uses. The script:
 #   - installs the tmux-tell-<adapter> binary to ${PREFIX}/bin/
 #   - drops the systemd user template into the operator's
 #     ~/.config/systemd/user/
@@ -28,7 +40,12 @@
 # touched.
 set -euo pipefail
 
-PREFIX=${PREFIX:-/usr/local}
+# Install mode (#636). Default 0 = user-space install (no root); --system flips
+# to 1 for the historical root install. PREFIX's default depends on it, so the
+# default is resolved AFTER arg parsing (an explicit PREFIX= env override wins in
+# either mode and is captured here).
+SYSTEM=0
+PREFIX=${PREFIX:-}
 
 # Which adapter to install. The binary name encodes substrate+adapter
 # (tmux-tell-<adapter>); `claude` is the only adapter today, but a future
@@ -60,9 +77,22 @@ for arg in "$@"; do
         --no-bootstrap) BOOTSTRAP=0 ;;
         --prune-orphans) PRUNE_ORPHANS=1 ;;
         --allow-stale-mailmen) ALLOW_STALE_MAILMEN=1 ;;
-        *) echo "install.sh: unknown argument: $arg (expected --adapter=NAME | --agent=NAME | --no-bootstrap | --prune-orphans | --allow-stale-mailmen)" >&2; exit 1 ;;
+        --system) SYSTEM=1 ;;
+        *) echo "install.sh: unknown argument: $arg (expected --adapter=NAME | --agent=NAME | --system | --no-bootstrap | --prune-orphans | --allow-stale-mailmen)" >&2; exit 1 ;;
     esac
 done
+
+# Resolve the PREFIX default now that the mode is known. --system installs into
+# the system tree (/usr/local); the default user-space install lives under the
+# invoking user's home. An explicit PREFIX= env override (captured above) wins in
+# either mode.
+if [[ -z "$PREFIX" ]]; then
+    if [[ "$SYSTEM" -eq 1 ]]; then
+        PREFIX=/usr/local
+    else
+        PREFIX="$HOME/.local"
+    fi
+fi
 if [[ -z "$ADAPTER" || ! -d "$(dirname "$0")/cmd/tmux-tell-${ADAPTER}" ]]; then
     echo "install.sh: no adapter 'cmd/tmux-tell-${ADAPTER}/' in this repo." >&2
     exit 1
@@ -112,9 +142,22 @@ if [[ -z "$OPERATOR_USER" || "$OPERATOR_USER" == "root" ]]; then
     exit 1
 fi
 
-if [[ $EUID -ne 0 ]]; then
-    echo "install.sh: must run as root (try: sudo -A ./install.sh)" >&2
-    exit 1
+if [[ "$SYSTEM" -eq 1 ]]; then
+    # --system installs root-owned into the system tree; that needs root.
+    if [[ $EUID -ne 0 ]]; then
+        echo "install.sh: --system install must run as root (try: sudo -A ./install.sh --system)" >&2
+        exit 1
+    fi
+else
+    # The default user-space install writes only under the invoking user's home
+    # ($HOME/.local/bin + ~/.config/systemd/user). Running it as root would
+    # install into root's home (or chown the operator's files to root) — reject
+    # rather than silently do the wrong thing. Use --system for a root install.
+    if [[ $EUID -eq 0 ]]; then
+        echo "install.sh: the default install is user-space and must NOT run as root." >&2
+        echo "  Run it as your normal user (no sudo), or pass --system for a root/system-wide install." >&2
+        exit 1
+    fi
 fi
 
 # Resolve operator's home so we can install the systemd template there.
@@ -130,6 +173,63 @@ fi
 # USER_SYSTEMD may be overridden (testing / bespoke layouts); defaults to the
 # operator's standard user-unit dir.
 USER_SYSTEMD="${USER_SYSTEMD:-$OPERATOR_HOME/.config/systemd/user}"
+
+# Mode-keyed command prefixes + ownership flags (#636). In --system mode the
+# script starts as root and drops to the operator for the non-privileged steps,
+# and installs the binary root-owned; these arrays expand to EXACTLY the historical
+# tokens, so --system behavior is byte-for-byte unchanged. In the default
+# user-space mode we already ARE the operator, so the privilege-drop is a no-op
+# (sudo -u $self would still demand sudo rights) and the chown flags are dropped
+# (a non-root user can't chown, and files it creates are already its own).
+#
+#   DROP        — drop privileges for a plain operator command (rm / make / ln / systemctl)
+#   DROP_TMUX   — same, preserving the tmux env the discover/bootstrap walkers need
+#   BIN_OWNER   — ownership flags for the installed binary
+#   OP_OWNER    — ownership flags for operator-owned files (systemd template + dirs)
+if [[ "$SYSTEM" -eq 1 ]]; then
+    DROP=(sudo -u "$OPERATOR_USER")
+    # The commas in --preserve-env=A,B,C are part of a single sudo argument, not
+    # array-element separators (SC2054 misreads them).
+    # shellcheck disable=SC2054
+    DROP_TMUX=(sudo -u "$OPERATOR_USER" --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR)
+    BIN_OWNER=(-o root -g root)
+    OP_OWNER=(-o "$OPERATOR_USER" -g "$OPERATOR_USER")
+else
+    DROP=()
+    DROP_TMUX=()
+    BIN_OWNER=()
+    OP_OWNER=()
+fi
+
+# enable_linger keeps the operator's user manager running across logout/reboot so
+# the mailman daemons survive (#636). In --system mode it is a root operation and
+# stays FATAL on failure — the deploy chain requires the operator's user manager
+# reachable. In the default user-space mode, enabling linger for your own user may
+# need polkit auth the adopter hasn't granted, and it is NOT required to try the
+# tool now (the mailman runs in the live session regardless; linger only governs
+# boot persistence). So user mode fails SOFT: try, and on denial print the
+# one-line sudo follow-up instead of aborting the whole install (Option B).
+if [[ "$SYSTEM" -eq 1 ]]; then
+    enable_linger() {
+        echo
+        echo "==> enabling user-manager linger for $OPERATOR_USER"
+        loginctl enable-linger "$OPERATOR_USER" || {
+            echo "install.sh: loginctl enable-linger failed; bootstrap requires the operator's user manager to be reachable." >&2
+            echo "  Re-run with --no-bootstrap if you want to handle this manually." >&2
+            exit 1
+        }
+    }
+else
+    enable_linger() {
+        echo
+        echo "==> enabling user-manager linger for $OPERATOR_USER (best-effort)"
+        if ! loginctl enable-linger "$OPERATOR_USER" 2>/dev/null; then
+            echo "install.sh: could not enable lingering for $OPERATOR_USER without privilege — continuing." >&2
+            echo "  The bus works now. For the mailman daemons to survive logout/reboot, run once:" >&2
+            echo "    sudo loginctl enable-linger $OPERATOR_USER" >&2
+        fi
+    }
+fi
 
 cd "$(dirname "$0")"
 
@@ -155,21 +255,30 @@ if ! command -v make >/dev/null 2>&1; then
     echo "install.sh: make not found; install.sh requires make for ldflags-stamped builds (#342)" >&2
     exit 1
 fi
-# Create bin/ owned by the operator — the build below runs as OPERATOR_USER,
-# and a root-owned bin/ left from a prior install run would block its writes.
-# `install -d` is idempotent and re-applies ownership on an existing dir,
-# fixing a stale root-owned bin/ in place.
-install -d -m 0755 -o "$OPERATOR_USER" -g "$OPERATOR_USER" bin
+# Create bin/ owned by the operator — the build below runs as the operator, and
+# a root-owned bin/ left from a prior --system install run would block its
+# writes. `install -d` is idempotent and re-applies ownership on an existing dir,
+# fixing a stale root-owned bin/ in place. (In user-space mode we are already the
+# operator: OP_OWNER is empty and the build runs directly.)
+install -d -m 0755 "${OP_OWNER[@]}" bin
 # Force a rebuild even if sources didn't change: `git describe` may now report
 # a different tag than the last build's embedded version, and make's
 # source-dependency tracking wouldn't notice. Removing the target makes the
 # pattern rule fire unconditionally.
-sudo -u "$OPERATOR_USER" rm -f "bin/$BIN_NAME"
-sudo -u "$OPERATOR_USER" make "bin/$BIN_NAME" GO="$GO"
+"${DROP[@]}" rm -f "bin/$BIN_NAME"
+"${DROP[@]}" make "bin/$BIN_NAME" GO="$GO"
 
-# 2. Install binary (root-owned, world-readable+executable).
+# 2. Install binary (root-owned under --system; user-owned in the default
+#    user-space install). World-readable+executable in both.
 echo "==> installing $PREFIX/bin/$BIN_NAME"
-install -m 0755 -o root -g root "bin/$BIN_NAME" "$PREFIX/bin/$BIN_NAME"
+# Ensure $PREFIX/bin exists. Guard on NON-existence: `install -d` re-applies
+# ownership to an existing dir, so an unconditional call would re-chown an
+# already-present dir on every run — in --system mode that drifts the existing
+# root:root /usr/local/bin (a system PATH dir) to the operator + breaks the
+# byte-identical guarantee (Surveyor #672). When the dir is missing (a fresh
+# ~/.local/bin, or a custom PREFIX), create it with the binary's ownership.
+[[ -d "$PREFIX/bin" ]] || install -d -m 0755 "${BIN_OWNER[@]}" "$PREFIX/bin"
+install -m 0755 "${BIN_OWNER[@]}" "bin/$BIN_NAME" "$PREFIX/bin/$BIN_NAME"
 
 # 2b. Deprecation-cycle binary aliases: tmux-msg-<adapter> (+ claude-msg for the
 # claude adapter) → the canonical tmux-tell-<adapter>. A relative symlink target
@@ -187,10 +296,20 @@ done
 # operator by virtue of being under their home.
 
 # 4. Install the systemd user template.
-echo "==> installing systemd user template $UNIT_NAME"
-install -d -m 0755 -o "$OPERATOR_USER" -g "$OPERATOR_USER" "$USER_SYSTEMD"
-install -m 0644 -o "$OPERATOR_USER" -g "$OPERATOR_USER" \
-    "init/$UNIT_NAME" "$USER_SYSTEMD/$UNIT_NAME"
+#
+# The shipped template hardcodes ExecStart=/usr/local/bin/$BIN_NAME (so the
+# `cp init/... ~/.config/systemd/user/` manual path documented in its header
+# works for a system install). For any other $PREFIX — in particular the
+# user-space default $HOME/.local — that absolute path is wrong and the unit
+# would fail to start (#636). Rewrite the ExecStart bindir to $PREFIX/bin at
+# install time. When PREFIX=/usr/local the sed is a no-op, so the installed
+# file is byte-identical to the historical --system install.
+echo "==> installing systemd user template $UNIT_NAME (ExecStart → $PREFIX/bin/$BIN_NAME)"
+install -d -m 0755 "${OP_OWNER[@]}" "$USER_SYSTEMD"
+UNIT_TMP=$(mktemp)
+sed "s|^\(ExecStart=\)/usr/local/bin/|\1$PREFIX/bin/|" "init/$UNIT_NAME" > "$UNIT_TMP"
+install -m 0644 "${OP_OWNER[@]}" "$UNIT_TMP" "$USER_SYSTEMD/$UNIT_NAME"
+rm -f "$UNIT_TMP"
 
 # 4b. Deprecation-cycle systemd template alias: claude-mailman@ → the new
 # template. systemd resolves a template-unit symlink, so a pre-rename
@@ -198,7 +317,7 @@ install -m 0644 -o "$OPERATOR_USER" -g "$OPERATOR_USER" \
 # template with the same instance name. Owned by the operator. Removed at v1.0 boundary per ADR-0008 §Discretion clause extension.
 if [[ -n "$LEGACY_UNIT" ]]; then
     echo "==> deprecation alias $USER_SYSTEMD/$LEGACY_UNIT → $UNIT_NAME (removed at v1.0 boundary)"
-    sudo -u "$OPERATOR_USER" ln -sfn "$UNIT_NAME" "$USER_SYSTEMD/$LEGACY_UNIT"
+    "${DROP[@]}" ln -sfn "$UNIT_NAME" "$USER_SYSTEMD/$LEGACY_UNIT"
 fi
 
 # 4c. Phase-2 rename migration (#440): if the legacy tmux-msg-<adapter>-mailman@
@@ -211,7 +330,7 @@ OPERATOR_UID=$(id -u "$OPERATOR_USER")
 LEGACY_RENAME_PREFIX="tmux-msg-${ADAPTER}-mailman@"
 LEGACY_RENAME_TEMPLATE="${LEGACY_RENAME_PREFIX}.service"
 LEGACY_RENAME_TEMPLATE_PATH="${USER_SYSTEMD}/${LEGACY_RENAME_TEMPLATE}"
-LEGACY_RENAME_ACTIVE=$(sudo -u "$OPERATOR_USER" env \
+LEGACY_RENAME_ACTIVE=$("${DROP[@]}" env \
     XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
     systemctl --user list-units --type=service --state=active --plain --no-legend \
@@ -227,27 +346,27 @@ if [[ -n "$LEGACY_RENAME_ACTIVE" || -f "$LEGACY_RENAME_TEMPLATE_PATH" ]]; then
         # Stop the legacy unit first so it releases the tmux pane + DB pollers
         # BEFORE the new mailman binds them. `|| true` keeps an already-stopped
         # unit from breaking the migration.
-        sudo -u "$OPERATOR_USER" env \
+        "${DROP[@]}" env \
             XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
             systemctl --user stop "$LEGACY_FOR_AGENT" 2>/dev/null || true
-        sudo -u "$OPERATOR_USER" env \
+        "${DROP[@]}" env \
             XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
             systemctl --user disable "$LEGACY_FOR_AGENT" 2>/dev/null || true
-        sudo -u "$OPERATOR_USER" env \
+        "${DROP[@]}" env \
             XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
             systemctl --user enable "$NEW_FOR_AGENT"
-        sudo -u "$OPERATOR_USER" env \
+        "${DROP[@]}" env \
             XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
             systemctl --user restart "$NEW_FOR_AGENT"
     done
     if [[ -f "$LEGACY_RENAME_TEMPLATE_PATH" ]]; then
         echo "   - removing legacy template $LEGACY_RENAME_TEMPLATE_PATH"
-        sudo -u "$OPERATOR_USER" rm -f "$LEGACY_RENAME_TEMPLATE_PATH"
-        sudo -u "$OPERATOR_USER" env \
+        "${DROP[@]}" rm -f "$LEGACY_RENAME_TEMPLATE_PATH"
+        "${DROP[@]}" env \
             XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
             DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
             systemctl --user daemon-reload
@@ -285,7 +404,7 @@ if [[ "$BOOTSTRAP" -eq 0 ]]; then
     # `--version` only proves file-on-disk, not running-process effectiveness).
     # --allow-stale-mailmen is the explicit manual-operator opt-out for
     # debug/transient-failure scenarios; it demotes the failure to a warning.
-    if ! sudo -u "$OPERATOR_USER" \
+    if ! "${DROP[@]}" \
         env \
             HOME="$OPERATOR_HOME" \
             XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
@@ -346,23 +465,16 @@ if [[ "$ADAPTER" == "codex" ]]; then
     # — the pre-#438 path always ran codex-install, whose step 2 flipped a
     # paste-served chamber (Lookout) back to hook-context, re-creating the
     # #443 Obs1 stale-hook duplicate-delivery.
-    echo
-    echo "==> enabling user-manager linger for $OPERATOR_USER"
-    loginctl enable-linger "$OPERATOR_USER" || {
-        echo "install.sh: loginctl enable-linger failed; bootstrap requires the operator's user manager to be reachable." >&2
-        echo "  Re-run with --no-bootstrap if you want to handle this manually." >&2
-        exit 1
-    }
+    enable_linger
 
     # Discover (populates $AGENT_NAME; a fresh agent defaults to paste-and-enter
     # per #360) + read its delivery_mode via whoami's MODE line (no jq). Runs as
     # the operator: discover needs TMUX*, whoami reads the same DB via HOME.
     echo "==> discovering codex panes + resolving delivery_mode for '$AGENT_NAME'"
-    sudo -u "$OPERATOR_USER" \
-        --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR \
+    "${DROP_TMUX[@]}" \
         env HOME="$OPERATOR_HOME" \
             "$PREFIX/bin/$BIN_NAME" discover >/dev/null
-    CODEX_MODE=$(sudo -u "$OPERATOR_USER" \
+    CODEX_MODE=$("${DROP[@]}" \
         env HOME="$OPERATOR_HOME" \
             "$PREFIX/bin/$BIN_NAME" whoami --as "$AGENT_NAME" --format=text \
         | awk -F'\t' '$1 == "MODE" { print $2 }')
@@ -378,8 +490,7 @@ if [[ "$ADAPTER" == "codex" ]]; then
         # is already hook-context so codex-install's step 2 is a no-op (no flip).
         # No mailman — hook-context delivers via the UserPromptSubmit hook.
         echo "==> '$AGENT_NAME' is hook-context → codex-install (hook config)"
-        sudo -u "$OPERATOR_USER" \
-            --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR \
+        "${DROP_TMUX[@]}" \
             env HOME="$OPERATOR_HOME" \
                 "$PREFIX/bin/$BIN_NAME" codex-install \
                     --agent="$AGENT_NAME"
@@ -393,12 +504,12 @@ if [[ "$ADAPTER" == "codex" ]]; then
         # chamber is tracked separately (#453).
         MAILMAN_UNIT="${UNIT_NAME%@.service}@${AGENT_NAME}.service"
         echo "==> '$AGENT_NAME' is paste-and-enter → enable + restart $MAILMAN_UNIT (mode preserved)"
-        sudo -u "$OPERATOR_USER" \
+        "${DROP[@]}" \
             env HOME="$OPERATOR_HOME" \
                 XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
                 DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
                 systemctl --user enable "$MAILMAN_UNIT"
-        sudo -u "$OPERATOR_USER" \
+        "${DROP[@]}" \
             env HOME="$OPERATOR_HOME" \
                 XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
                 DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
@@ -416,13 +527,7 @@ if [[ "$ADAPTER" == "codex" ]]; then
     echo
     echo "Codex bootstrap complete."
 else
-    echo
-    echo "==> enabling user-manager linger for $OPERATOR_USER"
-    loginctl enable-linger "$OPERATOR_USER" || {
-        echo "install.sh: loginctl enable-linger failed; bootstrap requires the operator's user manager to be reachable." >&2
-        echo "  Re-run with --no-bootstrap if you want to handle this manually." >&2
-        exit 1
-    }
+    enable_linger
 
     # Drop privileges to the operator + thread through the env the bootstrap
     # subcommand needs: HOME for the systemd-dir derivation and DB resolution,
@@ -434,8 +539,7 @@ else
     fi
 
     echo "==> running bootstrap (discover + mailman enable + orphan walk + refresh)"
-    sudo -u "$OPERATOR_USER" \
-        --preserve-env=TMUX,TMUX_PANE,TMUX_TMPDIR \
+    "${DROP_TMUX[@]}" \
         env \
             HOME="$OPERATOR_HOME" \
             XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \

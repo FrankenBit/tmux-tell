@@ -71,34 +71,50 @@ On a Linux host with tmux, sqlite3, and Go (≥ 1.24):
 # from inside a tmux session:
 git clone https://github.com/FrankenBit/tmux-tell && cd tmux-tell
 make build
-sudo ./install.sh        # installs the binary + the systemd user template
+./install.sh             # user-space install — no root, no sudo
 ```
 
-`install.sh` builds `bin/tmux-tell-claude`, installs it to `/usr/local/bin/tmux-tell-claude`,
-and drops the systemd user template (`tmux-tell-claude-mailman@.service`) into
-`~/.config/systemd/user/`. The DB (`messages.db`) lives under your user-home
+`install.sh` builds `bin/tmux-tell-claude`, installs it to `~/.local/bin/tmux-tell-claude`
+(owned by you), and drops the systemd user template (`tmux-tell-claude-mailman@.service`)
+into `~/.config/systemd/user/`. The DB (`messages.db`) lives under your user-home
 (`$XDG_DATA_HOME/tmux-tell` or `~/.local/share/tmux-tell/`) and is created lazily on
 first use — no install-time data dir to create or chown. Pick the adapter at install
 time — `--adapter=claude` (the default) or `--adapter=codex`; both can coexist on one
-bus. Then, **as your user (not root)**:
+bus.
+
+Make sure `~/.local/bin` is on your `PATH` (most distros add it automatically when it
+exists), then — to keep the mailman daemons running across logout/reboot:
 
 ```bash
-sudo loginctl enable-linger "$USER"   # keep the user manager running across reboots
+loginctl enable-linger "$USER"        # may prompt; one-time, governs boot-persistence
 systemctl --user daemon-reload        # so the mailman unit is visible
 ```
 
-### What runs as root, and what runs as you
+The install itself never needs root — if `enable-linger` can't be set without privilege
+on your system, the bus still works for the current session; re-run it once with `sudo`
+when you want boot-persistence (`sudo loginctl enable-linger "$USER"`).
 
-`sudo ./install.sh` asks for root, but root's reach is deliberately narrow: **as root**
-it does exactly one privileged thing — installs the binary to
-`/usr/local/bin/tmux-tell-claude`. Everything else (`go build`, the systemd template, the
-mailman daemons) runs as your user, never as root — and the DB lives under your user-home,
-created lazily by the binary with no privileged step at all. That's the whole point of
-shipping the installer as a readable shell script: you can confirm exactly which operation
-needs root before you grant it.
+### No root by default — and `--system` when you want it
 
-→ Full breakdown — the `$SUDO_USER` resolution, the `OPERATOR_USER` override, the
-no-hardcoded-fallback rule: [operator reference → Install internals](docs/reference.md#install-internals-what-runs-as-root).
+The default install touches **only your home** (`~/.local/bin` + `~/.config/systemd/user`)
+and runs entirely as you — no `sudo`, nothing root-owned. That's deliberate: you can clone
+an unfamiliar repo and `./install.sh` to see what the tool does without granting root to a
+binary you haven't audited. Reverting is a plain `rm` (see [Removal](#removal)).
+
+Pass `--system` for the historical system-wide install — binary root-owned under
+`/usr/local/bin`, on the `PATH` for every user on the host:
+
+```bash
+make build && sudo ./install.sh --system   # root-owned binary in /usr/local/bin
+```
+
+`--system` is the only mode that touches anything outside your home, and the installer is a
+readable shell script — you can confirm exactly what root does (it installs the binary to
+`/usr/local/bin`; `go build`, the systemd template, and the mailman daemons still run as
+your user) before you grant it.
+
+→ Full breakdown — the user-space vs `--system` split, the `$SUDO_USER` / `OPERATOR_USER`
+resolution, the no-hardcoded-fallback rule: [operator reference → Install internals](docs/reference.md#install-internals-what-runs-as-root).
 
 ## Quickstart
 
@@ -332,6 +348,19 @@ Operator guides live in [`docs/`](docs/), architecture decisions in [`docs/adr/`
 
 ## Removal
 
+A **user-space install** (the default) reverts with a plain `rm` — nothing is root-owned:
+
+```bash
+systemctl --user disable --now 'tmux-tell-claude-mailman@*'   # stop any running mailmen
+rm ~/.local/bin/tmux-tell-claude ~/.local/bin/tmux-msg-claude ~/.local/bin/claude-msg
+rm ~/.config/systemd/user/tmux-tell-claude-mailman@.service
+systemctl --user daemon-reload
+# the DB (message history) survives at ~/.local/share/tmux-tell/ — delete it too if you want:
+#   rm -rf ~/.local/share/tmux-tell/
+```
+
+For a **`--system` install**, `uninstall.sh` removes the root-owned artifacts:
+
 ```bash
 sudo ./uninstall.sh            # stops mailmen, removes the binary, leaves the DB
 sudo ./uninstall.sh --purge    # also wipes ~/.local/share/tmux-tell/ (interactive confirm)
@@ -341,6 +370,8 @@ sudo ./uninstall.sh --purge    # also wipes ~/.local/share/tmux-tell/ (interacti
 `/etc/tmux-tell/` (host config), the MCP entry in `~/.claude.json` (`claude mcp remove
 tmux-tell -s user`), `loginctl enable-linger`, and the user-home DB dir
 (`~/.local/share/tmux-tell/`, history, default-preserved; `--purge` wipes it).
+(`uninstall.sh` currently targets `--system` installs; mirroring the user-space default
+is tracked as [#671](https://git.frankenbit.de/frankenbit/tmux-tell/issues/671).)
 
 ## Where to go next
 

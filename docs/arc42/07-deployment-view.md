@@ -37,9 +37,15 @@ host (single UID)
 
 ## Install path — `install.sh` (with `bootstrap`) is canonical
 
-`sudo ./install.sh` builds + installs the adapter binaries and the systemd
-templates, then drops privileges and runs the **`bootstrap`** subcommand, which
-wires a fully-working bus in one invocation:
+The default `./install.sh` (no flags, since #636) is a **user-space** install —
+no root, binary under `~/.local/bin` — the adopter-friendly path. Alcatraz
+deploys with **`--system`** (binary root-owned at `/usr/local/bin`, on the system
+`PATH`), the historical behavior the chambers + deploy chain depend on; the
+description below is that `--system` path.
+
+`sudo ./install.sh --system` builds + installs the adapter binaries and the
+systemd templates, then drops privileges and runs the **`bootstrap`** subcommand,
+which wires a fully-working bus in one invocation:
 
 1. `systemctl --user daemon-reload`
 2. stale-DB detect (delegates to `db migrate` if a pre-#308 DB is found)

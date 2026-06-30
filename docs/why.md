@@ -122,7 +122,7 @@ problem tmux-tell exists to take off your hands.
 ```bash
 # from inside a tmux session:
 git clone https://github.com/FrankenBit/tmux-tell && cd tmux-tell
-make build && sudo ./install.sh          # builds + installs tmux-tell-claude and the systemd user unit
+make build && ./install.sh               # user-space install (no root); --system for /usr/local
 systemctl --user daemon-reload           # so the mailman unit is visible
 
 # register two panes (one command in each), then send across the bus

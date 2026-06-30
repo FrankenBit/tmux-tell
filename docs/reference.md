@@ -326,8 +326,9 @@ substrate changes.
 Pick the adapter at install time (both can coexist):
 
 ```bash
-sudo -A ./install.sh --adapter=claude   # default
-sudo -A ./install.sh --adapter=codex
+./install.sh --adapter=claude   # default — user-space install, no root
+./install.sh --adapter=codex
+# add --system for the root-owned /usr/local install (see "Install internals" below)
 ```
 
 Each adapter gets its own mailman unit template (`tmux-tell-<adapter>-mailman@.service`)
@@ -1885,28 +1886,38 @@ neither per-message nor per-agent. Today the only slot is
 each time it observes the operator attached at a registered chamber's
 pane (see §Operator-presence routing).
 
-## Install internals: what runs as root
+## Install internals: user-space default vs `--system`
 
-`sudo ./install.sh` asks for root, but root's reach is deliberately narrow.
-**As root** the script does exactly one privileged thing: installs the
-binary to `/usr/local/bin/tmux-tell-claude` (mode `0755`, owned `root:root`).
-**As you** — never as root — it runs `go build`, installs the systemd
-template to your `~/.config/systemd/user/`, and (after install) the mailman
-daemons run in your linger-enabled `systemctl --user` session. The DB needs no
-install-time step at all: it lives under your user-home (#308) and the binary
-creates it lazily on first open. No daemon ever runs as root; root touches
-nothing but the binary path.
+Since #636 the default `./install.sh` is a **user-space install that needs no
+root**. It writes only under your home: the binary to `~/.local/bin/tmux-tell-claude`
+(mode `0755`, owned by you), the systemd template to `~/.config/systemd/user/`,
+and the DB lives under your user-home (#308), created lazily by the binary on
+first open. `go build` and the mailman daemons run as you, exactly as before.
+Running the default install **as root is rejected** — it would install into
+root's home or chown your files to root; use `--system` if you want a root
+install. `loginctl enable-linger` is the one step that may need privilege: in
+user mode it is best-effort (the bus works for the current session regardless;
+re-run with `sudo` for boot-persistence).
 
-The operator account is resolved from `$SUDO_USER` (set by `sudo`), falling
-back to `$USER`. There is **no hardcoded fallback** — if neither resolves
-(or resolves to `root`), the installer fails loud rather than guessing an
-owner. To install for a different target user without `sudo`, set it
-explicitly: `OPERATOR_USER=alice ./install.sh`.
+`--system` reproduces the historical behavior — binary root-owned at
+`/usr/local/bin/tmux-tell-claude` (mode `0755`, `root:root`), on the system
+`PATH` for every user. It requires root. In `--system` mode root's reach is
+still deliberately narrow: **as root** the script does exactly one privileged
+thing (install the binary to `/usr/local/bin`); `go build`, the systemd
+template, and the mailman daemons all still run as the operator. The
+`PREFIX=/usr/local` default + `-o root -g root` ownership apply only in this mode.
+
+The operator account (who owns the build + template + runs the mailmen) is
+resolved from `$OPERATOR_USER`, then `$SUDO_USER` (set by `sudo` under
+`--system`), then `$USER` (the default user-space case, where you ARE the
+operator). There is **no hardcoded fallback** — if it resolves to nothing or to
+`root`, the installer fails loud rather than guessing an owner. To install for a
+different target user, set it explicitly: `OPERATOR_USER=alice ./install.sh`.
 
 That boundary is the whole point of shipping the installer as a readable
 shell script: the same "audit it in an afternoon" property the bus itself
-offers applies to the install story too — you can confirm exactly which
-two operations need root before you grant it.
+offers applies to the install story too — by default you grant **no** root at
+all, and `--system` is a single, visible, auditable opt-in.
 
 ## Versioning and the K-counter
 
