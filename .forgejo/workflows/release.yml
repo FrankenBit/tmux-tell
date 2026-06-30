@@ -40,7 +40,7 @@ on:
 
 jobs:
   release:
-    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-release.yml@v0.18.0
+    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-release.yml@v0.20.0-rc.2
     secrets: inherit
     with:
       runs_on:       go
