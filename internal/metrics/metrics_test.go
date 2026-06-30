@@ -119,6 +119,31 @@ func TestIncRateLimit_CountsByCauseAndProvider(t *testing.T) {
 	}
 }
 
+func TestIncRateLimitResume_CountsByOutcomeAndProvider(t *testing.T) {
+	m := New()
+	m.IncRateLimitResume("bob", "anthropic", "attempt")
+	m.IncRateLimitResume("bob", "anthropic", "attempt")
+	m.IncRateLimitResume("bob", "anthropic", "recovered")
+	m.IncRateLimitResume("alice", "openai", "gave_up")
+
+	if got := testutil.ToFloat64(m.rateLimitResumeTotal.WithLabelValues("attempt", "bob", "anthropic")); got != 2 {
+		t.Errorf("rate_limit_resume_total{outcome=attempt,agent=bob} = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(m.rateLimitResumeTotal.WithLabelValues("recovered", "bob", "anthropic")); got != 1 {
+		t.Errorf("rate_limit_resume_total{outcome=recovered,agent=bob} = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.rateLimitResumeTotal.WithLabelValues("gave_up", "alice", "openai")); got != 1 {
+		t.Errorf("rate_limit_resume_total{outcome=gave_up,agent=alice,provider=openai} = %v, want 1", got)
+	}
+	// Distinct outcome+agent tuples don't bleed.
+	if got := testutil.ToFloat64(m.rateLimitResumeTotal.WithLabelValues("gave_up", "bob", "anthropic")); got != 0 {
+		t.Errorf("rate_limit_resume_total{outcome=gave_up,agent=bob} = %v, want 0 (never incremented)", got)
+	}
+	// A nil *Metrics is a no-op, not a panic (mirrors the other Inc* guards).
+	var nilM *Metrics
+	nilM.IncRateLimitResume("bob", "anthropic", "attempt")
+}
+
 func TestProviderDeferInflightGauge(t *testing.T) {
 	m := New()
 	m.SetProviderDeferInflight("anthropic", 2)
