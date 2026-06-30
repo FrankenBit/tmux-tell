@@ -522,6 +522,27 @@ an unset provider falls to the tightest `unknown` pool (fail-safe). The internal
 synchronous and bounded (a pathological fan-out caps its total stagger); single-recipient
 and below-threshold sends are untouched (zero added latency).
 
+**Observability — `tmux_tell_rate_limit_total` + structured events (#613).** Rate-limit
+detection is exposed for monitoring so an investigator can answer "external provider pressure
+vs our own usage" without a manual status-page check (the 2026-06-23 Anthropic-incident gap that
+motivated this). Three live **gauges** track the *current* state, labeled by `agent` and
+`provider`: `tmux_tell_chamber_rate_limited_seconds` (age of a transient throttle),
+`tmux_tell_chamber_rate_limit_retry_after_seconds` (live seconds until the next retry), and
+`tmux_tell_chamber_usage_limited_seconds` (age of a hard-stop park). On top of those, a
+cumulative **counter** `tmux_tell_rate_limit_total{cause,agent,provider}` gives `rate()` a series
+to differentiate — it increments **once per episode** at the first-detection transition (not per
+poll, so a long park is one increment, not thousands). The `cause` label is derived from the
+detected **state**, not an HTTP response: `overloaded` ← `StateRateLimited` (#504, the transient
+throttle) and `quota_exceeded` ← `StateUsageLimited` (#540, the park-until-reset hard-stop). Each
+episode-start also emits a structured `rate_limit_event` log line (scraped into Loki) with
+`agent`, `provider`, `cause`, `retry_after_seconds` + `retry_after_source` (`banner` when the
+regex exposed a parseable hint, else `backoff` for the exponential fallback — disclosing which so
+a provider-supplied window reads distinctly from our local guess), and `banner_excerpt` (the
+matched pane text). **Layer caveat:** this is **pane-observation**, not HTTP instrumentation —
+tmux-tell never sees a `429` or a response body; it matches the configured regex against the
+rendered TUI banner. So `banner_excerpt` is the captured banner line, *not* an API payload, and
+there is no status-code field. The counter is purely additive; the existing gauges are unaffected.
+
 This is what unblocked `PasteCapable = true` (#360). The historical blocker was **verify-token
 robustness**, not pane-reading: both adapters collapse a pasted message to a `[Pasted …]`
 placeholder (Codex by size ~1KB, Claude by line-count), hiding the verify token until the

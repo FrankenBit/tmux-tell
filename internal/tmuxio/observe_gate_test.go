@@ -1016,6 +1016,49 @@ func TestObserveGate_UsageLimited_ReturnsErrUsageLimited(t *testing.T) {
 	if outcome.Iterations != 1 {
 		t.Fatalf("Iterations = %d, want 1", outcome.Iterations)
 	}
+	// #613: the matched banner threads through to GateOutcome.Banner so the
+	// caller can surface it as the structured Loki event's banner_excerpt.
+	if !strings.Contains(outcome.Banner, "usage limit") {
+		t.Errorf("Banner = %q, want the matched usage-limit banner text (#613)", outcome.Banner)
+	}
+}
+
+// TestObserveGate_RateLimited_ThreadsBanner pins #613: on the rate-limit path
+// the gate surfaces the matched pane banner (Evidence.Marker) as
+// GateOutcome.Banner — the substrate-honest raw signal the caller logs as the
+// structured rate-limit event's banner_excerpt — alongside the RetryAfter hint
+// parsed from the regex capture.
+func TestObserveGate_RateLimited_ThreadsBanner(t *testing.T) {
+	fastObserveDelta(t)
+	setActivePaneProfileForTest(t, PaneProfile{
+		PromptSentinel:   PromptSentinel,
+		RateLimitPattern: `Rate limited.*?retry after (?P<retry_seconds>\d+ms)`,
+	})
+	pane := "history\nRate limited; retry after 400ms\n❯ \n"
+	runner := newObserveGateRunner([]observeStep{
+		{paneA: pane, paneB: pane, cursorX: 2, cursorY: 2, inputContent: ""},
+	})
+	prev := SetTmuxRunner(runner.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	outcome, err := ObserveGate(context.Background(), "%5", ObserveGateOpts{
+		PollIntervalMin:     time.Microsecond,
+		PollIntervalMax:     time.Microsecond,
+		InputStaleThreshold: time.Minute,
+		MaxWait:             time.Second,
+	})
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("err = %v, want ErrRateLimited", err)
+	}
+	if outcome.State != StateRateLimited {
+		t.Fatalf("State = %v, want StateRateLimited", outcome.State)
+	}
+	if !strings.Contains(outcome.Banner, "Rate limited") {
+		t.Errorf("Banner = %q, want the matched rate-limit banner text (#613)", outcome.Banner)
+	}
+	if outcome.RetryAfter != 400*time.Millisecond {
+		t.Errorf("RetryAfter = %v, want 400ms parsed from the regex capture", outcome.RetryAfter)
+	}
 }
 
 // TestObserveGate_WorkingDeliverImmediately_Off_DefaultBackoff pins

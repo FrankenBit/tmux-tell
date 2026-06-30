@@ -97,6 +97,28 @@ func TestQueueDepthAndLoopAndAborts(t *testing.T) {
 	}
 }
 
+func TestIncRateLimit_CountsByCauseAndProvider(t *testing.T) {
+	m := New()
+	m.IncRateLimit("bob", "anthropic", "overloaded")
+	m.IncRateLimit("bob", "anthropic", "overloaded")
+	m.IncRateLimit("bob", "anthropic", "quota_exceeded")
+	m.IncRateLimit("alice", "openai", "overloaded")
+
+	if got := testutil.ToFloat64(m.rateLimitTotal.WithLabelValues("overloaded", "bob", "anthropic")); got != 2 {
+		t.Errorf("rate_limit_total{cause=overloaded,agent=bob} = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(m.rateLimitTotal.WithLabelValues("quota_exceeded", "bob", "anthropic")); got != 1 {
+		t.Errorf("rate_limit_total{cause=quota_exceeded,agent=bob} = %v, want 1", got)
+	}
+	// Distinct cause+agent+provider tuples don't bleed into one another.
+	if got := testutil.ToFloat64(m.rateLimitTotal.WithLabelValues("overloaded", "alice", "openai")); got != 1 {
+		t.Errorf("rate_limit_total{cause=overloaded,agent=alice,provider=openai} = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(m.rateLimitTotal.WithLabelValues("quota_exceeded", "alice", "openai")); got != 0 {
+		t.Errorf("rate_limit_total{cause=quota_exceeded,agent=alice} = %v, want 0 (never incremented)", got)
+	}
+}
+
 func TestProviderDeferInflightGauge(t *testing.T) {
 	m := New()
 	m.SetProviderDeferInflight("anthropic", 2)
@@ -205,6 +227,7 @@ func TestNilMetrics_AllNoOp(t *testing.T) {
 	m.SetQueueDepth("b", 3)
 	m.IncLoopIteration("b")
 	m.IncPasteUnsafeAbort("b", "unknown")
+	m.IncRateLimit("b", "anthropic", "overloaded")
 	m.SetMailmanStuck("b", "pane-not-found", true)
 	m.IncProviderDefer("anthropic")
 	m.SetProviderDeferInflight("anthropic", 1)

@@ -78,6 +78,7 @@ type Metrics struct {
 	chamberRateLimited         *prometheus.GaugeVec
 	chamberRateLimitRetryAfter *prometheus.GaugeVec
 	chamberUsageLimited        *prometheus.GaugeVec
+	rateLimitTotal             *prometheus.CounterVec
 	copymodeDefer              *prometheus.CounterVec
 	copymodeDeferWait          *prometheus.HistogramVec
 }
@@ -150,6 +151,10 @@ func New() *Metrics {
 			Name: "tmux_tell_chamber_usage_limited_seconds",
 			Help: "Live age of a chamber's usage-limited state, by agent and provider. Present-at-zero when usage-limit detection is configured; zero means not currently usage-limited.",
 		}, []string{"agent", "provider"}),
+		rateLimitTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tmux_tell_rate_limit_total",
+			Help: "Total rate-limit / usage-limit episodes detected from the pane banner, by cause (overloaded ← StateRateLimited #504 transient throttle; quota_exceeded ← StateUsageLimited #540 hard-stop park), agent, and provider. One increment per episode-start (first-detection transition), not per poll. Cumulative complement to the live chamber_rate_limited / chamber_usage_limited gauges — gives rate() a counter to differentiate over.",
+		}, []string{"cause", "agent", "provider"}),
 		copymodeDefer: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tmux_tell_copymode_defer_total",
 			Help: "Total delivery cycles deferred because the recipient pane was scrolled up in tmux copy-mode (#526), by agent. One increment per gate cycle that observed copy-mode (delivered-on-exit or reverted-at-MaxWait).",
@@ -175,6 +180,7 @@ func New() *Metrics {
 		m.chamberRateLimited,
 		m.chamberRateLimitRetryAfter,
 		m.chamberUsageLimited,
+		m.rateLimitTotal,
 		m.copymodeDefer,
 		m.copymodeDeferWait,
 	)
@@ -305,6 +311,19 @@ func (m *Metrics) SetChamberUsageLimited(agent, provider string, seconds float64
 		return
 	}
 	m.chamberUsageLimited.WithLabelValues(agent, provider).Set(seconds)
+}
+
+// IncRateLimit bumps the cumulative rate-limit-episode counter for the agent
+// (#613). cause is the detected state: "overloaded" (StateRateLimited #504, a
+// transient throttle) or "quota_exceeded" (StateUsageLimited #540, a hard-stop
+// park). Called once per episode-start (first-detection transition), so each
+// increment is one distinct rate-limit episode, not one poll. Pairs with the
+// structured rate_limit_event Loki log line emitted at the same transition.
+func (m *Metrics) IncRateLimit(agent, provider, cause string) {
+	if m == nil {
+		return
+	}
+	m.rateLimitTotal.WithLabelValues(cause, agent, provider).Inc()
 }
 
 // ObserveProviderDeferWait records how long a cap-deferred message waited

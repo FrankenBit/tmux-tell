@@ -1535,6 +1535,14 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					if usageLimitedMsgID != msg.PublicID {
 						usageLimitedMsgID = msg.PublicID
 						usageLimitedSince = time.Now()
+						// #613: count + structurally log this usage-limit
+						// episode once at the first-detection transition (the
+						// guard fires once per episode; subsequent same-msg
+						// re-detections skip it). quota_exceeded is a park-until-
+						// reset hard-stop, so there is no retry hint.
+						m.IncRateLimit(opts.Agent, active.Provider, "quota_exceeded")
+						logger.Printf("rate_limit_event agent=%s provider=%s cause=quota_exceeded retry_after_seconds=0 retry_after_source=none banner_excerpt=%q (#613)",
+							opts.Agent, active.Provider, outcome.Banner)
 					}
 					logger.Printf("WARN gate_usagelimited id=%s pane=%s iter=%d — reverting to queued and parking until reset",
 						msg.PublicID, paneForDelivery, outcome.Iterations)
@@ -1571,7 +1579,8 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
 						logger.Printf("WARN gate_ratelimited_recover_failed id=%s err=%v", msg.PublicID, rerr)
 					}
-					if rateLimitedMsgID != msg.PublicID {
+					rateLimitFirstDetection := rateLimitedMsgID != msg.PublicID
+					if rateLimitFirstDetection {
 						rateLimitedMsgID = msg.PublicID
 						rateLimitedSince = time.Now()
 						rateLimitedAttempts = 0
@@ -1594,6 +1603,25 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 						active.Provider, providerCapForWake,
 						opts.ProviderCapTTL, opts.ProviderCapRecheckInterval)
 					rateLimitedRetryAt = time.Now().Add(backoff)
+					if rateLimitFirstDetection {
+						// #613: count + structurally log this rate-limit episode
+						// once at the first-detection transition. Emitted here —
+						// after the wake delay is computed — so retry_after
+						// reflects the actual signal: the banner-parsed hint when
+						// the regex exposed one (source=banner), else the computed
+						// exponential backoff (source=backoff). Disclosing the
+						// source lets an investigator tell an Anthropic-supplied
+						// retry window from our local fallback.
+						retryAfterSeconds := backoff.Seconds()
+						retryAfterSource := "backoff"
+						if outcome.RetryAfter > 0 {
+							retryAfterSeconds = outcome.RetryAfter.Seconds()
+							retryAfterSource = "banner"
+						}
+						m.IncRateLimit(opts.Agent, active.Provider, "overloaded")
+						logger.Printf("rate_limit_event agent=%s provider=%s cause=overloaded retry_after_seconds=%.0f retry_after_source=%s banner_excerpt=%q (#613)",
+							opts.Agent, active.Provider, retryAfterSeconds, retryAfterSource, outcome.Banner)
+					}
 					logger.Printf("WARN gate_ratelimited id=%s pane=%s iter=%d retry_after=%s — reverting to queued for retry",
 						msg.PublicID, paneForDelivery, outcome.Iterations, backoff)
 					if m != nil {

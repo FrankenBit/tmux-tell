@@ -61,6 +61,14 @@ func TestServe_UsageLimitedDefersAndReportsMetrics(t *testing.T) {
 		t.Fatalf("usage-limited age gauge = %v, want > 0", got)
 	}
 
+	// #613: the cumulative counter records this episode under
+	// cause=quota_exceeded (StateUsageLimited — the park-until-reset hard-stop,
+	// distinct from the transient overloaded throttle).
+	counterLabels := map[string]string{"cause": "quota_exceeded", "agent": "bob", "provider": "anthropic"}
+	if got := gatherCounter(t, m, "tmux_tell_rate_limit_total", counterLabels); got != 1 {
+		t.Fatalf("rate_limit_total{cause=quota_exceeded} = %v, want 1", got)
+	}
+
 	delivered, err := s.ListMessages(ctx, store.ListFilter{ToAgent: "bob", State: store.StateDelivered, Limit: 10})
 	if err != nil {
 		t.Fatalf("list delivered: %v", err)

@@ -134,6 +134,13 @@ type GateOutcome struct {
 	// Zero means the banner did not expose a parseable retry_seconds capture;
 	// the caller falls back to exponential backoff.
 	RetryAfter time.Duration
+	// Banner is the matched pane text that triggered the rate-limit or
+	// usage-limit classification (Evidence.Marker) — the substrate-honest
+	// raw signal (a captured TUI banner, NOT an HTTP 429 body). Populated
+	// only on the StateRateLimited / StateUsageLimited return paths; empty
+	// otherwise. The caller surfaces it as the banner_excerpt field of the
+	// #613 structured rate-limit Loki event for cause-classification debugging.
+	Banner string
 }
 
 // ErrMaxWaitExceeded is returned when ObserveGate's safety cap fires
@@ -395,12 +402,14 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 				State:      state,
 				Iterations: iterations,
 				RetryAfter: ev.RetryAfter,
+				Banner:     ev.Marker,
 			}, ErrRateLimited
 		case StateUsageLimited:
 			return GateOutcome{
 				Reason:     "usage-limited: " + ev.Reason,
 				State:      state,
 				Iterations: iterations,
+				Banner:     ev.Marker,
 			}, ErrUsageLimited
 		case StateInCopyMode:
 			// #526: operator scrolled the pane up into copy-mode. Safer-
