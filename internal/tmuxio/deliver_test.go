@@ -75,6 +75,9 @@ func TestDeliver_HappyPath_PastesAndVerifies(t *testing.T) {
 		Pane:        "%3",
 		Body:        "rendered body with id 7f3a marker",
 		VerifyToken: "id 7f3a",
+		// #616 pre-paste race-check off: this static-capture fake exercises the
+		// paste→verify sequence in isolation, not the pre-paste operator-draft check.
+		PrePasteRaceCheckDisabled: true,
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -212,6 +215,7 @@ func TestDeliver_VerifyRetriesOnMiss(t *testing.T) {
 	})
 	err := Deliver(context.Background(), DeliverParams{
 		Pane: "%3", Body: "x", VerifyToken: "id 7f3a",
+		PrePasteRaceCheckDisabled: true, // #616: keep the verify-loop capture count pure
 	})
 	if err != nil {
 		t.Fatalf("err: %v", err)
@@ -272,6 +276,166 @@ func TestDeliver_DoesNotAcceptClearedInputDuringCompaction(t *testing.T) {
 	})
 	if !errors.Is(err, ErrUnverifiedDelivery) {
 		t.Errorf("err = %v, want ErrUnverifiedDelivery (a cleared input concurrent with a visible /compact must not be accepted)", err)
+	}
+}
+
+// cmdRan reports whether any recorded tmuxRun call had args[0] == name.
+func cmdRan(calls *[]recordedCall, name string) bool {
+	for _, c := range *calls {
+		if len(c.args) > 0 && c.args[0] == name {
+			return true
+		}
+	}
+	return false
+}
+
+// TestDeliver_PrePasteRace_OperatorContentAbortsBeforePaste is the #616 load-
+// bearing invariant + mutation anchor: when the operator has typed into the
+// input row (cursor past the prompt sentinel) at the tightest pre-paste moment,
+// Deliver returns ErrInputRaced and NEVER pastes — no load-buffer, no paste-
+// buffer, no Enter. This is the residual TOCTOU the mailman's pre-paste probe
+// can't catch (a keystroke landing after the probe passes); pasting here would
+// prepend the message to the operator's draft, and the input-cleared verify
+// couldn't tell the corrupted submit from a clean one.
+func TestDeliver_PrePasteRace_OperatorContentAbortsBeforePaste(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			return []byte("an earlier turn\n" + PromptSentinel + "operator half-typed draft"), nil
+		case "display-message":
+			return []byte("22/1"), nil // cursor past the sentinel col (2) → operator mid-typing
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "the bus message", VerifyToken: "id 7f3a",
+	})
+	if !errors.Is(err, ErrInputRaced) {
+		t.Fatalf("err = %v, want ErrInputRaced (operator content in input at pre-paste)", err)
+	}
+	// The whole point: we did NOT paste onto the operator's draft.
+	for _, cmd := range []string{"load-buffer", "paste-buffer", "send-keys"} {
+		if cmdRan(calls, cmd) {
+			t.Errorf("%s ran, but a raced input must abort BEFORE any paste/Enter", cmd)
+		}
+	}
+}
+
+// TestDeliver_PrePasteRace_EmptyInputProceeds is the negative control: an empty
+// input row (cursor AT the sentinel) is not a race — Deliver pastes and verifies
+// normally. Without this, a too-eager pre-paste check would block every delivery.
+func TestDeliver_PrePasteRace_EmptyInputProceeds(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			return []byte("an earlier turn\n" + PromptSentinel), nil // empty input row
+		case "display-message":
+			return []byte("2/1"), nil // cursor at the sentinel col → empty
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "the bus message", VerifyToken: "id 7f3a",
+	})
+	if err != nil {
+		t.Fatalf("empty input must not race; got %v", err)
+	}
+	if !cmdRan(calls, "load-buffer") || !cmdRan(calls, "send-keys") {
+		t.Errorf("clean delivery must paste + Enter; calls=%v", *calls)
+	}
+}
+
+// TestDeliver_PrePasteRace_CodexGhostTextSafe pins AC#5 (cross-CLI): codex paints
+// dim placeholder ghost-text into an EMPTY composer. A plain-text input scan would
+// misread it as operator content and false-positive every codex delivery as raced;
+// the cursor-anchored check does not — the cursor stays at the sentinel for ghost-
+// text and only moves past it for real operator typing. Both arms exercised.
+func TestDeliver_PrePasteRace_CodexGhostTextSafe(t *testing.T) {
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	t.Run("ghost-text (cursor at sentinel) proceeds", func(t *testing.T) {
+		shortRetries(t)
+		calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+			switch args[0] {
+			case "capture-pane":
+				// Empty composer with dim placeholder ghost-text after the sentinel.
+				return []byte("a prior turn\n" + CodexPromptSentinel + "Improve documentation in @file"), nil
+			case "display-message":
+				return []byte("2/1"), nil // cursor at sentinel col → empty despite ghost-text
+			}
+			return nil, nil
+		})
+		err := Deliver(context.Background(), DeliverParams{
+			Pane: "%9", Body: "the bus message", VerifyToken: "id 7f3a",
+		})
+		if errors.Is(err, ErrInputRaced) {
+			t.Fatalf("ghost-text must NOT be read as operator content (AC#5); got ErrInputRaced")
+		}
+		if !cmdRan(calls, "load-buffer") {
+			t.Errorf("ghost-text delivery must proceed to paste; calls=%v", *calls)
+		}
+	})
+
+	t.Run("operator typing (cursor past sentinel) races", func(t *testing.T) {
+		shortRetries(t)
+		calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+			switch args[0] {
+			case "capture-pane":
+				return []byte("a prior turn\n" + CodexPromptSentinel + "operator typed this"), nil
+			case "display-message":
+				return []byte("14/1"), nil // cursor past sentinel → real operator content
+			}
+			return nil, nil
+		})
+		err := Deliver(context.Background(), DeliverParams{
+			Pane: "%9", Body: "the bus message", VerifyToken: "id 7f3a",
+		})
+		if !errors.Is(err, ErrInputRaced) {
+			t.Fatalf("codex operator content must race; got %v", err)
+		}
+		if cmdRan(calls, "load-buffer") {
+			t.Errorf("a raced codex input must abort before paste; calls=%v", *calls)
+		}
+	})
+}
+
+// TestDeliver_PrePasteRace_DegradesOpenWhenCursorUnanchored pins the best-effort
+// posture: when the cursor can't anchor the input row (query failed / no sentinel),
+// the pre-paste check degrades OPEN — it pastes anyway rather than blocking, the
+// same fallback the verify uses. The check tightens the window; it must not become
+// a new way to wedge delivery when the cursor is unreadable.
+func TestDeliver_PrePasteRace_DegradesOpenWhenCursorUnanchored(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			return []byte("output with id 7f3a visible"), nil
+		case "display-message":
+			return []byte("not-a-cursor"), nil // unparseable → cursor query fails
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "the bus message", VerifyToken: "id 7f3a",
+	})
+	if errors.Is(err, ErrInputRaced) {
+		t.Fatalf("cursor-unanchored must degrade open, not race; got ErrInputRaced")
+	}
+	if !cmdRan(calls, "load-buffer") {
+		t.Errorf("degrade-open must still paste; calls=%v", *calls)
 	}
 }
 
@@ -442,6 +606,7 @@ func TestDeliver_InputEmptied_RejectsPasteStillInInput(t *testing.T) {
 	})
 	err := Deliver(context.Background(), DeliverParams{
 		Pane: "%3", Body: "x", VerifyToken: "id 7f3a",
+		PrePasteRaceCheckDisabled: true, // #616: static post-paste capture; not testing the pre-paste check
 	})
 	if !errors.Is(err, ErrUnverifiedDelivery) {
 		t.Fatalf("paste still in input row must read as unverified; got %v", err)
@@ -603,6 +768,7 @@ func TestDeliver_Claude_NoResubmit(t *testing.T) {
 	})
 	err := Deliver(context.Background(), DeliverParams{
 		Pane: "%3", Body: "x", VerifyToken: "never-appears",
+		PrePasteRaceCheckDisabled: true, // #616: static post-paste capture; not testing the pre-paste check
 	})
 	if !errors.Is(err, ErrUnverifiedDelivery) {
 		t.Fatalf("want ErrUnverifiedDelivery, got %v", err)

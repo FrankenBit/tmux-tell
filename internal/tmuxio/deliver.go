@@ -57,6 +57,15 @@ type DeliverParams struct {
 	// hard capture-pane/context error mid-loop (those are not a
 	// verify-budget outcome — they abort the delivery).
 	OnVerify func(elapsed time.Duration, verified bool)
+	// PrePasteRaceCheckDisabled turns off the #616 tightest-window pre-paste
+	// operator-draft re-check (the cursor-anchored input-row check immediately
+	// before the paste that returns ErrInputRaced when the operator has typed
+	// into the input in the probe→paste TOCTOU window). Default false: the
+	// check is ON for every real delivery. Set true in unit tests that feed a
+	// static post-paste capture to exercise the verify loop in isolation — that
+	// idiom would otherwise read the pre-paste capture as operator content.
+	// Mirrors serve.go's PrePasteSafetyDisabled (safety on by default).
+	PrePasteRaceCheckDisabled bool
 }
 
 // SetRetrySchedule replaces the package-level verify-retry schedule and
@@ -171,6 +180,20 @@ func DeriveRetrySchedule(budget time.Duration) []time.Duration {
 // operator will see the text and submit it manually.
 var ErrUnverifiedDelivery = errors.New("tmuxio: delivery unverified")
 
+// ErrInputRaced is returned by Deliver when, in the final cursor-anchored
+// check immediately before pasting, the recipient's input row holds operator-
+// typed content (the cursor sits past the prompt sentinel). The mailman's pre-
+// paste AgentState probe already aborts when content is present AT PROBE TIME
+// (cursor-past-sentinel → StateAwaitingOperator → paste-unsafe); this sentinel
+// covers the residual TOCTOU window where a keystroke lands AFTER that probe
+// passes but BEFORE this paste fires. Pasting then would prepend the message to
+// the operator's draft (paste-buffer inserts at the cursor), and the post-Enter
+// input-cleared verify cannot tell the corrupted submit from a clean one (both
+// leave the input empty). Deliver does NOT paste in this case; the caller
+// reverts the message to queued and retries on a later cycle, once the input is
+// clear — the operator's draft is left untouched (#616).
+var ErrInputRaced = errors.New("tmuxio: operator input raced the paste")
+
 // Deliver pastes Body into the given tmux pane and presses Enter. It uses
 // a unique named buffer per call so concurrent invocations from multiple
 // mailmen can never race the default buffer.
@@ -208,6 +231,31 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 	body := p.Body
 	if activeProfile.PasteCollapseMarker != "" {
 		body = normalizeCollapsePaste(body)
+	}
+	// #616: tightest-window pre-paste operator-draft re-check. paste-buffer
+	// inserts at the cursor, so any operator content in the input row now would
+	// be prepended to the message; and the post-Enter verify keys on the input
+	// CLEARING, which can't distinguish a prepended submit from a clean one.
+	// The mailman's pre-paste probe already caught content present at probe
+	// time; this closes the residual TOCTOU window between that probe and this
+	// paste by re-checking as late as possible, cursor-anchored (ghost-text-
+	// safe: codex paints dim placeholder text the cursor ignores — a plain-text
+	// scan would false-positive on it, so we MUST anchor on the cursor, the same
+	// #336 inputRowCleared primitive the verify uses). Gated on VerifyToken,
+	// which every real delivery sets (control commands take the SendKeys path);
+	// a token-less call skips the check, matching the verify-work gate below.
+	// Degrades open when the cursor can't anchor the input row (query failed /
+	// no sentinel) — paste anyway, the same best-effort posture as the verify's
+	// cursor-less fallback. A stuck codex `[Pasted Content]` collapse marker
+	// parks the cursor on an empty sub-line so it reads cleared here and is left
+	// to the #401 resubmit machinery — out of scope for #616 (operator drafts).
+	if p.VerifyToken != "" && !p.PrePasteRaceCheckDisabled {
+		if pre, perr := tmuxRun(ctx, nil, "capture-pane", "-p", "-t", p.Pane); perr == nil {
+			cx, cy, cerr := agentCursor(ctx, p.Pane)
+			if cleared, anchored := inputRowCleared(string(pre), cx, cy, cerr == nil); anchored && !cleared {
+				return ErrInputRaced
+			}
+		}
 	}
 	if err := pasteChunk(ctx, p.Pane, body); err != nil {
 		return err

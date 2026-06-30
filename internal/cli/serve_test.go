@@ -521,6 +521,72 @@ func TestServe_AutoHealOnPaneDrift(t *testing.T) {
 	}
 }
 
+// TestServe_InputRaced_RevertsToQueued pins the #616 serve-loop wiring: when
+// Deliver's tightest-window pre-paste check finds operator content in the input
+// row and returns ErrInputRaced, the mailman must NOT mark the message delivered
+// or failed — it reverts to queued (RecoverDelivering) and retries on a later
+// cycle, leaving the operator's draft untouched and unpasted. fastOpts disables
+// the serve-level pre-paste probe, so the ONLY thing that can abort here is the
+// Deliver-level race check — isolating the sentinel→revert mapping. (The tmuxio
+// test pins the abort-before-paste; this pins what serve does with the sentinel.)
+func TestServe_InputRaced_RevertsToQueued(t *testing.T) {
+	prevProfile := tmuxio.ActivePaneProfile()
+	tmuxio.SetActivePaneProfile(tmuxio.ClaudePaneProfile())
+	t.Cleanup(func() { tmuxio.SetActivePaneProfile(prevProfile) })
+
+	var pastes atomic.Int64
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			return []byte("a prior turn\n" + tmuxio.PromptSentinel + "operator mid-typing"), nil
+		case "display-message":
+			return []byte("18/1"), nil // cursor past the sentinel col → operator content
+		case "paste-buffer":
+			pastes.Add(1)
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "engineer", "%3")
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "engineer", Body: "do not prepend me",
+	})
+
+	opts := fastOpts("engineer")
+	stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(logbuf.String(), "input_raced") {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	if !strings.Contains(logbuf.String(), "input_raced") {
+		t.Fatalf("expected input_raced log line; got:\n%s", logbuf.String())
+	}
+	// Never pasted onto the operator's draft.
+	if n := pastes.Load(); n != 0 {
+		t.Errorf("paste-buffer ran %d times; a raced input must abort before any paste", n)
+	}
+	// Not terminally delivered or failed — reverted to queued for retry.
+	delivered, _ := s.ListMessages(ctx, store.ListFilter{ToAgent: "engineer", State: store.StateDelivered, Limit: 10})
+	if len(delivered) != 0 {
+		t.Errorf("delivered = %d, want 0 (a raced input must not mark delivered)", len(delivered))
+	}
+	failed, _ := s.ListMessages(ctx, store.ListFilter{ToAgent: "engineer", State: store.StateFailed, Limit: 10})
+	if len(failed) != 0 {
+		t.Errorf("failed = %d, want 0 (a raced input must not mark failed)", len(failed))
+	}
+}
+
 func TestServe_AutoHealNoMatchStillFails(t *testing.T) {
 	// Deliver fails with can't-find-pane; LookupByName returns no match;
 	// message ends in 'failed'.

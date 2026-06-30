@@ -1926,6 +1926,23 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if sec, ok := deliveryLatencySeconds(msg.CreatedAt); ok {
 				m.ObserveDeliveryLatency(opts.Agent, sec)
 			}
+		case errors.Is(derr, tmuxio.ErrInputRaced):
+			// #616: the final pre-paste cursor-anchored check found operator-
+			// typed content in the input row — a keystroke that landed in the
+			// residual TOCTOU window after the pre-paste safety probe passed.
+			// Deliver did NOT paste (no prepend, no corruption). Revert to
+			// queued and retry on a later cycle, once the input is clear — the
+			// same revert-and-wait posture as pre_paste_safety_abort above for
+			// content present AT probe time. The operator's draft is left
+			// untouched (lossless); the observe-gate's stranded-draft path
+			// archives it if it goes stale. delivered stays false, so no post-
+			// deliver cooldown fires (nothing landed in the recipient's context).
+			logger.Printf("input_raced id=%s pane=%s — operator typed in the probe→paste window; not pasted, reverting to queued for retry (#616)",
+				msg.PublicID, paneForDelivery)
+			m.IncPasteUnsafeAbort(opts.Agent, "input_raced")
+			if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
+				logger.Printf("WARN input_raced_recover_failed id=%s err=%v", msg.PublicID, rerr)
+			}
 		default:
 			logger.Printf("deliver_failed id=%s err=%v", msg.PublicID, derr)
 			if err := s.MarkFailed(opCtx, msg.PublicID, derr.Error()); err != nil {
