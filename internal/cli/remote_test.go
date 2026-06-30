@@ -73,6 +73,46 @@ func TestResolveRemoteIdentity_FallsBackToSessionName(t *testing.T) {
 	}
 }
 
+func TestValidateRemoteIdentity(t *testing.T) {
+	valid := []string{"Admin", "bosun", "caymans-admin", "agent_1", "a.b.c", "X"}
+	for _, v := range valid {
+		if err := validateRemoteIdentity(v); err != nil {
+			t.Errorf("validateRemoteIdentity(%q) = %v, want nil", v, err)
+		}
+	}
+	// The injection / truncation vectors that cross the ssh remote shell.
+	invalid := []string{
+		"",                    // empty
+		"Pilot tmux-tell#286", // whitespace → silent truncation at the space (#286 made this live)
+		"a b",                 // any space
+		"a\tb",                // tab
+		"a;rm -rf /",          // command separator
+		"a$(whoami)",          // command substitution
+		"a`id`",               // backtick substitution
+		"a|b",                 // pipe
+		"a&b",                 // background
+		"a>b",                 // redirect
+		"$HOME",               // var expansion (also: starts non-alnum)
+		"-rf",                 // leading hyphen → reads as a flag on the receiver
+		"#abc",                // leading # → shell comment
+		"/leading",            // leading slash
+	}
+	for _, v := range invalid {
+		if err := validateRemoteIdentity(v); err == nil {
+			t.Errorf("validateRemoteIdentity(%q) = nil, want rejection", v)
+		}
+	}
+}
+
+func TestResolveRemoteIdentity_RejectsUnsafe(t *testing.T) {
+	// A multi-word session name (real since #286) must fail loud at resolution,
+	// not silently truncate when forwarded.
+	t.Setenv("TMUX_AGENT_NAME", "Pilot tmux-tell#286")
+	if _, err := resolveRemoteIdentity(context.Background()); err == nil {
+		t.Fatal("resolveRemoteIdentity: want rejection of whitespace identity, got nil")
+	}
+}
+
 func TestResolveRemoteIdentity_FailsLoudWhenUnresolvable(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "")
 	t.Setenv("CLAUDE_AGENT_NAME", "")

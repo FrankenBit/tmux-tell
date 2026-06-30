@@ -9,11 +9,41 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/mcp"
 )
+
+// shellSafeIdentityRe matches a single shell-safe token: alphanumeric start,
+// then alphanumerics / dot / underscore / hyphen. Deliberately STRICTER than
+// control.ValidateForTask (#668), which permits spaces because its label is
+// pasted into a pane as one unit. A remote identity instead crosses
+// `ssh host cmd args…`, where the originating host's login shell re-splits and
+// interprets the args — so a space would truncate the identity (silent
+// mis-attribution) and a shell metacharacter would reach that shell.
+var shellSafeIdentityRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validateRemoteIdentity rejects an identity that isn't a single shell-safe
+// token. cfg.Identity is the one caller-influenced argv element that crosses
+// the originating host's login shell (the tool name is a registered constant
+// and the JSON body rides stdin, which ssh does not re-parse), so validating it
+// here is the single chokepoint that keeps the forward shell-safe.
+func validateRemoteIdentity(name string) error {
+	if name == "" {
+		return errors.New("remote MCP mode: resolved bus identity is empty")
+	}
+	if !shellSafeIdentityRe.MatchString(name) {
+		return fmt.Errorf(
+			"remote MCP mode: bus identity %q is not a single shell-safe token "+
+				"([A-Za-z0-9._-], starting alphanumeric) — it crosses to the originating host's "+
+				"login shell via ssh, so whitespace would truncate it (silent mis-attribution) and "+
+				"shell metacharacters would be interpreted; set $TMUX_AGENT_NAME to a single-token name",
+			name)
+	}
+	return nil
+}
 
 // Remote MCP mode (#310). When $TMUX_TELL_REMOTE_HOST is set, the MCP server
 // runs on a remote host reached over a reverse-SSH tunnel and forwards every
@@ -86,19 +116,28 @@ var remoteSessionName = func(ctx context.Context) (string, error) {
 // session name. Fails loud when neither resolves: a remote session with no
 // resolvable identity must not silently forward as nobody.
 func resolveRemoteIdentity(ctx context.Context) (string, error) {
-	if v := strings.TrimSpace(os.Getenv("TMUX_AGENT_NAME")); v != "" {
-		return v, nil
+	name := strings.TrimSpace(os.Getenv("TMUX_AGENT_NAME"))
+	if name == "" {
+		name = strings.TrimSpace(os.Getenv("CLAUDE_AGENT_NAME"))
 	}
-	if v := strings.TrimSpace(os.Getenv("CLAUDE_AGENT_NAME")); v != "" {
-		return v, nil
+	if name == "" {
+		if n, err := remoteSessionName(ctx); err == nil {
+			name = strings.TrimSpace(n)
+		}
 	}
-	if name, err := remoteSessionName(ctx); err == nil && name != "" {
-		return name, nil
+	if name == "" {
+		return "", errors.New(
+			"remote MCP mode: cannot resolve bus identity — set $TMUX_AGENT_NAME to the name " +
+				"this session sends AS on the originating bus, or run inside a tmux whose session " +
+				"name is that identity")
 	}
-	return "", errors.New(
-		"remote MCP mode: cannot resolve bus identity — set $TMUX_AGENT_NAME to the name " +
-			"this session sends AS on the originating bus, or run inside a tmux whose session " +
-			"name is that identity")
+	// The identity crosses the originating host's login shell via ssh — it must
+	// be a single shell-safe token. Fail loud at startup rather than truncate or
+	// inject at the first forwarded call.
+	if err := validateRemoteIdentity(name); err != nil {
+		return "", err
+	}
+	return name, nil
 }
 
 // sshRun executes `ssh -p <port> <host> <remoteArgs...>` with stdin piped in,
