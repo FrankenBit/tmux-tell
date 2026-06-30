@@ -78,6 +78,17 @@ shape both possible and dramatically more on-message.)
 > against the substrate-honesty of the recording showing the real chamber
 > experience the README sells. Mechanical recipe below reflects this.
 
+> **Codex sibling (resolved post-F6, #322/#360 — the #278 Codex paste arc):** the
+> classifier is no longer Claude-only. The per-adapter `PaneProfile` (#322) teaches the
+> observe-gate each adapter's prompt sentinel — Codex's `› ` (U+203A) alongside Claude's
+> `❯` — and `tmux-tell-codex` runs `PasteCapable = true` by default (#360). So a recipient
+> pane running real **`codex`** shows the same hold-on-typing gate dynamics as `claude`;
+> the "must run real Claude" constraint above generalizes to "must run a real
+> *adapter-matched* CLI" (use the `tmux-tell-codex` binary for a Codex recipient). The
+> sentinel + cursor model for each adapter lives in
+> [reference.md §Codex](reference.md#codex--tmux-tell-codex) and the per-adapter
+> `PaneProfile` note.
+
 > **Stranded-draft cadence (QM dry-run, 2026-06-08, resolved):** the gate
 > archives the half-typed prompt as a `kind=stranded_draft` substrate row
 > (silent — no pane output), then sends `Ctrl+U` to clear the input row

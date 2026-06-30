@@ -34,8 +34,10 @@ every message with `sqlite3`, and uninstall is one script.
 > **Why the name has two parts.** `tmux-tell` is the substrate — the tmux pane
 > registry, the paste-and-Enter delivery, the per-pane state detection. The
 > `tmux-tell-claude` binary is that substrate plus the adapter for the CLI tool in the
-> pane (Claude Code today). The repo name reflects what the substrate *is*, not which
-> tool runs on top.
+> pane — Claude Code. A sibling `tmux-tell-codex` binary adapts the OpenAI Codex CLI the
+> same way; both are full paste-and-Enter peers on the one bus (the observe-gate reads
+> each adapter's prompt sentinel via its `PaneProfile` — #322/#360). The repo name
+> reflects what the substrate *is*, not which tool runs on top.
 
 ## How it works
 
@@ -76,8 +78,9 @@ sudo ./install.sh        # installs the binary + the systemd user template
 and drops the systemd user template (`tmux-tell-claude-mailman@.service`) into
 `~/.config/systemd/user/`. The DB (`messages.db`) lives under your user-home
 (`$XDG_DATA_HOME/tmux-tell` or `~/.local/share/tmux-tell/`) and is created lazily on
-first use — no install-time data dir to create or chown. Pick a specific adapter with
-`--adapter=claude` (the default). Then, **as your user (not root)**:
+first use — no install-time data dir to create or chown. Pick the adapter at install
+time — `--adapter=claude` (the default) or `--adapter=codex`; both can coexist on one
+bus. Then, **as your user (not root)**:
 
 ```bash
 sudo loginctl enable-linger "$USER"   # keep the user manager running across reboots
