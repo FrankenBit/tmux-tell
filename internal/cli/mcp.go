@@ -54,6 +54,16 @@ func runMCPCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// Remote MCP mode (#310): when $TMUX_TELL_REMOTE_HOST is set, this MCP server
+	// runs on a remote host reached over a reverse-SSH tunnel. Instead of opening
+	// a local store, every tool call is forwarded back to the originating bus's
+	// tmux-tell-claude via SSH. The env var is the explicit opt-in gesture —
+	// never inferred (an SSH session without it just behaves as a local standalone
+	// on whatever host it runs on).
+	if remoteHost := os.Getenv("TMUX_TELL_REMOTE_HOST"); remoteHost != "" {
+		return runRemoteMCP(remoteHost, stdin, stdout, stderr)
+	}
+
 	resolvedDB := resolveDBPath(*dbPath)
 	fmt.Fprintf(stderr, "mcp: claude_msg_db=%s source=%s\n", resolvedDB, dbPathSource(*dbPath))
 	s, err := store.Open(resolvedDB)
@@ -479,7 +489,36 @@ func mcpSetMetabolismHandler(s *store.Store) mcp.ToolHandler {
 // Order: own registered pane (or explicit override) → ancestor registered pane →
 // own name pin → ancestor name pin → actionable error. A name pin that disagrees
 // with a resolved pane is surfaced via identity.WarnMismatch (the pane wins).
+// injectedIdentityKey carries a bus identity supplied out-of-band by the
+// remote-MCP receiver (#310). When a remote session forwards a tool call over
+// SSH, the receiver runs on the originating host (alcatraz) where this SSH
+// session has no $TMUX_PANE — so pane resolution would fail. The receiver
+// instead injects the remote session's already-resolved bus identity into the
+// context, and resolveMCPIdentity honours it as an explicit override.
+type injectedIdentityKey struct{}
+
+// withInjectedIdentity returns a context carrying name as the authoritative
+// bus identity for the handlers it reaches.
+func withInjectedIdentity(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, injectedIdentityKey{}, name)
+}
+
+// injectedIdentity returns the out-of-band identity set by withInjectedIdentity,
+// or "" when none was injected (the normal in-process MCP path).
+func injectedIdentity(ctx context.Context) string {
+	v, _ := ctx.Value(injectedIdentityKey{}).(string)
+	return v
+}
+
 func resolveMCPIdentity(ctx context.Context, s *store.Store) (string, error) {
+	// Remote-MCP receiver path (#310): an injected identity is authoritative —
+	// the remote session already resolved its bus name; treat it exactly like a
+	// CLI --from override (SourceExplicit), skipping all pane/ancestor lookups
+	// (this host's panes are not the remote session's).
+	if inj := injectedIdentity(ctx); inj != "" {
+		name, _, err := identity.Resolve(ctx, s, inj)
+		return name, err
+	}
 	name, src, err := identity.Resolve(ctx, s, "")
 	if err != nil {
 		return "", err

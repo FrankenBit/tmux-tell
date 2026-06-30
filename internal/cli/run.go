@@ -228,6 +228,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runClearOperatorFlagCLI(args[1:], stdout, stderr)
 	case "mcp":
 		return runMCPCLI(args[1:], stdin, stdout, stderr)
+	case remoteRecvSubcommand:
+		return runRemoteRecvCLI(args[1:], stdin, stdout, stderr)
 	case "hook-context":
 		return runHookContextCLI(args[1:], stdin, stdout, stderr)
 	default:

@@ -167,6 +167,14 @@ func (s *Server) handleInitialize(req *request) *response {
 }
 
 func (s *Server) handleToolsList(req *request) *response {
+	return okResp(req.ID, map[string]any{"tools": s.ToolList()})
+}
+
+// ToolList returns the registered tools sorted by name. The returned *Tool
+// values carry Name/Description/InputSchema (the client-visible metadata) plus
+// the Handler. Used by handleToolsList and by the remote-MCP forwarder (#310),
+// which mirrors every tool's name+schema onto a forwarding server.
+func (s *Server) ToolList() []*Tool {
 	s.mu.RLock()
 	tools := make([]*Tool, 0, len(s.tools))
 	for _, t := range s.tools {
@@ -175,7 +183,23 @@ func (s *Server) handleToolsList(req *request) *response {
 	s.mu.RUnlock()
 	// Sort for deterministic output.
 	sortTools(tools)
-	return okResp(req.ID, map[string]any{"tools": tools})
+	return tools
+}
+
+// Dispatch invokes a registered tool's handler directly, bypassing the
+// JSON-RPC transport layer. It returns the handler's raw result (or error)
+// without the content/isError envelope handleToolsCall wraps around it. Used
+// by the remote-MCP receiver subcommand (#310): it re-runs the actual handler
+// on the originating host so the structured result is preserved by
+// construction, then serialises that result back over the SSH wire.
+func (s *Server) Dispatch(ctx context.Context, name string, args json.RawMessage) (any, error) {
+	s.mu.RLock()
+	tool, ok := s.tools[name]
+	s.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("unknown tool: %s", name)
+	}
+	return tool.Handler(ctx, args)
 }
 
 type toolsCallParams struct {

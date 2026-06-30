@@ -1717,6 +1717,91 @@ losing context; for a fleet, `tmux-tell-claude refresh-all-mcps` fires it per re
 agent (operator-only — a peer-invokable bulk restart would be a DoS amplification
 class).
 
+## Remote MCP via reverse-SSH (#310)
+
+By default the MCP server and the message DB share a machine — a tool call writes
+to the local store. When you SSH from your local tmux into a Claude session on
+another host, that assumption breaks: the remote session's MCP server runs on the
+remote host, against a DB isolated from your bus. Delivery *into* the remote pane
+already works (the bus pastes over the SSH transport); the gap is the **return
+path** — the remote session sending back to your chambers.
+
+Remote MCP mode closes it. It's an **opt-in deviation** from the
+MCP-and-DB-share-a-machine default, gated on one env var: when
+`$TMUX_TELL_REMOTE_HOST` is set, the MCP server forwards *every* tool call back to
+the originating bus's `tmux-tell-claude` over a reverse-SSH tunnel, instead of
+opening a local store. Without the env var the MCP behaves as a local standalone
+on whatever host it runs on — remote mode is never inferred.
+
+### Minimal defaults-guided path
+
+Open SSH with a reverse tunnel back to the originating host's SSH port, forward
+the env var, and start `claude` with `$TMUX_TELL_REMOTE_HOST` pointing at the
+tunnel:
+
+```bash
+# From your local tmux:
+ssh -R 7777:localhost:22 -o "SendEnv TMUX_TELL_REMOTE_HOST" alex@caymans
+
+# On the remote host:
+TMUX_TELL_REMOTE_HOST=alex@localhost:7777 claude
+```
+
+That's it. Port `7777` is the default — `$TMUX_TELL_REMOTE_HOST=alex@localhost`
+(no port) works identically. Identity is the remote session's tmux session name
+(`tmux display-message -p "#S"`), which Claude and codex set to the chamber name
+natively — so a session named `Admin` sends as `Admin` on your bus, no extra
+config.
+
+A convenience alias for `~/.bashrc` (operator-owned, not a shipped wrapper — you
+see exactly what it does):
+
+```bash
+# Connect to <host> with bidirectional tmux-tell bus participation
+tmux-tell-ssh() {
+    ssh -R 7777:localhost:22 -o "SendEnv TMUX_TELL_REMOTE_HOST" "alex@$1"
+}
+```
+
+### Extended tunable path
+
+- **Custom port:** `$TMUX_TELL_REMOTE_HOST=alex@localhost:9876` (match the `-R`
+  forward). An `ssh://` scheme prefix is tolerated.
+- **Explicit identity override:** `$TMUX_AGENT_NAME=caymans-admin` — for CLIs
+  that don't auto-name their tmux session (e.g. aichat), or when the session name
+  doesn't match the desired bus name. The override wins over the session-name
+  query. With neither resolvable, the server **fails loud at startup** rather than
+  forwarding as nobody.
+- **Custom SSH user / socket / config:** standard SSH config applies — the
+  `[user@]host` half of `$TMUX_TELL_REMOTE_HOST` is passed to `ssh` verbatim.
+
+### How it works (and what to expect)
+
+Each tool call shells `ssh -p <port> <host> tmux-tell-claude __remote-mcp-recv
+--tool <name> --from <identity>` with the tool's JSON arguments piped over stdin;
+the receiver re-runs the **actual** MCP handler on the originating host and pipes
+the structured result back. Because it's the same handler, results are identical
+to a local call — no per-tool translation, no schema drift.
+
+Two consequences worth knowing:
+
+- **Pane-introspection forwards too.** `agents`, `whoami`, and `agent_state` query
+  the *originating* host's tmux (the bus you're a remote participant on), not the
+  remote host's — which is exactly what a remote participant wants to see.
+- **SSH is fail-loud and per-call.** A down tunnel surfaces as a tool error, never
+  a silent success. Connections are fresh per call (no pooling) — simple and
+  correct first; pooling is a later refinement if latency bites.
+
+The MCP startup line on stderr reports the mode so it's visible at a glance:
+`mcp: remote mode host=… port=… identity=… (forwarding all tool calls over
+reverse-SSH; $TMUX_TELL_REMOTE_HOST set)`.
+
+**Out of scope** (deliberately): cross-host bus federation. Federating SQLite
+mailboxes would dissolve the auditability the substrate depends on ("read every
+message with `sqlite3`, uninstall is one script"). Remote mode is operator-bridged
+transport, not implicit bus-to-bus replication — the explicit env-var-plus-tunnel
+setup *is* the bridge gesture.
+
 ## Identity, names & aliases
 
 **Identity precedence** (shared by the MCP server and the CLI): (1) explicit override
