@@ -33,6 +33,17 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.24.1] — 2026-06-30
+
+### Fixed
+
+Operator keystrokes landing in the narrow window between the mailman's pre-paste safety probe and the paste no longer prepend to the delivered message. `paste-buffer` inserts at the cursor, so a draft the operator started typing in that window would be pasted onto — submitting `<operator text><message>` as one corrupted message — and the post-Enter verify (which keys on the input row CLEARING) couldn't tell the corrupted submit from a clean one, so it confirmed the bad delivery silently. Delivery now re-checks the input row one last time immediately before pasting, cursor-anchored (the same `#336` signal the verify uses, so it is robust to codex's placeholder ghost-text — the cursor stays at the prompt sentinel for an empty composer and only moves past it for real typing). When the operator has content there, the paste is aborted before it happens and the message reverts to queued for a later cycle, leaving the operator's draft untouched — the same revert-and-wait the pre-paste probe already does for content present at probe time. This shrinks the race window to the gap between that final check and the paste rather than closing it entirely (tmux has no input lock), but that residual is microseconds versus the previous multi-millisecond window. Out of scope: a stuck codex `[Pasted Content]` collapse marker is a different signal handled by the `#401` resubmit machinery, not this check.
+
+Post-`/compact` follow-up delivery no longer races the compaction settle window. The mailman held the next row for a fixed `PostCompactPause` (120s) after delivering a `/compact` control, but `/compact` time scales with context size — a large one outlasts the fixed timer, so the follow-up (e.g. a `sleep`+`resume_with` continuation) pasted mid-settle and the context-swap swallowed it, while the input-cleared verify false-positived it as delivered (silent loss). The fixed timer is now an adaptive **stability-gate**: after `/compact`, the mailman polls until the pane reads stably idle (compaction marker absent **and** prompt-ready, for a short debounce) before delivering the next row, with `PostCompactPause` as a ceiling rather than a target — faster than the fixed wait in the common case, correct past 120s. Adapter-neutral: for codex (no compaction marker) the gate degrades to prompt-ready + debounce. A cheap secondary guard also stops `deliverySubmitted` from accepting a cleared input row that is concurrent with a visible compaction frame (the compaction UI keeps the prompt sentinel, so the row can read "empty" mid-`/compact`). The stably-idle primitive is the shared substrate #616 also builds on. Depends on #647 (compaction-marker detection that doesn't false-positive on transcript text).
+
+- **deliver**: close the operator-keystroke prepend race before paste (#616)
+- **serve**: adaptive post-/compact stability-gate for swallowed follow-ups (#622)
+
 ## [0.24.0] — 2026-06-30
 
 ### Added
