@@ -543,6 +543,38 @@ tmux-tell never sees a `429` or a response body; it matches the configured regex
 rendered TUI banner. So `banner_excerpt` is the captured banner line, *not* an API payload, and
 there is no status-code field. The counter is purely additive; the existing gauges are unaffected.
 
+**Auto-resume after a transient rate-limit (#618).** When a chamber hits a transient rate-limit,
+its adapter shows the banner and the chamber sits *stuck mid-turn* — the interrupted work does
+not resume on its own (neither Claude Code nor codex auto-retries today), so historically the
+operator had to type `continue` by hand. The mailman now does this automatically. It rides the
+**same #448 self-observe probe** that publishes `observed_state` (and that #621's metabolism
+auto-clear rides) — so it fires **regardless of whether a bus message is queued**, resuming the
+chamber's *own* interrupted turn rather than only unblocking a pending delivery. The flow, per
+rate-limit episode:
+
+1. **Wait out the cooldown.** On first self-observing `StateRateLimited`, the mailman backs off —
+   the banner-parsed `Retry-After` hint when present, else the #613 exponential fallback, plus a
+   normal-band #543 jitter so chambers resuming after one provider-wide overload don't all paste
+   on the same tick. It does **not** paste into an un-elapsed throttle.
+2. **Paste `continue`.** Once the backoff elapses and the chamber is still rate-limited, the
+   mailman pastes `continue` (via the same `SendKeys` path control commands use) to re-issue the
+   interrupted turn.
+3. **Verify via the probe cadence.** The throttled self-probe *is* the verify-and-retry loop: a
+   later observation that finds the chamber no longer rate-limited ends the episode (`recovered`).
+   If it is still rate-limited, the mailman waits the (escalated) backoff and pastes again, up to
+   `--rate-limit-resume-max-attempts` (default 5), after which it **gives up** and leaves the
+   chamber for the operator rather than spamming a wedged provider.
+
+Scope: **only `StateRateLimited`** (the #504 transient throttle) is auto-resumed. `StateUsageLimited`
+(#540, a hard quota park) is deliberately left alone — pasting `continue` into an exhausted quota
+just re-hits the cap; the delivery path parks it until reset. The action is **default-on** with no
+don't-fight-upstream guard (AC4) because no adapter auto-resumes natively today; `--rate-limit-resume-disabled`
+(per-agent TOML `rate-limit-resume-disabled = true`) is the escape hatch to add when one does.
+Observability: `tmux_tell_rate_limit_resume_total{outcome,agent,provider}` counts `attempt`
+(per paste), `recovered`, and `gave_up`, paired with `rate_limit_resume` / `rate_limit_resume_gave_up`
+structured logs. The continue-paste is the *one* sanctioned paste into a rate-limited pane — it is
+intentionally distinct from message delivery, which `IsPasteUnsafe(StateRateLimited)` still blocks.
+
 This is what unblocked `PasteCapable = true` (#360). The historical blocker was **verify-token
 robustness**, not pane-reading: both adapters collapse a pasted message to a `[Pasted …]`
 placeholder (Codex by size ~1KB, Claude by line-count), hiding the verify token until the

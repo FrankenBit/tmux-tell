@@ -88,6 +88,18 @@ const (
 	// usageLimitMetricsTick refreshes the standing usage-limit gauge while the
 	// mailman is parked so scrapes see live values.
 	usageLimitMetricsTick = 5 * time.Second
+	// rateLimitResumeText is the input the mailman pastes into a rate-limited
+	// chamber to resume its interrupted turn (#618) — the prompt the operator
+	// types by hand today. StateRateLimited (#504) is a TRANSIENT throttle, so
+	// re-issuing the turn once the cooldown elapses is the recovery; this is
+	// deliberately NOT done for StateUsageLimited (#540, a hard quota park —
+	// pasting "continue" there just re-hits the cap).
+	rateLimitResumeText = "continue"
+	// defaultRateLimitResumeMaxAttempts bounds the continue-pastes per rate-limit
+	// episode. After this many pastes that fail to clear the rate-limit, the
+	// mailman gives up and leaves the chamber for the operator rather than
+	// spamming the pane against a stuck provider.
+	defaultRateLimitResumeMaxAttempts = 5
 )
 
 // stuckBackoffBase is the unit for paneNotFoundBackoff's exponential schedule.
@@ -254,6 +266,128 @@ func stopOrSleepWithUpdates(stopCtx context.Context, d, tick time.Duration, onTi
 			return true
 		case <-timer.C:
 		}
+	}
+}
+
+// rateLimitResumeState tracks one #618 auto-resume episode across the
+// throttled self-observe iterations. The zero value means "no active episode."
+// It lives as a loop-local in runServeWithStore's mailman loop (single-threaded
+// per agent, so no locking), mirroring the rateLimitedMsgID family the delivery
+// path keeps for its own rate-limit bookkeeping.
+type rateLimitResumeState struct {
+	active      bool      // currently inside a rate-limit episode
+	since       time.Time // first self-observed rate-limited (for logging)
+	attempts    int       // continue-pastes fired this episode
+	nextPasteAt time.Time // earliest wall-clock the next continue-paste may fire
+	gaveUp      bool      // bounded ceiling hit; stop pasting, surfaced once
+}
+
+// rateLimitResumeAction is the decision planRateLimitResume returns for one
+// self-observe observation. The wiring layer turns it into the actual paste /
+// log / metric side effects.
+type rateLimitResumeAction int
+
+const (
+	resumeNoop      rateLimitResumeAction = iota // nothing to do this observation
+	resumeWait                                   // in an episode, backoff not yet elapsed
+	resumePaste                                  // paste rateLimitResumeText now
+	resumeGiveUp                                 // bounded ceiling reached — surface once
+	resumeRecovered                              // episode ended (state left rate-limited)
+)
+
+// planRateLimitResume is the PURE decision core for #618 auto-resume (no I/O):
+// given the current observed state + its evidence, the running episode state,
+// the wall clock, the bounded-retry ceiling, and a backoff closure, it mutates
+// rs and returns the action the caller should take. Extracted as a pure
+// function (mirroring #621's maybeAutoClearMetabolism split) so the whole
+// state machine is exhaustively table-testable without a live tmux pane.
+//
+// Only StateRateLimited drives the machine. StateUsageLimited is deliberately
+// NOT handled here — it is a hard quota park (#540), not a transient throttle,
+// so pasting "continue" cannot help and is left to the delivery path's park.
+//
+// backoff(attempt, hint) returns how long to wait before the next paste:
+// attempt is the upcoming attempt index (1 for the first wait), hint is the
+// banner-parsed Evidence.RetryAfter (zero when the regex exposed none). The
+// first wait fires BEFORE any paste — the rate-limit must be given its cooldown
+// before a retry, so the chamber is never pasted into an un-elapsed throttle.
+func planRateLimitResume(observed tmuxio.State, ev tmuxio.Evidence, rs *rateLimitResumeState, now time.Time, maxAttempts int, backoff func(attempt int, hint time.Duration) time.Duration) rateLimitResumeAction {
+	if observed != tmuxio.StateRateLimited {
+		if rs.active {
+			*rs = rateLimitResumeState{}
+			return resumeRecovered
+		}
+		return resumeNoop
+	}
+	// observed == StateRateLimited.
+	if !rs.active {
+		rs.active = true
+		rs.since = now
+		rs.attempts = 0
+		rs.gaveUp = false
+		// Wait out the first cooldown before any paste — never paste into an
+		// un-elapsed throttle.
+		rs.nextPasteAt = now.Add(backoff(1, ev.RetryAfter))
+		return resumeWait
+	}
+	if rs.gaveUp {
+		return resumeNoop
+	}
+	if now.Before(rs.nextPasteAt) {
+		return resumeWait
+	}
+	if rs.attempts >= maxAttempts {
+		rs.gaveUp = true
+		return resumeGiveUp
+	}
+	rs.attempts++
+	// Escalate the next wait (attempts+1) so a paste that fails to clear the
+	// throttle backs off further; a fresh banner hint still takes precedence.
+	rs.nextPasteAt = now.Add(backoff(rs.attempts+1, ev.RetryAfter))
+	return resumePaste
+}
+
+// maybeAutoResumeRateLimited runs planRateLimitResume and applies its side
+// effects: pasting rateLimitResumeText into the chamber's own pane to resume an
+// interrupted turn after a transient rate-limit, plus the structured logs and
+// #618 metric. paste is injected (tmuxio.SendKeys in production, a recording
+// stub in tests) so the planner+wiring are testable without real tmux. Called
+// from the #448 self-observe block on its throttled cadence, so the probe loop
+// itself is the verify-and-retry loop — a subsequent observation that finds the
+// chamber no longer rate-limited yields resumeRecovered.
+func maybeAutoResumeRateLimited(
+	ctx context.Context,
+	logger *log.Logger,
+	m *metrics.Metrics,
+	agent, provider, pane string,
+	observed tmuxio.State,
+	ev tmuxio.Evidence,
+	rs *rateLimitResumeState,
+	now time.Time,
+	maxAttempts int,
+	backoff func(attempt int, hint time.Duration) time.Duration,
+	paste func(ctx context.Context, pane, text string) error,
+) {
+	switch planRateLimitResume(observed, ev, rs, now, maxAttempts, backoff) {
+	case resumePaste:
+		if err := paste(ctx, pane, rateLimitResumeText); err != nil {
+			// Don't advance state on a failed paste beyond the attempt count
+			// the planner already bumped — the next eligible cadence retries.
+			logger.Printf("WARN rate_limit_resume_paste_failed agent=%s pane=%s attempt=%d err=%v (#618)",
+				agent, pane, rs.attempts, err)
+			return
+		}
+		logger.Printf("rate_limit_resume agent=%s provider=%s pane=%s attempt=%d — pasted %q to resume after rate-limit (#618)",
+			agent, provider, pane, rs.attempts, rateLimitResumeText)
+		m.IncRateLimitResume(agent, provider, "attempt")
+	case resumeRecovered:
+		logger.Printf("rate_limit_resume_recovered agent=%s provider=%s — chamber left rate-limited (#618)",
+			agent, provider)
+		m.IncRateLimitResume(agent, provider, "recovered")
+	case resumeGiveUp:
+		logger.Printf("WARN rate_limit_resume_gave_up agent=%s provider=%s attempts=%d — still rate-limited after bounded continue-pastes; leaving for operator (#618)",
+			agent, provider, maxAttempts)
+		m.IncRateLimitResume(agent, provider, "gave_up")
 	}
 }
 
@@ -427,6 +561,19 @@ type serveOpts struct {
 	// the chamber-read. Default defaultPostDeliverCooldown (5s); 0 disables (the
 	// inter-message-delay still applies).
 	PostDeliverCooldown time.Duration
+	// RateLimitResumeDisabled turns off the #618 auto-resume action: when the
+	// self-observe probe sees the chamber rate-limited, the mailman normally
+	// waits out the cooldown then pastes `continue` to resume the interrupted
+	// turn. Default false (auto-resume ON) — neither Claude Code nor codex
+	// auto-resumes natively today, so this doesn't fight upstream (AC4). Set true
+	// as the escape hatch if an adapter later adds native rate-limit recovery.
+	RateLimitResumeDisabled bool
+	// RateLimitResumeMaxAttempts bounds the continue-pastes per rate-limit
+	// episode before the mailman gives up and leaves the chamber for the
+	// operator. Default defaultRateLimitResumeMaxAttempts (5). <=0 falls back to
+	// the default (a zero ceiling would disable resumption silently — use
+	// RateLimitResumeDisabled to turn it off explicitly).
+	RateLimitResumeMaxAttempts int
 }
 
 // runServeCLI parses serve-subcommand flags, sets up signal handling, and
@@ -500,6 +647,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"#449 cross-channel scheduler: `max` (default — weight a sender-channel by its top priority; uniform priority → plain FIFO) or `aged` (also depth-ages within same-priority channels, favoring the longest backlog under uniform priority). Per-agent TOML knob: `priority-strategy = \"max\"`.")
 	postDeliverCooldown := fs.Duration("post-deliver-cooldown", defaultPostDeliverCooldown,
 		"#449 per-chamber hold after a successful delivery before the next paste — an ingest window so a burst doesn't flood + collide during chamber-read. 0 disables (inter-message-delay still applies). Per-agent TOML knob: `post-deliver-cooldown = \"5s\"`.")
+	rateLimitResumeDisabled := fs.Bool("rate-limit-resume-disabled", false,
+		"#618 disable the auto-resume action: by default the self-observe probe waits out a rate-limit cooldown then pastes `continue` to resume the chamber's interrupted turn. Set true as the escape hatch if an adapter adds native rate-limit recovery (don't-fight-upstream). Per-agent TOML knob: `rate-limit-resume-disabled = true`.")
+	rateLimitResumeMaxAttempts := fs.Int("rate-limit-resume-max-attempts", defaultRateLimitResumeMaxAttempts,
+		"#618 bound on continue-pastes per rate-limit episode before the mailman gives up and leaves the chamber for the operator. <=0 falls back to the default (use --rate-limit-resume-disabled to turn resumption off). Per-agent TOML knob: `rate-limit-resume-max-attempts = N`.")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
@@ -588,6 +739,12 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if !flagWasSet(fs, "post-deliver-cooldown") {
 		*postDeliverCooldown = config.ResolveDuration(cfg, *agent, "post-deliver-cooldown", *postDeliverCooldown)
+	}
+	if !flagWasSet(fs, "rate-limit-resume-disabled") {
+		*rateLimitResumeDisabled = config.ResolveBool(cfg, *agent, "rate-limit-resume-disabled", *rateLimitResumeDisabled)
+	}
+	if !flagWasSet(fs, "rate-limit-resume-max-attempts") {
+		*rateLimitResumeMaxAttempts = config.ResolveInt(cfg, *agent, "rate-limit-resume-max-attempts", *rateLimitResumeMaxAttempts)
 	}
 	// Parse the #449 strategy after config resolution so a TOML override is
 	// honored; a bad value fails loud (usage error) rather than silently
@@ -735,6 +892,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		ObservedStateInterval:       *observedStateInterval,
 		PriorityStrategy:            strategy,
 		PostDeliverCooldown:         *postDeliverCooldown,
+		RateLimitResumeDisabled:     *rateLimitResumeDisabled,
+		RateLimitResumeMaxAttempts:  *rateLimitResumeMaxAttempts,
 	}, logger, stdout, stderr)
 }
 
@@ -1012,7 +1171,34 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		rateLimitedAttempts int
 		usageLimitedMsgID   string
 		usageLimitedSince   time.Time
+		// #618 auto-resume episode tracking for the self-observe path. Distinct
+		// from the rateLimited* family above, which is the DELIVERY path's
+		// per-message backoff bookkeeping — this rides the throttled self-probe
+		// and resumes the chamber regardless of whether a message is queued.
+		rlResume rateLimitResumeState
 	)
+	// resolvedRateLimitResumeMaxAttempts clamps a non-positive configured ceiling
+	// back to the default so a stray 0 can't silently disable resumption (the
+	// explicit off-switch is RateLimitResumeDisabled).
+	resolvedRateLimitResumeMaxAttempts := opts.RateLimitResumeMaxAttempts
+	if resolvedRateLimitResumeMaxAttempts <= 0 {
+		resolvedRateLimitResumeMaxAttempts = defaultRateLimitResumeMaxAttempts
+	}
+	// rateLimitResumeBackoff is the wait before the next continue-paste: the
+	// banner-parsed Retry-After hint when present, else the exponential fallback
+	// (reusing the #613 schedule), plus normal-band #543 jitter so independent
+	// chambers resuming after the same provider-wide overload don't all paste on
+	// the same tick. No message priority applies here (this isn't a delivery), so
+	// the jitter uses the normal band; the #448 cap-aware extension is omitted —
+	// a continue-paste resumes the chamber's OWN interrupted turn, it does not
+	// consume a delivery slot.
+	rateLimitResumeBackoff := func(attempt int, hint time.Duration) time.Duration {
+		base := hint
+		if base <= 0 {
+			base = rateLimitBackoff(attempt)
+		}
+		return base + rateLimitWakeJitter(base, store.PriorityNormal)
+	}
 	clearRateLimitState := func() {
 		if rateLimitedMsgID == "" {
 			return
@@ -1126,7 +1312,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		// handles a crashed mailman's stale row.
 		if capOn && a.PaneID != "" && time.Since(lastObservedWrite) >= opts.ObservedStateInterval {
 			obsCtx, obsCancel := context.WithTimeout(opCtx, 2*time.Second)
-			if st, _, perr := tmuxio.AgentState(obsCtx, a.PaneID); perr == nil {
+			if st, ev, perr := tmuxio.AgentState(obsCtx, a.PaneID); perr == nil {
 				if werr := s.SetObservedState(opCtx, opts.Agent, st.String(), time.Now()); werr != nil {
 					logger.Printf("observed_state_write_failed err=%v", werr)
 				}
@@ -1139,6 +1325,20 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				// tmux capture (substrate-fit).
 				if cerr := maybeAutoClearMetabolism(opCtx, s, opts.Agent, st); cerr != nil {
 					logger.Printf("metabolism_autoclear_failed err=%v", cerr)
+				}
+				// #618: auto-resume after a transient rate-limit. Rides the same
+				// throttled self-probe (substrate-fit, like #621's auto-clear):
+				// once the cooldown elapses, paste `continue` to resume the
+				// chamber's interrupted turn — independent of whether a bus
+				// message is queued (the delivery-path backoff above only fires
+				// when there IS a message to deliver). The probe cadence is the
+				// verify-and-retry loop: a later observation that finds the chamber
+				// no longer rate-limited ends the episode.
+				if !opts.RateLimitResumeDisabled {
+					maybeAutoResumeRateLimited(obsCtx, logger, m, opts.Agent,
+						active.Provider, a.PaneID, st, ev, &rlResume, time.Now(),
+						resolvedRateLimitResumeMaxAttempts, rateLimitResumeBackoff,
+						tmuxio.SendKeys)
 				}
 				lastObservedWrite = time.Now()
 			}

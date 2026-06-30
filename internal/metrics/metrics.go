@@ -79,6 +79,7 @@ type Metrics struct {
 	chamberRateLimitRetryAfter *prometheus.GaugeVec
 	chamberUsageLimited        *prometheus.GaugeVec
 	rateLimitTotal             *prometheus.CounterVec
+	rateLimitResumeTotal       *prometheus.CounterVec
 	copymodeDefer              *prometheus.CounterVec
 	copymodeDeferWait          *prometheus.HistogramVec
 }
@@ -155,6 +156,10 @@ func New() *Metrics {
 			Name: "tmux_tell_rate_limit_total",
 			Help: "Total rate-limit / usage-limit episodes detected from the pane banner, by cause (overloaded ← StateRateLimited #504 transient throttle; quota_exceeded ← StateUsageLimited #540 hard-stop park), agent, and provider. One increment per episode-start (first-detection transition), not per poll. Cumulative complement to the live chamber_rate_limited / chamber_usage_limited gauges — gives rate() a counter to differentiate over.",
 		}, []string{"cause", "agent", "provider"}),
+		rateLimitResumeTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tmux_tell_rate_limit_resume_total",
+			Help: "Total #618 auto-resume actions taken on a rate-limited chamber, by outcome (attempt ← a `continue` paste fired after the backoff; recovered ← the chamber left StateRateLimited, ending the episode; gave_up ← the bounded continue-paste ceiling was hit and the chamber is left for the operator), agent, and provider. attempt counts each paste (may be several per episode); recovered/gave_up fire at most once per episode.",
+		}, []string{"outcome", "agent", "provider"}),
 		copymodeDefer: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tmux_tell_copymode_defer_total",
 			Help: "Total delivery cycles deferred because the recipient pane was scrolled up in tmux copy-mode (#526), by agent. One increment per gate cycle that observed copy-mode (delivered-on-exit or reverted-at-MaxWait).",
@@ -181,6 +186,7 @@ func New() *Metrics {
 		m.chamberRateLimitRetryAfter,
 		m.chamberUsageLimited,
 		m.rateLimitTotal,
+		m.rateLimitResumeTotal,
 		m.copymodeDefer,
 		m.copymodeDeferWait,
 	)
@@ -324,6 +330,21 @@ func (m *Metrics) IncRateLimit(agent, provider, cause string) {
 		return
 	}
 	m.rateLimitTotal.WithLabelValues(cause, agent, provider).Inc()
+}
+
+// IncRateLimitResume bumps the cumulative #618 auto-resume counter for the
+// agent. outcome is the action taken on the rate-limited chamber: "attempt" (a
+// `continue` paste fired after the backoff window — counted per paste, so an
+// episode that needs several pastes increments several times), "recovered" (the
+// chamber left StateRateLimited and the episode ended — at most once per
+// episode), or "gave_up" (the bounded continue-paste ceiling was reached and the
+// chamber is left for the operator — at most once per episode). Pairs with the
+// structured rate_limit_resume / rate_limit_resume_gave_up Loki log lines.
+func (m *Metrics) IncRateLimitResume(agent, provider, outcome string) {
+	if m == nil {
+		return
+	}
+	m.rateLimitResumeTotal.WithLabelValues(outcome, agent, provider).Inc()
 }
 
 // ObserveProviderDeferWait records how long a cap-deferred message waited
