@@ -301,7 +301,7 @@ backward-compatible within a minor. See `CHANGELOG.md` for what shipped per rele
 
 ```bash
 $ tmux-tell-claude --version
-tmux-tell-claude v0.25.0
+tmux-tell-claude v0.26.0
 ```
 
 A binary built via `make build` stamps the version from `git describe`; a bare
