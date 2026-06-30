@@ -2108,7 +2108,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				m.ObserveDeliveryLatency(opts.Agent, sec)
 				m.ObserveDeliveryLatencyByPriority(store.PriorityName(msg.Priority), sec)
 			}
-			if isCompactControl(msg) && opts.PostCompactPause > 0 {
+			if isSessionResetControl(msg) && opts.PostCompactPause > 0 {
 				// #622: wait for the pane to be STABLY idle (compaction settled)
 				// rather than a fixed timer — the fixed PostCompactPause under-
 				// shoots a large /compact and the next row's paste is swallowed
@@ -2555,11 +2555,23 @@ func isCantFindPaneError(err error) bool {
 	return strings.Contains(err.Error(), "can't find pane")
 }
 
-// isCompactControl returns true when msg is a control row whose body is
-// exactly `/compact` (no args today — kept strict so a future arg-bearing
-// /compact-style command doesn't accidentally pull in the long pause).
-func isCompactControl(msg *store.Message) bool {
-	return msg.Kind == store.KindControl && strings.TrimSpace(msg.Body) == "/compact"
+// isSessionResetControl returns true when msg is a control row that RESETS the
+// recipient's session and triggers a re-render the next paste must wait out:
+// `/compact` (summarise + continue) or `/clear` (#286 — discard + fresh
+// session). Both leave the pane briefly "looks-idle-then-re-renders", the trap
+// the post-reset stability-gate (#622) closes: without the wait, the follow-up
+// row (compact→resume, or the #286 clear→rename macro) pastes mid-settle and is
+// swallowed. /clear has the same settle-race shape as /compact, so it earns the
+// same gate. Matched strictly on the exact body (no args) so a future
+// arg-bearing sibling doesn't accidentally inherit the long pause — note the
+// #286 clear macro's FIRST row is a bare `/clear` (the relabel rides the second
+// `/rename …` row, which is correctly NOT a reset and does not pause).
+func isSessionResetControl(msg *store.Message) bool {
+	if msg.Kind != store.KindControl {
+		return false
+	}
+	body := strings.TrimSpace(msg.Body)
+	return body == "/compact" || body == "/clear"
 }
 
 // Stability-gate tunables for the post-/compact wait (#622). Package vars so

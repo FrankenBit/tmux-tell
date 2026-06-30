@@ -1610,7 +1610,7 @@ allowlist of specific (sender, recipient) pairs.
 | `rename`  | ✓ | ✓ | useful for `<Project> #<Issue>` tab automation |
 | `cost`    | ✓ | ✗ | self-only — output goes to the recipient |
 | `help`    | ✓ | ✓ | harmless either way |
-| `clear`   | ✗ | ✗ | **edge-only** rescue path when `sleep` (`/compact`) can't recover from token exhaustion; loses in-flight work |
+| `clear`   | ✗ | ✗ | **edge-only** rescue / clear-before-task path; **requires `for_task`** (see below); loses in-flight work |
 | `mcp-enable-tmux-tell`  | ✓ | ✓ | refresh the tool surface after deploying a new `tmux-tell.*` tool — no context loss |
 | `mcp-disable-tmux-tell` | ✓ | ✗ | self-only: raw peer-disable is a DoS surface; use the restart macro |
 | `mcp-restart-tmux-tell` | ✓ | ✓ | macro: `disable` + `enable` as two rows for a peer-safe reconnect |
@@ -1632,6 +1632,32 @@ mailman holds the queue for `--post-compact-pause` (default 120s) so the follow-
 lands after the CLI tool has settled, not into the slash-command parser mid-compaction.
 (`--post-compact-pause` keeps its name: it keys on the emitted `/compact` primitive,
 which the verb rename leaves unchanged.)
+
+**Clear-with-task (#286).** `command=clear` *requires* a `for_task` label (CLI
+`--for-task`, MCP `for_task`) — e.g. `tmux-tell-claude control --to pilot --command clear
+--for-task tmux-tell#286`. The handler synthesises an atomic two-row macro — `/clear`
+**then** `/rename "<Chamber> <task>"` (e.g. `/rename Pilot tmux-tell#286`) — so the cleared
+session is relabelled to its dispatch-time task identity. The settle-gate that holds a
+post-`/compact` follow-up also covers `/clear`, so the `/rename` lands in the fresh,
+settled session rather than mid-reset.
+
+This encodes a two-part identity model worth stating explicitly (it composes with the
+`session_id`-as-addressee routing of #626):
+
+- the **chamber name** (`Pilot`) is the *persistent addressee* — what you send to, what
+  `claude --resume Pilot` resolves;
+- the **per-task session name** (`Pilot tmux-tell#286`) is the *dispatch-time identity* of
+  the session that did one task.
+
+`/clear` keeps the session *name* but spins up a new session id, so without the relabel the
+chamber accrues many sessions all named `Pilot`, and a post-restart `--resume Pilot`
+disambiguation prompts the operator. Renaming the just-cleared session away from the bare
+chamber name keeps that name free for the next pickup and makes historical sessions
+searchable by task. The label is constrained — single line, starts alphanumeric, ≤80 chars
+of `[A-Za-z0-9 #/._-]` — so a caller-supplied string can't smuggle a second pasted command
+into the otherwise argument-free control surface; `for_task` on any non-`clear` command is
+rejected fail-loud, and `clear` without it is rejected (forward-only — the `bosun`/`qm`→`pilot`
+edges are updated in lockstep, so there's no deprecation cycle).
 
 ### Removing a pane (#289)
 

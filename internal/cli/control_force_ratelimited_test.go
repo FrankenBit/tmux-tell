@@ -101,6 +101,32 @@ func TestControl_ForceRateLimited_ResumeWith_BothRows(t *testing.T) {
 	}
 }
 
+// TestControl_ForceRateLimited_ClearForTask_BothRows is the #286 application of
+// the #573 per-row-flag discipline: force applies to BOTH the /clear row and
+// the /rename row of the clear+rename InsertMessagePair. Mutation anchor: drop
+// `ForceRateLimited: p.ForceRateLimited` from renameP in control.go → the
+// second assertion fails (the rename would defer on the same banner /clear just
+// punched through, leaving the recipient cleared-but-not-relabelled).
+func TestControl_ForceRateLimited_ClearForTask_BothRows(t *testing.T) {
+	s := newCmdTestStore(t, "bosun", "pilot")
+	res, err := doControl(context.Background(), s, controlParams{
+		From: "bosun", To: "pilot", Command: "clear",
+		ForTask: "tmux-tell#286", ForceRateLimited: true,
+	})
+	if err != nil {
+		t.Fatalf("doControl clear+for-task: %v", err)
+	}
+	if res.Macro != "clear" {
+		t.Fatalf("macro = %q, want clear", res.Macro)
+	}
+	if !claimForce(t, s, "pilot") {
+		t.Errorf("clear row 1 (/clear) not forced")
+	}
+	if !claimForce(t, s, "pilot") {
+		t.Errorf("clear row 2 (/rename) not forced — force must ride BOTH rows or the rename defers, leaving the session cleared-but-not-relabelled (#286/#573)")
+	}
+}
+
 // TestControl_NoForce_DefaultsFalse guards against a hardcoded-true regression:
 // without the flag, every row defaults to unforced (so all existing control
 // macros keep their normal deferral semantics).

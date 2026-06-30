@@ -60,6 +60,53 @@ func TestMCP_Control_PeerInvocation_PeerAllowedCommand(t *testing.T) {
 	}
 }
 
+// TestMCP_Control_ClearForTask_ThreadsForTask drives the #286 macro through the
+// MCP surface (a distinct input struct + schema from the CLI flag, so it needs
+// its own guard): a bosun→pilot clear with for_task synthesises the /clear +
+// /rename pair. The rename body is the mutation anchor for the for_task→handler
+// wiring (drop ForTask from the handler's controlParams and this fails).
+func TestMCP_Control_ClearForTask_ThreadsForTask(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "bosun")
+	s := newCmdTestStore(t, "bosun", "pilot")
+
+	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
+		"to":       "pilot",
+		"command":  "clear",
+		"for_task": "tmux-tell#286",
+	})
+	if got["ok"] != true {
+		t.Fatalf("clear+for_task should succeed; got=%v", got)
+	}
+	if got["macro"] != "clear" {
+		t.Errorf("macro = %v, want clear", got["macro"])
+	}
+	msgs, err := s.ListMessages(context.Background(), store.ListFilter{
+		ToAgent: "pilot", State: store.StateQueued, Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(msgs) != 2 || msgs[0].Body != "/clear" || msgs[1].Body != "/rename Pilot tmux-tell#286" {
+		t.Errorf("rows = %+v, want [/clear, /rename Pilot tmux-tell#286]", msgs)
+	}
+}
+
+// TestMCP_Control_ClearWithoutForTask_Rejected pins the required-arg contract at
+// the MCP boundary: clear with no for_task fails (no plain-/clear MCP path).
+func TestMCP_Control_ClearWithoutForTask_Rejected(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "bosun")
+	s := newCmdTestStore(t, "bosun", "pilot")
+
+	_, err := mcpControlHandler(s)(context.Background(),
+		[]byte(`{"to":"pilot","command":"clear"}`))
+	if err == nil {
+		t.Fatalf("clear without for_task should error at the MCP boundary")
+	}
+	if !strings.Contains(err.Error(), "requires for_task") {
+		t.Errorf("error = %v, want it to name the required for_task", err)
+	}
+}
+
 // Peer-invoking a self-only command (sleep) is blocked at the MCP
 // boundary — the regression this scope split exists to prevent.
 func TestMCP_Control_PeerInvocation_BlockedForSelfOnlyCommand(t *testing.T) {

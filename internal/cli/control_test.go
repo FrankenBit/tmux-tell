@@ -243,6 +243,129 @@ func TestControlCLI_MissingFlags(t *testing.T) {
 	}
 }
 
+// TestControlCLI_ClearForTask_QueuesClearThenRename pins the #286 macro: a
+// bosun→pilot clear with --for-task synthesises exactly two control rows in
+// the operator-ratified order — /clear FIRST, then /rename "<Chamber> <task>"
+// — and reports macro=clear with a rename_id. The rename body is the
+// load-bearing invariant (mutation anchor): flip the order, drop the chamber
+// prefix, or mis-template the label and this assertion fails.
+func TestControlCLI_ClearForTask_QueuesClearThenRename(t *testing.T) {
+	s := newCmdTestStore(t, "bosun", "pilot")
+	t.Setenv("TMUX_AGENT_NAME", "bosun")
+	t.Setenv("CLAUDE_MSG_DB", ":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+
+	var stdout, stderr bytes.Buffer
+	exit := runControlCLI(
+		[]string{"--to", "pilot", "--command", "clear", "--for-task", "tmux-tell#286"},
+		&stdout, &stderr,
+	)
+	if exit != exitOK {
+		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
+	}
+	got := parseJSONResult(t, stdout.Bytes())
+	if got["macro"] != "clear" {
+		t.Errorf("macro = %v, want clear", got["macro"])
+	}
+	if got["rename_id"] == nil {
+		t.Errorf("rename_id missing: %v", got)
+	}
+	if got["command"] != "/clear" {
+		t.Errorf("command = %v, want /clear", got["command"])
+	}
+
+	msgs, _ := s.ListMessages(context.Background(), store.ListFilter{
+		ToAgent: "pilot", State: store.StateQueued, Limit: 10,
+	})
+	if len(msgs) != 2 {
+		t.Fatalf("queued = %d, want 2", len(msgs))
+	}
+	if msgs[0].Kind != store.KindControl || msgs[0].Body != "/clear" {
+		t.Errorf("row[0] = %+v, want control /clear FIRST", msgs[0])
+	}
+	if msgs[1].Kind != store.KindControl || msgs[1].Body != "/rename Pilot tmux-tell#286" {
+		t.Errorf("row[1].Body = %q, want %q (rename SECOND, chamber-prefixed)", msgs[1].Body, "/rename Pilot tmux-tell#286")
+	}
+}
+
+// TestControlCLI_ClearWithoutForTask_Rejected pins the required-arg contract:
+// a clear with no --for-task is rejected (forward-only, no plain-/clear path).
+func TestControlCLI_ClearWithoutForTask_Rejected(t *testing.T) {
+	s := newCmdTestStore(t, "bosun", "pilot")
+	t.Setenv("TMUX_AGENT_NAME", "bosun")
+	t.Setenv("CLAUDE_MSG_DB", ":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+
+	var stdout, stderr bytes.Buffer
+	exit := runControlCLI(
+		[]string{"--to", "pilot", "--command", "clear"},
+		&stdout, &stderr,
+	)
+	if exit == exitOK {
+		t.Fatalf("clear without --for-task should fail; got exitOK, stderr=%s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "requires for_task") {
+		t.Errorf("stderr should explain the required for_task; got %q", stderr.String())
+	}
+	// No half-actioned state: nothing queued.
+	msgs, _ := s.ListMessages(context.Background(), store.ListFilter{ToAgent: "pilot", State: store.StateQueued, Limit: 10})
+	if len(msgs) != 0 {
+		t.Errorf("queued = %d, want 0 (no /clear without the relabel)", len(msgs))
+	}
+}
+
+// TestControlCLI_ForTaskOnNonClear_Rejected pins the out-of-scope-flag fail-loud
+// discipline: --for-task on any command other than clear is rejected, never
+// silently dropped (the #558 escape-hatch lesson).
+func TestControlCLI_ForTaskOnNonClear_Rejected(t *testing.T) {
+	s := newCmdTestStore(t, "alice")
+	t.Setenv("TMUX_AGENT_NAME", "alice")
+	t.Setenv("CLAUDE_MSG_DB", ":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+
+	var stdout, stderr bytes.Buffer
+	exit := runControlCLI(
+		[]string{"--to", "alice", "--command", "sleep", "--for-task", "tmux-tell#286"},
+		&stdout, &stderr,
+	)
+	if exit == exitOK {
+		t.Fatalf("for_task on a non-clear command should fail; got exitOK")
+	}
+	if !strings.Contains(stderr.String(), "only valid with command=clear") {
+		t.Errorf("stderr should fail loud about scope; got %q", stderr.String())
+	}
+	msgs, _ := s.ListMessages(context.Background(), store.ListFilter{ToAgent: "alice", State: store.StateQueued, Limit: 10})
+	if len(msgs) != 0 {
+		t.Errorf("queued = %d, want 0 (rejected, not accepted-then-dropped)", len(msgs))
+	}
+}
+
+// TestControlCLI_ClearForTask_InvalidLabel_Rejected pins that a label which
+// could smuggle a second pasted command (here an embedded newline) is rejected
+// by the constrained-charset validator before anything is queued.
+func TestControlCLI_ClearForTask_InvalidLabel_Rejected(t *testing.T) {
+	s := newCmdTestStore(t, "bosun", "pilot")
+	t.Setenv("TMUX_AGENT_NAME", "bosun")
+	t.Setenv("CLAUDE_MSG_DB", ":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+
+	var stdout, stderr bytes.Buffer
+	exit := runControlCLI(
+		[]string{"--to", "pilot", "--command", "clear", "--for-task", "tmux-tell#286\n/clear"},
+		&stdout, &stderr,
+	)
+	if exit == exitOK {
+		t.Fatalf("injection-shaped label should be rejected; got exitOK")
+	}
+	if !strings.Contains(stderr.String(), "for_task") {
+		t.Errorf("stderr should name the invalid for_task; got %q", stderr.String())
+	}
+	msgs, _ := s.ListMessages(context.Background(), store.ListFilter{ToAgent: "pilot", State: store.StateQueued, Limit: 10})
+	if len(msgs) != 0 {
+		t.Errorf("queued = %d, want 0 (validation precedes insert)", len(msgs))
+	}
+}
+
 func TestControlCLI_AutoIdentity_FromPane(t *testing.T) {
 	// Pane-derived identity (no CLAUDE_AGENT_NAME) — proves #27's
 	// shared resolver flows into the new subcommand for free.

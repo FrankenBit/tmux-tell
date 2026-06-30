@@ -27,6 +27,7 @@ package control
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -158,6 +159,53 @@ func Canonicalize(name string) (canonical string, wasAlias bool) {
 		return c, true
 	}
 	return n, false
+}
+
+// maxForTaskLen caps the #286 bus-mediated-clear target-task label. The label
+// only needs to hold a `<project>#<issue>` reference (plus an optional short
+// human descriptor), so a tight cap doubles as a paste-safety bound.
+const maxForTaskLen = 80
+
+// forTaskRe constrains the #286 target-task label. The label is interpolated
+// into a `/rename <Chamber> <task>` slash-command pasted (paste + Enter) into
+// the recipient's pane, so this regex's job is injection-safety: the pasted
+// line must stay a SINGLE benign line that can't smuggle a second
+// slash-command. The load-bearing rule is "no character outside this
+// allowlist" — a newline/carriage-return would split the paste into a second,
+// caller-chosen line (potentially its own slash-command); they are rejected by
+// being absent from the class. Requiring the first char to be alphanumeric
+// forecloses a leading `/` that could itself read as a command. The allowed
+// punctuation (space, `#`, `/`, `.`, `_`, `-`) is exactly what an issue-ref
+// like `frankenbit/tmux-tell#286` needs and nothing sharper (no `;`, “ ` “,
+// `$`, quotes, `&`, `|`).
+var forTaskRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 #/._-]*$`)
+
+// ErrForTaskInvalid is returned by ValidateForTask when the target-task label
+// is empty, too long, or contains characters outside the safe single-line set.
+var ErrForTaskInvalid = errors.New("control: invalid for_task label")
+
+// ValidateForTask checks the #286 bus-mediated-clear target-task label is a
+// safe single-line token to interpolate into a pasted /rename. Returns
+// ErrForTaskInvalid (wrapped with the specific reason) on any violation.
+//
+// This sanitiser lives in the control package — beside the command whitelist
+// rather than in the CLI/MCP plumbing — on purpose: the whitelist's whole
+// reason to exist is keeping the pasted-into-a-pane surface un-injectable (its
+// commands are fixed literals with no caller-supplied text). for_task is the
+// single place a caller-supplied string reaches that paste surface, so its
+// guard belongs at the same trust boundary as the command resolution it rides
+// alongside.
+func ValidateForTask(s string) error {
+	if s == "" {
+		return fmt.Errorf("%w: empty", ErrForTaskInvalid)
+	}
+	if len(s) > maxForTaskLen {
+		return fmt.Errorf("%w: %d bytes exceeds the %d-byte cap", ErrForTaskInvalid, len(s), maxForTaskLen)
+	}
+	if !forTaskRe.MatchString(s) {
+		return fmt.Errorf("%w: must be a single line of [A-Za-z0-9 #/._-] starting with an alphanumeric (no leading slash, no newlines/tabs/control chars)", ErrForTaskInvalid)
+	}
+	return nil
 }
 
 // Edge identifies a specific (sender → recipient) pair for which a

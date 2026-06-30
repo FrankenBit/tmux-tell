@@ -263,6 +263,82 @@ func TestServe_NonCompactControlDoesNotPause(t *testing.T) {
 		logbuf.String())
 }
 
+// TestServe_ClearControlPauses pins the #286 extension of the #622 settle-gate:
+// /clear resets the session exactly like /compact (new sessionId, re-render),
+// so it MUST engage the same post-reset stability-gate before the follow-up
+// row (the clear→rename macro's /rename) is delivered — otherwise the rename
+// pastes mid-settle and is swallowed. Asserts the stability-wait log fires for
+// /clear and that ordering holds (clear before its follow-up). The mutation
+// anchor for the isSessionResetControl broadening: revert it to /compact-only
+// and the log assertion fails.
+func TestServe_ClearControlPauses(t *testing.T) {
+	withSuccessfulDelivery(t)
+	fastStabilityGate(t)
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+
+	clearRes, err := s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob",
+		Body: "/clear", Kind: store.KindControl,
+	})
+	if err != nil {
+		t.Fatalf("insert clear: %v", err)
+	}
+	renameRes, err := s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob",
+		Body: "/rename Bob tmux-tell#286", Kind: store.KindControl,
+	})
+	if err != nil {
+		t.Fatalf("insert rename: %v", err)
+	}
+
+	opts := fastOpts("bob")
+	opts.PostCompactPause = 30 * time.Millisecond // stability-gate ceiling for the test
+
+	stop, wait, logbuf := runServeInBackground(t, s, opts)
+	deadline := time.Now().Add(2*time.Second + opts.PostCompactPause)
+	bothDelivered := false
+	for time.Now().Before(deadline) {
+		msgs, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "bob", State: store.StateDelivered, Limit: 10,
+		})
+		if len(msgs) >= 2 {
+			bothDelivered = true
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	if !bothDelivered {
+		t.Fatalf("not both delivered within deadline; log=%s", logbuf.String())
+	}
+	if !strings.Contains(logbuf.String(), "post_compact_stability_wait") {
+		t.Errorf("expected the post-reset stability-gate to engage on /clear; got %s", logbuf.String())
+	}
+	clear, err := s.GetMessage(ctx, clearRes.PublicID)
+	if err != nil {
+		t.Fatalf("get clear: %v", err)
+	}
+	rename, err := s.GetMessage(ctx, renameRes.PublicID)
+	if err != nil {
+		t.Fatalf("get rename: %v", err)
+	}
+	if !clear.DeliveredAt.Valid || !rename.DeliveredAt.Valid {
+		t.Fatalf("delivered_at empty: clear=%v rename=%v", clear.DeliveredAt, rename.DeliveredAt)
+	}
+	clearAt, _ := time.Parse("2006-01-02T15:04:05.000Z", clear.DeliveredAt.String)
+	renameAt, _ := time.Parse("2006-01-02T15:04:05.000Z", rename.DeliveredAt.String)
+	if renameAt.Before(clearAt) {
+		t.Errorf("rename delivered before clear (renameAt=%s clearAt=%s); ordering must hold", renameAt, clearAt)
+	}
+}
+
 // fastStabilityGate shrinks the #622 post-/compact stability-gate's poll cadence
 // + AgentState temporal delta so tests don't wait the production 1s/poll.
 func fastStabilityGate(t *testing.T) {

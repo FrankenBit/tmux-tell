@@ -272,14 +272,15 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpRegisterHandler(s))
 
 	srv.RegisterTool("tmux-tell.control",
-		"Send a whitelisted Claude Code slash-command directly to a pane. Scope-gated: when to==self, the self-whitelist applies; when to is a peer, the peer-whitelist applies — with a third tier of per-edge exceptions for destructive commands. Specifically, /clear is globally denied but Bosun→Pilot and Quartermaster→Pilot are permitted (routine clear-before-each-task dispatch + rescue path when Pilot can't sleep (/compact) out of token exhaustion). Bypasses the chat-message renderer. Optional resume_with (only with command=sleep, only on self) queues a follow-up message that the mailman delivers AFTER the sleep (/compact) has settled — pre-write your continuation instead of going silent post-sleep. (`sleep` is the bus verb for /compact, #509; `compact` still works as a deprecated alias.)",
+		"Send a whitelisted Claude Code slash-command directly to a pane. Scope-gated: when to==self, the self-whitelist applies; when to is a peer, the peer-whitelist applies — with a third tier of per-edge exceptions for destructive commands. Specifically, /clear is globally denied but Bosun→Pilot and Quartermaster→Pilot are permitted (routine clear-before-each-task dispatch + rescue path when Pilot can't sleep (/compact) out of token exhaustion). Bypasses the chat-message renderer. Optional resume_with (only with command=sleep, only on self) queues a follow-up message that the mailman delivers AFTER the sleep (/compact) has settled — pre-write your continuation instead of going silent post-sleep. command=clear REQUIRES for_task: it synthesises an atomic /clear + /rename \"<Chamber> <task>\" pair (clear THEN rename) so the cleared session is relabelled to its dispatch-time task identity, keeping the chamber's persistent name free for an unambiguous resume (#286). (`sleep` is the bus verb for /compact, #509; `compact` still works as a deprecated alias.)",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
 				"to":          {"type": "string", "description": "Recipient agent name; set to your own name for self-invocation"},
 				"command":     {"type": "string", "description": "Whitelisted command (e.g. 'sleep'); leading slash optional"},
 				"resume_with": {"type": "string", "description": "Optional continuation prompt delivered after the sleep (/compact) settles. Only valid with command=sleep on self-invocation."},
-				"force_rate_limited": {"type": "boolean", "description": "Bypass the recipient's rate-limit / usage-limit defer for this control macro, delivering even when the pane shows a rate-/usage-limit banner (#573, control arm of #558). Applies to BOTH rows of the restart / sleep+resume macros. Does NOT bypass copy-mode / popup / unknown / compaction paste-safety."}
+				"for_task":    {"type": "string", "description": "REQUIRED with command=clear: the dispatch-time task identity (e.g. \"tmux-tell#286\") the cleared session is renamed to. Synthesises an atomic /clear + /rename \"<Chamber> <task>\" pair so the cleared session is relabelled away from the chamber's persistent name and a later resume resolves unambiguously (#286). Constrained single-line token: starts alphanumeric, ≤80 chars of [A-Za-z0-9 #/._-]. Rejected (fail-loud) with any other command."},
+				"force_rate_limited": {"type": "boolean", "description": "Bypass the recipient's rate-limit / usage-limit defer for this control macro, delivering even when the pane shows a rate-/usage-limit banner (#573, control arm of #558). Applies to BOTH rows of the restart / sleep+resume / clear+rename macros. Does NOT bypass copy-mode / popup / unknown / compaction paste-safety."}
 			},
 			"required": ["to", "command"]
 		}`),
@@ -1161,6 +1162,7 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 		To               string `json:"to"`
 		Command          string `json:"command"`
 		ResumeWith       string `json:"resume_with"`
+		ForTask          string `json:"for_task"`
 		ForceRateLimited bool   `json:"force_rate_limited"`
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
@@ -1177,6 +1179,7 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 			To:               in.To,
 			Command:          in.Command,
 			ResumeWith:       in.ResumeWith,
+			ForTask:          in.ForTask,
 			ForceRateLimited: in.ForceRateLimited,
 			MaxRecipient:     capRecipientQueue,
 			MaxSender:        capSenderBacklog,
