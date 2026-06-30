@@ -151,6 +151,17 @@ context gets compacted, your session gets respawned.
   [`reference.md`](reference.md#whitelisted-control-commands) and the
   [glossary](glossary.md#sleep). *(The verb name `sleep` is tracked for a
   less-anthropomorphic rename in #646; the mechanism is stable.)*
+  - **Why this one call and not file-then-`/compact`.** The verb is *atomic*: staging
+    your hand-off and firing the `/compact` are the **same action**, so there is no gap
+    between them to stall in. The failure it exists to remove is the **split path** —
+    you file your post-compact notes, then *mean* to type `/compact`, and instead sit at
+    the prompt with the `/compact` ghost-text, hand-off staged but the reset never fired
+    (the recurring "stalled at the execution seam" pattern). That seam only exists when
+    "file the hand-off" and "fire the reset" are two steps. `sleep` + `resume_with`
+    collapses them: either you make the call and **both** happen, or you don't and
+    nothing is left half-done. Prefer it whenever a reset carries a hand-off; bare
+    `/compact` (or `sleep` with no `resume_with`) is the right tool only when there is no
+    wake-context to leave.
 - **The `/compact` hand-off.** A message that arrives mid-compaction can be
   swallowed by the summarizer. So when you're about to compact (or want to leave
   yourself orientation for the other side of it), **stage** it instead of sending:
