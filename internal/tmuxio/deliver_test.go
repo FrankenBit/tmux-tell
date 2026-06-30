@@ -439,6 +439,141 @@ func TestDeliver_PrePasteRace_DegradesOpenWhenCursorUnanchored(t *testing.T) {
 	}
 }
 
+// TestDeliver_PrePasteRace_PriorStuckPasteDefersAndDrains is the #610 load-
+// bearing invariant + mutation anchor: when a PRIOR delivery's collapsed paste
+// is still sitting unsubmitted in the codex input (the `[Pasted Content]` marker
+// in the bottom-most input block) at pre-paste time, Deliver must NOT paste this
+// message onto it — that is the stacking #610 reports. Instead it returns
+// ErrPriorPasteStuck and fires ONE resubmit Enter to drain the stuck paste
+// across mailman cycles. Critically the cursor reads CLEARED here (codex parks
+// it on an empty sub-line of the multi-line input), so the #616 cursor-anchor
+// check does NOT fire — this is exactly the hole #616 left to the resubmit
+// machinery, which #610 falls through under load.
+func TestDeliver_PrePasteRace_PriorStuckPasteDefersAndDrains(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			// A prior collapsed paste stuck unsubmitted in the bottom-most input.
+			return []byte("a prior turn\n" + CodexPromptSentinel + CodexPasteCollapseMarker + " 1024 chars]"), nil
+		case "display-message":
+			// Cursor AT the sentinel col: codex parks it on the empty sub-line, so
+			// #616's inputRowCleared reads "cleared" and would NOT race — proving the
+			// marker check (not the cursor) is what catches the stuck paste.
+			return []byte("2/1"), nil
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%9", Body: "the bus message", VerifyToken: "id 7f3a",
+	})
+	if !errors.Is(err, ErrPriorPasteStuck) {
+		t.Fatalf("err = %v, want ErrPriorPasteStuck (prior collapsed paste unsubmitted in input)", err)
+	}
+	// Must NOT paste onto the stuck message — that is the stacking #610 reports.
+	for _, cmd := range []string{"load-buffer", "paste-buffer"} {
+		if cmdRan(calls, cmd) {
+			t.Errorf("%s ran, but a stuck prior paste must abort BEFORE any paste (no stacking)", cmd)
+		}
+	}
+	// Must fire exactly one drain Enter (the cross-cycle resubmit), no more.
+	enters := 0
+	for _, c := range *calls {
+		if len(c.args) >= 2 && c.args[0] == "send-keys" && c.args[len(c.args)-1] == "Enter" {
+			enters++
+		}
+	}
+	if enters != 1 {
+		t.Errorf("want exactly 1 drain Enter (send-keys Enter), got %d; calls=%v", enters, *calls)
+	}
+}
+
+// TestDeliver_PrePasteRace_SubmittedPasteProceeds is the #610 negative control:
+// a SUBMITTED paste lingers as a transcript entry ABOVE a fresh empty input
+// prompt — the collapse marker is NOT in the bottom-most sentinel block, so
+// pasteStillInInput is false and Deliver proceeds normally. Without this, the
+// stuck-paste guard would false-positive on every post-submit codex pane (whose
+// transcript still shows the collapsed paste) and wedge all delivery.
+func TestDeliver_PrePasteRace_SubmittedPasteProceeds(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			// Submitted: the paste lingers in the transcript above; a NEW empty
+			// input prompt is the bottom-most sentinel.
+			return []byte(CodexPromptSentinel + CodexPasteCollapseMarker + " 1024 chars]\n(some output)\n" + CodexPromptSentinel), nil
+		case "display-message":
+			return []byte("2/1"), nil // cursor at the fresh empty sentinel
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%9", Body: "the bus message", VerifyToken: "id 7f3a",
+	})
+	if errors.Is(err, ErrPriorPasteStuck) {
+		t.Fatalf("a submitted paste (marker above a fresh empty prompt) must NOT defer; got ErrPriorPasteStuck")
+	}
+	if !cmdRan(calls, "load-buffer") {
+		t.Errorf("submitted-paste pane must proceed to deliver; calls=%v", *calls)
+	}
+}
+
+// TestDeliver_PrePasteRace_OperatorLargePasteAlsoDrains pins the deliberate LIMIT
+// of the #610 defer-on-stuck-marker check (Surveyor's edge-case lens): it keys on
+// the collapse marker being present in the bottom-most input block, which looks
+// IDENTICAL whether the marker is a prior bus delivery's stuck paste OR an
+// operator's own large paste they are still composing. The check cannot tell the
+// provenance apart from a capture, so it treats both the same — fires the drain
+// Enter (which SUBMITS an operator's mid-flight large paste a beat early) and
+// defers the bus message. This is the substrate-honest trade-off: it is
+// consistent with the #401 resubmit, which already re-sends Enter on any stuck
+// marker without provenance attribution; the alternative (leaving the marker
+// untouched) reproduces #610's stuck-chamber pain. Distinguishing provenance
+// (drain only markers the mailman itself left stuck) needs cross-cycle
+// attribution state — the load-adaptive follow-up, not this fix.
+func TestDeliver_PrePasteRace_OperatorLargePasteAlsoDrains(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+	var enters int
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			// An operator's own large paste, collapsed + not yet submitted —
+			// indistinguishable from a prior bus delivery's stuck paste.
+			return []byte("transcript\n" + CodexPromptSentinel + CodexPasteCollapseMarker + " 4096 chars] (operator composing)"), nil
+		case "send-keys":
+			if contains(args, "Enter") {
+				enters++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%9", Body: "the bus message", VerifyToken: "tok",
+	})
+	if !errors.Is(err, ErrPriorPasteStuck) {
+		t.Fatalf("err = %v, want ErrPriorPasteStuck (marker present, provenance-blind by design)", err)
+	}
+	// The drain Enter fires — which submits the operator's paste. Documented trade-off.
+	if enters != 1 {
+		t.Errorf("want exactly 1 drain Enter (it submits the operator's paste — the documented trade-off), got %d", enters)
+	}
+	// It still never pastes the BUS message onto the composer (no stacking).
+	for _, cmd := range []string{"load-buffer", "paste-buffer"} {
+		if cmdRan(calls, cmd) {
+			t.Errorf("%s ran, but defer must abort before pasting the bus message", cmd)
+		}
+	}
+}
+
 // TestDeliverySubmitted exercises the #336 input-emptied verify predicate
 // directly across both adapter profiles and the cursor-less fallback. The
 // signal is CURSOR-ANCHORED (#336 cursor-anchor fix): the cursor at the
@@ -715,11 +850,18 @@ func TestDeliver_Codex_ResubmitsStuckCollapsedPaste(t *testing.T) {
 		switch args[0] {
 		case "capture-pane":
 			captureN++
-			if captureN <= 2 {
+			// captureN==1 is the #610 pre-paste check: the input is CLEAN here (no
+			// PRIOR stuck paste — this delivery hasn't pasted yet). THIS delivery's
+			// paste then collapses and the first Enter is eaten, so the post-paste
+			// verify captures (2,3) show the marker stuck and the #401 resubmit
+			// re-sends Enter until the input clears at 4. (A marker already present
+			// at the pre-paste capture is the distinct #610 prior-stuck case, which
+			// defers — see TestDeliver_PrePasteRace_PriorStuckPasteDefersAndDrains.)
+			if captureN >= 2 && captureN <= 3 {
 				// Stuck: collapsed paste is the live (bottom) input.
 				return []byte("transcript\n" + CodexPromptSentinel + "[Pasted Content 2048 chars] tail"), nil
 			}
-			// Idle: input cleared (submitted).
+			// Clean pre-paste (1) / idle-submitted (>=4): input cleared.
 			return []byte("transcript\n" + CodexPromptSentinel), nil
 		case "display-message":
 			return []byte("2/1"), nil // cursor at sentinel (moot while marker present)

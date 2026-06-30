@@ -2181,6 +2181,23 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
 				logger.Printf("WARN input_raced_recover_failed id=%s err=%v", msg.PublicID, rerr)
 			}
+		case errors.Is(derr, tmuxio.ErrPriorPasteStuck):
+			// #610: the pre-paste check found a prior delivery's collapsed paste
+			// still unsubmitted in the codex input — a load case the #616 cursor-
+			// anchor can't see (codex parks the cursor on an empty sub-line so the
+			// row reads "cleared") and the per-delivery #401 resubmit budget didn't
+			// drain. Deliver did NOT paste (no stacking onto the stuck message) and
+			// fired one resubmit Enter to drain the prior paste across cycles. Revert
+			// THIS message to queued and retry next cycle, by which point the prior
+			// paste has had time to submit — the same revert-and-wait posture as the
+			// input_raced case above. delivered stays false (nothing of this message
+			// landed), so no post-deliver cooldown fires.
+			logger.Printf("prior_paste_stuck id=%s pane=%s — prior collapsed paste unsubmitted in input; fired resubmit Enter, reverting to queued for retry (#610)",
+				msg.PublicID, paneForDelivery)
+			m.IncPasteUnsafeAbort(opts.Agent, "prior_paste_stuck")
+			if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
+				logger.Printf("WARN prior_paste_stuck_recover_failed id=%s err=%v", msg.PublicID, rerr)
+			}
 		default:
 			logger.Printf("deliver_failed id=%s err=%v", msg.PublicID, derr)
 			if err := s.MarkFailed(opCtx, msg.PublicID, derr.Error()); err != nil {

@@ -194,6 +194,25 @@ var ErrUnverifiedDelivery = errors.New("tmuxio: delivery unverified")
 // clear — the operator's draft is left untouched (#616).
 var ErrInputRaced = errors.New("tmuxio: operator input raced the paste")
 
+// ErrPriorPasteStuck is returned by Deliver when, at the pre-paste check, the
+// recipient's live input already holds an unsubmitted collapsed paste — the
+// adapter's PasteCollapseMarker (codex `[Pasted Content`) is present in the
+// bottom-most input block. A prior delivery's paste+Enter did not submit within
+// its verify budget (codex still ingesting under load), leaving the message
+// stuck. Pasting now would STACK this message onto the unsubmitted one, the
+// multi-message concatenated composer #610 reports. #616's cursor-anchored pre-
+// paste check cannot catch this: codex parks the cursor on an empty sub-line of
+// the multi-line input, so the row reads "cleared" — which is why #616 was
+// scoped to operator drafts and left the collapse marker to the #401 resubmit
+// machinery. Under load that per-delivery machinery exhausts its budget; this
+// sentinel extends the drain ACROSS mailman cycles. Before returning, Deliver
+// fires one resubmit Enter (the same safe Enter-on-empty no-op #401 uses) to
+// drain the stuck paste; the caller reverts THIS message to queued and retries
+// on a later cycle, by which point the prior paste has had time to submit.
+// Codex-specific by config: an adapter without a collapse marker (Claude) never
+// triggers it (pasteStillInInput is false).
+var ErrPriorPasteStuck = errors.New("tmuxio: prior collapsed paste still unsubmitted in input")
+
 // Deliver pastes Body into the given tmux pane and presses Enter. It uses
 // a unique named buffer per call so concurrent invocations from multiple
 // mailmen can never race the default buffer.
@@ -251,8 +270,29 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 	// to the #401 resubmit machinery — out of scope for #616 (operator drafts).
 	if p.VerifyToken != "" && !p.PrePasteRaceCheckDisabled {
 		if pre, perr := tmuxRun(ctx, nil, "capture-pane", "-p", "-t", p.Pane); perr == nil {
+			preCapture := string(pre)
+			// #610: a prior delivery's collapsed paste still sitting unsubmitted in
+			// the input (load outlasted its per-delivery verify budget) must NOT be
+			// pasted onto — that stacks messages into one corrupted composer. The
+			// #616 cursor-anchor below can't see it (codex parks the cursor on an
+			// empty sub-line of the multi-line input, so the row reads "cleared"),
+			// so check the collapse marker explicitly. Fire one resubmit Enter to
+			// drain the stuck paste across cycles — consistent with the #401 resubmit
+			// posture, which already sends Enter on a stuck marker; Enter-on-empty is
+			// a safe no-op (operator + Lookout confirmed) so a resubmit that races an
+			// already-submitted paste is harmless. Then defer THIS message: the caller
+			// reverts it to queued and retries on a later cycle, by which point the
+			// prior paste has had time to submit. No-op for adapters without a collapse
+			// marker (Claude) — pasteStillInInput is false.
+			if pasteStillInInput(preCapture) {
+				if out, err := tmuxRun(ctx, nil, "send-keys", "-t", p.Pane, "Enter"); err != nil {
+					return fmt.Errorf("tmuxio: send-keys Enter (pre-paste drain): %w: %s",
+						err, strings.TrimSpace(string(out)))
+				}
+				return ErrPriorPasteStuck
+			}
 			cx, cy, cerr := agentCursor(ctx, p.Pane)
-			if cleared, anchored := inputRowCleared(string(pre), cx, cy, cerr == nil); anchored && !cleared {
+			if cleared, anchored := inputRowCleared(preCapture, cx, cy, cerr == nil); anchored && !cleared {
 				return ErrInputRaced
 			}
 		}
