@@ -33,6 +33,26 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.24.0] — 2026-06-30
+
+### Added
+
+Intrinsic session-id routing (#626 Phase 1b). `register` now self-discovers the Claude session id from the registering pane's process environment and stores it on the agent row, and the mailman uses it as the **primary, exact** delivery-resolution key: a message addressed to an agent resolves the pane hosting that exact session, which cannot mis-route to a different agent the way the fuzzy `claude --resume <name>` argv/title match can. When the session id resolves a pane, the name-based drift-check is skipped (the session-id match is a stronger liveness guarantee). Resolution falls back to the existing name path — with a deprecation log — when there is no stored session id (legacy registrations, #626 AC6) or the stored id resolves nowhere (a re-resumed same-name session is still reachable by name; a truly gone session is blocked by the Phase-1a bare-shell guard). An explicit `register --session-id` override is available. Userspace-only; the codex/aichat session-id sources land in a later phase.
+
+Session-id discovery now recognizes an adapter-neutral env var, `TMUX_TELL_SESSION_ID`, in addition to Claude's native `CLAUDE_CODE_SESSION_ID` (#626 Phase 2). CLIs with no native session identity (codex, aichat) have their launch wrapper mint a session id and inject it under this name; the delivery-time discover walk reads it exactly as it reads Claude's native var, so session-as-addressee routing works uniformly across adapters. The two vars are checked in priority order (native first); a pane hosts one CLI, so in practice only one is ever set. This change is **additive and dormant** — it only recognizes the neutral var; the wrappers that populate it land separately (the receiver ships before the activator), and the Claude native path is unchanged.
+
+### Fixed
+
+Bare-shell delivery is now blocked (#626 Phase 1a). When a chamber's registered pane has outlived its session and hosts a bare shell, the mailman no longer pastes the message body into it — which would execute the text as a shell command. The pre-paste drift-check now handles the "no recognizable session in the registered pane" case (`running==""`): it looks the addressed agent up across all panes, reroutes + heals the registry if the session relocated, and otherwise fails the delivery with `no_live_session` instead of pasting. The block is **unconditional** — it holds even under `--drift-soft-fail` (which governs the distinct deliver-to-wrong-agent policy, not this safety invariant). First slice of the session-as-addressee reframe.
+
+`TestServe_ProviderCap_DefersAtCap` no longer data-races under `go test -race` (#637). The background-serve test helpers (`runServeInBackground`/`runServeInBackgroundOpts`) handed the mailman goroutine's logger and the test a shared plain `*bytes.Buffer`; the provider-cap test polls `logbuf.String()` mid-run (via `waitFor`) while the goroutine is still writing, which the race detector flagged. The helpers now use a small mutex-synchronized `syncBuffer` (locked `Write` + `String`). CI stays green either way (it runs without `-race`), but the pre-push `-race` gate — house discipline for every contributor — was red on clean `main`; this clears it. Sibling to the `-race`-only timing flakes tracked separately in #281.
+
+Compaction detection no longer false-positives on transcript text. `AgentState`'s `StateAtRestInCompaction` check matched `CompactionMarker` (`"Compacting conversation…"`) as a bare whole-pane substring, so a chamber that merely *wrote* the phrase in a message — e.g. one working on the compaction-delivery code itself — was misread as mid-`/compact`. Because that state is paste-unsafe, the mailman then deferred **all** inbound delivery to that pane (reproduced live: an Engineer ratification sat `queued` and a Bosun ack wedged in `delivering`, with both Engineer and Bosun panes simultaneously false-positived). The match (`capturedLiveCompaction`) now requires the live UI's elapsed-timer parenthetical (`Compacting conversation… (7s …)`), which survives the spinner-glyph animation and which prose quotes of the bare phrase lack — the same structural-uniqueness discipline `AwaitingOperatorMarker` already uses. Prerequisite for the #622 stability-gate, which keys on marker-absence.
+
+- **tmuxio**: require live-timer parenthetical for compaction detection (#647)
+- **serve**: bare-shell block must cover lookup-error + ambiguous too (#626 Phase 1a; Surveyor review 3287)
+- **serve**: block bare-shell paste when no live session hosts the addressee (#626 Phase 1a)
+
 ## [0.23.0] — 2026-06-29
 
 ### Changed
