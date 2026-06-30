@@ -84,10 +84,32 @@ func withSuccessfulDelivery(t *testing.T) {
 	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
 }
 
-func runServeInBackground(t *testing.T, s *store.Store, opts serveOpts) (cancel func(), wait func() int, logbuf *bytes.Buffer) {
+// syncBuffer is a goroutine-safe bytes.Buffer for the background-serve test
+// helpers below: the mailman goroutine writes log lines via log.Logger while
+// the test polls String() mid-run (e.g. waitFor). A plain *bytes.Buffer raced
+// (logger.Write vs String()) — invisible to CI (no -race) but red on the
+// pre-push -race gate for every contributor (#637). Write + String both lock.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func runServeInBackground(t *testing.T, s *store.Store, opts serveOpts) (cancel func(), wait func() int, logbuf *syncBuffer) {
 	t.Helper()
 	stopCtx, stop := context.WithCancel(context.Background())
-	logbuf = &bytes.Buffer{}
+	logbuf = &syncBuffer{}
 	logger := log.New(logbuf, "[mailman/test] ", 0)
 	var (
 		exit int
@@ -550,10 +572,10 @@ func TestServe_AutoHealNoMatchStillFails(t *testing.T) {
 
 // runServeInBackgroundOpts is like runServeInBackground but accepts a full
 // serveOpts so tests can plug in a walker.
-func runServeInBackgroundOpts(t *testing.T, s *store.Store, opts serveOpts) (cancel func(), wait func() int, logbuf *bytes.Buffer) {
+func runServeInBackgroundOpts(t *testing.T, s *store.Store, opts serveOpts) (cancel func(), wait func() int, logbuf *syncBuffer) {
 	t.Helper()
 	stopCtx, stop := context.WithCancel(context.Background())
-	logbuf = &bytes.Buffer{}
+	logbuf = &syncBuffer{}
 	logger := log.New(logbuf, "[mailman/test] ", 0)
 	var (
 		exit int
