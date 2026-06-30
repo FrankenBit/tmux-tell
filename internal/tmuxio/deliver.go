@@ -288,10 +288,23 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		// inside deliverySubmitted via inputRowCleared's anchored=false path.
 		cursorX, cursorY, cursorErr := agentCursor(ctx, p.Pane)
 		if deliverySubmitted(lastCapture, cursorX, cursorY, cursorErr == nil, p.VerifyToken) {
-			if p.OnVerify != nil {
-				p.OnVerify(time.Since(verifyStart), true)
+			// #622 cheap secondary: don't accept a cleared input that is
+			// concurrent with a visible /compact frame. deliverySubmitted keys on
+			// the input row clearing, but the compaction UI KEEPS the prompt
+			// sentinel (the input row can read "empty" mid-compaction), so a
+			// cleared signal while the compaction marker is visible is the
+			// compaction redraw — not our submit. Skip acceptance; the marker
+			// clears when compaction finishes, and a later poll accepts (or the
+			// budget exhausts → unverified → re-queue, correct for a /compact that
+			// outlasts the verify window). Codex-noop (empty CompactionMarker).
+			// The stability-gate prevents pasting INTO compaction; this guards the
+			// TOCTOU residual where a /compact becomes visible mid-verify.
+			if m := activeProfile.CompactionMarker; m == "" || !capturedLiveCompaction(lastCapture, m) {
+				if p.OnVerify != nil {
+					p.OnVerify(time.Since(verifyStart), true)
+				}
+				return nil
 			}
-			return nil
 		}
 		// Resubmit (#401): when a collapsed paste is still sitting in the input,
 		// codex's first Enter was absorbed while it was still ingesting the

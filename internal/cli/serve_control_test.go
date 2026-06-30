@@ -106,9 +106,10 @@ func TestServe_DeliversControlMessageViaSendKeysOnly(t *testing.T) {
 }
 
 // TestServe_PostCompactPauseDelaysNextDelivery asserts that when a
-// /compact control message is delivered, the next queued row is held
-// for at least PostCompactPause before its delivery starts. This is
-// the "land follow-up after compaction settles" property.
+// /compact control message is delivered, the next queued row is held by the
+// stability-gate (#622) until the pane settles, then delivered in order. The
+// gate is adaptive (wait-for-stably-idle, PostCompactPause as a ceiling), not a
+// fixed minimum — the "land follow-up after compaction settles" property.
 //
 // The gap is measured via the store's `delivered_at` column (stamped
 // inside MarkDelivered at the actual transition moment) rather than
@@ -121,6 +122,7 @@ func TestServe_DeliversControlMessageViaSendKeysOnly(t *testing.T) {
 // poller managed to observe.
 func TestServe_PostCompactPauseDelaysNextDelivery(t *testing.T) {
 	withSuccessfulDelivery(t)
+	fastStabilityGate(t)
 
 	s, _ := store.Open(":memory:")
 	t.Cleanup(func() { _ = s.Close() })
@@ -144,7 +146,7 @@ func TestServe_PostCompactPauseDelaysNextDelivery(t *testing.T) {
 	}
 
 	opts := fastOpts("bob")
-	opts.PostCompactPause = 80 * time.Millisecond
+	opts.PostCompactPause = 30 * time.Millisecond // stability-gate ceiling for the test
 
 	stopCtx, stop := context.WithCancel(context.Background())
 	t.Cleanup(stop)
@@ -198,12 +200,16 @@ func TestServe_PostCompactPauseDelaysNextDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse resume.delivered_at %q: %v", resume.DeliveredAt.String, err)
 	}
-	gap := resumeAt.Sub(compactAt)
-	if gap < opts.PostCompactPause {
-		t.Errorf("gap = %s, want >= %s (post-compact pause)", gap, opts.PostCompactPause)
+	// #622: the post-/compact wait is now an adaptive stability-gate, not a fixed
+	// minimum — the resume is held until the pane reads stably idle (up to
+	// PostCompactPause as a ceiling). So we assert ORDERING (resume after the
+	// compact) + that the stability-gate engaged, not a fixed gap.
+	if resumeAt.Before(compactAt) {
+		t.Errorf("resume delivered before compact (resumeAt=%s compactAt=%s); ordering must hold",
+			resumeAt, compactAt)
 	}
-	if !strings.Contains(logbuf.String(), "post_compact_pause") {
-		t.Errorf("expected post_compact_pause log line; got %s", logbuf.String())
+	if !strings.Contains(logbuf.String(), "post_compact_stability_wait") {
+		t.Errorf("expected post_compact_stability_wait log line; got %s", logbuf.String())
 	}
 }
 
@@ -243,8 +249,8 @@ func TestServe_NonCompactControlDoesNotPause(t *testing.T) {
 		if len(msgs) == 2 {
 			stop()
 			wait()
-			if strings.Contains(logbuf.String(), "post_compact_pause") {
-				t.Errorf("post-compact pause should NOT fire on /help; log=%s",
+			if strings.Contains(logbuf.String(), "post_compact_stability_wait") {
+				t.Errorf("post-compact stability-gate should NOT fire on /help; log=%s",
 					logbuf.String())
 			}
 			return
@@ -255,4 +261,75 @@ func TestServe_NonCompactControlDoesNotPause(t *testing.T) {
 	wait()
 	t.Fatalf("both messages should have been delivered quickly; log=%s",
 		logbuf.String())
+}
+
+// fastStabilityGate shrinks the #622 post-/compact stability-gate's poll cadence
+// + AgentState temporal delta so tests don't wait the production 1s/poll.
+func fastStabilityGate(t *testing.T) {
+	t.Helper()
+	op, od := postCompactPollEvery, postCompactStableDebounce
+	postCompactPollEvery = time.Millisecond
+	postCompactStableDebounce = 2
+	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() {
+		postCompactPollEvery = op
+		postCompactStableDebounce = od
+		tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta)
+	})
+}
+
+// TestWaitForStableIdle pins the #622 stability-gate primitive: it settles only
+// once the pane reads StateIdle for `debounce` consecutive polls, returns
+// settled=false at the maxWait ceiling when the pane never settles (e.g. a
+// /compact still in progress), and returns stopped on ctx-cancel.
+func TestWaitForStableIdle(t *testing.T) {
+	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta) })
+
+	// An idle pane: cursor (2/2) at the prompt sentinel on row 2, content stable.
+	idleRunner := func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			return []byte("some history\n" + tmuxio.PromptSentinel + "\nfooter\n"), nil
+		case "display-message":
+			return []byte("2/1"), nil // cursor at sentinel col (2) on the prompt row (1)
+		}
+		return nil, nil
+	}
+	// A pane mid-/compact: AgentState reads StateAtRestInCompaction (never idle).
+	compactingRunner := func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		if args[0] == "capture-pane" {
+			return []byte("✻ Compacting conversation… (7s · ↑ 2.9k tokens)\n  ▰▰▰▱▱\n"), nil
+		}
+		return nil, nil
+	}
+
+	t.Run("settles when pane stably idle", func(t *testing.T) {
+		prev := tmuxio.SetTmuxRunner(idleRunner)
+		t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+		settled, stopped := waitForStableIdle(context.Background(), "%3", time.Second, time.Millisecond, 0, 2)
+		if !settled || stopped {
+			t.Errorf("settled=%v stopped=%v, want settled=true stopped=false", settled, stopped)
+		}
+	})
+
+	t.Run("ceiling when pane never idle (mid-compact)", func(t *testing.T) {
+		prev := tmuxio.SetTmuxRunner(compactingRunner)
+		t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+		settled, stopped := waitForStableIdle(context.Background(), "%3", 5*time.Millisecond, time.Millisecond, 0, 2)
+		if settled || stopped {
+			t.Errorf("settled=%v stopped=%v, want settled=false (ceiling) stopped=false", settled, stopped)
+		}
+	})
+
+	t.Run("stopped on ctx cancel", func(t *testing.T) {
+		prev := tmuxio.SetTmuxRunner(compactingRunner)
+		t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, stopped := waitForStableIdle(ctx, "%3", time.Second, time.Millisecond, 0, 2)
+		if !stopped {
+			t.Errorf("stopped=%v, want true (ctx cancelled)", stopped)
+		}
+	})
 }

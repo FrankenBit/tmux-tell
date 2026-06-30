@@ -247,6 +247,34 @@ func TestDeliver_ReturnsUnverifiedSentinelAfterRetriesExhausted(t *testing.T) {
 	}
 }
 
+// TestDeliver_DoesNotAcceptClearedInputDuringCompaction pins the #622 cheap
+// secondary discriminator: deliverySubmitted keys on the input row clearing, but
+// the /compact UI keeps the prompt sentinel, so a cursor-at-sentinel "cleared"
+// reading while the live compaction marker is visible is the compaction redraw,
+// not our submit. Deliver must NOT accept it — it re-queues via
+// ErrUnverifiedDelivery so the row re-delivers after the stability-gate.
+func TestDeliver_DoesNotAcceptClearedInputDuringCompaction(t *testing.T) {
+	shortRetries(t)
+	// Cursor (2/1) anchors the cleared input row (PromptSentinel on line 1), but
+	// the live compaction marker is present on line 0 → the clear is the redraw.
+	capture := "✻ Compacting conversation… (7s · ↑ 2.9k tokens)\n" + PromptSentinel
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			return []byte(capture), nil
+		case "display-message":
+			return []byte("2/1"), nil
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "x", VerifyToken: "id 7f3a",
+	})
+	if !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Errorf("err = %v, want ErrUnverifiedDelivery (a cleared input concurrent with a visible /compact must not be accepted)", err)
+	}
+}
+
 // TestDeliverySubmitted exercises the #336 input-emptied verify predicate
 // directly across both adapter profiles and the cursor-less fallback. The
 // signal is CURSOR-ANCHORED (#336 cursor-anchor fix): the cursor at the

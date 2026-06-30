@@ -1871,10 +1871,20 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				m.ObserveDeliveryLatencyByPriority(store.PriorityName(msg.Priority), sec)
 			}
 			if isCompactControl(msg) && opts.PostCompactPause > 0 {
-				logger.Printf("post_compact_pause id=%s duration=%s",
+				// #622: wait for the pane to be STABLY idle (compaction settled)
+				// rather than a fixed timer — the fixed PostCompactPause under-
+				// shoots a large /compact and the next row's paste is swallowed
+				// mid-settle. PostCompactPause is now the ceiling, not the target.
+				logger.Printf("post_compact_stability_wait id=%s ceiling=%s",
 					msg.PublicID, opts.PostCompactPause)
-				if sleepRespectingWatchdog(stopCtx, opts.PostCompactPause, watchdogPing) {
+				settled, stopped := waitForStableIdle(stopCtx, paneForDelivery,
+					opts.PostCompactPause, postCompactPollEvery, watchdogPing, postCompactStableDebounce)
+				if stopped {
 					return exitOK
+				}
+				if !settled {
+					logger.Printf("post_compact_stability_ceiling id=%s — pane not stably idle within %s; proceeding (pre-paste gate backstops)",
+						msg.PublicID, opts.PostCompactPause)
 				}
 			}
 		case errors.Is(derr, tmuxio.ErrUnverifiedDelivery):
@@ -2297,39 +2307,64 @@ func isCompactControl(msg *store.Message) bool {
 	return msg.Kind == store.KindControl && strings.TrimSpace(msg.Body) == "/compact"
 }
 
-// sleepRespectingWatchdog blocks for d, returning early when stopCtx
-// cancels. It pings sd_notify every pingEvery so the systemd watchdog
-// doesn't trip during long quiescent windows (the post-compact pause is
-// ~120s, well above WatchdogSec=30s). pingEvery <= 0 falls back to a
-// single uninterrupted sleep — fine for tests, fine on hosts without a
-// configured watchdog.
-func sleepRespectingWatchdog(stopCtx context.Context, d, pingEvery time.Duration) bool {
-	if d <= 0 {
-		return stopCtx.Err() != nil
+// Stability-gate tunables for the post-/compact wait (#622). Package vars so
+// tests can shrink them; production values are small (the gate polls the
+// recipient's pane once per second, not a hot loop).
+var (
+	postCompactPollEvery      = 1 * time.Second
+	postCompactStableDebounce = 2
+)
+
+// waitForStableIdle polls pane until AgentState reads StateIdle for `debounce`
+// consecutive polls — the pane has settled past a /compact transition — or until
+// maxWait elapses (a safety CEILING, not a target). Returns (settled, stopped):
+// settled=true once stable-idle is observed; stopped=true if stopCtx cancelled
+// mid-wait (the caller then exits).
+//
+// #622: replaces the fixed PostCompactPause timer at the post-/compact site. A
+// fixed 120s under-shoots a large /compact (compaction time scales with context
+// size), so the next row's paste lands mid-settle and the context-swap swallows
+// it — a silent loss the input-cleared verify then false-positives as delivered
+// (QM 7698). Polling for the ACTUAL stable-idle adapts to the real duration:
+// faster than the fixed wait in the common (short) case, and correct past 120s
+// up to the ceiling. Past the ceiling it returns settled=false and the caller
+// proceeds — the pre-paste AgentState gate (defers on StateAtRestInCompaction)
+// and the verify+retry layer are the backstops.
+//
+// Adapter-neutral: for codex StateIdle is just prompt-ready (empty
+// CompactionMarker disables the compaction precedence), so the gate degrades to
+// prompt-ready + debounce per the codex floor (Lookout 933d). The shared
+// stably-idle primitive #616 also keys off (its pre-paste baseline-tightening).
+func waitForStableIdle(stopCtx context.Context, pane string, maxWait, pollEvery, pingEvery time.Duration, debounce int) (settled, stopped bool) {
+	if maxWait <= 0 || debounce <= 0 {
+		return false, stopCtx.Err() != nil
 	}
-	if pingEvery <= 0 || pingEvery >= d {
-		select {
-		case <-stopCtx.Done():
-			return true
-		case <-time.After(d):
-			return false
-		}
-	}
-	deadline := time.Now().Add(d)
+	deadline := time.Now().Add(maxWait)
+	lastPing := time.Now()
+	consecutive := 0
 	for {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return false
+		probeCtx, cancel := context.WithTimeout(stopCtx, 2*time.Second)
+		state, _, err := tmuxio.AgentState(probeCtx, pane)
+		cancel()
+		if err == nil && state == tmuxio.StateIdle {
+			consecutive++
+			if consecutive >= debounce {
+				return true, false
+			}
+		} else {
+			consecutive = 0
 		}
-		wait := pingEvery
-		if wait > remaining {
-			wait = remaining
+		if !time.Now().Before(deadline) {
+			return false, false
 		}
 		select {
 		case <-stopCtx.Done():
-			return true
-		case <-time.After(wait):
+			return false, true
+		case <-time.After(pollEvery):
+		}
+		if pingEvery > 0 && time.Since(lastPing) >= pingEvery {
 			_ = sdnotify.Watchdog()
+			lastPing = time.Now()
 		}
 	}
 }
