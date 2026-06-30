@@ -80,6 +80,16 @@ func TestRunTrackWatch_RendersOnEveryStateChange(t *testing.T) {
 
 // TestRunTrackWatch_TimeoutExits — message stays queued forever; the
 // watch loop should exit on timeout without an error code.
+//
+// #281: the old assertion was a brittle wall-clock CEILING (`elapsed > 200ms`)
+// that flaked under `-race` + concurrent load — a 30ms context timeout routinely
+// measures well past 200ms once the race detector and parallel tests contend the
+// scheduler, even though the loop exits correctly. The message never leaves
+// `queued` (never claimed, never delivered), so the terminal-state branch is
+// unreachable and `exit == exitOK` is itself the proof the timeout path was
+// taken. The timing checks below are anchored on `context.WithTimeout`'s
+// deadline semantics — a deterministic FLOOR plus a generous, jitter-immune
+// ceiling — rather than a tight wall-clock bound the host load can blow past.
 func TestRunTrackWatch_TimeoutExits(t *testing.T) {
 	s := newCmdTestStore(t, "alice", "bob")
 	ctx := context.Background()
@@ -89,18 +99,38 @@ func TestRunTrackWatch_TimeoutExits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	_ = ctx
+
+	const (
+		interval = 5 * time.Millisecond
+		timeout  = 30 * time.Millisecond
+	)
 
 	var stdout, stderr bytes.Buffer
 	start := time.Now()
-	exit := runTrackWatch(s, res.PublicID, "text",
-		5*time.Millisecond, 30*time.Millisecond, &stdout, &stderr)
+	exit := runTrackWatch(s, res.PublicID, "text", interval, timeout, &stdout, &stderr)
 	elapsed := time.Since(start)
+
 	if exit != exitOK {
 		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
 	}
-	if elapsed > 200*time.Millisecond {
-		t.Errorf("timeout took too long: %v", elapsed)
+	// Deterministic floor: the watch must actually wait out the timeout rather
+	// than short-circuit. context.WithTimeout never fires before its deadline, so
+	// elapsed >= timeout holds regardless of host load — and it catches a real
+	// regression (dropped timeout plumbing, or an early exit) that the old
+	// ceiling-only assertion missed.
+	if elapsed < timeout {
+		t.Errorf("watch returned after %v, before the %v timeout — timeout not respected", elapsed, timeout)
+	}
+	// Generous sanity ceiling: flags a wildly-wrong timeout (e.g. seconds, not
+	// millis) while staying immune to -race scheduler jitter. A true
+	// timeout-ignore regression hangs and is caught by `go test`'s own deadline,
+	// not here, so this bound is deliberately loose.
+	if elapsed > 5*time.Second {
+		t.Errorf("timeout took too long: %v (want < 5s)", elapsed)
+	}
+	// The loop polled at least once before timing out: the queued state rendered.
+	if !strings.Contains(stdout.String(), "STATE\tqueued") {
+		t.Errorf("expected queued state to render before timeout; got %s", stdout.String())
 	}
 }
 

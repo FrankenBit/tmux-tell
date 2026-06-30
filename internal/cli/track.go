@@ -212,6 +212,16 @@ func runTrackWatch(
 	for {
 		res, err := doTrack(ctx, s, id)
 		if err != nil {
+			// #281: our OWN context ending (the --timeout deadline or a SIGINT)
+			// can be observed by the store read as context.DeadlineExceeded /
+			// Canceled before the select below reaches its ctx.Done() branch.
+			// That is the clean watch-exit path, not a store failure — surface it
+			// as exitOK, identically to the ctx.Done() case. Without this guard a
+			// timeout that lands mid-read returns exitInternal(70), which is the
+			// -race-load flake the queued-forever timeout test exhibited.
+			if ctx.Err() != nil {
+				return exitOK
+			}
 			if errors.Is(err, errTrackNotFound) {
 				return writeJSONError(stdout, stderr, err.Error(), exitUnavailable)
 			}
