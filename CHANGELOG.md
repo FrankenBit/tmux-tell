@@ -33,6 +33,22 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.25.0] — 2026-06-30
+
+### Added
+
+Rate-limit observability: a cumulative `tmux_tell_rate_limit_total{cause,agent,provider}` Prometheus counter and a structured `rate_limit_event` Loki log line, both emitted once per rate-limit episode at the first-detection transition. `cause` is derived from the detected pane state — `overloaded` (transient throttle, #504) vs `quota_exceeded` (park-until-reset hard-stop, #540). The Loki event carries `retry_after_seconds` with a `retry_after_source` (`banner` vs `backoff`) disclosure and the matched `banner_excerpt`. The counter is the cumulative complement to the existing live `tmux_tell_chamber_rate_limited` / `usage_limited` gauges, giving `rate()` a series to differentiate. This is pane-observation, not HTTP instrumentation: there is no status code or response body — tmux-tell matches the configured regex against the rendered TUI banner.
+
+The agent manual now documents the self-sleep verb in its "Surviving your own lifecycle" section: `tmux-tell.control` with `command=sleep`, `to: <your-own-name>`, and a `resume_with` continuation. The reference and glossary already covered it, but a chamber deciding to reset its own context didn't reach for it — it reached for a send-by-convention bus message that never fires the `/compact` or stages the wake-context. The manual now points to the dedicated mechanism, closing the chamber-facing discoverability gap.
+
+Documented the `🔕` no-reply marker's semantic explicitly in the reference's message-rendering section and the agent manual: it is a sender-side expectation signal ("I don't need a reply from you"), not a state-claim that anyone is at-rest. This preempts the misreading of a sender's `🔕` as "they're resting / don't disturb," which inverts the meaning — the marker releases the recipient from reply-pressure, it doesn't impose rest or withdraw the sender.
+
+- **metrics**: rate-limit observability — counter + structured Loki events (#613)
+
+### Fixed
+
+- **changelog**: rename .documentation.md → .added.md (#655 fragments)
+
 ## [0.24.1] — 2026-06-30
 
 ### Fixed
