@@ -793,6 +793,62 @@ func TestAgentState_AtRestInCompactionOnGolden(t *testing.T) {
 	}
 }
 
+// TestAgentState_CompactionPhraseInTranscriptNotMidCompact pins #647: a chamber
+// discussing compaction writes the bare phrase "Compacting conversation…" in a
+// message; with the input idle, AgentState must NOT classify the pane as
+// mid-/compact. The original bare-phrase whole-pane substring match did, and
+// because StateAtRestInCompaction ∈ IsPasteUnsafe it deferred ALL inbound
+// delivery (reproduced live: Engineer + Bosun panes both wedged while working on
+// this very code). The fix requires the live-elapsed-timer parenthetical, which
+// transcript prose lacks.
+func TestAgentState_CompactionPhraseInTranscriptNotMidCompact(t *testing.T) {
+	fastTemporalDelta(t)
+	// Cursor row (index 3) is the empty prompt; the marker phrase sits in
+	// transcript text above it WITHOUT the live-timer parenthetical.
+	pane := "history\n  the wedge: \"Compacting conversation…\" matched transcript text\n────────\n❯ \n"
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 3)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state == StateAtRestInCompaction {
+		t.Fatalf("state = StateAtRestInCompaction; the bare phrase in transcript prose must NOT read as mid-/compact (#647)")
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (idle prompt; phrase only in transcript text)", state)
+	}
+}
+
+// TestCapturedLiveCompaction pins the #647 discriminator directly: the live UI
+// (marker + live-timer parenthetical, any spinner glyph) matches; transcript
+// prose quoting the bare phrase — or the phrase with a non-timer parenthetical —
+// does not.
+func TestCapturedLiveCompaction(t *testing.T) {
+	const marker = CompactionMarker
+	cases := []struct {
+		name    string
+		capture string
+		want    bool
+	}{
+		{"live UI early (✻ + 7s)", "✻ " + marker + " (7s · ↑ 2.9k tokens)", true},
+		{"live UI advanced (✢ + 1m 42s)", "✢ " + marker + " (1m 42s · ↑ 2.9k tokens)", true},
+		{"bare phrase quoted in prose", "the wedge: \"" + marker + "\" matched transcript text", false},
+		{"phrase + non-timer parenthetical", marker + " (the marker)", false},
+		{"phrase at end of a sentence, no paren", "discussing " + marker, false},
+		{"phrase absent entirely", "nothing compaction-ish in this pane", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := capturedLiveCompaction(c.capture, marker); got != c.want {
+				t.Errorf("capturedLiveCompaction(%q) = %v, want %v", c.capture, got, c.want)
+			}
+		})
+	}
+}
+
 func TestAgentState_AwaitingOperatorOnAskUserQuestionGolden(t *testing.T) {
 	fastTemporalDelta(t)
 	golden, err := os.ReadFile("testdata/golden_quartermaster_askuserquestion_2026-06-04.txt")

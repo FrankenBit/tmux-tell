@@ -248,6 +248,15 @@ type Evidence struct {
 // spinner frames; the trailing phrase is the stable load-bearing
 // substring. The ellipsis is U+2026, painted as a single codepoint.
 //
+// The phrase alone is NOT matched as a bare whole-pane substring: it is
+// NOT structurally unique against transcript text — a chamber discussing
+// compaction (or working on this code) writes "Compacting conversation…"
+// in ordinary messages, which the original bare-substring match read as
+// mid-/compact, deferring all inbound delivery (#647). The match
+// (capturedLiveCompaction) therefore requires the marker's live-elapsed-
+// timer parenthetical ("<marker> (<digit>…"), which survives the spinner
+// animation and which prose-quotes of the phrase lack.
+//
 // Precedence in AgentState: this check runs BEFORE the pane-equality
 // "working" check (precedence 1 vs 2) so a agent mid-compaction — a
 // pane whose spinner is animating across the temporal-delta window and
@@ -450,8 +459,12 @@ func AgentState(ctx context.Context, pane string) (state State, ev Evidence, err
 	capBStr := string(capB)
 
 	// Precedence 1: compaction marker (from the active PaneProfile; empty
-	// disables the check for an adapter with no compaction UI).
-	if m := activeProfile.CompactionMarker; m != "" && strings.Contains(capBStr, m) {
+	// disables the check for an adapter with no compaction UI). The match
+	// requires the marker's LIVE-timer parenthetical, not the bare phrase, so a
+	// chamber writing "Compacting conversation…" in a message (e.g. one working
+	// on this very code) doesn't false-positive as mid-/compact — the
+	// transcript-sentinel wedge that deferred all inbound delivery (#647).
+	if m := activeProfile.CompactionMarker; m != "" && capturedLiveCompaction(capBStr, m) {
 		return StateAtRestInCompaction,
 			Evidence{
 				Reason: fmt.Sprintf("compaction marker found: %q", m),
@@ -772,4 +785,44 @@ func inputRowCleared(capture string, cursorX, cursorY int, cursorOK bool) (clear
 	// Cursor at the sentinel column ⇒ empty input (ghost-text doesn't move
 	// the cursor). Cursor past it ⇒ a buffered paste or an operator draft.
 	return cursorX == utf8.RuneCountInString(sentinel), true
+}
+
+// capturedLiveCompaction reports whether capture shows Claude Code's LIVE
+// compaction UI rather than transcript prose that merely quotes the marker
+// phrase. The live UI renders the marker with an animated spinner-glyph prefix
+// AND a live-elapsed-timer parenthetical:
+//
+//	✻ Compacting conversation… (7s · ↑ 2.9k tokens)
+//	✢ Compacting conversation… (1m 42s · ↑ 2.9k tokens)
+//
+// The spinner glyph animates across a set we don't enumerate (✻ U+273B, ✢
+// U+2722, …), so the marker deliberately excludes it; but the bare phrase alone
+// is NOT structurally unique — a chamber discussing compaction (or working on
+// this code) writes "Compacting conversation…" in ordinary message text, which
+// the old whole-pane substring match read as mid-/compact → IsPasteUnsafe → all
+// inbound delivery deferred (#647, reproduced live).
+//
+// The live-timer parenthetical is the structural anchor: it survives the
+// spinner animation (always present once compaction starts) and prose-quotes of
+// the phrase lack it. Requiring "<marker> (<digit>" — the phrase, a space, the
+// open paren, then the elapsed-timer's leading digit — admits the live UI while
+// rejecting prose like "Compacting conversation… (the marker)". marker is the
+// profile's CompactionMarker; the caller's m != "" guard disables the check for
+// adapters with no compaction UI (codex).
+//
+// Residual: a message quoting the FULL live line (phrase + "(7s …") would still
+// match — far rarer than quoting the bare phrase, so this collapses the
+// false-positive surface rather than eliminating it.
+func capturedLiveCompaction(capture, marker string) bool {
+	for i := 0; ; {
+		j := strings.Index(capture[i:], marker)
+		if j < 0 {
+			return false
+		}
+		rest := capture[i+j+len(marker):]
+		if strings.HasPrefix(rest, " (") && len(rest) > 2 && rest[2] >= '0' && rest[2] <= '9' {
+			return true
+		}
+		i += j + len(marker)
+	}
 }

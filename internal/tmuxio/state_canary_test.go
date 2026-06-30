@@ -154,12 +154,15 @@ func TestAwaitingOperatorMarker_MatchesGoldenCapture(t *testing.T) {
 // either or both fixtures stop matching and the test fails loudly +
 // names the re-capture recipe.
 //
-// The substring is structurally unique to Claude Code's compaction UI
-// — regular chat / response text doesn't combine "Compacting" with
-// "conversation" plus the U+2026 ellipsis. The two-fixture shape pins
-// the spinner-frame robustness: a future contributor who accidentally
-// includes the glyph (e.g., `CompactionMarker = "✻ Compacting…"`) gets
-// at least one failing case here.
+// The marker phrase is NOT structurally unique on its own: a chamber
+// discussing compaction writes "Compacting conversation…" in ordinary
+// message text, which the bare whole-pane substring match read as
+// mid-/compact and wedged all inbound delivery (#647). The MATCH therefore
+// requires the live-elapsed-timer parenthetical (capturedLiveCompaction);
+// the canary below pins that both goldens carry that live form, so a drift
+// that drops the parenthetical fails here loudly. The two-fixture shape also
+// pins spinner-frame robustness: a contributor who folds the animated glyph
+// into the constant (e.g. `"✻ Compacting…"`) gets at least one failing case.
 func TestCompactionMarker_MatchesGoldenCapture(t *testing.T) {
 	// Guard against the empty-marker regression: strings.Contains(g, "")
 	// returns true for any g, so an accidentally-emptied constant
@@ -183,7 +186,7 @@ func TestCompactionMarker_MatchesGoldenCapture(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read golden capture: %v", err)
 			}
-			if !strings.Contains(string(golden), CompactionMarker) {
+			if !capturedLiveCompaction(string(golden), CompactionMarker) {
 				t.Errorf("golden %q does NOT contain CompactionMarker %q — Claude Code compaction UI may have drifted; re-verify via `tmux capture-pane -p -t <pane>` during a live /compact + update CompactionMarker + re-capture both golden fixtures",
 					c.path, CompactionMarker)
 			}
