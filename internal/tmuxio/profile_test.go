@@ -220,6 +220,40 @@ func TestAgentState_CodexIdleNoMarker_StaysIdle(t *testing.T) {
 	}
 }
 
+// TestAgentState_CodexEmptyComposer_StrippedSentinel_Idle pins the #690 fix. An
+// idle codex composer with NO ghost-text is `› ` (sentinel + trailing space,
+// empty); `tmux capture-pane -p` strips the trailing space, so the captured row
+// is a bare `›`. Pre-fix, CutPrefix(row, "› ") missed it → the cursor-aware
+// branch was skipped and the pane fell through to StateUnknown ("prompt
+// sentinel not found in any row") for a genuinely-idle pane, wedging delivery.
+// cutPromptSentinel tolerates the strip → StateIdle, PromptEmpty=true.
+//
+// Mutation anchor: revert cutPromptSentinel to a plain strings.CutPrefix and
+// this reverts to StateUnknown at the want-StateIdle assertion.
+func TestAgentState_CodexEmptyComposer_StrippedSentinel_Idle(t *testing.T) {
+	setActivePaneProfileForTest(t, CodexPaneProfile())
+	fastTemporalDelta(t)
+
+	// Row 2 is the bare `›` — codex's empty composer after capture-pane strips
+	// the sentinel's trailing space. Cursor at x=2 (the full "› " column; the
+	// terminal cell wasn't stripped, only the captured string).
+	pane := "history\n  context\n›\n  gpt-5.5 default · /srv/codex/lookout\n"
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 2)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%9")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (empty composer, trailing space stripped); evidence=%q", state, ev.Reason)
+	}
+	if !ev.PromptEmpty {
+		t.Errorf("PromptEmpty = false, want true (empty composer, no ghost-text)")
+	}
+}
+
 // TestCodexWorkingPattern_MatchesMarker pins the #590 codex working-marker regex
 // against the empirical marker bytes and the negative cases it must NOT match.
 // The pattern keys on the `Working (` … `esc to interrupt)` phrase pair on a

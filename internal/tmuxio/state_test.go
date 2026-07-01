@@ -153,6 +153,39 @@ func TestAgentState_UsageLimitPatternDisabledWhenProfileEmpty(t *testing.T) {
 	}
 }
 
+// TestCutPromptSentinel pins the #690 strip-tolerant sentinel match: a
+// regular-space-terminated sentinel (Codex `› `) matches its right-trimmed
+// captured form (bare `›`, capture-pane strips the trailing space when the
+// composer is empty), while a normal `› <ghost>` row still yields the ghost as
+// rest. Claude's NBSP sentinel is space-scoped-inert (NBSP isn't stripped, so a
+// bare `❯` must NOT match — the tolerance must not widen Claude's matching).
+func TestCutPromptSentinel(t *testing.T) {
+	const codex = "› " // U+203A + regular 0x20 space
+	for _, c := range []struct {
+		row, wantRest string
+		wantFound     bool
+	}{
+		{"› Explain this codebase", "Explain this codebase", true}, // normal ghost-text
+		{"› ", "", true},   // sentinel with its space intact (capture kept it)
+		{"›", "", true},    // #690: empty composer, trailing space stripped → bare glyph
+		{"  ›", "", false}, // indented bare glyph: neither a prefix nor == trimmed sentinel
+		{"no sentinel here", "", false},
+	} {
+		rest, found := cutPromptSentinel(c.row, codex)
+		if found != c.wantFound || rest != c.wantRest {
+			t.Errorf("cutPromptSentinel(%q, codex) = (%q,%v); want (%q,%v)", c.row, rest, found, c.wantRest, c.wantFound)
+		}
+	}
+
+	const claude = "❯ " // U+276F + NBSP (U+00A0) — capture-pane does NOT strip NBSP
+	if rest, found := cutPromptSentinel("❯", claude); found {
+		t.Errorf("cutPromptSentinel(bare ❯, claude) = (%q,%v); want not-found (tolerance is space-scoped; NBSP unaffected)", rest, found)
+	}
+	if rest, found := cutPromptSentinel("❯ draft", claude); !found || rest != "draft" {
+		t.Errorf("cutPromptSentinel(claude sentinel + draft) = (%q,%v); want (\"draft\",true)", rest, found)
+	}
+}
+
 // --- AgentState integration tests ---
 
 // fastTemporalDelta installs a microsecond temporal-delta so tests

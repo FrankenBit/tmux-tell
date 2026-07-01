@@ -534,7 +534,7 @@ func AgentState(ctx context.Context, pane string) (state State, ev Evidence, err
 		lines := strings.Split(capBStr, "\n")
 		if cursorY >= 0 && cursorY < len(lines) {
 			row := lines[cursorY]
-			rest, hasSentinel := strings.CutPrefix(row, sentinel)
+			rest, hasSentinel := cutPromptSentinel(row, sentinel)
 			if hasSentinel {
 				sentinelCol := utf8.RuneCountInString(sentinel)
 				switch {
@@ -757,7 +757,7 @@ func isInputRowQuiet(paneContent string) bool {
 	}
 	sawSentinel := false
 	for _, row := range strings.Split(paneContent, "\n") {
-		rest, found := strings.CutPrefix(row, sentinel)
+		rest, found := cutPromptSentinel(row, sentinel)
 		if !found {
 			continue
 		}
@@ -767,6 +767,32 @@ func isInputRowQuiet(paneContent string) bool {
 		}
 	}
 	return sawSentinel
+}
+
+// cutPromptSentinel splits a captured row on the active prompt sentinel,
+// tolerating `tmux capture-pane -p`'s trailing-whitespace strip. A sentinel
+// ending in a REGULAR space (Codex's `› `) is captured as its right-trimmed
+// form (bare `›`) when the composer is EMPTY — no ghost-text or content follows
+// the space, so capture-pane strips it — and a literal CutPrefix(row, "› ")
+// then misses the empty-idle composer, falling through to StateUnknown
+// ("prompt sentinel not found in any row") for a genuinely-idle pane (#690,
+// operator-witnessed). When the row equals the right-trimmed sentinel, treat it
+// as the sentinel with empty rest.
+//
+// Scoped to space-terminated sentinels: Claude's sentinel ends in NBSP
+// (U+00A0), which capture-pane does NOT strip, so `TrimRight(sentinel, " ")`
+// leaves it unchanged and this tolerance is inert for Claude — its empty
+// composer keeps the NBSP and matches via the plain CutPrefix above. (That
+// NBSP, chosen to avoid sentinel word-wrap, incidentally immunizes Claude
+// against this strip; Codex's plain 0x20 is the vulnerable case.)
+func cutPromptSentinel(row, sentinel string) (rest string, found bool) {
+	if rest, ok := strings.CutPrefix(row, sentinel); ok {
+		return rest, true
+	}
+	if trimmed := strings.TrimRight(sentinel, " "); trimmed != sentinel && row == trimmed {
+		return "", true
+	}
+	return "", false
 }
 
 // inputRowCleared reports whether the captured pane shows the live input
