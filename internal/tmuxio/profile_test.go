@@ -3,6 +3,7 @@ package tmuxio
 import (
 	"context"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -154,6 +155,112 @@ func TestAgentState_ClassifiesCodexPane(t *testing.T) {
 			t.Errorf("Reason should mention operator mid-typing; got %q", ev.Reason)
 		}
 	})
+}
+
+// TestAgentState_CodexWorkingMarker_BeatsFalseIdle pins the #590 fix. During an
+// active codex turn the pane renders a persistent `◦ Working (Ns • esc to
+// interrupt)` status row above the composer, while the composer below still
+// shows the `› ` sentinel with the cursor parked at it (ghost-text) and the
+// frame is stable across the temporal-delta window (the elapsed counter happens
+// not to tick in this 200ms sample). Pre-fix that shape hit the
+// cursor-at-sentinel branch and classified StateIdle — a false-idle that let the
+// observe-gate treat a busy pane as paste-safe. The positive WorkingPattern
+// marker (Precedence 4) must classify it StateWorking instead.
+//
+// Mutation anchor: blank CodexPaneProfile().WorkingPattern (or delete the
+// Precedence-4 check in AgentState) and this reverts to StateIdle at the
+// want-StateWorking assertion.
+func TestAgentState_CodexWorkingMarker_BeatsFalseIdle(t *testing.T) {
+	setActivePaneProfileForTest(t, CodexPaneProfile())
+	fastTemporalDelta(t)
+
+	// Stable frame (capA == capB): active turn, working row present, composer
+	// sentinel below with cursor parked at it — the exact #590 false-idle shape.
+	pane := "  assistant is running a tool\n" +
+		"◦ Working (5s • esc to interrupt)\n" +
+		"› \n" +
+		"  gpt-5.5 default · /srv/codex/lookout\n"
+	// cursor at the composer sentinel row (index 2), col 2 == RuneCount("› ").
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 2)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%9")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateWorking {
+		t.Errorf("state = %v, want StateWorking (codex working marker must beat the cursor-at-sentinel false-idle); evidence=%q", state, ev.Reason)
+	}
+	if !strings.Contains(ev.Reason, "working marker matched") {
+		t.Errorf("Reason = %q, want it to name the matched working marker", ev.Reason)
+	}
+}
+
+// TestAgentState_CodexIdleNoMarker_StaysIdle is the negative-space companion to
+// the #590 fix: a genuinely idle codex pane (composer ghost-text, cursor at
+// sentinel, NO working row) must still classify StateIdle. Pins that Precedence
+// 4 is inert when the marker is absent — the fix is purely additive and does not
+// regress the #322/#609 codex-idle path.
+func TestAgentState_CodexIdleNoMarker_StaysIdle(t *testing.T) {
+	setActivePaneProfileForTest(t, CodexPaneProfile())
+	fastTemporalDelta(t)
+
+	pane := "history\n  context\n› Write tests for @filename\n  gpt-5.5 default · /srv/codex/lookout\n"
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 2)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%9")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (no working marker → additive check inert)", state)
+	}
+}
+
+// TestCodexWorkingPattern_MatchesMarker pins the #590 codex working-marker regex
+// against the empirical marker bytes and the negative cases it must NOT match.
+// The pattern keys on the `Working (` … `esc to interrupt)` phrase pair on a
+// single row; a future codex TUI change to that phrase surfaces here.
+func TestCodexWorkingPattern_MatchesMarker(t *testing.T) {
+	re := regexp.MustCompile(CodexWorkingPattern)
+
+	// Positive: the live marker row across elapsed-counter values + surrounding
+	// pane context. The leading ◦ glyph and the • separator are intentionally
+	// not required by the pattern (drift-prone), so these all match.
+	for _, s := range []string{
+		"◦ Working (5s • esc to interrupt)",
+		"◦ Working (12s • esc to interrupt)",
+		"◦ Working (0s • esc to interrupt)",
+		"  ◦ Working (3s • esc to interrupt)  ",
+		"Working (7s - esc to interrupt)", // separator glyph drifted; still matches
+	} {
+		if !re.MatchString(s) {
+			t.Errorf("CodexWorkingPattern should match working row %q", s)
+		}
+	}
+
+	// Negative: idle composer / ghost-text / status / unrelated prose must NOT
+	// match (no `Working (` … `esc to interrupt)` pair on the row).
+	for _, s := range []string{
+		"› Write tests for @filename",
+		"  gpt-5.5 default · /srv/codex/lookout",
+		"history line about how the code is working",
+		"press esc to interrupt is documented somewhere",
+	} {
+		if re.MatchString(s) {
+			t.Errorf("CodexWorkingPattern should NOT match non-working row %q", s)
+		}
+	}
+
+	// Cross-line guard: the phrase pair split across rows must NOT match — Go
+	// regexp `.` excludes newline, so the marker cannot straddle lines (prevents
+	// a stray `Working (` in scrollback pairing with a later `esc to interrupt)`).
+	if re.MatchString("◦ Working (5s\nsome output esc to interrupt)") {
+		t.Errorf("CodexWorkingPattern must not straddle newlines")
+	}
 }
 
 // TestAgentState_Codex609PlaceholderClassifiesIdle is the #609 regression pin +

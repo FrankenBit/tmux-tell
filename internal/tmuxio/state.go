@@ -495,7 +495,25 @@ func AgentState(ctx context.Context, pane string) (state State, ev Evidence, err
 			}, nil
 	}
 
-	// Precedence 4: working (any substantive change across the window).
+	// Precedence 4: positive working marker (from the active PaneProfile; empty
+	// parks the check). An adapter whose active turn renders a persistent status
+	// marker is classified Working from that marker directly — BEFORE the
+	// temporal-delta frame-change heuristic and the cursor-aware idle logic
+	// below. Codex renders `◦ Working (Ns • esc to interrupt)` throughout a turn;
+	// its only per-second delta is the elapsed counter, so a 200ms capture pair
+	// can read the frame as stable and the cursor-at-sentinel branch would
+	// false-idle the active turn (#590). Keying the marker here makes the
+	// positive busy signal win over frame-stability. Additive: Claude's empty
+	// WorkingPattern parks it, so the Claude path is unchanged.
+	if m := firstWorkingMarkerMatch(capBStr); m != "" {
+		return StateWorking,
+			Evidence{
+				Reason: fmt.Sprintf("working marker matched: %q", m),
+				Marker: m,
+			}, nil
+	}
+
+	// Precedence 5: working (any substantive change across the window).
 	if capAStr != capBStr {
 		return StateWorking,
 			Evidence{
@@ -619,6 +637,16 @@ func firstUsageLimitMatch(capture string) string {
 		return ""
 	}
 	return matches[0]
+}
+
+// firstWorkingMarkerMatch returns the active profile's working-marker match in
+// the capture, or "" when the profile parks the check (empty WorkingPattern, as
+// Claude does) or the marker is absent. Positive in-turn busy detection (#590).
+func firstWorkingMarkerMatch(capture string) string {
+	if activeWorkingRE == nil {
+		return ""
+	}
+	return activeWorkingRE.FindString(capture)
 }
 
 func parseRetrySeconds(s string) (time.Duration, error) {

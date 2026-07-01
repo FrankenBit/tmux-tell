@@ -63,6 +63,15 @@ import "regexp"
 //     adapter's usage-limit pane (#540). Empty parks the detector. This is a
 //     distinct hard-stop sibling to rate-limit: the mailman parks until quota
 //     reset rather than backing off exponentially.
+//   - WorkingPattern: adapter-specific regex identifying a pane actively
+//     processing a turn via a persistent status marker, checked independently of
+//     (and before) the temporal-delta frame-change heuristic (#590). Empty parks
+//     the positive-detection check — correct for Claude, whose animated spinner
+//     the 200ms temporal-delta already catches. Codex renders a stable
+//     "Working (…esc to interrupt)" status row whose only per-second change is an
+//     elapsed counter, so a capture pair can read the frame as stable and the
+//     cursor-aware logic false-idles the active turn; this positive marker
+//     classifies it Working regardless of frame stability.
 type PaneProfile struct {
 	PromptSentinel         string
 	CompactionMarker       string
@@ -71,6 +80,7 @@ type PaneProfile struct {
 	PasteCollapseMarker    string
 	RateLimitPattern       string
 	UsageLimitPattern      string
+	WorkingPattern         string
 }
 
 // ClaudePaneProfile returns the Claude Code pane-observation profile — the
@@ -110,14 +120,36 @@ const CodexPromptSentinel = "› "
 // Load-bearing for the codex paste-submit fix — see PaneProfile.PasteCollapseMarker.
 const CodexPasteCollapseMarker = "[Pasted Content"
 
+// CodexWorkingPattern matches the OpenAI Codex TUI's active-turn status row,
+// rendered immediately above the composer while a turn is processing — e.g.
+// `◦ Working (12s • esc to interrupt)`. Empirically captured 2026-07-01 from
+// Lookout's live codex v0.141.0 pane; `capture-pane -p` renders it as plain
+// text (no ANSI escapes), byte-anchored `e2 97 a6 20` (◦ + space) + `Working (`
+// + elapsed + ` ` + `e2 80 a2` (•) + ` esc to interrupt)`.
+//
+// The pattern keys on the phrase pair `Working (` … `esc to interrupt)` on a
+// SINGLE row (Go regexp `.` excludes newline, so the pair cannot straddle
+// lines) and deliberately omits both the leading `◦` (U+25E6) glyph and the
+// elapsed-seconds format — the drift-prone parts. The `esc to interrupt`
+// interrupt-hint is codex's active-turn-only affordance, so the same-row pair is
+// a stable positive busy marker resilient to glyph/format churn. A future codex
+// TUI change to the phrase surfaces via TestCodexWorkingPattern_MatchesMarker.
+const CodexWorkingPattern = `Working \(.*esc to interrupt\)`
+
 // CodexPaneProfile returns the OpenAI Codex CLI pane-observation profile.
 // PromptSentinel is the substrate-verified `› ` (CodexPromptSentinel); under it
 // the existing cursor-aware AgentState classifies Codex panes correctly (idle
 // at the sentinel / ghost-text, awaiting-operator when the cursor moves past) —
 // #322 observations 1 and 3, substrate-verified against real bytes.
 //
-// The marker fields are intentionally EMPTY pending characterization of Codex's
-// other UIs (the 2026-06-12 capture only exercised idle + operator-typing):
+// WorkingPattern is POPULATED (CodexWorkingPattern) — the #590 characterization
+// of codex's active-turn status row, empirically captured 2026-07-01. Unlike the
+// fields below it is live, not parked: it fixes the false-idle where a
+// stable-frame active turn (mid-tool-run / mid-sleep) classified Idle because the
+// temporal-delta saw no change and the cursor sat at the composer sentinel.
+//
+// The remaining marker fields are intentionally EMPTY pending characterization of
+// Codex's other UIs (the 2026-06-12 capture only exercised idle + operator-typing):
 //   - CompactionMarker / AwaitingOperatorMarker: empty disables those precedence
 //     checks. Codex's compaction / popup equivalents (if any) aren't captured
 //     yet; agent_state still classifies idle / working / awaiting-operator from
@@ -137,6 +169,7 @@ func CodexPaneProfile() PaneProfile {
 	return PaneProfile{
 		PromptSentinel:      CodexPromptSentinel,
 		PasteCollapseMarker: CodexPasteCollapseMarker,
+		WorkingPattern:      CodexWorkingPattern,
 	}
 }
 
@@ -151,6 +184,7 @@ func CodexPaneProfile() PaneProfile {
 var activeProfile = ClaudePaneProfile()
 var activeRateLimitRE *regexp.Regexp
 var activeUsageLimitRE *regexp.Regexp
+var activeWorkingRE *regexp.Regexp
 
 // SetActivePaneProfile installs the active pane-observation profile. Called once
 // from cli.Run at process start with the adapter's Profile.Pane. Callers should
@@ -163,6 +197,7 @@ func SetActivePaneProfile(p PaneProfile) {
 	activeProfile = p
 	activeRateLimitRE = compileProfilePattern(p.RateLimitPattern)
 	activeUsageLimitRE = compileProfilePattern(p.UsageLimitPattern)
+	activeWorkingRE = compileProfilePattern(p.WorkingPattern)
 }
 
 // ActivePaneProfile returns the installed pane-observation profile — a read-only
