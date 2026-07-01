@@ -156,6 +156,53 @@ func TestAgentState_ClassifiesCodexPane(t *testing.T) {
 	})
 }
 
+// TestAgentState_Codex609PlaceholderClassifiesIdle is the #609 regression pin +
+// substrate-of-record close. #609 reported codex chambers (Carpenter/Lookout)
+// wedged at state=unknown "prompt sentinel not found in any row" when the
+// composer showed the placeholder/typeahead text (e.g. `› Explain this
+// codebase`). The 2026-07-01 survey found the issue body's root-cause was a
+// hypothesis the code contradicts: the cursor-aware classifier has classified
+// `› <ghost-text>` as StateIdle since 2026-06-04 (commit 1d6b4d4), well BEFORE
+// #609 was filed (2026-06-20). Lookout byte-captured the exact live placeholder
+// row — U+203A (`e2 80 ba`) + literal space (`20`) + text, cursor parked at
+// column 2 (== RuneCount("› ")) — i.e. the literal `› ` sentinel IS present with
+// the cursor at the sentinel. This test pins that exact reported state → Idle.
+//
+// The 2026-06-20 sprint-wedge was the #610 stacking downstream (a multi-message
+// composer moves the cursor off the sentinel row / pushes the sentinel out of
+// the captured input area → the "sentinel not found" / "cursor not at input row"
+// unknown branches), which #610 (merged 2b1b56f) now prevents. #609 is
+// resolved-by-#610; this pin guards the classifier's handling of the reported
+// placeholder against regression. Distinct from the sibling ghost-text subtest
+// above by naming #609's operator-witnessed capture as the substrate-of-record.
+func TestAgentState_Codex609PlaceholderClassifiesIdle(t *testing.T) {
+	setActivePaneProfileForTest(t, CodexPaneProfile())
+	fastTemporalDelta(t)
+	// Lookout's exact live capture: `› Explain this codebase` as the bottom input
+	// row. CodexPromptSentinel is `› ` (U+203A + space) — the `e2 80 ba 20` bytes
+	// Lookout reported, pinned byte-exact by TestCodexPromptSentinel_Bytes.
+	inputRow := CodexPromptSentinel + "Explain this codebase"
+	pane := "some transcript\n  context line\n" + inputRow + "\n  gpt-5.5 default · /srv/codex/lookout\n"
+	// cursor_x=2 == utf8.RuneCountInString("› "); cursor_y=2 (the input row).
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 2)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%8")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateIdle {
+		t.Fatalf("state = %v, want StateIdle — the #609-reported codex placeholder (cursor at sentinel, ghost-text after) is idle, not unknown; reason=%q", state, ev.Reason)
+	}
+	if ev.PromptEmpty {
+		t.Errorf("PromptEmpty should be false: placeholder ghost-text follows the sentinel (not a clean-empty prompt)")
+	}
+	if !strings.Contains(ev.Reason, "ghost-text") {
+		t.Errorf("Reason should identify the auto-suggestion ghost-text; got %q", ev.Reason)
+	}
+}
+
 // TestSetActivePaneProfile_Installs pins the install/accessor round-trip and
 // the package default (Claude). The default matters: in-package callers that
 // never go through cli.Run (every existing tmuxio test) rely on activeProfile
