@@ -48,8 +48,9 @@ Standalone decisions (no application chain): 0001 (discipline pins), 0002 (chamb
 state carry-forward), 0006 (length cap), 0007 (Binnacle external-module coexist),
 0008 (deprecation policy — see the amendment note above), 0013 (plan-first, *Proposed*).
 
-> **Numbering note:** a parked duplicate `0014-comparative-source-reading.md`
-> shares the 0014 number with the indexed scope ADR; the renumber is tracked in
-> #500 (it will move the duplicate to the next free number, not 0015).
+> **Background note:** `0014-comparative-source-reading-background.md` is
+> supporting evidence for ADR-0014's scope fence, not a superseding decision. It
+> is co-located under the parent ADR's number with the ADR-0006 `-background`
+> suffix convention.
 
 **The live, authoritative index is always [`../adr/README.md`](../adr/README.md).**
