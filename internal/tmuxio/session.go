@@ -39,3 +39,23 @@ func RespawnPane(ctx context.Context, pane, command string) error {
 	}
 	return nil
 }
+
+// RespawnPaneOriginal restarts pane via `tmux respawn-pane -k` with NO command,
+// so tmux re-runs the command the pane was ORIGINALLY created with (#285). This
+// is the load-bearing distinction from RespawnPane: for a chamber launched via
+// the memory-cap wrapper (chamber-claude.sh → systemd-run --scope … claude), the
+// original command IS the wrapper invocation, so re-running it preserves the
+// cgroup memory cap (alcatraz-infra#50) AND the launch-time register hygiene —
+// exactly what "process restarted with original cmdline" in the #285 sequencing
+// requires. Passing an explicit reconstructed command would drop the wrapper and
+// launch a bare, uncapped claude. The -k force-kills any process still occupying
+// the pane (the force-kill fallback after a graceful /exit that didn't complete).
+func RespawnPaneOriginal(ctx context.Context, pane string) error {
+	if pane == "" {
+		return errors.New("tmuxio: pane required")
+	}
+	if out, err := tmuxRun(ctx, nil, "respawn-pane", "-k", "-t", pane); err != nil {
+		return fmt.Errorf("tmuxio: respawn-pane (original): %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}

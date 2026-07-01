@@ -236,6 +236,17 @@ var migrations = []string{
 	// stays observed-state-only).
 	`ALTER TABLE agents ADD COLUMN metabolism TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE agents ADD COLUMN metabolism_set_at TEXT`,
+	// #285: bounded post-shrink chamber respawn. respawn_after_shrinks is the
+	// per-chamber threshold N — the mailman respawns the chamber's process
+	// after N in-substrate context-shrink events (bus-delivered clear in PR1;
+	// self-compact detection layers on in PR2). 0 (the default) = DISABLED:
+	// opt-in per chamber via set-respawn-after-shrinks, so an install never
+	// auto-restarts live processes (the memory-cap wrapper, alcatraz-infra#50,
+	// already covers host-protection; this is graceful-vs-abrupt hygiene).
+	// respawn_shrink_count is the running counter, incremented on each counted
+	// shrink and reset to 0 after a respawn fires. Both additive, default 0.
+	`ALTER TABLE agents ADD COLUMN respawn_after_shrinks INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE agents ADD COLUMN respawn_shrink_count INTEGER NOT NULL DEFAULT 0`,
 }
 
 // Close releases the underlying database handle.

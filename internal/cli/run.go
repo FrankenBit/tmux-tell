@@ -190,6 +190,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runSetPaneNameCLI(args[1:], stdout, stderr)
 	case "set-metabolism":
 		return runSetMetabolismCLI(args[1:], stdout, stderr)
+	case "set-respawn-after-shrinks":
+		return runSetRespawnAfterShrinksCLI(args[1:], stdout, stderr)
 	case "register":
 		return runRegisterCLI(args[1:], stdout, stderr)
 	case "unregister":

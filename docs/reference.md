@@ -963,6 +963,61 @@ single source is `store.MetabolismEmoji`, so a glyph swap touches one place):
 | `saturating` | 🌡️ |
 | `compact-pending` | 💤 |
 
+## Bounded post-shrink chamber respawn (#285)
+
+Long-running chamber processes accumulate heap that `/compact` and `/clear`
+shrink the *context* of but never release from the *process*. The memory-cap
+wrapper (alcatraz-infra#50) already protects the host — systemd OOM-kills a
+runaway chamber at a hard ceiling. This feature is the complementary
+**graceful** lever: instead of waiting for an abrupt OOM-kill + a manual
+relaunch, the mailman can proactively restart a chamber's process after N
+context-shrink events, on the chamber's own idle cadence, so the heap is
+released routinely and the operator never has to relaunch by hand.
+
+**Opt-in, per chamber, disabled by default.** The threshold `N` defaults to 0
+(no respawn ever). An operator who observes a chamber's RSS climbing
+(alcatraz-infra#33) opts it in without a mailman restart — the running mailman
+reads the persisted threshold each delivery cycle:
+
+```bash
+# Enable: respawn pilot after every 3 counted context-shrink events.
+tmux-tell-claude set-respawn-after-shrinks --name pilot 3
+# Disable again (0 = off).
+tmux-tell-claude set-respawn-after-shrinks --name pilot 0
+# A chamber can self-target (no --name) from inside its own pane.
+```
+
+**What counts as a shrink event.** In this first cut, only a **bus-delivered
+`/clear`** (the `control clear --for-task` primitive) increments the counter —
+the mailman observes it on delivery, no detection subsystem needed (the bus is
+the source of truth). Self-run `/compact` is *not yet* counted; its detection
+(a PostCompact hook + a transcript-JSONL polling fallback) is tracked as a
+follow-up. `--respawn-after-n-shrinks 0`-equivalent (an unset / 0 threshold)
+means the counter is never even incremented.
+
+**The respawn sequence**, fired inline when the counter reaches `N` right after
+the clear settles to a stable idle:
+
+1. **Idle gate** — proceed only if the pane is idle *now*; never respawn under
+   an open operator turn (the counter is retained so a later clear retries).
+2. **Graceful `/exit`** so claude flushes its (just-cleared) transcript.
+3. **Bounded exit grace**, then **`tmux respawn-pane -k` with the pane's
+   original cmdline** — re-running the launch command preserves the memory-cap
+   wrapper (a bare `claude --resume` would drop the cgroup cap).
+4. **Session-id re-establishment (#626)** — the old session-id is now dead, so
+   it is cleared; delivery falls back to name-resolution (which the bare-shell
+   guard, #638, makes safe during boot) until the restarted chamber
+   re-registers a fresh session-id on launch.
+5. **Bounded ready wait** for the restarted claude to reach a live prompt, then
+   the counter resets. Because the serve loop is single-flight and the respawn
+   is synchronous, nothing delivers to the dying process — the clear macro's
+   follow-up `/rename` and any #227 deferred rows land on the *ready* new one.
+
+The scope fences (why this belongs in the bus at all) are ADR-0011's three-fence
+test: the trigger is an in-substrate event (not a standalone `respawn` verb),
+the carriage work is already the mailman's, and there is deliberately no
+standalone restart lever.
+
 ## Recovering a stuck mailman (#291)
 
 A mailman delivers by probing the recipient's tmux pane before each paste. When
@@ -1870,6 +1925,8 @@ CREATE TABLE agents (
   stuck_reason     TEXT NOT NULL DEFAULT '',       -- '' = healthy; 'pane-not-found' = mailman parked (#291)
   metabolism        TEXT NOT NULL DEFAULT '',      -- '' | 'warming' | 'saturating' | 'compact-pending' — chamber self-report (#621)
   metabolism_set_at TEXT                           -- stamp of the current metabolism; NULL when metabolism is '' (#621)
+  respawn_after_shrinks INTEGER NOT NULL DEFAULT 0, -- #285 per-chamber respawn threshold N; 0 = disabled (opt-in)
+  respawn_shrink_count  INTEGER NOT NULL DEFAULT 0  -- #285 counted context-shrink events since the last respawn
   -- … later additive columns (provider/observed_state #448, display_name #556, session_id #626) omitted for brevity
 );
 

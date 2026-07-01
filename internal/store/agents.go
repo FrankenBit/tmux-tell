@@ -120,8 +120,8 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 		metabolismSetAt sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -232,7 +232,7 @@ func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) e
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +248,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 			deliveryMode    string
 			metabolismSetAt sql.NullString
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount); err != nil {
 			return nil, err
 		}
 		if pane.Valid {
@@ -344,6 +344,69 @@ func (s *Store) ClearMetabolismIfPending(ctx context.Context, name string) error
 		`UPDATE agents SET metabolism = '', metabolism_set_at = NULL
 		 WHERE name = ? AND metabolism = ?`,
 		name, MetabolismCompactPending)
+	return err
+}
+
+// SetRespawnAfterShrinks sets the #285 per-chamber respawn threshold N: the
+// mailman respawns the chamber's process after N counted context-shrink events.
+// n must be >= 0; 0 disables respawn for this chamber (the default). Returns
+// ErrNotFound if no agent with that name is registered.
+//
+// Does not bump updated_at: an operational tunable, not a discovery-relevant
+// change (mirrors SetMetabolism / SetAttentionState).
+func (s *Store) SetRespawnAfterShrinks(ctx context.Context, name string, n int) error {
+	if n < 0 {
+		return fmt.Errorf("store: respawn-after-shrinks must be >= 0, got %d", n)
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET respawn_after_shrinks = ? WHERE name = ?`,
+		n, name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
+}
+
+// IncrementRespawnShrinkCount increments the #285 shrink counter for an agent
+// and returns the new count. Called by the mailman when it delivers a counted
+// context-shrink event (a bus-delivered clear in PR1). Returns ErrNotFound if
+// no agent with that name is registered.
+//
+// The increment + read-back are two statements rather than one RETURNING (the
+// codebase's SQLite idiom is ExecContext + Select). That is race-free here: the
+// per-agent mailman loop is single-flight (one delivery at a time) and is the
+// SOLE writer of this counter — both increment and ResetRespawnShrinkCount run
+// on that one goroutine, so no concurrent mutation can interleave. Does not bump
+// updated_at: internal delivery bookkeeping.
+func (s *Store) IncrementRespawnShrinkCount(ctx context.Context, name string) (int, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET respawn_shrink_count = respawn_shrink_count + 1 WHERE name = ?`,
+		name)
+	if err != nil {
+		return 0, err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return 0, fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	var count int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT respawn_shrink_count FROM agents WHERE name = ?`, name).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// ResetRespawnShrinkCount clears the #285 shrink counter back to 0 — called
+// after a respawn fires (the counter cycle restarts) and safe to call when the
+// count is already 0. A missing agent is a no-op, not an error: this is
+// best-effort bookkeeping bracketing the respawn pathway.
+func (s *Store) ResetRespawnShrinkCount(ctx context.Context, name string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET respawn_shrink_count = 0 WHERE name = ?`,
+		name)
 	return err
 }
 

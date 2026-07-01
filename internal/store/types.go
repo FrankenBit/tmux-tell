@@ -201,6 +201,18 @@ type Agent struct {
 	// Metabolism is empty (the cleared state stores NULL). Mirrors how
 	// observed_state_at stamps the auto-observed axis (#448).
 	MetabolismSetAt string
+	// RespawnAfterShrinks is the #285 per-chamber respawn threshold N: the
+	// mailman respawns the chamber's process after N counted context-shrink
+	// events. 0 (the default) = DISABLED — opt-in per chamber, so merging the
+	// feature never auto-restarts live processes. Set via SetRespawnAfterShrinks.
+	// Read at serve-time each delivery cycle from the agent row.
+	RespawnAfterShrinks int
+	// RespawnShrinkCount is the #285 running counter of counted context-shrink
+	// events since the last respawn (bus-delivered clear in PR1). When it reaches
+	// RespawnAfterShrinks (and that threshold is > 0) the mailman fires the
+	// respawn pathway and resets this to 0. Incremented via
+	// IncrementRespawnShrinkCount, cleared via ResetRespawnShrinkCount.
+	RespawnShrinkCount int
 }
 
 // Delivery-mode constants. Constrained string set; see Agent.DeliveryMode

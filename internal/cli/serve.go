@@ -2125,6 +2125,33 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 						msg.PublicID, opts.PostCompactPause)
 				}
 			}
+			// #285 PR1: a bus-delivered clear is a counted context-shrink event.
+			// When the agent has opted in (RespawnAfterShrinks > 0) and the count
+			// reaches the threshold, respawn the chamber's process to release the
+			// heap /clear can't — graceful-vs-abrupt hygiene, complementing the
+			// memory-cap wrapper's host-protection ceiling (alcatraz-infra#50).
+			// Fired INLINE here, right after the clear settled to stable idle: the
+			// single-flight loop guarantees nothing else delivers during the
+			// respawn window, and the synchronous respawn (it waits for ready)
+			// completes before the loop delivers the clear macro's follow-up
+			// /rename to the restarted, ready session. /compact is not counted
+			// here — self-compact detection is PR2 (see isClearControl).
+			if isClearControl(msg) && a.RespawnAfterShrinks > 0 {
+				count, ierr := s.IncrementRespawnShrinkCount(opCtx, opts.Agent)
+				switch {
+				case ierr != nil:
+					logger.Printf("respawn_count_err agent=%s err=%v", opts.Agent, ierr)
+				case count >= a.RespawnAfterShrinks:
+					logger.Printf("respawn_threshold_reached agent=%s count=%d threshold=%d",
+						opts.Agent, count, a.RespawnAfterShrinks)
+					if respawnChamber(stopCtx, s, defaultRespawnOps(), logger, opts.Agent, paneForDelivery, watchdogPing) {
+						return exitOK
+					}
+				default:
+					logger.Printf("respawn_shrink_counted agent=%s count=%d/%d",
+						opts.Agent, count, a.RespawnAfterShrinks)
+				}
+			}
 		case errors.Is(derr, tmuxio.ErrUnverifiedDelivery):
 			logger.Printf("WARN delivered_in_input_box id=%s — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); message is in recipient's input box pending submit",
 				msg.PublicID)
@@ -2589,6 +2616,19 @@ func isSessionResetControl(msg *store.Message) bool {
 	}
 	body := strings.TrimSpace(msg.Body)
 	return body == "/compact" || body == "/clear"
+}
+
+// isClearControl returns true when msg is the bus clear primitive's first row —
+// a bare `/clear` control (#286). This is the #285 PR1 respawn trigger: a
+// bus-delivered clear is a counted context-shrink event the mailman observes on
+// delivery, no detection subsystem needed (the bus IS the source of truth).
+// /compact is deliberately EXCLUDED: self-compact is chamber-driven, not
+// bus-delivered, so it can't be counted here — its detection (PostCompact hook +
+// transcript polling) lands in PR2. The clear macro's second `/rename` row is
+// not a `/clear` body, so it is correctly NOT counted — one increment per clear,
+// not per macro row.
+func isClearControl(msg *store.Message) bool {
+	return msg.Kind == store.KindControl && strings.TrimSpace(msg.Body) == "/clear"
 }
 
 // Stability-gate tunables for the post-/compact wait (#622). Package vars so
