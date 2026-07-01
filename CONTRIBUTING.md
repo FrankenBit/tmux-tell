@@ -187,8 +187,10 @@ cleared via #546.
 > **Superseded by release-toolkit (#617).** Release-cut machinery now consumes
 > [`frankenbit/release-toolkit`](https://git.frankenbit.de/frankenbit/release-toolkit):
 > a release-relevant push to `main` opens a rolling release-prep PR; merging it
-> cuts a **draft** release; the operator clicks **Publish** (which fires
-> `release: published`, chaining `deploy.yml` onto alcatraz-host).
+> **publishes the release immediately**, firing `release: published` and chaining
+> `deploy.yml` onto alcatraz-host — merge is the gate (#701). Pass
+> `publish_mode: draft` via `workflow_dispatch` to restore the click-to-**Publish**
+> gate for a cut that wants a draft review window.
 > `workflow_dispatch` on `release.yml` is retained as an emergency-cut fallback.
 > The detailed manual procedure below describes the RETIRED hand-rolled flow and
 > is kept for reference only; it will be rewritten for the toolkit flow once the
