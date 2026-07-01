@@ -1347,6 +1347,26 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 
 		pruneProviderDeferStart(opCtx, s, m, active.Provider, deferStart)
 
+		// #285 PR2 self-compact detection. A self-/compact is chamber-driven, not
+		// bus-delivered, so it can't be counted inline on delivery like the clear
+		// (PR1, below) — the mailman counts it HERE on its self-observation pass.
+		// The adapter's post-compaction hook wrote last_self_compact_at (via
+		// note-compact); we edge-detect it against the mailman-owned watermark.
+		// Gated on opt-in (RespawnAfterShrinks>0) and a live pane; the in-memory
+		// compare on the freshly-read agent row (line ~1264) skips the store
+		// round-trip on the common no-new-compact iteration, so this is ~free every
+		// loop. CountSelfCompactIfNew is the authoritative re-check + atomic count.
+		if a.RespawnAfterShrinks > 0 && a.PaneID != "" &&
+			a.LastSelfCompactAt != "" && a.LastSelfCompactAt > a.SelfCompactCountedAt {
+			counted, count, cerr := s.CountSelfCompactIfNew(opCtx, opts.Agent)
+			if cerr != nil {
+				logger.Printf("self_compact_count_err agent=%s err=%v", opts.Agent, cerr)
+			} else if counted && respawnIfThresholdReached(stopCtx, s, defaultRespawnOps(), logger, opts.Agent,
+				a.PaneID, "self-compact", count, a.RespawnAfterShrinks, watchdogPing) {
+				return exitOK
+			}
+		}
+
 		msg, err := s.ClaimNextWithStrategy(opCtx, opts.Agent, opts.PriorityStrategy)
 		if err != nil {
 			logger.Printf("claim_failed err=%v", err)
@@ -2138,18 +2158,11 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			// here — self-compact detection is PR2 (see isClearControl).
 			if isClearControl(msg) && a.RespawnAfterShrinks > 0 {
 				count, ierr := s.IncrementRespawnShrinkCount(opCtx, opts.Agent)
-				switch {
-				case ierr != nil:
+				if ierr != nil {
 					logger.Printf("respawn_count_err agent=%s err=%v", opts.Agent, ierr)
-				case count >= a.RespawnAfterShrinks:
-					logger.Printf("respawn_threshold_reached agent=%s count=%d threshold=%d",
-						opts.Agent, count, a.RespawnAfterShrinks)
-					if respawnChamber(stopCtx, s, defaultRespawnOps(), logger, opts.Agent, paneForDelivery, watchdogPing) {
-						return exitOK
-					}
-				default:
-					logger.Printf("respawn_shrink_counted agent=%s count=%d/%d",
-						opts.Agent, count, a.RespawnAfterShrinks)
+				} else if respawnIfThresholdReached(stopCtx, s, defaultRespawnOps(), logger, opts.Agent,
+					paneForDelivery, "clear", count, a.RespawnAfterShrinks, watchdogPing) {
+					return exitOK
 				}
 			}
 		case errors.Is(derr, tmuxio.ErrUnverifiedDelivery):

@@ -118,10 +118,12 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 		aliases         string
 		deliveryMode    string
 		metabolismSetAt sql.NullString
+		lastCompactAt   sql.NullString
+		compactCounted  sql.NullString
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count, last_self_compact_at, self_compact_counted_at FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount, &lastCompactAt, &compactCounted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -135,6 +137,12 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 	a.DeliveryMode = deliveryMode
 	if metabolismSetAt.Valid {
 		a.MetabolismSetAt = metabolismSetAt.String
+	}
+	if lastCompactAt.Valid {
+		a.LastSelfCompactAt = lastCompactAt.String
+	}
+	if compactCounted.Valid {
+		a.SelfCompactCountedAt = compactCounted.String
 	}
 	return &a, nil
 }
@@ -232,7 +240,7 @@ func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) e
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count, last_self_compact_at, self_compact_counted_at FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -247,8 +255,10 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 			aliases         string
 			deliveryMode    string
 			metabolismSetAt sql.NullString
+			lastCompactAt   sql.NullString
+			compactCounted  sql.NullString
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount, &lastCompactAt, &compactCounted); err != nil {
 			return nil, err
 		}
 		if pane.Valid {
@@ -259,6 +269,12 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 		a.DeliveryMode = deliveryMode
 		if metabolismSetAt.Valid {
 			a.MetabolismSetAt = metabolismSetAt.String
+		}
+		if lastCompactAt.Valid {
+			a.LastSelfCompactAt = lastCompactAt.String
+		}
+		if compactCounted.Valid {
+			a.SelfCompactCountedAt = compactCounted.String
 		}
 		out = append(out, a)
 	}
@@ -408,6 +424,94 @@ func (s *Store) ResetRespawnShrinkCount(ctx context.Context, name string) error 
 		`UPDATE agents SET respawn_shrink_count = 0 WHERE name = ?`,
 		name)
 	return err
+}
+
+// SetSelfCompactSignal stamps the #285 PR2 self-compact signal for an agent:
+// last_self_compact_at = now (sqliteTimeFormat UTC). Invoked by the adapter's
+// post-compaction hook via the note-compact helper — it records THAT a
+// self-/compact happened; the mailman counts it on its next self-observation via
+// CountSelfCompactIfNew. Returns ErrNotFound if no agent with that name is
+// registered (a hook wired for an unregistered agent must fail loud, not silently
+// no-op).
+//
+// This is the ONE column the hook writes. It is a blind overwrite (always "now"),
+// never a read-modify-write, so it is safe for the hook process to write
+// concurrently with the mailman's reads: SQLite WAL serializes the write, and the
+// mailman only ever READS last_self_compact_at (it writes self_compact_counted_at +
+// respawn_shrink_count, which the hook never touches). That separation is what
+// keeps the mailman the sole writer of the counter family — PR1's race-freedom
+// invariant — even though a second process (the hook) now participates.
+//
+// Does not bump updated_at: an operational delivery signal, not discovery-relevant.
+func (s *Store) SetSelfCompactSignal(ctx context.Context, name string) error {
+	return s.setSelfCompactSignalAt(ctx, name, time.Now())
+}
+
+// setSelfCompactSignalAt is the timestamp-injectable core of SetSelfCompactSignal.
+// Production stamps time.Now(); tests pass explicit instants so the edge-detection
+// ordering (CountSelfCompactIfNew's `>` watermark guard) is deterministic without
+// sleeping to cross the millisecond-precision sqliteTimeFormat boundary.
+func (s *Store) setSelfCompactSignalAt(ctx context.Context, name string, at time.Time) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET last_self_compact_at = ? WHERE name = ?`,
+		at.UTC().Format(sqliteTimeFormat), name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
+}
+
+// CountSelfCompactIfNew edge-detects a fresh self-compact signal and, if the
+// current last_self_compact_at is newer than the mailman's watermark
+// (self_compact_counted_at), counts ONE shrink toward respawn_shrink_count and
+// advances the watermark — atomically, in a single UPDATE. Returns (counted=true,
+// the new count) when it counted, or (false, 0) when nothing was new (or the agent
+// is missing). Called by the mailman on its self-observation cadence; a self-compact
+// is chamber-driven (no bus delivery), so this is the counting path the inline
+// clear path (PR1) can't serve.
+//
+// Atomicity + race-freedom: the increment and the watermark-advance are ONE
+// statement, so a mailman crash between them is impossible — the signal is either
+// fully counted or not at all (never double-counted, never half-counted). The
+// mailman is the sole writer of both columns this touches; the hook only writes
+// last_self_compact_at (read here). Lexical `>` on last_self_compact_at vs
+// self_compact_counted_at is chronological because both are the same fixed-width
+// sqliteTimeFormat UTC stamp (the watermark is copied verbatim from the signal).
+//
+// Burst semantics (documented, accepted): if two self-/compacts land between two
+// mailman observations, last_self_compact_at reflects only the LATEST, so this
+// counts ONE, not two. Compactions are turns/minutes apart, and an under-count in a
+// rapid burst merely delays a respawn by one shrink event — the next compaction
+// re-triggers. Exact per-compaction counting would require a hook-side
+// read-modify-write, reintroducing the very cross-process race this design avoids.
+func (s *Store) CountSelfCompactIfNew(ctx context.Context, name string) (counted bool, newCount int, err error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents
+		    SET respawn_shrink_count = respawn_shrink_count + 1,
+		        self_compact_counted_at = last_self_compact_at
+		  WHERE name = ?
+		    AND last_self_compact_at IS NOT NULL
+		    AND last_self_compact_at != ''
+		    AND (self_compact_counted_at IS NULL
+		         OR self_compact_counted_at = ''
+		         OR last_self_compact_at > self_compact_counted_at)`,
+		name)
+	if err != nil {
+		return false, 0, err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		// Nothing new (or the agent is missing). Not an error: the mailman polls
+		// this every eligible iteration, so a no-op is the common case.
+		return false, 0, nil
+	}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT respawn_shrink_count FROM agents WHERE name = ?`, name).Scan(&newCount); err != nil {
+		return false, 0, err
+	}
+	return true, newCount, nil
 }
 
 // SetStuck parks an agent's mailman with the given non-empty reason (#291).

@@ -213,6 +213,22 @@ type Agent struct {
 	// respawn pathway and resets this to 0. Incremented via
 	// IncrementRespawnShrinkCount, cleared via ResetRespawnShrinkCount.
 	RespawnShrinkCount int
+	// LastSelfCompactAt is the #285 PR2 self-compact signal: the adapter's
+	// post-compaction hook stamps it (via the note-compact helper →
+	// SetSelfCompactSignal) each time the chamber self-/compacts. sqliteTimeFormat
+	// UTC; empty until the first signal. The mailman edge-detects it against
+	// SelfCompactCountedAt to count a self-compact toward RespawnShrinkCount —
+	// a self-compact is NOT bus-delivered, so it can't be counted on delivery like
+	// PR1's clear.
+	LastSelfCompactAt string
+	// SelfCompactCountedAt is the #285 PR2 mailman-owned watermark: the value of
+	// LastSelfCompactAt the last time the mailman counted a self-compact. Advanced
+	// atomically with the increment in CountSelfCompactIfNew, so the same signal is
+	// never double-counted. sqliteTimeFormat UTC; empty until the first count. The
+	// hook NEVER writes this column — the mailman stays the sole writer of the
+	// counter family (respawn_shrink_count + this watermark), preserving PR1's
+	// single-flight race-freedom.
+	SelfCompactCountedAt string
 }
 
 // Delivery-mode constants. Constrained string set; see Agent.DeliveryMode

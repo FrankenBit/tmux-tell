@@ -987,16 +987,62 @@ tmux-tell-claude set-respawn-after-shrinks --name pilot 0
 # A chamber can self-target (no --name) from inside its own pane.
 ```
 
-**What counts as a shrink event.** In this first cut, only a **bus-delivered
-`/clear`** (the `control clear --for-task` primitive) increments the counter —
-the mailman observes it on delivery, no detection subsystem needed (the bus is
-the source of truth). Self-run `/compact` is *not yet* counted; its detection
-(a PostCompact hook + a transcript-JSONL polling fallback) is tracked as a
-follow-up. `--respawn-after-n-shrinks 0`-equivalent (an unset / 0 threshold)
-means the counter is never even incremented.
+**What counts as a shrink event.** Two triggers feed the one shared counter:
 
-**The respawn sequence**, fired inline when the counter reaches `N` right after
-the clear settles to a stable idle:
+- **Bus-delivered `/clear`** (the `control clear --for-task` primitive) — the
+  mailman observes it on delivery, no detection subsystem needed (the bus is the
+  source of truth). Counted inline in the delivery path.
+- **Self-run `/compact`** (auto or manual) — chamber-driven, so it is *not*
+  bus-delivered and can't be counted on delivery. Instead the chamber's
+  post-compaction hook records a signal and the mailman counts it on its
+  self-observation pass (see the wiring below). Catches the unattended
+  auto-compaction that accumulates heap over long uptimes.
+
+An unset / 0 threshold means the counter is never even incremented (neither
+trigger fires). Adapter classes with no hook infrastructure at all can't yet feed
+the self-compact trigger — tracked as follow-up #685.
+
+**Wiring self-compact detection.** The mailman never edits your adapter config;
+you opt in by wiring the adapter's post-compaction hook to run
+`tmux-tell-<adapter> note-compact` (which stamps the signal for the calling
+chamber). The helper writes *only* the signal timestamp — the mailman stays the
+sole writer of the counter, so the hook running as a separate process can't race
+it.
+
+*Claude Code* — in `~/.claude/settings.json` (matcher `manual|auto` catches both
+self-`/compact` and auto-compaction):
+
+```json
+{
+  "hooks": {
+    "PostCompact": [
+      { "matcher": "manual|auto",
+        "hooks": [ { "type": "command", "command": "tmux-tell-claude note-compact" } ] }
+    ]
+  }
+}
+```
+
+*Codex* — in `~/.codex/config.toml` (or `~/.codex/hooks.json`); command hooks
+require `/hooks` trust review:
+
+```toml
+[[hooks.PostCompact]]
+matcher = "manual|auto"
+
+[[hooks.PostCompact.hooks]]
+type = "command"
+command = "tmux-tell-codex note-compact"
+```
+
+Omit `--from` and the helper resolves the calling chamber from `$TMUX_PANE`
+(the hook runs in the chamber's own shell); pass `--from <chamber>` only for an
+out-of-pane wiring. A hook wired for an unregistered chamber fails loud rather
+than silently dropping the signal.
+
+**The respawn sequence** — fired when the counter reaches `N`, either inline
+right after a bus `/clear` settles to a stable idle, or on the self-observation
+pass after a self-compact is counted:
 
 1. **Idle gate** — proceed only if the pane is idle *now*; never respawn under
    an open operator turn (the counter is retained so a later clear retries).
@@ -1924,9 +1970,11 @@ CREATE TABLE agents (
   attention_state  TEXT NOT NULL DEFAULT 'idle',  -- 'idle' | 'busy' | 'awaiting_operator' (#224)
   stuck_reason     TEXT NOT NULL DEFAULT '',       -- '' = healthy; 'pane-not-found' = mailman parked (#291)
   metabolism        TEXT NOT NULL DEFAULT '',      -- '' | 'warming' | 'saturating' | 'compact-pending' — chamber self-report (#621)
-  metabolism_set_at TEXT                           -- stamp of the current metabolism; NULL when metabolism is '' (#621)
+  metabolism_set_at TEXT,                          -- stamp of the current metabolism; NULL when metabolism is '' (#621)
   respawn_after_shrinks INTEGER NOT NULL DEFAULT 0, -- #285 per-chamber respawn threshold N; 0 = disabled (opt-in)
-  respawn_shrink_count  INTEGER NOT NULL DEFAULT 0  -- #285 counted context-shrink events since the last respawn
+  respawn_shrink_count  INTEGER NOT NULL DEFAULT 0, -- #285 counted context-shrink events since the last respawn
+  last_self_compact_at    TEXT,                    -- #285 PR2 self-compact signal: the post-compaction hook stamps this (sqliteTimeFormat UTC)
+  self_compact_counted_at TEXT                     -- #285 PR2 mailman-owned watermark of the last self-compact it counted (never hook-written)
   -- … later additive columns (provider/observed_state #448, display_name #556, session_id #626) omitted for brevity
 );
 

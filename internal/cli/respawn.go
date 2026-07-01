@@ -163,6 +163,26 @@ func respawnChamber(stopCtx context.Context, s *store.Store, ops respawnOps,
 	return false
 }
 
+// respawnIfThresholdReached fires the respawn pathway when a freshly-incremented
+// shrink count has reached the agent's threshold, and logs either the
+// threshold-hit respawn or the sub-threshold count. It is the shared tail of both
+// #285 shrink triggers so they stay in lockstep: the inline bus-delivered clear
+// (PR1) and the observe-path self-compact detection (PR2) each do their own
+// counting, then hand the (count, threshold) here. trigger is a short label
+// ("clear" | "self-compact") for log observability. Returns stopped=true when
+// respawnChamber saw stopCtx cancelled (the caller should return from the loop).
+func respawnIfThresholdReached(stopCtx context.Context, s *store.Store, ops respawnOps, logger *log.Logger,
+	agent, pane, trigger string, count, threshold int, watchdogPing time.Duration) (stopped bool) {
+	if count >= threshold {
+		logger.Printf("respawn_threshold_reached agent=%s trigger=%s count=%d threshold=%d",
+			agent, trigger, count, threshold)
+		return respawnChamber(stopCtx, s, ops, logger, agent, pane, watchdogPing)
+	}
+	logger.Printf("respawn_shrink_counted agent=%s trigger=%s count=%d/%d",
+		agent, trigger, count, threshold)
+	return false
+}
+
 // respawnWaitReady polls AgentState until the restarted claude reaches a live
 // idle prompt (respawnReady), respawnReadyTimeout elapses (respawnTimedOut), or
 // stopCtx is cancelled (respawnStopped). A single StateIdle read is sufficient:

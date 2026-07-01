@@ -187,6 +187,47 @@ func TestRespawnChamber_ReadyTimeoutStillCompletes(t *testing.T) {
 	}
 }
 
+// respawnIfThresholdReached is the shared tail of both shrink triggers (PR1 clear
+// + PR2 self-compact). It fires the respawn ONLY when count >= threshold. Below
+// threshold it must not touch the pane at all (no /exit, no respawn-pane) — a
+// counted-but-not-yet-triggering shrink. Mutation anchor: flipping the `count >=
+// threshold` comparison fires a respawn on the sub-threshold case and flips the
+// call-count asserts.
+func TestRespawnIfThresholdReached_Routing(t *testing.T) {
+	fastRespawnTunables(t)
+
+	// Below threshold: no respawn, no pane touch, returns not-stopped.
+	s := respawnTestStore(t, "old-session-uuid") // counter seeded at 2
+	below := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}}
+	if stopped := respawnIfThresholdReached(context.Background(), s, below.toOps(), discardLogger(),
+		"pilot", "%6", "self-compact", 2 /*count*/, 3 /*threshold*/, 0); stopped {
+		t.Fatal("stopped = true below threshold, want false")
+	}
+	if below.sendExitN != 0 || below.respawnN != 0 {
+		t.Errorf("below threshold: sendExit=%d respawn=%d, want 0/0", below.sendExitN, below.respawnN)
+	}
+	a, _ := s.GetAgent(context.Background(), "pilot")
+	if a.RespawnShrinkCount != 2 || a.SessionID != "old-session-uuid" {
+		t.Errorf("below threshold mutated state: count=%d session=%q, want 2 / preserved",
+			a.RespawnShrinkCount, a.SessionID)
+	}
+
+	// At threshold: fires the respawn (idle pane → full pathway → counter reset).
+	s2 := respawnTestStore(t, "old-session-uuid")
+	at := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}}
+	if stopped := respawnIfThresholdReached(context.Background(), s2, at.toOps(), discardLogger(),
+		"pilot", "%6", "self-compact", 3 /*count*/, 3 /*threshold*/, 0); stopped {
+		t.Fatal("stopped = true at threshold happy path, want false")
+	}
+	if at.sendExitN != 1 || at.respawnN != 1 {
+		t.Errorf("at threshold: sendExit=%d respawn=%d, want 1/1 (respawn fired)", at.sendExitN, at.respawnN)
+	}
+	a2, _ := s2.GetAgent(context.Background(), "pilot")
+	if a2.RespawnShrinkCount != 0 {
+		t.Errorf("at threshold: RespawnShrinkCount = %d after respawn, want 0 (reset)", a2.RespawnShrinkCount)
+	}
+}
+
 // isClearControl matches ONLY a bare `/clear` control row (the PR1 trigger).
 // /compact is excluded (self-compact detection is PR2); the clear macro's
 // `/rename` second row and ordinary messages are excluded (one count per clear).

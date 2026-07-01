@@ -62,9 +62,10 @@ Subcommands:
   codex-install  Codex-adapter bootstrap: set hook-context delivery mode + write hook blocks to ~/.codex/config.toml (#384)
   mcp     Speak MCP over stdio (%s tools)
   hook-context  Present pending messages as additionalContext for a hook-context agent — invoked by a %s SessionStart/UserPromptSubmit hook (#249)
+  note-compact  Record a self-/compact for the calling chamber — invoked by a %s post-compaction (PostCompact) hook; feeds the #285 respawn counter
 
 See https://git.frankenbit.de/frankenbit/tmux-tell for the design notes.
-`, active.BinaryName, active.DisplayLabel, active.DisplayLabel)
+`, active.BinaryName, active.DisplayLabel, active.DisplayLabel, active.DisplayLabel)
 }
 
 // warnIfDeprecatedName emits the ADR-0008 deprecation WARN when the binary is
@@ -234,6 +235,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runRemoteRecvCLI(args[1:], stdin, stdout, stderr)
 	case "hook-context":
 		return runHookContextCLI(args[1:], stdin, stdout, stderr)
+	case "note-compact":
+		return runNoteCompactCLI(args[1:], stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "%s: unknown subcommand %q\n\n%s", active.BinaryName, args[0], usageText())
 		return exitUsage

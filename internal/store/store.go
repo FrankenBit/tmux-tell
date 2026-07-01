@@ -247,6 +247,18 @@ var migrations = []string{
 	// shrink and reset to 0 after a respawn fires. Both additive, default 0.
 	`ALTER TABLE agents ADD COLUMN respawn_after_shrinks INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE agents ADD COLUMN respawn_shrink_count INTEGER NOT NULL DEFAULT 0`,
+	// #285 PR2: self-compact detection. A self-/compact is chamber-driven, not
+	// bus-delivered, so the mailman can't count it on delivery like the clear
+	// (PR1). Instead the adapter's post-compaction hook writes a signal
+	// (last_self_compact_at, via the note-compact helper) and the mailman
+	// edge-detects it on its self-observation cadence. self_compact_counted_at is
+	// the mailman-owned watermark of the last signal it counted — advanced
+	// atomically with the increment so a signal is never double-counted. The hook
+	// only ever writes last_self_compact_at; the mailman stays the SOLE writer of
+	// respawn_shrink_count, preserving PR1's single-flight race-freedom. Both
+	// nullable (NULL until the first compact / first count).
+	`ALTER TABLE agents ADD COLUMN last_self_compact_at TEXT`,
+	`ALTER TABLE agents ADD COLUMN self_compact_counted_at TEXT`,
 }
 
 // Close releases the underlying database handle.
