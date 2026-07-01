@@ -128,7 +128,7 @@ to headline + link.
 **Per-release prelude (at cut time).** Each `## [X.Y.Z]` section opens with a short
 narrative paragraph naming the cluster, then a `Headlines:` digest of bolded bullets
 where the release has enough substance to digest (3+); a small cut can skip the
-digest but not the paragraph. This is not decoration: `release-draft.yml` extracts
+digest but not the paragraph. This is not decoration: the toolkit extracts
 everything before the first `### ` subsection as the curated release body, so an
 empty prelude **hard-fails the draft by design** (#427).
 
@@ -329,11 +329,15 @@ off?".
 
 ### Amending a release after Publish
 
-Clicking **Publish** creates the tag and makes the release public, so the clean
-fix for a bad prelude is to **catch it before Publish** — the draft sits in the
-releases UI precisely so it can be reviewed, and the prelude gate (a reviewer
-reading the draft body) is where a register or accuracy problem should be caught.
-Treat post-Publish amendment as **rare**.
+Under `publish_mode=immediate` (the default), the rolling PR merge IS the
+publish — the release becomes public + the tag exists as soon as merge lands,
+so the clean fix for a bad prelude is to **catch it at the rolling-PR
+pre-merge gate**: the Cold-Read step above is where a register or accuracy
+problem should surface. Under `publish_mode=draft`, an additional catch
+surface exists (the draft sits in the releases UI until the operator clicks
+Publish; the same Cold-Read discipline applies to the draft body). Either
+way, treat post-Publish amendment as **rare** — the pre-merge gate is the
+substantive review moment; the post-Publish paths below are the fallback.
 
 Worked precedent: the **v0.17.2** cut (2026-06-15), where a published prelude was
 flagged as cryptic and rewritten in place — see
