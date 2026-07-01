@@ -66,7 +66,7 @@ jobs:
           echo "head:       $(git rev-parse HEAD)"
           echo "origin:     $(git config --get remote.origin.url)"
 
-      - name: deploy via wrapper (claude adapter, bootstrap + prune orphans)
+      - name: deploy via wrapper (claude adapter, binary + mailman restart)
         # --system (#636): since the user-space install became the default,
         # alcatraz's system-wide deploy (root-owned binary in /usr/local/bin — the
         # existing deploy contract) must opt in explicitly, because install.sh now
@@ -74,12 +74,24 @@ jobs:
         # deploy-tmux-tell.sh argument allowlist must already permit --system, or
         # the wrapper rejects this arg before exec'ing install.sh. That allowlist
         # change must land BEFORE this ref deploys (see PR #636 cross-repo note).
+        #
+        # --no-bootstrap (#656): the runner has its own tmux context (or none at
+        # all) — chambers live in alex's separate tmux server. bootstrap's step 3
+        # (discover) + step 6 (refresh-all-mcps) both walk live tmux state, so
+        # they can't see the chambers from here and fail. Symptom: v0.23.0 +
+        # v0.24.0 + v0.24.1 all showed exit 70 at the refresh-all-mcps step even
+        # though the binary installed correctly. install.sh's --no-bootstrap path
+        # still runs restart-mailmen (the #436 load-bearing binary-effectiveness
+        # step) + prints a "Next steps" block naming `tmux-tell-claude bootstrap`
+        # as the operator-side follow-up to fire from their tmux session. Also
+        # loses --prune-orphans on the runner path (bootstrap is where the
+        # orphan walk lives); operator's manual bootstrap post-deploy picks it up.
         run: |
           sudo /srv/scripts/deploy-tmux-tell.sh \
             "$GITHUB_WORKSPACE" \
             --adapter=claude \
             --system \
-            --prune-orphans
+            --no-bootstrap
 
       - name: deploy via wrapper (codex adapter, binary + mailman restart)
         # #436: the release builds BOTH adapter binaries, so the deploy must roll
