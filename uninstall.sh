@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Idempotent uninstaller for tmux-tell.
+# Idempotent uninstaller for tmux-tell. Mirrors install.sh's mode split (#671):
 #
-# Run as root (sudo -A ./uninstall.sh). The script:
-#   - stops + disables every running claude-mailman@*.service user unit
+# Default is a USER-SPACE uninstall — no root (matches install.sh's #636
+# default): run `./uninstall.sh [--adapter=claude]` as your normal user to undo
+# a user-space install (binary under ~/.local/bin, systemd template under
+# ~/.config/systemd/user). Pass `--system` to undo a root install (binary under
+# /usr/local/bin; requires sudo). The script:
+#   - stops + disables every running tmux-tell-<adapter>-mailman@*.service unit
 #     under the operator's session
-#   - removes the systemd user template from
-#     ~/.config/systemd/user/claude-mailman@.service
-#   - removes the claude-msg binary from ${PREFIX}/bin/
+#   - removes the systemd user template
+#     ~/.config/systemd/user/tmux-tell-<adapter>-mailman@.service (+ the legacy
+#     claude-mailman@ alias for the claude adapter)
+#   - removes the tmux-tell-<adapter> binary from ${PREFIX}/bin/ (+ its
+#     deprecation aliases tmux-msg-<adapter>, and claude-msg for claude)
 #
 # By default the SQLite data directory at ${DATADIR} is left ALONE —
 # message history + the agents table survive an uninstall. Pass --purge
@@ -25,20 +31,38 @@
 # AC was reviewed).
 set -euo pipefail
 
-PREFIX=${PREFIX:-/usr/local}
+# Install mode (#671, mirrors install.sh #636). Default 0 = user-space uninstall
+# (no root); --system flips to 1 for the root uninstall. PREFIX's default depends
+# on it, so it is resolved AFTER arg parsing (an explicit PREFIX= env override
+# wins in either mode and is captured here).
+SYSTEM=0
+PREFIX=${PREFIX:-}
+# Which adapter to uninstall (mirrors install.sh --adapter). Selects the binary +
+# unit names removed; `claude` additionally carries the older claude-msg /
+# claude-mailman@ deprecation aliases.
+ADAPTER=${ADAPTER:-claude}
 # Default computed from the operator's user-home below (#308) when not set
 # explicitly via --datadir / $DATADIR.
 DATADIR=${DATADIR:-}
-OPERATOR_USER=${SUDO_USER:-${USER:-alex}}
+# Operator account (owns the systemd session the mailmen run under). Precedence
+# mirrors install.sh: explicit $OPERATOR_USER, then sudo's $SUDO_USER (the
+# --system case), then $USER (the default user-space case). No hardcoded
+# fallback — guessing a username targets the wrong session.
+OPERATOR_USER=${OPERATOR_USER:-${SUDO_USER:-${USER:-}}}
 PURGE_DATA=false
 
 usage() {
     cat <<'EOF'
-Usage: sudo -A ./uninstall.sh [--purge] [--prefix DIR] [--datadir DIR]
+Usage: ./uninstall.sh [--adapter=NAME] [--system] [--purge] [--prefix DIR] [--datadir DIR]
 
+  --adapter=NAME    Which adapter to remove: claude (default) or codex.
+  --system          Undo a root/system install (binary under /usr/local/bin;
+                    requires sudo). Default is a user-space uninstall — no root,
+                    binary under ~/.local/bin.
   --purge           Also delete the SQLite data directory (default-off;
                     needs an interactive confirmation when stdin is a TTY).
-  --prefix DIR      Where the binary lives (default: /usr/local).
+  --prefix DIR      Where the binary lives (default: ~/.local user-space,
+                    /usr/local with --system).
   --datadir DIR     Where the SQLite DB lives (default:
                     ~/.local/share/tmux-tell under the operator's home, #308;
                     a pre-rename install may still hold ~/.local/share/tmux-msg).
@@ -60,6 +84,9 @@ EOF
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --adapter=*) ADAPTER="${1#--adapter=}" ;;
+        --adapter) ADAPTER="$2"; shift ;;
+        --system) SYSTEM=1 ;;
         --purge) PURGE_DATA=true ;;
         --prefix) PREFIX="$2"; shift ;;
         --datadir) DATADIR="$2"; shift ;;
@@ -69,8 +96,47 @@ while [[ $# -gt 0 ]]; do
     shift
 done
 
-if [[ $EUID -ne 0 ]]; then
-    echo "uninstall.sh: must run as root (try: sudo -A ./uninstall.sh)" >&2
+# Resolve the PREFIX default now that the mode is known (mirrors install.sh). An
+# explicit PREFIX= env / --prefix override (captured above) wins in either mode.
+if [[ -z "$PREFIX" ]]; then
+    if [[ "$SYSTEM" -eq 1 ]]; then
+        PREFIX=/usr/local
+    else
+        PREFIX="$HOME/.local"
+    fi
+fi
+
+# Adapter-derived names (mirror install.sh). The canonical binary + unit are
+# tmux-tell-<adapter>; claude additionally carries the older claude-msg binary +
+# claude-mailman@ template deprecation aliases (removed at the v1.0 boundary).
+BIN_NAME="tmux-tell-${ADAPTER}"
+UNIT_PREFIX="tmux-tell-${ADAPTER}-mailman@"
+LEGACY_BINS=("tmux-msg-${ADAPTER}")
+LEGACY_UNIT=""
+if [[ "$ADAPTER" == "claude" ]]; then
+    LEGACY_BINS+=("claude-msg")
+    LEGACY_UNIT="claude-mailman@.service"
+fi
+
+if [[ "$SYSTEM" -eq 1 ]]; then
+    # --system removes the root-owned binary under /usr/local — needs root.
+    if [[ $EUID -ne 0 ]]; then
+        echo "uninstall.sh: --system uninstall must run as root (try: sudo -A ./uninstall.sh --system)" >&2
+        exit 1
+    fi
+else
+    # The default user-space uninstall touches only the invoking user's home.
+    # Running it as root would target root's home / the wrong session — reject.
+    if [[ $EUID -eq 0 ]]; then
+        echo "uninstall.sh: the default uninstall is user-space and must NOT run as root." >&2
+        echo "  Run it as your normal user (no sudo), or pass --system to undo a root install." >&2
+        exit 1
+    fi
+fi
+
+if [[ -z "$OPERATOR_USER" || "$OPERATOR_USER" == "root" ]]; then
+    echo "uninstall.sh: cannot determine the operator user (got: '${OPERATOR_USER}')." >&2
+    echo "  Set OPERATOR_USER=<you> or run via sudo (which exports \$SUDO_USER)." >&2
     exit 1
 fi
 
@@ -84,7 +150,9 @@ if [[ -z "$OPERATOR_HOME" || -z "$OPERATOR_UID" ]]; then
     echo "uninstall.sh: cannot resolve home dir or uid for $OPERATOR_USER" >&2
     exit 1
 fi
-USER_SYSTEMD="$OPERATOR_HOME/.config/systemd/user"
+# USER_SYSTEMD may be overridden (testing / bespoke layouts); defaults to the
+# operator's standard user-unit dir (mirrors install.sh).
+USER_SYSTEMD="${USER_SYSTEMD:-$OPERATOR_HOME/.config/systemd/user}"
 
 # Default data dir is the operator's user-home location (#308) unless an
 # explicit --datadir / $DATADIR override was given. Honors the standard XDG
@@ -110,53 +178,88 @@ if [[ "$CWD_REAL" == "$DATADIR_REAL"* ]]; then
     exit 1
 fi
 
-# 1. Stop + disable every claude-mailman@*.service user unit.
+# 1. Stop + disable every running mailman unit for this adapter.
 #
-# `systemctl --user` needs XDG_RUNTIME_DIR set to the operator's
-# session for it to talk to the right manager. machinectl or sudo -i
-# would work too; the explicit env-var form is the smallest portable
-# shape.
-sysctl_user() {
-    sudo -u "$OPERATOR_USER" \
-        XDG_RUNTIME_DIR="/run/user/${OPERATOR_UID}" \
+# `systemctl --user` needs to talk to the operator's session manager. In
+# --system mode we start as root and drop to the operator with XDG_RUNTIME_DIR
+# pointed at their runtime dir; in the default user-space mode we ARE the
+# operator, so we call systemctl --user directly (our own session, and
+# `sudo -u $self` would needlessly demand sudo). Mirrors install.sh's #636
+# privilege-drop split.
+if [[ "$SYSTEM" -eq 1 ]]; then
+    sysctl_user() {
+        sudo -u "$OPERATOR_USER" \
+            XDG_RUNTIME_DIR="/run/user/${OPERATOR_UID}" \
+            systemctl --user "$@"
+    }
+else
+    sysctl_user() {
         systemctl --user "$@"
-}
+    }
+fi
 
-if sysctl_user list-units --no-legend 'claude-mailman@*.service' >/dev/null 2>&1; then
-    units=$(sysctl_user list-units --no-legend --plain --state=loaded,active,failed \
-        'claude-mailman@*.service' 2>/dev/null | awk '{print $1}')
-    if [[ -n "$units" ]]; then
-        echo "==> stopping mailman units:"
-        # shellcheck disable=SC2086
-        for u in $units; do
-            echo "    $u"
-            sysctl_user stop "$u" || true
-            sysctl_user disable "$u" || true
-        done
-    else
-        echo "==> no claude-mailman@*.service units running (skip)"
+# The canonical unit is tmux-tell-<adapter>-mailman@; for claude also sweep the
+# legacy claude-mailman@ instances (a pre-rename install may have enabled units
+# under that name — the template is a symlink, but instance names differ).
+UNIT_GLOBS=("${UNIT_PREFIX}*.service")
+if [[ -n "$LEGACY_UNIT" ]]; then
+    UNIT_GLOBS+=("${LEGACY_UNIT%.service}*.service")
+fi
+for glob in "${UNIT_GLOBS[@]}"; do
+    if sysctl_user list-units --no-legend "$glob" >/dev/null 2>&1; then
+        units=$(sysctl_user list-units --no-legend --plain --state=loaded,active,failed \
+            "$glob" 2>/dev/null | awk '{print $1}')
+        if [[ -n "$units" ]]; then
+            echo "==> stopping mailman units ($glob):"
+            # shellcheck disable=SC2086
+            for u in $units; do
+                echo "    $u"
+                sysctl_user stop "$u" || true
+                sysctl_user disable "$u" || true
+            done
+        else
+            echo "==> no $glob units running (skip)"
+        fi
     fi
-fi
+done
 
-# 2. Remove the systemd user template + reload the manager so it
-# forgets the unit.
-TEMPLATE_PATH="$USER_SYSTEMD/claude-mailman@.service"
-if [[ -e "$TEMPLATE_PATH" ]]; then
-    echo "==> removing $TEMPLATE_PATH"
-    rm -f "$TEMPLATE_PATH"
+# 2. Remove the systemd user template(s) + reload the manager so it forgets them.
+# The canonical template is tmux-tell-<adapter>-mailman@.service; claude also has
+# the legacy claude-mailman@.service symlink alias. A `-L` check catches the
+# alias even after the canonical target it points at is removed (dangling).
+TEMPLATES=("$USER_SYSTEMD/${UNIT_PREFIX}.service")
+if [[ -n "$LEGACY_UNIT" ]]; then
+    TEMPLATES+=("$USER_SYSTEMD/$LEGACY_UNIT")
+fi
+removed_template=0
+for tpl in "${TEMPLATES[@]}"; do
+    if [[ -e "$tpl" || -L "$tpl" ]]; then
+        echo "==> removing $tpl"
+        rm -f "$tpl"
+        removed_template=1
+    else
+        echo "==> $tpl not present (skip)"
+    fi
+done
+if [[ "$removed_template" -eq 1 ]]; then
     sysctl_user daemon-reload || true
-else
-    echo "==> $TEMPLATE_PATH not present (skip)"
 fi
 
-# 3. Remove the binary.
-BIN_PATH="${PREFIX}/bin/claude-msg"
-if [[ -e "$BIN_PATH" ]]; then
-    echo "==> removing $BIN_PATH"
-    rm -f "$BIN_PATH"
-else
-    echo "==> $BIN_PATH not present (skip)"
-fi
+# 3. Remove the binary + its deprecation aliases. Canonical is
+# tmux-tell-<adapter>; aliases are tmux-msg-<adapter> (+ claude-msg for claude),
+# each a symlink — the `-L` check removes a dangling alias too.
+BINS=("${PREFIX}/bin/${BIN_NAME}")
+for legacy in "${LEGACY_BINS[@]}"; do
+    BINS+=("${PREFIX}/bin/${legacy}")
+done
+for bin in "${BINS[@]}"; do
+    if [[ -e "$bin" || -L "$bin" ]]; then
+        echo "==> removing $bin"
+        rm -f "$bin"
+    else
+        echo "==> $bin not present (skip)"
+    fi
+done
 
 # 4. Optional: purge the data directory. Default OFF — message history
 # survives an uninstall unless --purge is passed.

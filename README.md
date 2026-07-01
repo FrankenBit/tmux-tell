@@ -348,30 +348,32 @@ Operator guides live in [`docs/`](docs/), architecture decisions in [`docs/adr/`
 
 ## Removal
 
-A **user-space install** (the default) reverts with a plain `rm` — nothing is root-owned:
+`uninstall.sh` mirrors the installer's mode split — run it the same way you installed:
 
 ```bash
-systemctl --user disable --now 'tmux-tell-claude-mailman@*'   # stop any running mailmen
+./uninstall.sh                 # user-space install (the default) — no root
+sudo ./uninstall.sh --system   # system install — removes the root-owned /usr/local/bin binary
+```
+
+It stops + disables the adapter's mailmen, removes the binary (+ its `tmux-msg-*` and
+`claude-msg` deprecation aliases) and the systemd template, and leaves the DB (message
+history) intact. Flags: `--adapter=codex` to remove the codex adapter instead of claude;
+`--purge` to also wipe `~/.local/share/tmux-tell/` (interactive confirm when stdin is a TTY).
+
+A user-space install is also trivially reverted by hand — nothing is root-owned:
+
+```bash
+systemctl --user disable --now 'tmux-tell-claude-mailman@*'
 rm ~/.local/bin/tmux-tell-claude ~/.local/bin/tmux-msg-claude ~/.local/bin/claude-msg
 rm ~/.config/systemd/user/tmux-tell-claude-mailman@.service
 systemctl --user daemon-reload
-# the DB (message history) survives at ~/.local/share/tmux-tell/ — delete it too if you want:
-#   rm -rf ~/.local/share/tmux-tell/
-```
-
-For a **`--system` install**, `uninstall.sh` removes the root-owned artifacts:
-
-```bash
-sudo ./uninstall.sh            # stops mailmen, removes the binary, leaves the DB
-sudo ./uninstall.sh --purge    # also wipes ~/.local/share/tmux-tell/ (interactive confirm)
+# the DB survives at ~/.local/share/tmux-tell/ — rm -rf it too if you want it gone
 ```
 
 `uninstall.sh` is idempotent. It leaves alone (remove by hand if you want them gone):
 `/etc/tmux-tell/` (host config), the MCP entry in `~/.claude.json` (`claude mcp remove
 tmux-tell -s user`), `loginctl enable-linger`, and the user-home DB dir
 (`~/.local/share/tmux-tell/`, history, default-preserved; `--purge` wipes it).
-(`uninstall.sh` currently targets `--system` installs; mirroring the user-space default
-is tracked as [#671](https://git.frankenbit.de/frankenbit/tmux-tell/issues/671).)
 
 ## Where to go next
 
