@@ -514,10 +514,10 @@ of #558).** The same override on the control channel: the CLI `control` subcomma
 `--force-rate-limited` flag and the `tmux-tell.control` MCP tool's `force_rate_limited` input both
 mark the control row(s) for force, reusing the #558 enforcement (gate + #105) verbatim — no new
 paste-unsafe behavior. It applies to **both** rows of the multi-row macros: the restart macro's
-disable **and** enable, and the sleep+resume macro's `/compact` **and** resume-prompt. Forcing
+disable **and** enable, and the compact+resume macro's `/compact` **and** resume-prompt. Forcing
 only the primary would defeat the macro's atomicity (#29): a deferred re-enable leaves the
 recipient MCP-disabled-but-never-re-enabled, and a deferred resume leaves the chamber
-slept-but-dormant — the exact half-actioned states the atomic insert prevents, re-created at
+compacted-but-dormant — the exact half-actioned states the atomic insert prevents, re-created at
 delivery time. Narrowness is inherited unchanged: copy-mode / popup / unknown / compaction still
 defer for every forced control row. (Unlike `send`, `control` is single-recipient by construction,
 so there is no multi-recipient fail-loud guard to mirror.)
@@ -1727,7 +1727,7 @@ allowlist of specific (sender, recipient) pairs.
 
 | command | self | peer | note |
 |---|---|---|---|
-| `sleep`   | ✓ | ✗ | self-only — peers can't truncate your context (the bus verb for `/compact`; see the [glossary](glossary.md#sleep)) |
+| `compact` | ✓ | ✗ | self-only — peers can't truncate your context (the bus verb for `/compact`; see the [glossary](glossary.md#compact)) |
 | `rename`  | ✓ | ✓ | useful for `<Project> #<Issue>` tab automation |
 | `cost`    | ✓ | ✗ | self-only — output goes to the recipient |
 | `help`    | ✓ | ✓ | harmless either way |
@@ -1736,18 +1736,19 @@ allowlist of specific (sender, recipient) pairs.
 | `mcp-disable-tmux-tell` | ✓ | ✗ | self-only: raw peer-disable is a DoS surface; use the restart macro |
 | `mcp-restart-tmux-tell` | ✓ | ✓ | macro: `disable` + `enable` as two rows for a peer-safe reconnect |
 
-The pre-rename `mcp-{restart,disable,enable}-tmux-msg` names — and the pre-rename `compact`
-verb (#509) — keep working as deprecated aliases through v1.0 (#480, ADR-0008 §Discretion):
-an invocation resolves to the canonical form (`…-tmux-tell` / `sleep`), carries a
-`deprecated` field in the response, and logs a greppable `WARN deprecated_control_macro`.
+The pre-rename `mcp-{restart,disable,enable}-tmux-msg` names — and the former `sleep`
+verb (#646, which reversed the #509 `compact`→`sleep` rename) — keep working as deprecated
+aliases through v1.0 (#480, ADR-0008 §Discretion): an invocation resolves to the canonical
+form (`…-tmux-tell` / `compact`), carries a `deprecated` field in the response, and logs a
+greppable `WARN deprecated_control_macro`.
 
 Adding a command, flipping a scope, or adding an edge requires a code change
 (`internal/control/control.go`) — the audit surface is intentionally small. The same
 surface is a CLI subcommand (`tmux-tell-claude control --to … --command …`) for scripts and
 sessions whose MCP isn't loaded.
 
-**Self-sleep with a follow-up.** `/compact` leaves the session at an empty prompt;
-`command=sleep` accepts a `resume_with` string (self-invocation only). The handler
+**Self-compact with a follow-up.** `/compact` leaves the session at an empty prompt;
+`command=compact` accepts a `resume_with` string (self-invocation only). The handler
 queues the `/compact` plus the resume message (threaded via `reply_to`), and the
 mailman holds the queue for `--post-compact-pause` (default 120s) so the follow-up
 lands after the CLI tool has settled, not into the slash-command parser mid-compaction.

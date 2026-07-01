@@ -31,12 +31,12 @@ func claimForce(t *testing.T, s *store.Store, agent string) bool {
 }
 
 // TestControl_ForceRateLimited_PlainCommand: the plain path (single control row,
-// no macro, no resume) carries the marker. `sleep` on self with no resume_with
+// no macro, no resume) carries the marker. `compact` on self with no resume_with
 // resolves to /compact via path 3 (plain InsertMessage).
 func TestControl_ForceRateLimited_PlainCommand(t *testing.T) {
 	s := newCmdTestStore(t, "alice")
 	res, err := doControl(context.Background(), s, controlParams{
-		From: "alice", To: "alice", Command: "sleep", ForceRateLimited: true,
+		From: "alice", To: "alice", Command: "compact", ForceRateLimited: true,
 	})
 	if err != nil {
 		t.Fatalf("doControl plain: %v", err)
@@ -77,27 +77,27 @@ func TestControl_ForceRateLimited_RestartMacro_BothRows(t *testing.T) {
 
 // TestControl_ForceRateLimited_ResumeWith_BothRows is the second #573 decision
 // pin: force applies to BOTH the /compact (control) row and the resume
-// (message) row of the sleep+resume InsertMessagePair. Mutation anchor: drop
+// (message) row of the compact+resume InsertMessagePair. Mutation anchor: drop
 // `ForceRateLimited: p.ForceRateLimited` from resumeP → the resume assertion
-// fails (the continuation would defer, leaving the chamber slept-but-dormant).
+// fails (the continuation would defer, leaving the chamber compacted-but-dormant).
 func TestControl_ForceRateLimited_ResumeWith_BothRows(t *testing.T) {
 	s := newCmdTestStore(t, "alice")
 	res, err := doControl(context.Background(), s, controlParams{
-		From: "alice", To: "alice", Command: "sleep",
+		From: "alice", To: "alice", Command: "compact",
 		ResumeWith: "carry on with #573", ForceRateLimited: true,
 		MaxBody: 16 * 1024,
 	})
 	if err != nil {
-		t.Fatalf("doControl sleep+resume: %v", err)
+		t.Fatalf("doControl compact+resume: %v", err)
 	}
 	if res.Macro != "resume" {
 		t.Fatalf("macro = %q, want resume", res.Macro)
 	}
 	if !claimForce(t, s, "alice") {
-		t.Errorf("sleep row 1 (/compact) not forced")
+		t.Errorf("compact row 1 (/compact) not forced")
 	}
 	if !claimForce(t, s, "alice") {
-		t.Errorf("sleep row 2 (resume) not forced — force must ride BOTH rows or the continuation defers slept-but-dormant (#573)")
+		t.Errorf("compact row 2 (resume) not forced — force must ride BOTH rows or the continuation defers compacted-but-dormant (#573)")
 	}
 }
 
@@ -158,7 +158,7 @@ func TestControlCLI_ForceRateLimited_FlagPlumbs(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
-		[]string{"--to", "alice", "--command", "sleep", "--force-rate-limited"},
+		[]string{"--to", "alice", "--command", "compact", "--force-rate-limited"},
 		&stdout, &stderr,
 	)
 	if exit != exitOK {
@@ -177,7 +177,7 @@ func TestMCP_Control_ForceRateLimited_PlumbsFlag(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	handler := mcpControlHandler(s)
 	_, err := handler(context.Background(), json.RawMessage(
-		`{"to":"alice","command":"sleep","force_rate_limited":true}`))
+		`{"to":"alice","command":"compact","force_rate_limited":true}`))
 	if err != nil {
 		t.Fatalf("mcp control: %v", err)
 	}

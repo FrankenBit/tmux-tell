@@ -71,12 +71,16 @@ type Command struct {
 // to true only where the recipient-side effect is benign. Per-edge
 // exceptions for destructive commands live in PeerEdges below.
 var Allowed = map[string]Command{
-	// sleep is the bus verb for the Claude Code /compact mechanism (#509,
-	// renamed from `compact` per the lexicon meta-thread). The Text stays
-	// "/compact" — only the bus verb renames; the emitted CLI primitive is
-	// unchanged. Self-only by design (peers can't truncate your context);
-	// `compact` remains a deprecated alias (aliasOf below).
-	"sleep": {
+	// compact is the bus verb for the Claude Code /compact mechanism. The verb
+	// equals the emitted primitive equals the pin-language
+	// (feedback_sleep_is_chamber_metabolism: "/compact IS the rest mechanism")
+	// — substrate-honest, not anthropomorphic. #646 renamed the verb
+	// `sleep` → `compact`, reversing the #509 `compact` → `sleep` rename that
+	// the operator judged anthropomorphic-dramatic (chambers context-reset,
+	// they don't biologically rest). The Text is "/compact" — the emitted CLI
+	// primitive is unchanged. Self-only by design (peers can't truncate your
+	// context); `sleep` remains a deprecated alias (aliasOf below).
+	"compact": {
 		Text: "/compact", Self: true, Peer: false,
 		Desc: "self-compaction: recipient pastes /compact, summarises + drops accumulated context, continues with cleaned-up context — NOT suspended (morning-fresh after)",
 	},
@@ -144,10 +148,13 @@ var aliasOf = map[string]string{
 	"mcp-disable-tmux-msg": "mcp-disable-tmux-tell",
 	"mcp-enable-tmux-msg":  "mcp-enable-tmux-tell",
 	"mcp-restart-tmux-msg": "mcp-restart-tmux-tell",
-	// #509: `compact` → `sleep` bus-verb rename (lexicon meta-thread). The old
-	// verb keeps working through v1.0 per ADR-0008 §Discretion, emitting the
-	// same deprecation WARN as the substrate-rename aliases above.
-	"compact": "sleep",
+	// #646: `sleep` → `compact` bus-verb rename, reversing the #509
+	// `compact` → `sleep` rename (operator judged `sleep`
+	// anthropomorphic-dramatic; chambers context-reset, they don't biologically
+	// rest). The old `sleep` verb keeps working through v1.0 per ADR-0008
+	// §Discretion, emitting the same deprecation WARN as the substrate-rename
+	// aliases above.
+	"sleep": "compact",
 }
 
 // Canonicalize normalises a command name (trim, strip leading slash, lowercase)

@@ -22,7 +22,7 @@ func TestControlCLI_HappyPath_PlainCommand(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
-		[]string{"--to", "alice", "--command", "sleep"},
+		[]string{"--to", "alice", "--command", "compact"},
 		&stdout, &stderr,
 	)
 	if exit != exitOK {
@@ -114,13 +114,14 @@ func TestControlCLI_DeprecatedAlias_StillRestarts(t *testing.T) {
 	}
 }
 
-// TestControlCLI_CompactAlias_StillSleeps pins #509's backward-compat at the CLI
-// surface: the deprecated `compact` verb still resolves to the unchanged /compact
-// CLI primitive, surfaces a `deprecated` field naming the canonical `sleep`, and
+// TestControlCLI_SleepAlias_StillCompacts pins #646's backward-compat at the CLI
+// surface: the deprecated `sleep` verb still resolves to the unchanged /compact
+// CLI primitive, surfaces a `deprecated` field naming the canonical `compact`, and
 // emits the greppable WARN deprecated_control_macro. The retained deprecated-path
-// assertion at the IO boundary (the canonical `sleep` path is covered by the
-// other tests above).
-func TestControlCLI_CompactAlias_StillSleeps(t *testing.T) {
+// assertion at the IO boundary (the canonical `compact` path is covered by the
+// other tests above). #646 reversed the #509 `compact`→`sleep` rename, so `sleep`
+// is now the alias and `compact` the canonical verb.
+func TestControlCLI_SleepAlias_StillCompacts(t *testing.T) {
 	s := newCmdTestStore(t, "alice")
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	t.Setenv("CLAUDE_MSG_DB", ":memory:")
@@ -128,7 +129,7 @@ func TestControlCLI_CompactAlias_StillSleeps(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
-		[]string{"--to", "alice", "--command", "compact"}, // legacy alias, self-only
+		[]string{"--to", "alice", "--command", "sleep"}, // legacy alias, self-only
 		&stdout, &stderr,
 	)
 	if exit != exitOK {
@@ -138,8 +139,8 @@ func TestControlCLI_CompactAlias_StillSleeps(t *testing.T) {
 	if got["command"] != "/compact" {
 		t.Errorf("command = %v, want /compact (alias must still emit the unchanged primitive)", got["command"])
 	}
-	if dep, _ := got["deprecated"].(string); !strings.Contains(dep, "sleep") {
-		t.Errorf("deprecated field = %q, want it to name the canonical sleep", dep)
+	if dep, _ := got["deprecated"].(string); !strings.Contains(dep, "compact") {
+		t.Errorf("deprecated field = %q, want it to name the canonical compact", dep)
 	}
 	if !strings.Contains(stderr.String(), "WARN deprecated_control_macro") {
 		t.Errorf("missing WARN deprecated_control_macro on stderr; got: %s", stderr.String())
@@ -159,7 +160,7 @@ func TestControlCLI_ResumeWith_QueuesBothRows(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
 		[]string{
-			"--to", "alice", "--command", "sleep",
+			"--to", "alice", "--command", "compact",
 			"--resume-with", "carry on with #26",
 		},
 		&stdout, &stderr,
@@ -191,7 +192,7 @@ func TestControlCLI_ScopeRejected(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
-		[]string{"--to", "bob", "--command", "sleep"},
+		[]string{"--to", "bob", "--command", "compact"},
 		&stdout, &stderr,
 	)
 	if exit != exitUsage {
@@ -227,7 +228,7 @@ func TestControlCLI_MissingFlags(t *testing.T) {
 		name string
 		args []string
 	}{
-		{"no --to", []string{"--command", "sleep"}},
+		{"no --to", []string{"--command", "compact"}},
 		{"no --command", []string{"--to", "alice"}},
 	}
 	for _, tc := range cases {
@@ -325,7 +326,7 @@ func TestControlCLI_ForTaskOnNonClear_Rejected(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
-		[]string{"--to", "alice", "--command", "sleep", "--for-task", "tmux-tell#286"},
+		[]string{"--to", "alice", "--command", "compact", "--for-task", "tmux-tell#286"},
 		&stdout, &stderr,
 	)
 	if exit == exitOK {
@@ -377,7 +378,7 @@ func TestControlCLI_AutoIdentity_FromPane(t *testing.T) {
 
 	var stdout, stderr bytes.Buffer
 	exit := runControlCLI(
-		[]string{"--to", "alice", "--command", "sleep"},
+		[]string{"--to", "alice", "--command", "compact"},
 		&stdout, &stderr,
 	)
 	if exit != exitOK {

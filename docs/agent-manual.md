@@ -145,27 +145,27 @@ below.
 A few of the substrate's sharper tools exist because *you* are not permanent — your
 context gets compacted, your session gets respawned.
 
-- **Resetting your own context — `control … command=sleep`.** Context-load doesn't
+- **Resetting your own context — `control … command=compact`.** Context-load doesn't
   drain on its own; `/compact` is the reset, and you don't have to type it by hand.
-  `tmux-tell.control` with `command=sleep` and `to: <your-own-name>` (self-only — no
+  `tmux-tell.control` with `command=compact` and `to: <your-own-name>` (self-only — no
   peer can truncate your context) fires your `/compact` for you, and its `resume_with`
   field stages a continuation note the mailman delivers once the compaction settles
   (the same staging as `--deliver-after=resume` below, bundled into one self-addressed
   call). It's the deliberate "I'm resetting, here's my wake-context" verb — reach for
   it instead of hand-typing `/compact` and losing the orientation. Full semantics in
   [`reference.md`](reference.md#whitelisted-control-commands) and the
-  [glossary](glossary.md#sleep). *(The verb name `sleep` is tracked for a
-  less-anthropomorphic rename in #646; the mechanism is stable.)*
+  [glossary](glossary.md#compact). *(#646 renamed this verb `sleep` → `compact` for
+  substrate-honesty; `sleep` still works as a deprecated alias through v1.0.)*
   - **Why this one call and not file-then-`/compact`.** The verb is *atomic*: staging
     your hand-off and firing the `/compact` are the **same action**, so there is no gap
     between them to stall in. The failure it exists to remove is the **split path** —
     you file your post-compact notes, then *mean* to type `/compact`, and instead sit at
     the prompt with the `/compact` ghost-text, hand-off staged but the reset never fired
     (the recurring "stalled at the execution seam" pattern). That seam only exists when
-    "file the hand-off" and "fire the reset" are two steps. `sleep` + `resume_with`
+    "file the hand-off" and "fire the reset" are two steps. `compact` + `resume_with`
     collapses them: either you make the call and **both** happen, or you don't and
     nothing is left half-done. Prefer it whenever a reset carries a hand-off; bare
-    `/compact` (or `sleep` with no `resume_with`) is the right tool only when there is no
+    `/compact` (or `compact` with no `resume_with`) is the right tool only when there is no
     wake-context to leave.
 - **The `/compact` hand-off.** A message that arrives mid-compaction can be
   swallowed by the summarizer. So when you're about to compact (or want to leave

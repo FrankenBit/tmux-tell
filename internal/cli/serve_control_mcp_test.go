@@ -125,7 +125,7 @@ func TestDeliverOne_Codex_SkipsUnsupportedControl(t *testing.T) {
 
 // TestDeliverOne_Codex_PastesSupportedControl: control commands codex's CLI DOES
 // implement are typed normally and return nil. ≥2 supported per AC. /compact is
-// load-bearing — codex chambers sleep via the bus `sleep` verb → /compact Text.
+// load-bearing — codex chambers compact via the bus `compact` verb → /compact Text.
 func TestDeliverOne_Codex_PastesSupportedControl(t *testing.T) {
 	withActiveProfile(t, codexPasteCapableProfile)
 	for _, body := range []string{"/compact", "/rename"} {

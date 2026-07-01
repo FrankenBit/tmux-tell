@@ -15,8 +15,8 @@ func TestCanonicalize_DeprecatedAliases(t *testing.T) {
 		"mcp-disable-tmux-msg":  "mcp-disable-tmux-tell",
 		"mcp-enable-tmux-msg":   "mcp-enable-tmux-tell",
 		"/MCP-Restart-Tmux-Msg": "mcp-restart-tmux-tell", // trim/slash/lowercase too
-		"compact":               "sleep",                 // #509 compact→sleep bus-verb rename
-		"/COMPACT":              "sleep",                 // trim/slash/lowercase on the new alias too
+		"sleep":                 "compact",               // #646 sleep→compact bus-verb rename
+		"/SLEEP":                "compact",               // trim/slash/lowercase on the new alias too
 	}
 	for in, want := range aliases {
 		got, wasAlias := Canonicalize(in)
@@ -24,7 +24,7 @@ func TestCanonicalize_DeprecatedAliases(t *testing.T) {
 			t.Errorf("Canonicalize(%q) = (%q, %v), want (%q, true)", in, got, wasAlias, want)
 		}
 	}
-	for _, canon := range []string{"mcp-restart-tmux-tell", "sleep", "rename"} {
+	for _, canon := range []string{"mcp-restart-tmux-tell", "compact", "rename"} {
 		if got, wasAlias := Canonicalize(canon); got != canon || wasAlias {
 			t.Errorf("Canonicalize(%q) = (%q, %v), want (%q, false)", canon, got, wasAlias, canon)
 		}
@@ -34,28 +34,30 @@ func TestCanonicalize_DeprecatedAliases(t *testing.T) {
 	if lerr != nil || cerr != nil || legacy != canon || legacy == "" {
 		t.Errorf("alias Resolve %q (err %v) != canonical Resolve %q (err %v)", legacy, lerr, canon, cerr)
 	}
-	// #509: the deprecated `compact` alias resolves to the same Text as canonical
-	// `sleep` — both emit the unchanged /compact CLI primitive (self-scope, the
+	// #646: the deprecated `sleep` alias resolves to the same Text as canonical
+	// `compact` — both emit the unchanged /compact CLI primitive (self-scope, the
 	// only scope where this self-only macro is valid).
-	aliasText, aerr := Resolve("compact", ScopeSelf, "alice", "alice")
-	canonText, cerr2 := Resolve("sleep", ScopeSelf, "alice", "alice")
+	aliasText, aerr := Resolve("sleep", ScopeSelf, "alice", "alice")
+	canonText, cerr2 := Resolve("compact", ScopeSelf, "alice", "alice")
 	if aerr != nil || cerr2 != nil || aliasText != canonText || aliasText != "/compact" {
-		t.Errorf("compact-alias Resolve %q (err %v) != sleep Resolve %q (err %v), want /compact",
+		t.Errorf("sleep-alias Resolve %q (err %v) != compact Resolve %q (err %v), want /compact",
 			aliasText, aerr, canonText, cerr2)
 	}
 }
 
 func TestResolve_SelfScope(t *testing.T) {
 	cases := map[string]string{
-		"sleep":                 "/compact",
+		"compact":               "/compact",
 		"rename":                "/rename",
 		"cost":                  "/cost",
 		"help":                  "/help",
 		"mcp-enable-tmux-tell":  "/mcp enable tmux-tell",
 		"mcp-disable-tmux-tell": "/mcp disable tmux-tell",
 		"mcp-restart-tmux-tell": "/mcp restart tmux-tell",
-		"/sleep":                "/compact",
-		"SLEEP":                 "/compact",
+		"/compact":              "/compact",
+		"COMPACT":               "/compact",
+		"sleep":                 "/compact", // #646 deprecated alias still resolves
+		"/sleep":                "/compact", // alias, trim/slash-normalised
 		"  cost  ":              "/cost",
 	}
 	for in, want := range cases {
@@ -101,7 +103,7 @@ func TestResolve_PeerScope_RejectsSelfOnly(t *testing.T) {
 	// expose the peer-DoS surface again. clear is omitted here because
 	// its peer-denial is conditional (lifted for the Bosun→Pilot edge
 	// per #60) — see TestResolve_PeerScope_EdgeRule for that pinning.
-	for _, in := range []string{"sleep", "cost", "mcp-disable-tmux-tell"} {
+	for _, in := range []string{"compact", "cost", "mcp-disable-tmux-tell"} {
 		_, err := Resolve(in, ScopePeer, "alice", "bob")
 		if !errors.Is(err, ErrScopeDenied) {
 			t.Errorf("Resolve(%q, peer): want ErrScopeDenied, got %v", in, err)
@@ -256,9 +258,9 @@ func indexOf(s, sub string) int {
 func TestNames_SortedAndComplete(t *testing.T) {
 	names := Names()
 	want := []string{
-		"clear", "cost", "help",
+		"clear", "compact", "cost", "help",
 		"mcp-disable-tmux-tell", "mcp-enable-tmux-tell", "mcp-restart-tmux-tell",
-		"rename", "sleep",
+		"rename",
 	}
 	if len(names) != len(want) {
 		t.Fatalf("Names() = %v, want %v", names, want)
@@ -275,9 +277,9 @@ func TestNamesForScope(t *testing.T) {
 	// is excluded because its Self flag is false (#60).
 	self := NamesForScope(ScopeSelf, "alice", "alice")
 	wantSelf := []string{
-		"cost", "help",
+		"compact", "cost", "help",
 		"mcp-disable-tmux-tell", "mcp-enable-tmux-tell", "mcp-restart-tmux-tell",
-		"rename", "sleep",
+		"rename",
 	}
 	if len(self) != len(wantSelf) {
 		t.Fatalf("self names = %v, want %v", self, wantSelf)

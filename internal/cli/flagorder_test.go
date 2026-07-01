@@ -26,8 +26,8 @@ func newTestFlagSet() *flag.FlagSet {
 // followed the discipline and put flags first.
 func TestReorderFlagsFirst_FlagsAlreadyFirst(t *testing.T) {
 	fs := newTestFlagSet()
-	got := reorderFlagsFirst(fs, []string{"--to", "alice", "--command", "sleep"})
-	want := []string{"--to", "alice", "--command", "sleep"}
+	got := reorderFlagsFirst(fs, []string{"--to", "alice", "--command", "compact"})
+	want := []string{"--to", "alice", "--command", "compact"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -35,11 +35,11 @@ func TestReorderFlagsFirst_FlagsAlreadyFirst(t *testing.T) {
 
 // TestReorderFlagsFirst_PositionalFirstBuggyForm is the #44 bug case
 // — operator put the agent name first (natural English order).
-// Without the helper, `--command sleep` would be silently dropped.
+// Without the helper, `--command compact` would be silently dropped.
 func TestReorderFlagsFirst_PositionalFirstBuggyForm(t *testing.T) {
 	fs := newTestFlagSet()
-	got := reorderFlagsFirst(fs, []string{"alice", "--command", "sleep"})
-	want := []string{"--command", "sleep", "alice"}
+	got := reorderFlagsFirst(fs, []string{"alice", "--command", "compact"})
+	want := []string{"--command", "compact", "alice"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -50,8 +50,8 @@ func TestReorderFlagsFirst_PositionalFirstBuggyForm(t *testing.T) {
 // positionals at the back in original order.
 func TestReorderFlagsFirst_InterleavedFlagsAndPositionals(t *testing.T) {
 	fs := newTestFlagSet()
-	got := reorderFlagsFirst(fs, []string{"--to", "alice", "sleep", "--quiet-disabled", "extra"})
-	want := []string{"--to", "alice", "--quiet-disabled", "sleep", "extra"}
+	got := reorderFlagsFirst(fs, []string{"--to", "alice", "compact", "--quiet-disabled", "extra"})
+	want := []string{"--to", "alice", "--quiet-disabled", "compact", "extra"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -61,8 +61,8 @@ func TestReorderFlagsFirst_InterleavedFlagsAndPositionals(t *testing.T) {
 // token; no value-swallow needed.
 func TestReorderFlagsFirst_BundledFlagEquals(t *testing.T) {
 	fs := newTestFlagSet()
-	got := reorderFlagsFirst(fs, []string{"alice", "--command=sleep"})
-	want := []string{"--command=sleep", "alice"}
+	got := reorderFlagsFirst(fs, []string{"alice", "--command=compact"})
+	want := []string{"--command=compact", "alice"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -83,8 +83,8 @@ func TestReorderFlagsFirst_BoolFlagDoesNotSwallow(t *testing.T) {
 // everything after stays positional in original order.
 func TestReorderFlagsFirst_DashDashTerminator(t *testing.T) {
 	fs := newTestFlagSet()
-	got := reorderFlagsFirst(fs, []string{"--to", "alice", "--", "--command", "sleep"})
-	want := []string{"--to", "alice", "--command", "sleep"}
+	got := reorderFlagsFirst(fs, []string{"--to", "alice", "--", "--command", "compact"})
+	want := []string{"--to", "alice", "--command", "compact"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -131,12 +131,12 @@ func TestReorderFlagsFirst_IntegrationWithControlBuggyForm(t *testing.T) {
 	to := fs.Lookup("to").Value
 	command := fs.Lookup("command").Value
 	// The exact buggy form from #44.
-	reordered := reorderFlagsFirst(fs, []string{"alice", "--command", "sleep"})
+	reordered := reorderFlagsFirst(fs, []string{"alice", "--command", "compact"})
 	if err := fs.Parse(reordered); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if command.String() != "sleep" {
-		t.Errorf("after reorder, --command = %q, want sleep", command.String())
+	if command.String() != "compact" {
+		t.Errorf("after reorder, --command = %q, want compact", command.String())
 	}
 	if to.String() != "" {
 		t.Errorf("--to should be empty (no --to in input); got %q", to.String())
@@ -153,12 +153,12 @@ func TestReorderFlagsFirst_IntegrationWithControlWorkingForm(t *testing.T) {
 	fs := newTestFlagSet()
 	to := fs.Lookup("to").Value
 	command := fs.Lookup("command").Value
-	reordered := reorderFlagsFirst(fs, []string{"--to", "alice", "--command", "sleep"})
+	reordered := reorderFlagsFirst(fs, []string{"--to", "alice", "--command", "compact"})
 	if err := fs.Parse(reordered); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if command.String() != "sleep" {
-		t.Errorf("--command = %q, want sleep", command.String())
+	if command.String() != "compact" {
+		t.Errorf("--command = %q, want compact", command.String())
 	}
 	if to.String() != "alice" {
 		t.Errorf("--to = %q, want alice", to.String())

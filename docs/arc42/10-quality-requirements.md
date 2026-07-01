@@ -89,7 +89,7 @@ For each goal, the sub-attributes that decompose it into checkable dimensions.
   `--help` and [docs/operator-manual.md](../operator-manual.md) cover every
   command. Nothing hidden requires tribal knowledge.
 - **Vocabulary stays deliberately small and consistent — every new term has to
-  earn its keep.** Terms like *sleep* and *pause* each mean exactly one thing.
+  earn its keep.** Terms like *compact* and *pause* each mean exactly one thing.
   Deprecated terms warn when used (see Goal 5).
 - **There's always a path back.** When the system's state diverges from what
   the operator expected, there's a clear way to inspect, diagnose, and fix —
@@ -188,8 +188,8 @@ we know the response was correct).
 
 ### Scenario 8 — Deprecated command lands gracefully *(Goal 4, Goal 5)*
 
-- *Situation*: An operator or agent uses a deprecated command — say, `compact`
-  after it has been renamed to `sleep` (#509).
+- *Situation*: An operator or agent uses a deprecated command — say, `sleep`
+  after it has been renamed to `compact` (#646).
 - *Response*: The command still works (deprecation runway). The system emits a
   `WARN deprecated_*` log line naming the new command name and pointing at the
   issue or ADR that explains the change.

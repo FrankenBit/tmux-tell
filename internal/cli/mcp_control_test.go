@@ -8,7 +8,7 @@ import (
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
-// Self-invocation of a self-only command (sleep) is the canonical
+// Self-invocation of a self-only command (compact) is the canonical
 // "agent quietly trims its own context" path.
 func TestMCP_Control_SelfInvocation_SelfOnlyCommand(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
@@ -16,7 +16,7 @@ func TestMCP_Control_SelfInvocation_SelfOnlyCommand(t *testing.T) {
 
 	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "alice",
-		"command": "sleep",
+		"command": "compact",
 	})
 	if got["ok"] != true {
 		t.Fatalf("ok = %v; got=%v", got["ok"], got)
@@ -107,7 +107,7 @@ func TestMCP_Control_ClearWithoutForTask_Rejected(t *testing.T) {
 	}
 }
 
-// Peer-invoking a self-only command (sleep) is blocked at the MCP
+// Peer-invoking a self-only command (compact) is blocked at the MCP
 // boundary — the regression this scope split exists to prevent.
 func TestMCP_Control_PeerInvocation_BlockedForSelfOnlyCommand(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
@@ -115,10 +115,10 @@ func TestMCP_Control_PeerInvocation_BlockedForSelfOnlyCommand(t *testing.T) {
 
 	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "bob",
-		"command": "sleep",
+		"command": "compact",
 	})
 	if got["_isError"] != true {
-		t.Fatalf("sleep must be peer-denied; got=%v", got)
+		t.Fatalf("compact must be peer-denied; got=%v", got)
 	}
 	text, _ := got["_text"].(string)
 	if !strings.Contains(text, "self-only") {
@@ -153,14 +153,14 @@ func TestMCP_Control_RejectsUnknownRecipient(t *testing.T) {
 
 	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "ghost",
-		"command": "sleep",
+		"command": "compact",
 	})
 	if got["_isError"] != true {
 		t.Errorf("expected error for unknown recipient; got=%v", got)
 	}
 }
 
-// resume_with on a self-sleep queues two rows back-to-back: the
+// resume_with on a self-compact queues two rows back-to-back: the
 // /compact control row first, then the resume message threaded via
 // reply_to so the audit trail shows the link.
 func TestMCP_Control_CompactWithResume_QueuesBothRows(t *testing.T) {
@@ -169,16 +169,16 @@ func TestMCP_Control_CompactWithResume_QueuesBothRows(t *testing.T) {
 
 	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":          "alice",
-		"command":     "sleep",
+		"command":     "compact",
 		"resume_with": "continue the bus work; specifically finish #25 follow-ups",
 	})
 	if got["ok"] != true {
 		t.Fatalf("ok = %v; got=%v", got["ok"], got)
 	}
-	sleepID, _ := got["id"].(string)
+	compactID, _ := got["id"].(string)
 	resumeID, _ := got["resume_id"].(string)
-	if len(sleepID) != 4 || len(resumeID) != 4 {
-		t.Fatalf("ids = %q / %q; both should be 4-char public_ids", sleepID, resumeID)
+	if len(compactID) != 4 || len(resumeID) != 4 {
+		t.Fatalf("ids = %q / %q; both should be 4-char public_ids", compactID, resumeID)
 	}
 
 	msgs, err := s.ListMessages(context.Background(), store.ListFilter{
@@ -196,13 +196,13 @@ func TestMCP_Control_CompactWithResume_QueuesBothRows(t *testing.T) {
 	if msgs[1].Kind != store.KindMessage {
 		t.Errorf("second row should be kind=message; got kind=%q", msgs[1].Kind)
 	}
-	if msgs[1].ReplyTo.String != sleepID {
+	if msgs[1].ReplyTo.String != compactID {
 		t.Errorf("resume row should thread via reply_to=%s; got %q",
-			sleepID, msgs[1].ReplyTo.String)
+			compactID, msgs[1].ReplyTo.String)
 	}
 }
 
-// resume_with on a non-sleep command is rejected at the MCP boundary.
+// resume_with on a non-compact command is rejected at the MCP boundary.
 func TestMCP_Control_ResumeWith_RejectedOnNonCompact(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice")
@@ -217,7 +217,7 @@ func TestMCP_Control_ResumeWith_RejectedOnNonCompact(t *testing.T) {
 	}
 }
 
-// resume_with on a peer-target is rejected (sleep is self-only
+// resume_with on a peer-target is rejected (compact is self-only
 // already, but the error should be precise rather than relying on the
 // scope rejection landing first).
 func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
@@ -226,11 +226,11 @@ func TestMCP_Control_ResumeWith_RejectedOnPeer(t *testing.T) {
 
 	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":          "bob",
-		"command":     "sleep",
+		"command":     "compact",
 		"resume_with": "irrelevant",
 	})
 	if got["_isError"] != true {
-		t.Errorf("sleep+resume_with on peer should be rejected; got %v", got)
+		t.Errorf("compact+resume_with on peer should be rejected; got %v", got)
 	}
 }
 
@@ -377,7 +377,7 @@ func TestMCP_Control_RequiresIdentity(t *testing.T) {
 
 	got := callMCPTool(t, s, "tmux-tell.control", map[string]any{
 		"to":      "bob",
-		"command": "sleep",
+		"command": "compact",
 	})
 	if got["_isError"] != true {
 		t.Errorf("expected error when identity cannot be resolved; got=%v", got)
