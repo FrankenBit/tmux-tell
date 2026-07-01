@@ -41,11 +41,18 @@ func TestGatherPingEvidence_DebugGated(t *testing.T) {
 		t.Errorf("%s unset: expected no debug output, got %q", debug.EnvVar, buf.String())
 	}
 
-	// Enabled: the dropped error surfaces an evidence-gather debug line.
+	// Enabled: the dropped errors surface debug lines. A never-registered agent
+	// errors BOTH the GetAgent lookup and the state-resolve probe (resolveAgentState
+	// returns ErrNotFound), so this exercises both structurally-distinct guard
+	// shapes on the emit side — the `} else if debug.Enabled()` lookup guard AND
+	// the `if err != nil && debug.Enabled()` state-resolve guard — not just one.
 	t.Setenv(debug.EnvVar, "1")
 	buf.Reset()
 	_ = gatherPingEvidence(ctx, s, "ghost-never-registered")
-	if !strings.Contains(buf.String(), "evidence-gather") {
-		t.Errorf("%s=1: expected an evidence-gather debug line, got %q", debug.EnvVar, buf.String())
+	out := buf.String()
+	for _, want := range []string{"lookup err=", "state-resolve err="} {
+		if !strings.Contains(out, want) {
+			t.Errorf("%s=1: expected a debug line containing %q, got %q", debug.EnvVar, want, out)
+		}
 	}
 }
