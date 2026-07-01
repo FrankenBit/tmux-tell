@@ -2,11 +2,12 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"syscall"
+	"strings"
 	"testing"
 	"time"
 )
@@ -124,10 +125,14 @@ func TestDoctor_E2E_FlagsOrphanedMCP(t *testing.T) {
 			break
 		}
 		// mcp missing from the report — retry only if it's still alive. Signal 0
-		// is the standard null-signal alive probe on Linux (no side effect,
-		// returns error if the pid is gone).
-		if err := mcp.Process.Signal(syscall.Signal(0)); err != nil {
-			t.Fatalf("mcp pid %d exited before doctor could observe it (%v); this is not the /proc-scan slew #605 targets\n%s", mcp.Process.Pid, err, out)
+		// is NOT usable here: this parent Start'd mcp without a paired Wait
+		// before the deferred cleanup, so an exited mcp becomes an unreaped
+		// zombie whose pid still exists in the process table + kill(pid, 0)
+		// returns success. Read /proc/<pid>/stat directly — ENOENT means the
+		// pid is fully gone; state 'Z' means the process has terminated and is
+		// awaiting reap. Both are "exited" for our purpose (per Surveyor 2480).
+		if state, err := readProcStatState(mcp.Process.Pid); err != nil || state == 'Z' {
+			t.Fatalf("mcp pid %d exited before doctor could observe it (state=%q err=%v); this is not the /proc-scan slew #605 targets\n%s", mcp.Process.Pid, state, err, out)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
@@ -149,4 +154,26 @@ func TestDoctor_E2E_FlagsOrphanedMCP(t *testing.T) {
 			t.Errorf("orphaned mcp pid %d not marked db_deleted: %+v", p.PID, p)
 		}
 	}
+}
+
+// readProcStatState returns the state character from /proc/<pid>/stat, or an
+// error if the file can't be read. Used as an alive-check that correctly
+// classifies unreaped zombies as exited (unlike kill(pid, 0) which returns
+// success for zombies too — the trap Surveyor caught in review of #605).
+//
+// The stat file format is `<pid> (comm) <state> <ppid> ...` where `comm` may
+// contain any character including spaces + parens. Standard parse: find the
+// LAST ')' to skip past comm regardless of contents, then state is the byte
+// at offset +2 (space + state char). Alive processes report R/S/D/T; zombies
+// report Z; a fully-gone pid has no /proc/<pid>/stat (ENOENT).
+func readProcStatState(pid int) (byte, error) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return 0, err
+	}
+	idx := strings.LastIndex(string(data), ")")
+	if idx == -1 || idx+2 >= len(data) {
+		return 0, fmt.Errorf("malformed /proc/%d/stat: %q", pid, data)
+	}
+	return data[idx+2], nil
 }
