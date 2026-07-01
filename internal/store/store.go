@@ -273,10 +273,14 @@ var migrations = []string{
 	// collide — exactly the compatibility the constraint needs). The cleanup
 	// UPDATE runs FIRST so the index creation can't fail Open() on a legacy DB
 	// that carried a pre-#564 duplicate: it NULLs every duplicate pane_id row
-	// except the lowest-rowid survivor — the same displaced-to-NULL recovery
-	// #564 does per-register, applied once at migration time. On an
-	// already-clean DB (the expected post-#564 state) it matches no rows and is
-	// a no-op; re-running it after the index exists is likewise a no-op.
+	// except the lowest-rowid survivor. Same displaced-to-NULL demotion #564
+	// does per-register, with one difference immaterial here: #564 keeps the NEW
+	// registrant and NULLs the prior holder, while this one-time heal keeps the
+	// lowest-rowid (oldest) row — an arbitrary but deterministic tiebreak, since
+	// these duplicates shouldn't exist and the next register reasserts the live
+	// binding regardless. On an already-clean DB (the expected post-#564 state)
+	// it matches no rows and is a no-op; re-running it after the index exists is
+	// likewise a no-op.
 	`UPDATE agents SET pane_id = NULL
 	 WHERE pane_id IS NOT NULL
 	   AND rowid NOT IN (SELECT MIN(rowid) FROM agents WHERE pane_id IS NOT NULL GROUP BY pane_id)`,

@@ -23,12 +23,19 @@ const (
 )
 
 // All returns the canonical provider identifiers that have a live adapter, in a
-// stable order. Both provider-keyed maps' drift-guards enumerate this set, so
-// adding a provider constant here forces the fanout-throttle pool and the
-// recipient-cap map to gain a matching entry (or the guards fail) — the
-// single-source co-addition that eliminates the drift class. A forward provider
-// (e.g. an ollama-backed adapter) is added here together with its throttle and
-// cap entries, never alone.
+// stable order. Both provider-keyed maps' drift-guards enumerate this set, but
+// enforce it asymmetrically:
+//   - fanout-throttle (forward): every All() member MUST resolve to its own
+//     throttle, so adding a constant here without a poolThrottles entry fails
+//     the guard.
+//   - recipient-cap (reverse-only): every cap-map key must be in All(), but a
+//     provider with no cap entry is fine — a queue floor is opt-in (anthropic
+//     has none). Adding a constant here does NOT require a cap entry.
+//
+// Either way a key can't drift off the canonical set into silent dead code. A
+// forward provider (e.g. an ollama-backed adapter) is added here together with
+// its throttle entry (and a cap entry only if it needs a floor), never as a
+// bare map key.
 func All() []string {
 	return []string{Anthropic, OpenAI}
 }

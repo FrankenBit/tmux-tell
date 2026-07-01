@@ -91,9 +91,13 @@ type agentView struct {
 	DisplayName string `json:"display_name,omitempty"`
 	// PaneConflict flags that this row's pane_id is held by more than one agent
 	// (#565) — the #549 duplicate-pane-row drift detect signal. #549 Fix-2a
-	// prevents it at the register source; this is the visible backstop for any
-	// future path that sets pane_id bypassing UpsertAgent. Omitted from JSON in
-	// the common no-conflict case (false) so the schema shape is unchanged.
+	// prevents it at the register source, and since #595 the UNIQUE(pane_id)
+	// index makes a duplicate a write-time impossibility — so this now fires only
+	// on a LEGACY / index-absent duplicate (a pre-#595 DB before its heal
+	// migration runs, or a future index drop by surgery/bug), not a live write
+	// concern. Retained as the read-side backstop for exactly that unhappy path.
+	// Omitted from JSON in the common no-conflict case (false) so the schema
+	// shape is unchanged.
 	PaneConflict bool `json:"pane_conflict,omitempty"`
 }
 
