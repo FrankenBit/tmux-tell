@@ -44,6 +44,7 @@ Subcommands:
   whoami  Show this session's registration (auto-resolves identity)
   set-pane-name  Assert this pane's display-name title (mirrors tmux-tell.set_pane_name; #556)
   set-metabolism Self-report this chamber's metabolism (mirrors tmux-tell.set_metabolism; #621)
+  set-session-id Field-specific session-id backfill; does NOT register (mirrors tmux-tell.set_session_id; #644)
   register   Register this (or another) pane on the bus (mirrors tmux-tell.register; #116)
   unregister Remove an agent from the registry + stop its mailman (mirrors tmux-tell.unregister; #289)
   serve   Run the mailman daemon for one agent
@@ -193,6 +194,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runSetMetabolismCLI(args[1:], stdout, stderr)
 	case "set-respawn-after-shrinks":
 		return runSetRespawnAfterShrinksCLI(args[1:], stdout, stderr)
+	case "set-session-id":
+		return runSetSessionIDCLI(args[1:], stdout, stderr)
 	case "register":
 		return runRegisterCLI(args[1:], stdout, stderr)
 	case "unregister":

@@ -359,6 +359,18 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		}`),
 		mcpSetMetabolismHandler(s))
 
+	srv.RegisterTool("tmux-tell.set_session_id",
+		"Backfill the session_id for a target chamber WITHOUT re-registering it (#644). Writes ONLY the session_id column — it deliberately does NOT clear attention_state (#224) or stuck_reason (#298) the way register does. register's auto-clear is correct only when the chamber ITSELF registers (back + ready by definition); this field-specific backfill is the safe ON-BEHALF path, so an orchestrator can populate a stale chamber's session id without erasing its real signals (a pane sitting at awaiting_operator, a parked mailman with a stuck_reason). Pass {name, session_id} — session_id must be an explicit UUID (this MCP surface does NOT self-discover: the server's own pane is not the target's; use the `set-session-id` CLI for discovery-from-pane). Returns {ok, agent, session_id, discovered}.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"name": {"type": "string", "description": "The target chamber to backfill the session id for"},
+				"session_id": {"type": "string", "description": "The session id (UUID) to write — field-specific backfill; does NOT register the chamber or clear its attention/stuck signals"}
+			},
+			"required": ["name", "session_id"]
+		}`),
+		mcpSetSessionIDHandler(s))
+
 	return srv
 }
 
@@ -468,6 +480,34 @@ func mcpSetMetabolismHandler(s *store.Store) mcp.ToolHandler {
 			return nil, err
 		}
 		res, err := setMetabolism(ctx, s, caller, in.Value)
+		if err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
+}
+
+// mcpSetSessionIDHandler returns the handler for the tmux-tell.set_session_id
+// MCP tool (#644). Unlike set_metabolism (self-only), this legitimately TARGETS
+// another chamber by name — its whole purpose is on-behalf backfill by an
+// orchestrator (Bosun migrating stale claude chambers, #626 Phase 3). Both
+// name and session_id are required: the MCP surface does NOT self-discover
+// (the server's own pane is not the target's), so the caller supplies the UUID
+// it discovered out-of-band. Shares the setSessionID core with the CLI so the
+// two surfaces stay byte-identical; the core writes ONLY session_id, never the
+// attention/stuck signals register clears.
+func mcpSetSessionIDHandler(s *store.Store) mcp.ToolHandler {
+	type input struct {
+		Name      string `json:"name"`
+		SessionID string `json:"session_id"`
+	}
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		var in input
+		if err := json.Unmarshal(args, &in); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		res, err := setSessionID(ctx, s,
+			strings.TrimSpace(in.Name), strings.TrimSpace(in.SessionID), false)
 		if err != nil {
 			return nil, err
 		}
