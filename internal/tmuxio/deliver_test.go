@@ -920,6 +920,216 @@ func TestDeliver_Claude_NoResubmit(t *testing.T) {
 	}
 }
 
+// codexCleanCapture / codexStuckCapture build the two codex verify-frame shapes
+// the #674 tests script: an empty submitted composer (input cleared, cursor at
+// sentinel) vs a collapsed paste still stuck in the input (marker present).
+func codexCleanCapture() []byte {
+	return []byte("transcript\n" + CodexPromptSentinel)
+}
+func codexStuckCapture(suffix string) []byte {
+	return []byte("transcript\n" + CodexPromptSentinel + "[Pasted Content 2048 chars] " + suffix)
+}
+
+// TestDeliver_Codex_LoadScaledBudgetExtension is the #674 dir-2 regression pin:
+// a codex paste that is STILL mid-ingest when the base retry schedule exhausts
+// (collapse marker present AND the frame changing every poll) gets the verify
+// budget EXTENDED, so it submits within its own mailman cycle instead of
+// returning ErrUnverifiedDelivery and deferring to the next visit.
+//
+// Under shortRetries len(retryDelays)==2 (base attempts 0..2); the clean
+// (submitted) frame appears at attempt 3, inside the load-adaptive extension
+// zone — unreachable without the extension.
+// Mutation: set maxLoadAdaptiveExtraAttempts=0 → the loop never reaches attempt
+// 3 → ErrUnverifiedDelivery.
+func TestDeliver_Codex_LoadScaledBudgetExtension(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var captureN int
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captureN++
+			if captureN <= 3 {
+				// attempts 0..2 (base schedule): still mid-ingest, frame changing
+				// each poll (unique suffix) → resubmit held, budget must extend.
+				return codexStuckCapture(fmt.Sprintf("ingest-%d", captureN)), nil
+			}
+			// attempt 3 (extension zone): codex finished, input cleared → submitted.
+			return codexCleanCapture(), nil
+		case "display-message":
+			return []byte("2/1"), nil // cursor at sentinel
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%8", Body: "x", VerifyToken: "tok",
+		PrePasteRaceCheckDisabled: true, // isolate the verify loop; captureN == attempt+1
+	})
+	if err != nil {
+		t.Fatalf("want in-cycle verify via load-adaptive extension, got %v", err)
+	}
+	// 4 verify polls (attempts 0..3): the extension carried it one poll past the
+	// base schedule of 3 (len(retryDelays)+1). Fewer would mean no extension.
+	var captures int
+	for _, c := range *calls {
+		if c.args[0] == "capture-pane" {
+			captures++
+		}
+	}
+	if captures != len(retryDelays)+2 {
+		t.Errorf("want %d capture-pane polls (base %d + 1 extension); got %d",
+			len(retryDelays)+2, len(retryDelays)+1, captures)
+	}
+}
+
+// TestDeliver_Codex_StabilityGatedResubmit is the #674 dir-1 regression pin: the
+// #401 resubmit Enter fires ONLY on a settled frame (two identical consecutive
+// captures) with the marker still present — not while the frame is still
+// redrawing (an Enter sent mid-render is eaten). Scripted so the only settled-
+// with-marker frame is attempt 1; exactly one resubmit fires.
+//
+// Mutation: drop the `!frameChanging` gate (fire on markerPresent alone) → the
+// resubmit also fires on attempt 0's marker frame → enterPresses==3, not 2.
+func TestDeliver_Codex_StabilityGatedResubmit(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var captureN, enterPresses int
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captureN++
+			switch captureN {
+			case 1, 2:
+				// attempts 0,1: marker present, IDENTICAL frames. attempt 0 is
+				// forced "changing" (no prior frame); attempt 1 sees the stable
+				// frame vs attempt 0 → the single resubmit fires here.
+				return codexStuckCapture("stable"), nil
+			default:
+				// attempt 2: submitted, input cleared.
+				return codexCleanCapture(), nil
+			}
+		case "display-message":
+			return []byte("2/1"), nil
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%8", Body: "x", VerifyToken: "tok",
+		PrePasteRaceCheckDisabled: true,
+	})
+	if err != nil {
+		t.Fatalf("want verify after stability-gated resubmit, got %v", err)
+	}
+	// initial submit Enter + exactly ONE stability-gated resubmit = 2. A blind
+	// resubmit (pre-#674) would also fire on attempt 0's changing frame = 3.
+	if enterPresses != 2 {
+		t.Errorf("want 2 Enter presses (initial + 1 stability-gated resubmit); got %d", enterPresses)
+	}
+}
+
+// TestDeliver_Codex_BestEffortFinalResubmit pins the #674 safety net + the
+// extension ceiling: when the frame changes on EVERY poll (never settles) the
+// stability gate never fires a resubmit, so a final best-effort Enter fires once
+// at exit to preserve the pre-#674 "a stuck paste always gets one resubmit"
+// guarantee — and the extension is bounded at maxLoadAdaptiveExtraAttempts.
+//
+// Mutation: remove the best-effort block → enterPresses==1 (initial only).
+func TestDeliver_Codex_BestEffortFinalResubmit(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var captureN, enterPresses int
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captureN++
+			// Every poll differs (never settles) → dir-1 gate never fires; dir-2
+			// extends to the ceiling; marker persists to the end.
+			return codexStuckCapture(fmt.Sprintf("churn-%d", captureN)), nil
+		case "display-message":
+			return []byte("2/1"), nil
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%8", Body: "x", VerifyToken: "tok",
+		PrePasteRaceCheckDisabled: true,
+	})
+	if !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Fatalf("want ErrUnverifiedDelivery (never settled), got %v", err)
+	}
+	// initial Enter + exactly one best-effort final Enter (no in-loop resubmit
+	// ever fired, since the frame never settled).
+	if enterPresses != 2 {
+		t.Errorf("want 2 Enter presses (initial + best-effort final); got %d", enterPresses)
+	}
+	// Extension ran to the ceiling: base+extra verify polls.
+	var captures int
+	for _, c := range *calls {
+		if c.args[0] == "capture-pane" {
+			captures++
+		}
+	}
+	if want := len(retryDelays) + maxLoadAdaptiveExtraAttempts + 1; captures != want {
+		t.Errorf("want %d capture-pane polls (extension to ceiling); got %d", want, captures)
+	}
+}
+
+// TestDeliver_Claude_NoLoadAdaptiveExtension is the #674 codex-scoping negative-
+// space pin: with no collapse marker (Claude) the load-adaptive extension never
+// triggers — the verify loop runs exactly the base schedule (len(retryDelays)+1
+// polls) and returns unverified, never extending into the ceiling zone.
+func TestDeliver_Claude_NoLoadAdaptiveExtension(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			// Never clears, no collapse marker → unverified, no extension.
+			return []byte("transcript\n" + PromptSentinel + "half-typed draft"), nil
+		case "display-message":
+			return []byte("30/1"), nil // cursor past sentinel → not cleared
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "x", VerifyToken: "never-appears",
+		PrePasteRaceCheckDisabled: true,
+	})
+	if !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Fatalf("want ErrUnverifiedDelivery, got %v", err)
+	}
+	var captures int
+	for _, c := range *calls {
+		if c.args[0] == "capture-pane" {
+			captures++
+		}
+	}
+	if captures != len(retryDelays)+1 {
+		t.Errorf("Claude must run exactly the base schedule (%d polls, no extension); got %d",
+			len(retryDelays)+1, captures)
+	}
+}
+
 // TestSetSettleDelay_UpdatesPackageDelay pins the #360 exported setter the
 // serve `-settle-delay` flag wires through: it overwrites the process-level
 // settle pause (sibling to SetRetrySchedule). Uses SetSettleDelayForTest to

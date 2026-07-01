@@ -170,6 +170,18 @@ func DeriveRetrySchedule(budget time.Duration) []time.Duration {
 	return out
 }
 
+// maxLoadAdaptiveExtraAttempts bounds #674's load-adaptive verify extension.
+// Past the base retry schedule, Deliver keeps polling only while the delivery
+// is still objectively mid-ingest (collapse marker present AND the pane frame
+// still changing between polls) or awaiting a just-fired resubmit's effect, up
+// to this many extra attempts — so a heavy-load codex paste that outlasts the
+// base budget still submits within its own mailman cycle instead of deferring
+// to the next, without unbounded polling on a genuinely wedged pane. Extra
+// polls reuse the patient-tail cadence (retryDelays' last, budget-scaled entry),
+// so the extension window scales with the verify-retry-budget config just like
+// the base schedule (#674 dir 2).
+const maxLoadAdaptiveExtraAttempts = 6
+
 // ErrUnverifiedDelivery is returned by Deliver when the paste + Enter
 // sequence completed without tmux errors, but the verify token never
 // became visible in the pane within the retry budget. The caller's
@@ -356,21 +368,55 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 	// its wall-clock on either terminal outcome (submitted / budget
 	// exhausted) so the caller can histogram verify-attempt latency
 	// (#146/#153).
+	// #674: load-adaptive verify. The base retry schedule (retryDelays,
+	// budget-scaled) is calibrated for a normal-load submit. Two adaptations
+	// make delivery reliable under heavy codex load, both driven off the
+	// frame-delta between consecutive polls (this loop already captures every
+	// iteration, so "is codex still redrawing?" costs nothing extra):
+	//
+	//   Dir 1 (stability-gated resubmit): the #401 resubmit Enter is now held
+	//   while the frame is still changing (codex mid-render eats the Enter) and
+	//   fired only once the frame settles with the collapse marker still present
+	//   — i.e. the paste is fully ingested but not yet submitted, so the Enter
+	//   lands submit-ready. A final best-effort Enter below preserves the
+	//   pre-#674 guarantee that a stuck marker always gets at least one resubmit.
+	//
+	//   Dir 2 (load-scaled budget): past the base schedule, keep polling while
+	//   the delivery is objectively still progressing toward submit — genuinely
+	//   mid-ingest (marker present AND frame changing) or awaiting the effect of
+	//   a just-fired resubmit Enter — up to maxLoadAdaptiveExtraAttempts. A heavy
+	//   paste then submits within its own cycle instead of exhausting the fixed
+	//   budget and deferring to the next mailman visit. Extra polls reuse the
+	//   patient-tail cadence, so the window scales with the budget config.
+	//
+	// Both are codex-scoped by the collapse marker: for Claude pasteStillInInput
+	// is always false, so no resubmit is ever gated (there is none) and the
+	// extension never triggers — the base schedule runs exactly as before.
 	verifyStart := time.Now()
-	var lastCapture string
-	for attempt := 0; attempt <= len(retryDelays); attempt++ {
+	var lastCapture, prevCapture string
+	firedAnyResubmit := false
+	polls := 0
+	ceiling := len(retryDelays) + maxLoadAdaptiveExtraAttempts
+	for attempt := 0; attempt <= ceiling; attempt++ {
 		if attempt > 0 {
+			// Base schedule for scheduled attempts; patient-tail cadence for the
+			// load-adaptive extension (attempts past len(retryDelays)).
+			idx := attempt - 1
+			if idx >= len(retryDelays) {
+				idx = len(retryDelays) - 1
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
-			case <-time.After(retryDelays[attempt-1]):
+			case <-time.After(retryDelays[idx]):
 			}
 		}
 		out, err := tmuxRun(ctx, nil, "capture-pane", "-p", "-t", p.Pane)
 		if err != nil {
 			return fmt.Errorf("tmuxio: capture-pane: %w", err)
 		}
-		lastCapture = string(out)
+		polls++
+		prevCapture, lastCapture = lastCapture, string(out)
 		// Cursor position anchors the input-emptied signal (#336 cursor-
 		// anchor): cursorOK=false (query failed) degrades to token-match
 		// inside deliverySubmitted via inputRowCleared's anchored=false path.
@@ -394,27 +440,48 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 				return nil
 			}
 		}
-		// Resubmit (#401): when a collapsed paste is still sitting in the input,
-		// codex's first Enter was absorbed while it was still ingesting the
-		// bracketed paste — re-send Enter. When codex has gone idle it submits;
-		// Enter-on-empty is a safe no-op (operator + Lookout confirmed), so a
-		// resubmit that races an already-submitted paste is harmless. The next
-		// loop iteration waits a retryDelays backoff before re-checking, giving
-		// codex time to process this Enter. No-op for adapters without a
-		// collapse marker (Claude) — pasteStillInInput is false, so they submit
-		// on the first Enter exactly as before.
-		if pasteStillInInput(lastCapture) {
+		markerPresent := pasteStillInInput(lastCapture)
+		// frameChanging: the pane redrew since the previous poll — codex is
+		// still actively ingesting/rendering. attempt 0 has no prior frame (and
+		// we just sent the step-3 Enter), so treat it as changing: never fire a
+		// resubmit on the first poll.
+		frameChanging := attempt == 0 || lastCapture != prevCapture
+		// Dir 1 (#674): stability-gated resubmit (#401). Fire only on a settled
+		// frame with the marker still present — the paste is ingested but not
+		// submitted, so this Enter lands submit-ready. Enter-on-empty is a safe
+		// no-op (operator + Lookout confirmed), so a resubmit that races an
+		// already-submitted paste is harmless; holding it while mid-render avoids
+		// the eaten-Enter waste. No-op for Claude (pasteStillInInput false).
+		firedResubmit := false
+		if markerPresent && !frameChanging {
 			if out, err := tmuxRun(ctx, nil, "send-keys", "-t", p.Pane, "Enter"); err != nil {
 				return fmt.Errorf("tmuxio: send-keys Enter (resubmit): %w: %s",
 					err, strings.TrimSpace(string(out)))
 			}
+			firedResubmit, firedAnyResubmit = true, true
 		}
+		// Dir 2 (#674): past the base schedule, extend only while still
+		// progressing toward submit — genuinely mid-ingest, or awaiting a just-
+		// fired resubmit's effect. Within the base schedule always continue, so
+		// the non-load path runs the exact pre-#674 attempt count.
+		progressing := (markerPresent && frameChanging) || firedResubmit
+		if attempt >= len(retryDelays) && !progressing {
+			break
+		}
+	}
+	// Best-effort final resubmit (#674): if a collapse marker is still stuck and
+	// the stability gate never let a resubmit fire (e.g. the frame changed on
+	// every poll), send one Enter before giving up — preserves the pre-#674
+	// guarantee that a stuck paste always gets at least one resubmit. Best-
+	// effort: a send-keys error here is not worth masking the unverified outcome.
+	if pasteStillInInput(lastCapture) && !firedAnyResubmit {
+		_, _ = tmuxRun(ctx, nil, "send-keys", "-t", p.Pane, "Enter")
 	}
 	if p.OnVerify != nil {
 		p.OnVerify(time.Since(verifyStart), false)
 	}
 	return fmt.Errorf("%w: input not cleared and token %q not surfaced after %d attempts; last capture (trunc):\n%s",
-		ErrUnverifiedDelivery, p.VerifyToken, len(retryDelays)+1, trim(lastCapture, 400))
+		ErrUnverifiedDelivery, p.VerifyToken, polls, trim(lastCapture, 400))
 }
 
 // deliverySubmitted reports whether a post-Enter pane capture confirms the
