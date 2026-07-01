@@ -1130,6 +1130,45 @@ func TestDeliver_Claude_NoLoadAdaptiveExtension(t *testing.T) {
 	}
 }
 
+// TestDeliver_EmptyRetrySchedule_NoPanic pins the #695 defensive guard: a
+// degenerate empty retryDelays (SetRetrySchedule([])) must NOT panic on the
+// load-adaptive patient-tail index (retryDelays[-1]). The extension ceiling
+// (len+extra) makes attempts past attempt 0 executable even with no schedule;
+// the idx<0 guard stops after the immediate poll, matching the pre-#674 empty-
+// schedule behavior (one verify capture). Mutation: remove the guard → panic.
+func TestDeliver_EmptyRetrySchedule_NoPanic(t *testing.T) {
+	shortRetries(t)   // near-zero settle; restores retryDelays on cleanup
+	retryDelays = nil // #695: degenerate empty schedule
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var captures int
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captures++
+			// Marker present + never clears: would extend if the schedule were
+			// non-empty; with an empty schedule the loop must stop after one poll
+			// rather than index retryDelays[-1].
+			return codexStuckCapture("stuck"), nil
+		case "display-message":
+			return []byte("2/1"), nil
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%8", Body: "x", VerifyToken: "tok",
+		PrePasteRaceCheckDisabled: true,
+	})
+	if !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Fatalf("want ErrUnverifiedDelivery (no panic), got %v", err)
+	}
+	if captures != 1 {
+		t.Errorf("empty schedule must run exactly one verify poll; got %d", captures)
+	}
+}
+
 // TestSetSettleDelay_UpdatesPackageDelay pins the #360 exported setter the
 // serve `-settle-delay` flag wires through: it overwrites the process-level
 // settle pause (sibling to SetRetrySchedule). Uses SetSettleDelayForTest to

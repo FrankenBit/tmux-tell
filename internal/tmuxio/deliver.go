@@ -405,6 +405,15 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 			if idx >= len(retryDelays) {
 				idx = len(retryDelays) - 1
 			}
+			// Degenerate empty-schedule config (SetRetrySchedule([])): idx < 0 is
+			// only reachable when len(retryDelays)==0, where there is no cadence to
+			// wait on and nothing to extend onto. Stop after the immediate poll,
+			// matching the pre-#674 empty-schedule behavior (one verify capture) and
+			// guarding retryDelays[-1] (#695). For any non-empty schedule idx >= 0,
+			// so production behavior is unchanged.
+			if idx < 0 {
+				break
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
