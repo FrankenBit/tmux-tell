@@ -196,20 +196,23 @@ cleared via #546.
 > is kept for reference only; it will be rewritten for the toolkit flow once the
 > first toolkit cut validates it end-to-end (#628).
 
-**Pre-flight.** If the cut driver works from a shared host checkout (on
-alcatraz, `/srv/tmux-msg/` is shared across chambers and read directly by
-host scripts), fast-forward it first so on-disk state matches `origin/main`
-before the cut branch is created:
+**Pre-flight.** Fast-forward your per-chamber tmux-tell checkout so on-disk
+state matches `origin/main` before the cut branch is created:
 
 ```bash
-cd /srv/tmux-msg/ && git pull --ff-only
+cd /srv/claude/<chamber>/tmux-tell/ && git pull --ff-only
 ```
 
-Operator scripts that invoke files from this tree (recording rig drivers,
-ad-hoc smoke tests) read the *last-fast-forwarded* state, not the current
-`origin/main` — so a stale shared checkout produces hard-to-diagnose
-"merged on origin but missing on disk" surprises (closes #284). Per-chamber
-worktrees handle their own state and don't need this step.
+Post-rename evolution: the historical shared checkout at `/srv/tmux-msg/`
+was retired when chambers migrated to per-chamber standalone clones under
+`/srv/claude/<chamber>/tmux-tell/`. Each chamber has its own working copy
+with its own pinned `user.name` / `user.email`, so identity flips can't
+fire and the pre-flight is scoped to the chamber doing the cut. Operator
+scripts that read on-disk state (recording rig drivers, ad-hoc smoke
+tests) point at the specific chamber's checkout that's authoritative for
+that operator flow; a stale checkout there would still produce the
+"merged on origin but missing on disk" surprises (#284) — the pre-flight
+lives on. (#434 SUPERSEDED-BY-EVOLUTION close, 2026-07-01.)
 
 The cut sequence (run from a clean main on the cut branch):
 

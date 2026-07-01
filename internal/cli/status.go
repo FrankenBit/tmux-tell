@@ -113,6 +113,7 @@ func runStatusWithStore(ctx context.Context, s *store.Store,
 		}
 		now := time.Now()
 		scanner := healthscan.New()
+		scanner.Resolve = mailmanUnitResolverForStore(ctx, s)
 		todayBlock, err := scanner.Scan(ctx, names, healthscan.SinceMidnight(now))
 		if err != nil {
 			// External-source failure shouldn't kill the core status

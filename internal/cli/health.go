@@ -11,6 +11,25 @@ import (
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
+// mailmanUnitResolverForStore returns a resolver that maps an agent name to its
+// systemd mailman unit, using the agent's persisted provider (#448) to pick the
+// adapter prefix. Codex chambers (provider="openai") get
+// `tmux-tell-codex-mailman@<name>.service`; everything else — including agents
+// whose mailman never ran + never persisted a provider — falls back to the
+// claude prefix. Injected into healthscan.Scanner.Resolve at CLI startup so
+// health/status probes hit the actually-existing unit for codex chambers
+// instead of the silent claude-only blindspot #708 catalogued.
+func mailmanUnitResolverForStore(ctx context.Context, s *store.Store) func(string) string {
+	return func(name string) string {
+		provider, _, _ := s.ProviderCapConfig(ctx, name)
+		adapter := "claude"
+		if provider == "openai" {
+			adapter = "codex"
+		}
+		return fmt.Sprintf("tmux-tell-%s-mailman@%s.service", adapter, name)
+	}
+}
+
 // runHealthCLI parses health-subcommand flags and dispatches (#42).
 //
 // Usage: tmux-tell-claude health [--since DURATION] [--format text|json] [AGENT...]
@@ -61,6 +80,7 @@ func runHealthCLI(args []string, stdout, stderr io.Writer) int {
 	}
 
 	scanner := healthscan.New()
+	scanner.Resolve = mailmanUnitResolverForStore(ctx, s)
 	out, err := scanner.Scan(ctx, names,
 		healthscan.SinceDuration(time.Now(), *since))
 	if err != nil {

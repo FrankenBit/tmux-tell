@@ -108,6 +108,58 @@ func TestScan_DeprecatedDeliveredUnverifiedShadow(t *testing.T) {
 	}
 }
 
+// TestScan_ResolverRoutesToCodexUnit covers #708: when Scanner.Resolve is set,
+// scanOne queries the resolved unit instead of the hardcoded claude prefix. A
+// codex chamber (whose real unit is `tmux-tell-codex-mailman@<name>.service`)
+// was silently reporting all-zeros pre-fix because the claude unit doesn't
+// exist for it. The fake journal fixture below only has data under the codex
+// unit key; the resolver has to route to it for the WARN counter to fire.
+func TestScan_ResolverRoutesToCodexUnit(t *testing.T) {
+	sc := &Scanner{
+		Systemctl: &fakeSystemctl{byUnit: map[string]map[string]string{
+			"tmux-tell-codex-mailman@carpenter.service": {"NRestarts": "2"},
+		}},
+		Journal: &fakeJournal{byUnit: map[string][]string{
+			"tmux-tell-codex-mailman@carpenter.service": {
+				"[mailman/carpenter] 2026/05/31 12:00:00 WARN quiet_cap_exceeded id=abc",
+			},
+		}},
+		Resolve: func(name string) string {
+			return "tmux-tell-codex-mailman@" + name + ".service"
+		},
+	}
+	out, err := sc.Scan(context.Background(), []string{"carpenter"}, ScanWindow{})
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	got := out[0]
+	if got.CrashCount != 2 {
+		t.Errorf("CrashCount = %d, want 2 (systemd probe against codex unit failed to route)", got.CrashCount)
+	}
+	if got.QuietCapExceeded != 1 {
+		t.Errorf("QuietCapExceeded = %d, want 1 (journal probe against codex unit failed to route)", got.QuietCapExceeded)
+	}
+}
+
+// TestScan_NilResolverPreservesClaudeDefault covers the backward-compat
+// contract: when Scanner.Resolve is nil, scanOne falls back to the pre-#708
+// claude-prefix hardcode. Existing tests rely on this default.
+func TestScan_NilResolverPreservesClaudeDefault(t *testing.T) {
+	sc := &Scanner{
+		Systemctl: &fakeSystemctl{},
+		Journal: &fakeJournal{byUnit: map[string][]string{
+			"tmux-tell-claude-mailman@bosun.service": {
+				"[mailman/bosun] 2026/05/31 12:00:00 WARN quiet_cap_exceeded id=abc",
+			},
+		}},
+		// Resolve intentionally left nil.
+	}
+	out, _ := sc.Scan(context.Background(), []string{"bosun"}, ScanWindow{})
+	if out[0].QuietCapExceeded != 1 {
+		t.Errorf("QuietCapExceeded = %d, want 1 (nil-Resolve default should hit the claude unit)", out[0].QuietCapExceeded)
+	}
+}
+
 func TestScan_NoDeliveriesNoPercentiles(t *testing.T) {
 	sc := &Scanner{
 		Systemctl: &fakeSystemctl{},

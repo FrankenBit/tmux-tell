@@ -83,6 +83,14 @@ type JournalReader interface {
 type Scanner struct {
 	Systemctl SystemctlReader
 	Journal   JournalReader
+	// Resolve returns the systemd mailman unit name for an agent. If nil,
+	// the scanner defaults to the claude-adapter prefix — preserving the
+	// pre-#708 single-adapter behavior for existing tests. Production
+	// callers (health.go, status.go) inject a resolver that reads the
+	// agent's registered provider from the store, so codex chambers
+	// (provider=openai) get their `tmux-tell-codex-mailman@…` unit
+	// probed instead of the (non-existent) claude one.
+	Resolve func(agentName string) string
 }
 
 // New returns a Scanner wired with the real systemd + journalctl
@@ -110,7 +118,16 @@ func (s *Scanner) Scan(ctx context.Context, agents []string, window ScanWindow) 
 
 func (s *Scanner) scanOne(ctx context.Context, name string, window ScanWindow) (AgentHealth, error) {
 	ah := AgentHealth{Name: name}
-	unit := fmt.Sprintf("tmux-tell-claude-mailman@%s.service", name)
+	var unit string
+	if s.Resolve != nil {
+		unit = s.Resolve(name)
+	} else {
+		// Backward-compat default: pre-#708 behavior assumed the claude
+		// adapter for every agent. Codex chambers landed as silent
+		// blindspots. New production callers set Resolve; the default
+		// preserves the old semantics for tests.
+		unit = fmt.Sprintf("tmux-tell-claude-mailman@%s.service", name)
+	}
 
 	// systemd: NRestarts.
 	props, err := s.Systemctl.ShowUnit(ctx, unit, "NRestarts")
