@@ -25,6 +25,25 @@ shouldn't sit unclaimed forever). Two opt-in flags refine this:
 - `--block-on-stale` — with `--reply-to`, refuse the send (`ok:false`) when the thread
   has moved since you last spoke. See the `thread_freshness` block below.
 
+Every successful send also includes a **`receipt`** block (#614) that names the
+substrate layer the response can honestly claim:
+
+- `receipt.enqueue` — always present on success. `state:"accepted"` means the row
+  was persisted into the queue; `state:"staged"` means it was persisted in the
+  deferred state for a later trigger.
+- `receipt.dispatch` — `state:"not_requested"` unless `--wait-for-delivered` was
+  set. With the wait enabled, this mirrors the observed terminal delivery state
+  or `timeout`.
+- `receipt.paste_confirmed` — `state:"confirmed"` only when the wait observed a
+  verified paste. It reports `unconfirmed`, `failed`, or `timeout` for the other
+  terminal/wait outcomes.
+
+This is defense-in-depth for dispatch claims: chamber/operator text should cite
+the returned id and receipt (or a later `message_status` lookup), not reconstruct
+"I dispatched X" from memory. The primary mitigation for chamber-side
+confabulation is still verifying own dispatch claims against actual tool-call
+results; the receipt block is the substrate-side complement.
+
 When the send carries `--reply-to <id>`, the response adds a **`thread_freshness`**
 block — the crossed-message guard. Async bus traffic means replies cross in
 flight: you `reply_to` a thread-state that an inbound you haven't read may already have

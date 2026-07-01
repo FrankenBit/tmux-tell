@@ -48,6 +48,25 @@ type DeliveryStatus struct {
 	VerifyMs    int64  `json:"verify_ms"`
 }
 
+// ReceiptLayer names the substrate-layer outcome a send response can honestly
+// claim. It is deliberately explicit: ok:true means the enqueue layer accepted
+// the row; dispatch / paste confirmation require wait_for_delivered evidence.
+type ReceiptLayer struct {
+	State    string `json:"state"`
+	At       string `json:"at,omitempty"`
+	Evidence string `json:"evidence,omitempty"`
+}
+
+// SendReceipt is the defense-in-depth receipt block (#614). It gives chambers a
+// substrate-of-record object to cite instead of overloading ok:true. Enqueue is
+// always populated on successful sends; Dispatch and PasteConfirmed are
+// "not_requested" unless the caller opted into wait_for_delivered.
+type SendReceipt struct {
+	Enqueue        ReceiptLayer `json:"enqueue"`
+	Dispatch       ReceiptLayer `json:"dispatch"`
+	PasteConfirmed ReceiptLayer `json:"paste_confirmed"`
+}
+
 // ThreadFreshness is the crossed-message signal, populated only when the send
 // carries a --reply_to (#155). It answers a substrate-knowable question: has
 // the thread moved since the sender last spoke in it? Specifically, NewerInThread
@@ -97,6 +116,7 @@ type SendResponse struct {
 	Queued    int              `json:"queued"`
 	Recipient *RecipientStatus `json:"recipient,omitempty"`
 	Delivery  *DeliveryStatus  `json:"delivery,omitempty"`
+	Receipt   *SendReceipt     `json:"receipt,omitempty"`
 	Freshness *ThreadFreshness `json:"thread_freshness,omitempty"`
 	Replay    *ReplayStatus    `json:"replay,omitempty"`
 	// DeliverAfter is set (to the trigger name) when the send was deferred
@@ -116,6 +136,7 @@ type MultiSendResult struct {
 	Queued    int              `json:"queued"`
 	Recipient *RecipientStatus `json:"recipient,omitempty"`
 	Delivery  *DeliveryStatus  `json:"delivery,omitempty"`
+	Receipt   *SendReceipt     `json:"receipt,omitempty"`
 	Freshness *ThreadFreshness `json:"thread_freshness,omitempty"`
 	Error     string           `json:"error,omitempty"`
 }
@@ -127,6 +148,55 @@ type MultiSendResult struct {
 type MultiSendResponse struct {
 	OK       bool              `json:"ok"`
 	Messages []MultiSendResult `json:"messages"`
+}
+
+func newSendReceipt(createdAt, deliverAfter string, delivery *DeliveryStatus) *SendReceipt {
+	enqueue := ReceiptLayer{
+		State:    "accepted",
+		At:       createdAt,
+		Evidence: "messages row persisted",
+	}
+	if deliverAfter != "" {
+		enqueue.State = "staged"
+		enqueue.Evidence = "messages row persisted in deferred state"
+	}
+	dispatch := ReceiptLayer{State: "not_requested"}
+	paste := ReceiptLayer{State: "not_requested"}
+	if delivery != nil {
+		dispatch, paste = receiptLayersFromDelivery(delivery)
+	}
+	return &SendReceipt{
+		Enqueue:        enqueue,
+		Dispatch:       dispatch,
+		PasteConfirmed: paste,
+	}
+}
+
+func receiptLayersFromDelivery(d *DeliveryStatus) (ReceiptLayer, ReceiptLayer) {
+	dispatch := ReceiptLayer{State: d.State, At: d.DeliveredAt}
+	paste := ReceiptLayer{State: "unconfirmed", At: d.DeliveredAt}
+	switch d.State {
+	case string(store.StateDelivered):
+		dispatch.Evidence = "message reached delivered state"
+		paste.State = "confirmed"
+		paste.Evidence = "delivery verification confirmed paste"
+	case displayStateDeliveredInInputBox:
+		dispatch.State = string(store.StateDelivered)
+		dispatch.Evidence = "message reached delivered state"
+		paste.Evidence = "paste entered input box but verification token was not observed"
+	case string(store.StateFailed):
+		dispatch.Evidence = "mailman marked delivery failed"
+		paste.State = "failed"
+		paste.Evidence = "delivery failed before paste confirmation"
+	case pingStateTimeout:
+		dispatch.Evidence = "wait_for_delivered timed out before terminal delivery"
+		paste.State = "timeout"
+		paste.Evidence = "wait_for_delivered timed out before paste confirmation"
+	default:
+		dispatch.Evidence = "wait_for_delivered observed delivery state"
+		paste.Evidence = "delivery state did not confirm paste"
+	}
+	return dispatch, paste
 }
 
 // renderSendResult writes a SendResponse in the requested format. JSON (the

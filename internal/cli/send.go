@@ -316,6 +316,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		}
 		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, p.To, timeout, pingPollInterval)
 	}
+	resp.Receipt = newSendReceipt(sendCreatedAt(ctx, s, res.PublicID), p.DeliverAfter, resp.Delivery)
 	renderSendResult(stdout, resp, p.To, p.Format)
 	return exitOK
 }
@@ -411,6 +412,7 @@ func runMultiSendWithStore(ctx context.Context, s *store.Store, p sendParams, st
 			Queued:    resp.Queued,
 			Recipient: resp.Recipient,
 			Delivery:  resp.Delivery,
+			Receipt:   resp.Receipt,
 			Freshness: freshness,
 			Error:     resp.Error,
 		}
@@ -487,7 +489,16 @@ func sendOneRecipient(ctx context.Context, s *store.Store, p sendParams) (SendRe
 		}
 		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, p.To, timeout, pingPollInterval)
 	}
+	resp.Receipt = newSendReceipt(sendCreatedAt(ctx, s, res.PublicID), p.DeliverAfter, resp.Delivery)
 	return resp, nil
+}
+
+func sendCreatedAt(ctx context.Context, s *store.Store, id string) string {
+	m, err := s.GetMessage(ctx, id)
+	if err != nil {
+		return ""
+	}
+	return m.CreatedAt
 }
 
 // splitRecipients splits a comma-separated recipient string, trimming spaces

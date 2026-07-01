@@ -134,8 +134,13 @@ tmux-tell-claude send --to bob "first message across the bus"
 first message across the bus
 ```
 
-That's the whole loop. `send` returns `{"ok":true,"id":"7f3a","queued":1, "recipient":{…}}`
-on success (or `{"ok":false,"error":"…"}` with a sysexits-style exit code on failure).
+That's the whole loop. `send` returns
+`{"ok":true,"id":"7f3a","queued":1,"recipient":{…},"receipt":{…}}` on success
+(or `{"ok":false,"error":"…"}` with a sysexits-style exit code on failure).
+`ok:true` means the bus accepted/persisted the row; the `receipt` block names
+that enqueue layer separately from dispatch and paste-confirmation evidence.
+Use `--wait-for-delivered` when the send response itself must include delivery
+and paste-confirmation status.
 
 > The disposition flags (`--strict` / `--wait-for-delivered` / `--block-on-stale`),
 > the `thread_freshness` crossed-message guard, and the full command set live in the

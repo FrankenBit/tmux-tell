@@ -123,6 +123,11 @@ choices that change the interaction shape — reach for them deliberately:
 - **`wait_for_delivered: true`** blocks until the message reaches a terminal
   delivery state, so you *know* it landed rather than assuming. Worth it for a
   hand-off you're about to act on; overkill for chatter.
+- **`receipt` in `send` responses** names what the substrate actually proved:
+  enqueue/stage is always reported on success; dispatch and paste-confirmation
+  are explicit only when you ask for `wait_for_delivered`. When writing
+  operator-facing text like "I dispatched X," cite the actual returned id/receipt
+  from the tool call rather than reconstructing the claim from memory.
 - **Fan-out:** pass `to` as an array to send one message to several recipients —
   each gets its own row. That's fan-out, not broadcast; the bus stays
   point-to-point underneath.

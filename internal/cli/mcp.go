@@ -118,7 +118,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("tmux-tell", "0.1.0")
 
 	srv.RegisterTool("tmux-tell.send",
-		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient}: \"queued\" means the bus accepted it — the recipient sees it once their mailman delivers. The \"recipient\" block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-tell.message_status. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155). Set quick=true to render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block — for routine acks where typing-overhead-to-signal ratio is high (#154). Multi-recipient: pass to as an array (e.g. [\"bosun\",\"surveyor\"]) to fan the message to multiple recipients in a single call — each recipient gets its own message id; the response shape changes to {ok,messages:[{to,id,queued,recipient,...},...]} (#158).",
+		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient,receipt}: ok:true / receipt.enqueue means the bus accepted and persisted the row; it is NOT a paste-confirmation claim. The recipient sees it once their mailman delivers. The recipient block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-tell.message_status; with wait_for_delivered the receipt.dispatch and receipt.paste_confirmed layers report the observed delivery/paste evidence. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155). Set quick=true to render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block — for routine acks where typing-overhead-to-signal ratio is high (#154). Multi-recipient: pass to as an array (e.g. [\"bosun\",\"surveyor\"]) to fan the message to multiple recipients in a single call — each recipient gets its own message id; the response shape changes to {ok,messages:[{to,id,queued,recipient,receipt,...},...]} (#158).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -134,7 +134,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 				"no_reply_expected": {"type": "boolean", "description": "Set true to signal the recipient that no acknowledgment is needed — reduces ack-cascade on FYI/status messages (#145). Default false."},
 				"quick":             {"type": "boolean", "description": "Render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block. For routine acks where typing-overhead-to-signal ratio is high. Default false (#154)."},
 				"strict":            {"type": "boolean", "description": "Fail (ok:false) if the recipient is registered but not reachable (pane gone). An UNregistered recipient is always fail-loud regardless of this flag. Default false (#152)."},
-				"wait_for_delivered": {"type": "boolean", "description": "Block until the message reaches a terminal delivery state (delivered/failed) or timeout, returning a \"delivery\" block with state + verify_ms. Default false (#152)."},
+				"wait_for_delivered": {"type": "boolean", "description": "Block until the message reaches a terminal delivery state (delivered/failed) or timeout, returning a \"delivery\" block with state + verify_ms and filling receipt.dispatch / receipt.paste_confirmed with observed evidence. Default false (#152/#614)."},
 				"timeout":           {"type": "string", "description": "Bound for wait_for_delivered as a Go duration (e.g. \"10s\"). Default 10s."},
 				"block_on_stale":    {"type": "boolean", "description": "With reply_to: fail (ok:false) instead of queueing when the thread_freshness check finds the thread moved since you last spoke (newer messages addressed to you arrived after your last message in the chain). Default false — staleness is reported but the send still succeeds (#155)."},
 				"deliver_after":     {"type": "string", "description": "Defer delivery until a trigger fires (#227): the message is STAGED (not queued) and delivers only after the trigger. Accepts \"resume\" — post-compaction self-handoff: stage orientation text with deliver_after=\"resume\", then call tmux-tell.flush_deferred{trigger:\"resume\"} in your post-/compact resume routine so it lands in the freshly-resumed context instead of being absorbed by the summarizer — or \"register\" (#258a): a spawn-die session bridge addressed to another agent (\"remember this for its next dispatch\"); it auto-promotes when that agent next (re)registers, no explicit flush needed. Single-recipient only. The response carries deliver_after to confirm staging."},
@@ -880,6 +880,7 @@ func doMultiSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, err
 			Queued:    resp.Queued,
 			Recipient: resp.Recipient,
 			Delivery:  resp.Delivery,
+			Receipt:   resp.Receipt,
 			Freshness: freshness,
 			Error:     resp.Error,
 		}
@@ -1001,6 +1002,7 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		}
 		resp.Delivery = waitForDelivery(ctx, s, res.PublicID, p.To, timeout, pingPollInterval)
 	}
+	resp.Receipt = newSendReceipt(sendCreatedAt(ctx, s, res.PublicID), p.DeliverAfter, resp.Delivery)
 	return resp, nil
 }
 

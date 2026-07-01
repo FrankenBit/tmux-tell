@@ -78,6 +78,22 @@ func TestMCP_Send_HappyPath(t *testing.T) {
 	if len(id) != 4 {
 		t.Errorf("id = %q, want 4 hex chars", id)
 	}
+	receipt, ok := got["receipt"].(map[string]any)
+	if !ok {
+		t.Fatalf("receipt missing or wrong type; got=%v", got["receipt"])
+	}
+	enqueue, ok := receipt["enqueue"].(map[string]any)
+	if !ok || enqueue["state"] != "accepted" || enqueue["at"] == "" {
+		t.Errorf("enqueue receipt = %v, want accepted with timestamp", receipt["enqueue"])
+	}
+	dispatch, ok := receipt["dispatch"].(map[string]any)
+	if !ok || dispatch["state"] != "not_requested" {
+		t.Errorf("dispatch receipt = %v, want not_requested", receipt["dispatch"])
+	}
+	paste, ok := receipt["paste_confirmed"].(map[string]any)
+	if !ok || paste["state"] != "not_requested" {
+		t.Errorf("paste receipt = %v, want not_requested", receipt["paste_confirmed"])
+	}
 }
 
 func TestMCP_Send_UnknownRecipient(t *testing.T) {
@@ -262,6 +278,20 @@ func TestMCP_Send_QuickNoReplyExpectedMultiRecipient(t *testing.T) {
 	}
 	if len(msgs) != 2 {
 		t.Errorf("messages = %d, want 2", len(msgs))
+	}
+	for _, raw := range msgs {
+		row, ok := raw.(map[string]any)
+		if !ok {
+			t.Fatalf("message row wrong type: %T", raw)
+		}
+		receipt, ok := row["receipt"].(map[string]any)
+		if !ok {
+			t.Fatalf("message receipt missing: %v", row)
+		}
+		enqueue, ok := receipt["enqueue"].(map[string]any)
+		if !ok || enqueue["state"] != "accepted" {
+			t.Errorf("message enqueue receipt = %v, want accepted", receipt["enqueue"])
+		}
 	}
 	// Verify quick + no_reply_expected survive the round-trip through the store.
 	ctx := context.Background()

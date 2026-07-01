@@ -86,6 +86,18 @@ func TestSend_KnownAlive_RecipientBlock(t *testing.T) {
 	if rc.DeliveryMode != store.DeliveryModePasteAndEnter {
 		t.Errorf("delivery_mode = %q, want paste-and-enter", rc.DeliveryMode)
 	}
+	if r.Receipt == nil {
+		t.Fatalf("receipt missing")
+	}
+	if r.Receipt.Enqueue.State != "accepted" || r.Receipt.Enqueue.At == "" {
+		t.Errorf("enqueue receipt = %+v, want accepted with timestamp", r.Receipt.Enqueue)
+	}
+	if r.Receipt.Dispatch.State != "not_requested" {
+		t.Errorf("dispatch receipt = %+v, want not_requested without wait", r.Receipt.Dispatch)
+	}
+	if r.Receipt.PasteConfirmed.State != "not_requested" {
+		t.Errorf("paste receipt = %+v, want not_requested without wait", r.Receipt.PasteConfirmed)
+	}
 }
 
 func TestSend_KnownDead_DefaultQueuesStrictRejects(t *testing.T) {
@@ -137,6 +149,34 @@ func TestSend_MailboxOnly_MailmanFalse(t *testing.T) {
 	}
 }
 
+func TestSend_DeferAfterReceiptReportsStaged(t *testing.T) {
+	s := newCmdTestStore(t)
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+	withReachability(t, map[string]bool{"%3": true}, true)
+
+	p := baseSendParams("alice", "bob")
+	p.DeliverAfter = deferTriggerResume
+	var stdout, stderr bytes.Buffer
+	if exit := runSendWithStore(ctx, s, p, &stdout, &stderr); exit != exitOK {
+		t.Fatalf("exit = %d; stderr=%s", exit, stderr.String())
+	}
+	r := decodeSend(t, stdout.Bytes())
+	if r.DeliverAfter != deferTriggerResume {
+		t.Fatalf("deliver_after = %q, want %q", r.DeliverAfter, deferTriggerResume)
+	}
+	if r.Receipt == nil {
+		t.Fatalf("receipt missing")
+	}
+	if r.Receipt.Enqueue.State != "staged" || r.Receipt.Enqueue.At == "" {
+		t.Errorf("enqueue receipt = %+v, want staged with timestamp", r.Receipt.Enqueue)
+	}
+	if r.Receipt.Dispatch.State != "not_requested" {
+		t.Errorf("dispatch receipt = %+v, want not_requested for deferred send", r.Receipt.Dispatch)
+	}
+}
+
 func TestSend_WaitForDelivered_HappyPath(t *testing.T) {
 	s := newCmdTestStore(t)
 	ctx := context.Background()
@@ -177,6 +217,18 @@ func TestSend_WaitForDelivered_HappyPath(t *testing.T) {
 	if r.Delivery == nil || r.Delivery.State != string(store.StateDelivered) {
 		t.Errorf("delivery = %+v, want state delivered", r.Delivery)
 	}
+	if r.Receipt == nil {
+		t.Fatalf("receipt missing")
+	}
+	if r.Receipt.Enqueue.State != "accepted" {
+		t.Errorf("enqueue receipt = %+v, want accepted", r.Receipt.Enqueue)
+	}
+	if r.Receipt.Dispatch.State != string(store.StateDelivered) {
+		t.Errorf("dispatch receipt = %+v, want delivered", r.Receipt.Dispatch)
+	}
+	if r.Receipt.PasteConfirmed.State != "confirmed" {
+		t.Errorf("paste receipt = %+v, want confirmed", r.Receipt.PasteConfirmed)
+	}
 }
 
 func TestSend_WaitForDelivered_Timeout(t *testing.T) {
@@ -201,6 +253,67 @@ func TestSend_WaitForDelivered_Timeout(t *testing.T) {
 	// The message is still queued — timeout is informational, not a failure.
 	if !r.OK {
 		t.Errorf("ok = false on wait-timeout; the row should still be queued")
+	}
+	if r.Receipt == nil {
+		t.Fatalf("receipt missing")
+	}
+	if r.Receipt.Enqueue.State != "accepted" {
+		t.Errorf("enqueue receipt = %+v, want accepted", r.Receipt.Enqueue)
+	}
+	if r.Receipt.Dispatch.State != pingStateTimeout {
+		t.Errorf("dispatch receipt = %+v, want timeout", r.Receipt.Dispatch)
+	}
+	if r.Receipt.PasteConfirmed.State != pingStateTimeout {
+		t.Errorf("paste receipt = %+v, want timeout", r.Receipt.PasteConfirmed)
+	}
+}
+
+func TestReceiptLayersFromDelivery_PasteConfirmationEvidence(t *testing.T) {
+	tests := []struct {
+		name         string
+		delivery     DeliveryStatus
+		wantDispatch string
+		wantPaste    string
+		wantEvidence string
+	}{
+		{
+			name: "delivered_in_input_box stays unconfirmed",
+			delivery: DeliveryStatus{
+				State:       displayStateDeliveredInInputBox,
+				DeliveredAt: "2026-07-01T20:00:00Z",
+			},
+			wantDispatch: string(store.StateDelivered),
+			wantPaste:    "unconfirmed",
+			wantEvidence: "verification token was not observed",
+		},
+		{
+			name: "failed delivery cannot confirm paste",
+			delivery: DeliveryStatus{
+				State:       string(store.StateFailed),
+				DeliveredAt: "2026-07-01T20:01:00Z",
+			},
+			wantDispatch: string(store.StateFailed),
+			wantPaste:    "failed",
+			wantEvidence: "delivery failed before paste confirmation",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dispatch, paste := receiptLayersFromDelivery(&tt.delivery)
+			if dispatch.State != tt.wantDispatch {
+				t.Errorf("dispatch state = %q, want %q", dispatch.State, tt.wantDispatch)
+			}
+			if paste.State != tt.wantPaste {
+				t.Errorf("paste state = %q, want %q", paste.State, tt.wantPaste)
+			}
+			if paste.At != tt.delivery.DeliveredAt {
+				t.Errorf("paste at = %q, want %q", paste.At, tt.delivery.DeliveredAt)
+			}
+			if !strings.Contains(paste.Evidence, tt.wantEvidence) {
+				t.Errorf("paste evidence = %q, want to contain %q", paste.Evidence, tt.wantEvidence)
+			}
+		})
 	}
 }
 
