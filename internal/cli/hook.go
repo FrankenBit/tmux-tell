@@ -20,7 +20,7 @@ import (
 // UserPromptSubmit hook in ~/.claude/settings.json to run `tmux-tell-claude
 // hook-context`; on each fire this claims the agent's pending messages, renders
 // them, marks them delivered (ADR-0009 Q3/3b: delivered = presented), and emits
-// them as `hookSpecificOutput.additionalContext` for Claude to inject.
+// them as `hookSpecificOutput.additionalContext` for the agent to inject.
 
 // hookOutput is the Claude Code hook response. An empty value (no
 // hookSpecificOutput) is a valid no-op when nothing is pending.
@@ -127,7 +127,7 @@ func doHookContext(ctx context.Context, s *store.Store, agent, eventName string,
 
 // renderHookContext formats claimed messages as an additionalContext block.
 // Plain text (not pane chrome): a short header + one labeled line per message.
-// The recipient's Claude reads this as context on its next turn.
+// The recipient agent reads this as context on its next turn.
 func renderHookContext(msgs []store.Message) string {
 	var b strings.Builder
 	if len(msgs) == 1 {

@@ -209,7 +209,7 @@ type Agent struct {
 const (
 	DeliveryModePasteAndEnter = "paste-and-enter"
 	DeliveryModeMailboxOnly   = "mailbox-only"
-	// DeliveryModeHookContext (#249, ADR-0009): the recipient's Claude session
+	// DeliveryModeHookContext (#249, ADR-0009): the recipient agent's session
 	// reads pending messages via a lifecycle hook (SessionStart /
 	// UserPromptSubmit) that injects them as `additionalContext`, instead of the
 	// mailman pasting into the pane. Like mailbox-only, the mailman does NOT
