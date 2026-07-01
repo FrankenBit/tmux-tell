@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -75,42 +76,77 @@ func TestDoctor_E2E_FlagsOrphanedMCP(t *testing.T) {
 		t.Fatalf("unlink canonical DB: %v", err)
 	}
 
-	// doctor (fresh process, same XDG) must flag the divergence.
-	doctor := exec.Command(bin, "doctor", "--format", "json")
-	doctor.Env = env
+	// Poll doctor's report for our mcp pid — #605.
+	//
+	// doctor's /proc walk (gatherDoctorProcs) takes a directory snapshot with
+	// os.ReadDir("/proc") and then per-pid os.Readlink("/proc/<pid>/exe"). If a
+	// live pid's exe symlink can't be resolved on that per-pid step (the process
+	// exited between the snapshot and the readlink, or a transient EACCES from a
+	// loaded runner), the pid drops silently from the walk. On the release-cut
+	// runner this manifested as "doctor did not list our mcp pid" even though
+	// openDBHandle above confirmed the DB fd IS open at test time — pure jitter.
+	//
+	// Retry the doctor invocation briefly if our pid isn't in the report but the
+	// mcp process is still alive. If mcp has actually exited (rare, but possible
+	// on a heavily loaded runner if the parent's stdinW handling races), fail
+	// with an explicit diagnostic rather than the earlier confusing "not listed".
+	//
 	// Output() (not CombinedOutput) so the JSON parse sees stdout only — Run emits
 	// the #440 Phase-3 deprecation WARNs (legacy DB/config path) to stderr, which
 	// would otherwise corrupt the machine-readable stream. Parse stdout, WARNs on
 	// stderr is the correct consumer contract.
-	out, derr := doctor.Output()
-	exit := 0
-	if ee, ok := derr.(*exec.ExitError); ok {
-		exit = ee.ExitCode()
-	} else if derr != nil {
-		t.Fatalf("run doctor: %v\n%s", derr, out)
+	var out []byte
+	var exit int
+	var rep doctorReport
+	found := false
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); {
+		doctor := exec.Command(bin, "doctor", "--format", "json")
+		doctor.Env = env
+		o, derr := doctor.Output()
+		exit = 0
+		if ee, ok := derr.(*exec.ExitError); ok {
+			exit = ee.ExitCode()
+		} else if derr != nil {
+			t.Fatalf("run doctor: %v\n%s", derr, o)
+		}
+		out = o
+		rep = doctorReport{}
+		if err := json.Unmarshal(o, &rep); err != nil {
+			t.Fatalf("parse doctor json: %v\n%s", err, o)
+		}
+		for _, p := range rep.Procs {
+			if p.PID == mcp.Process.Pid {
+				found = true
+				break
+			}
+		}
+		if found {
+			break
+		}
+		// mcp missing from the report — retry only if it's still alive. Signal 0
+		// is the standard null-signal alive probe on Linux (no side effect,
+		// returns error if the pid is gone).
+		if err := mcp.Process.Signal(syscall.Signal(0)); err != nil {
+			t.Fatalf("mcp pid %d exited before doctor could observe it (%v); this is not the /proc-scan slew #605 targets\n%s", mcp.Process.Pid, err, out)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
+	if !found {
+		t.Fatalf("doctor never listed our mcp pid %d within 3s (mcp still alive; /proc-scan slew persisted longer than the retry deadline)\n%s", mcp.Process.Pid, out)
+	}
+
 	if exit == 0 {
 		t.Errorf("doctor exit=0, want non-zero (an orphaned mcp is present)\n%s", out)
 	}
-
-	var rep doctorReport
-	if err := json.Unmarshal(out, &rep); err != nil {
-		t.Fatalf("parse doctor json: %v\n%s", err, out)
-	}
-	found := false
 	for _, p := range rep.Procs {
 		if p.PID != mcp.Process.Pid {
 			continue
 		}
-		found = true
 		if !p.Divergent {
 			t.Errorf("orphaned mcp pid %d not flagged divergent: %+v", p.PID, p)
 		}
 		if !p.DBDeleted {
 			t.Errorf("orphaned mcp pid %d not marked db_deleted: %+v", p.PID, p)
 		}
-	}
-	if !found {
-		t.Errorf("doctor did not list our mcp pid %d\n%s", mcp.Process.Pid, out)
 	}
 }
