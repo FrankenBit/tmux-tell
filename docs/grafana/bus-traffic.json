@@ -9,13 +9,13 @@
     {
       "id": 10,
       "title": "Messages delivered per chamber (recipient view)",
-      "description": "Count of messages delivered TO each chamber's mailman over time. Source: mailman log lines matching `delivering id=` from `tmux-tell-claude-mailman@<chamber>.service` (tight selector excludes gate_max_wait retry-warnings which also contain the word `delivering`). The `agent` label IS the recipient.",
+      "description": "Count of messages delivered TO each chamber's mailman over time. Source: mailman log lines matching `delivering id=` from `tmux-tell-(claude|codex)-mailman@<chamber>.service` (tight selector excludes gate_max_wait retry-warnings which also contain the word `delivering`). The `agent` label IS the recipient.",
       "type": "timeseries",
       "datasource": { "uid": "loki", "type": "loki" },
       "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
       "targets": [
         {
-          "expr": "sum by (agent) (count_over_time({unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"delivering id=\" [$__interval]))",
+          "expr": "sum by (agent) (count_over_time({unit=~\"tmux-tell-(claude|codex)-mailman@.+\\\\.service\"} |~ \"delivering id=\" [$__interval]))",
           "legendFormat": "{{agent}}",
           "refId": "A"
         }
@@ -37,7 +37,7 @@
       "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
       "targets": [
         {
-          "expr": "sum by (sender) (count_over_time({unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"delivering id=\" | regexp `from=(?P<sender>\\S+)` [$__interval]))",
+          "expr": "sum by (sender) (count_over_time({unit=~\"tmux-tell-(claude|codex)-mailman@.+\\\\.service\"} |~ \"delivering id=\" | regexp `from=(?P<sender>\\S+)` [$__interval]))",
           "legendFormat": "{{sender}}",
           "refId": "A"
         }
@@ -59,7 +59,7 @@
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 18 },
       "targets": [
         {
-          "expr": "sum by (agent) (sum_over_time({unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"delivering id=\" | regexp `body_bytes=(?P<bytes>\\d+)` | unwrap bytes [$__interval]))",
+          "expr": "sum by (agent) (sum_over_time({unit=~\"tmux-tell-(claude|codex)-mailman@.+\\\\.service\"} |~ \"delivering id=\" | regexp `body_bytes=(?P<bytes>\\d+)` | unwrap bytes [$__interval]))",
           "legendFormat": "{{agent}}",
           "refId": "A"
         }
@@ -81,12 +81,12 @@
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 18 },
       "targets": [
         {
-          "expr": "sum(count_over_time({unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"gate_max_wait\" [$__interval]))",
+          "expr": "sum(count_over_time({unit=~\"tmux-tell-(claude|codex)-mailman@.+\\\\.service\"} |~ \"gate_max_wait\" [$__interval]))",
           "legendFormat": "gate_max_wait",
           "refId": "A"
         },
         {
-          "expr": "sum(count_over_time({unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"pre_paste_safety_abort\" [$__interval]))",
+          "expr": "sum(count_over_time({unit=~\"tmux-tell-(claude|codex)-mailman@.+\\\\.service\"} |~ \"pre_paste_safety_abort\" [$__interval]))",
           "legendFormat": "pre_paste_safety_abort",
           "refId": "B"
         }
@@ -116,7 +116,7 @@
       "gridPos": { "h": 12, "w": 24, "x": 0, "y": 26 },
       "targets": [
         {
-          "expr": "{unit=~\"tmux-tell-claude-mailman@.+\\\\.service\"} |~ \"delivering\"",
+          "expr": "{unit=~\"tmux-tell-(claude|codex)-mailman@.+\\\\.service\"} |~ \"delivering\"",
           "refId": "A"
         }
       ],
