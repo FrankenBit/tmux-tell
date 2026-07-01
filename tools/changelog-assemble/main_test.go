@@ -87,7 +87,7 @@ func TestAssembleInto_MergeAware(t *testing.T) {
 
 // TestAssembleInto_PreludePreserved pins #427: a hand-curated prelude paragraph
 // already in [Unreleased] survives, and `### Type` blocks are inserted AFTER it
-// (so release-draft.yml's extract-before-first-### boundary still works).
+// (so the toolkit's extract-before-first-### release-body boundary still works).
 func TestAssembleInto_PreludePreserved(t *testing.T) {
 	changelog := "## [Unreleased]\n\nThe foundation release — fragment pattern lands.\n\n## [0.18.1] — 2026-06-16\n"
 	frags := []Fragment{{Issue: 494, Type: "changed", Body: "- **Fragment pattern** (#494)"}}

@@ -5,20 +5,30 @@
 // parallel PRs in a milestone collide (v0.18.1 #480/#486; v0.17.2 #464). The
 // fix is to stop touching CHANGELOG.md during the PR cycle — each PR drops a
 // fragment file in changelog.d/ — and assemble the fragments into [Unreleased]
-// at release-prep time, just before release.yml's existing CHANGELOG transition.
+// at cut time.
+//
+// Post-#617: the assemble + prune modes are dead code paths. release-toolkit's
+// reusable workflow now runs its own assembly at cut time (release-toolkit
+// #494's substrate lifted into the shared toolkit), and running the local tool
+// in a manual cut would just race with the workflow. What remains load-bearing
+// is the `-check` mode: it validates fragment names/types/non-emptiness
+// pre-merge in CI (`.forgejo/workflows/test.yml`). Keeping the assemble/prune
+// modes in-tree as harmless legacy is cheaper than retiring them + preserves
+// the option to inspect an assembled preview locally without a full CI run.
 //
 // Substrate-fit: this mirrors tools/check-pin-slugs/ — a small Go program run
-// via `go run ./tools/changelog-assemble` in CI/release, no external binary
-// dependency. It fills only the `### Type` bullet blocks in [Unreleased] and
-// leaves the hand-curated per-release prelude + Headlines (the surface
-// release-draft.yml extracts, #427) untouched.
+// via `go run ./tools/changelog-assemble` locally + `go run
+// ./tools/changelog-assemble -check` in CI, no external binary dependency. It
+// fills only the `### Type` bullet blocks in [Unreleased] and leaves the
+// hand-curated per-release prelude + Headlines (the surface the toolkit
+// extracts as the release body, #427) untouched.
 //
 // Modes:
 //
-//	(default)   assemble fragments into [Unreleased] (mutating)
-//	-prune      after a successful assemble, delete the consumed fragment files
+//	(default)   assemble fragments into [Unreleased] (mutating; toolkit-superseded, retained for local preview)
+//	-prune      after a successful assemble, delete the consumed fragment files (toolkit-superseded)
 //	-check      read-only: validate every fragment's name + type + non-emptiness;
-//	            no mutation. Run in CI (test.yml).
+//	            no mutation. Load-bearing: CI (test.yml) runs this on every PR.
 //
 // Flags:
 //

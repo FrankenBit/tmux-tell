@@ -134,14 +134,29 @@ empty prelude **hard-fails the draft by design** (#427).
 
 **Fragments (per-PR mechanics, #494).** The per-entry convention above applies to the
 fragment body you write in `changelog.d/<issue>.<type>.md` — same crisp-headline density,
-same one-bullet-per-change shape. At release-prep, `tools/changelog-assemble` gathers
-the fragments into `[Unreleased]`, grouping by `### Type` in the canonical order
-(Added → Changed → Deprecated → Removed → Fixed → Security → Documentation) and deleting
-the consumed fragments. The prelude convention is **unchanged and orthogonal** — the
-assembler only fills the `### Type` bullet blocks; the narrative prelude is still added
-by hand at cut, so the #427 extract-before-first-`###` boundary keeps working. Locally,
-`go run ./tools/changelog-assemble -check` validates fragment names/types (CI runs this);
-`go run ./tools/changelog-assemble` assembles into `[Unreleased]` for a manual preview.
+same one-bullet-per-change shape. At cut time, [release-toolkit](https://git.frankenbit.de/frankenbit/release-toolkit)'s
+reusable workflow gathers the fragments into `[Unreleased]`, grouping by `### Type` in the
+canonical order (Added → Changed → Deprecated → Removed → Fixed → Security → Documentation)
+and deleting the consumed fragments. The prelude convention is **unchanged and orthogonal**
+— the assembler only fills the `### Type` bullet blocks; the narrative prelude is still
+added by hand at cut, so the #427 extract-before-first-`###` boundary keeps working.
+Locally, `go run ./tools/changelog-assemble -check` validates fragment names/types (CI
+runs this in `test.yml`); the assemble + prune modes are now dead code — the toolkit's
+own assembly at cut time is the load-bearing surface, and running the local tool would
+just race with it.
+
+**Fragment brevity (#628, post-#687 Cold Read fold).** Each fragment is **outcome +
+required action in 1-3 sentences**. Mechanism, root-cause narrative, and why-it-broke
+stories belong in the **PR body**, not the fragment. Multi-paragraph prose fragments —
+even when accurate — bloat the assembled `[Unreleased]` section, and the accumulated
+prose ends up on the published release page as noise that pushes actionable content
+below the fold. Style reference: the compressed
+[v0.27.0 release notes](https://git.frankenbit.de/frankenbit/tmux-tell/releases/tag/v0.27.0)
+(post-Cold-Read rewrite from a 12KB draft down to 2.5KB) + the
+[Cold-Read Prompt on BookStack](https://docs.saratow.net/books/tmux-tell/page/cold-read-prompt-changelog-verifier)
+as the reader-simulated brevity check. Anchor: post-#687 v0.27.0 incident where multiple
+fragments arrived as multi-paragraph PR-body prose + the assembled body reached the
+outcome only after 3 paragraphs of narrative.
 
 **Forward-living-comprehensive.** The `CHANGELOG.md` at a tag is the *comprehensive*
 record — the canonical surface a reader consults for "what exactly changed" — while
@@ -184,97 +199,133 @@ cleared via #546.
 
 ## Release cuts
 
-> **Superseded by release-toolkit (#617).** Release-cut machinery now consumes
-> [`frankenbit/release-toolkit`](https://git.frankenbit.de/frankenbit/release-toolkit):
-> a release-relevant push to `main` opens a rolling release-prep PR; merging it
-> **publishes the release immediately**, firing `release: published` and chaining
-> `deploy.yml` onto alcatraz-host — merge is the gate (#701). Pass
-> `publish_mode: draft` via `workflow_dispatch` to restore the click-to-**Publish**
-> gate for a cut that wants a draft review window.
-> `workflow_dispatch` on `release.yml` is retained as an emergency-cut fallback.
-> The detailed manual procedure below describes the RETIRED hand-rolled flow and
-> is kept for reference only; it will be rewritten for the toolkit flow once the
-> first toolkit cut validates it end-to-end (#628).
+Release-cut machinery consumes [`frankenbit/release-toolkit`](https://git.frankenbit.de/frankenbit/release-toolkit)
+via `.forgejo/workflows/release.yml` (a thin consumer wrapper). The mechanical
+shape:
 
-**Pre-flight.** Fast-forward your per-chamber tmux-tell checkout so on-disk
-state matches `origin/main` before the cut branch is created:
+1. Each merge to `main` fires the toolkit's `reusable-release.yml`. It walks
+   `git log <last-released-sha>..HEAD`, consults `changelog.d/` fragments +
+   conventional-commit subjects, and picks one of three modes:
+
+   - `noop` — nothing release-relevant since the last release; exit.
+   - `update` — a bump-worthy commit was found; the workflow runs
+     `release-prep.sh --rolling-mode` to (re)open the **rolling release-prep
+     PR** with the assembled `[Unreleased]` and the projected version.
+   - `cut` — the merge that just landed IS the merge of the rolling PR; the
+     workflow runs `draft-release.sh` and commits the manifest update to
+     `main`.
+
+2. The cut path publishes **immediately by default** (`publish_mode=immediate`
+   — the current default per #114 / #701): Forgejo creates the release +
+   fires `release: published` on merge of the rolling PR. `release-publish.yml`
+   chains `deploy.yml` onto alcatraz-host. The merge itself is the cut.
+
+3. `publish_mode=draft` (opt-in via `workflow_dispatch` inputs) restores the
+   old ADR-0003 Gate-3 shape: cut creates a **draft** release, operator clicks
+   **Publish** in the UI, tag creation + `release: published` fire from that
+   click. Use for a cut that wants a manual review window before the deploy
+   chain fires.
+
+4. `workflow_dispatch` on `release.yml` also exposes `bump_override` +
+   `dry_run` for emergency cuts / previews; keep for the substrate-critical
+   escape hatch but treat merge-driven cuts as the steady state.
+
+Manifest state is tracked in `.release-toolkit-manifest.json` (committed,
+machine-managed; do not hand-edit per ADR-0004 / ADR-0007). The rolling PR's
+head branch is `release-prep/rolling` — a stable per-repo identity that the
+toolkit reuses across cuts. Path-α (direct-push manifest to `main`) requires
+`release-bot` on the branch protection push_whitelist; path-γ (PR-mediated
+manifest) is the fallback. See [release-toolkit#273](https://git.frankenbit.de/frankenbit/release-toolkit/issues/273)
+for the path-α integration checklist including whitelist setup — empirically
+grounded on the v0.28.0 setup gap (2026-07-01).
+
+### Pre-flight (fast-forward your chamber's checkout)
+
+Fast-forward your per-chamber tmux-tell checkout so on-disk state matches
+`origin/main` before you engage the rolling PR:
 
 ```bash
 cd /srv/claude/<chamber>/tmux-tell/ && git pull --ff-only
 ```
 
-Post-rename evolution: the historical shared checkout at `/srv/tmux-msg/`
-was retired when chambers migrated to per-chamber standalone clones under
-`/srv/claude/<chamber>/tmux-tell/`. Each chamber has its own working copy
-with its own pinned `user.name` / `user.email`, so identity flips can't
-fire and the pre-flight is scoped to the chamber doing the cut. Operator
-scripts that read on-disk state (recording rig drivers, ad-hoc smoke
-tests) point at the specific chamber's checkout that's authoritative for
-that operator flow; a stale checkout there would still produce the
-"merged on origin but missing on disk" surprises (#284) — the pre-flight
-lives on. (#434 SUPERSEDED-BY-EVOLUTION close, 2026-07-01.)
+Post-rename evolution: the historical shared checkout at `/srv/tmux-msg/` was
+retired when chambers migrated to per-chamber standalone clones under
+`/srv/claude/<chamber>/tmux-tell/`. Each chamber has its own working copy with
+pinned `user.name` / `user.email`; identity flips can't fire. Operator scripts
+that read on-disk state (recording rig drivers, ad-hoc smoke tests) point at
+whichever chamber's checkout is authoritative for that flow; a stale checkout
+there still produces the "merged on origin but missing on disk" surprises
+(#284). (#434 SUPERSEDED-BY-EVOLUTION close, 2026-07-01.)
 
-The cut sequence (run from a clean main on the cut branch):
+### Feeding the rolling PR
 
-1. **Sync state.** `git fetch origin && git checkout -b i/v<X.Y.Z>-release-cut
-   origin/main`
-2. **CHANGELOG header.** First **assemble fragments**: `go run
-   ./tools/changelog-assemble -prune` gathers `changelog.d/` into `[Unreleased]` and
-   deletes the consumed fragments (#494). The automated `release.yml` does this for you;
-   run it by hand only for a manual cut. *Order matters:* assemble **before** the
-   deprecation check in step 4 — a deprecation that lives only as a
-   `changelog.d/*.deprecated.md` fragment is invisible to `deprecations.sh` until it's
-   assembled into `CHANGELOG.md`. Then move `[Unreleased]` content under
-   `## [<X.Y.Z>] — <YYYY-MM-DD>`; leave `## [Unreleased]` as the empty shell.
-   Confirm the new `[<X.Y.Z>]` section opens with a narrative prelude + `Headlines:`
-   per [CHANGELOG entries](#changelog-entries) — `release-draft.yml` extracts
-   everything before the first `### ` as the curated release body, so an empty
-   prelude **hard-fails the draft by design** (#427).
-3. **README version pin — automated.** `release.yml`'s transition step now pins the
-   README `--version` example to v<X.Y.Z> as part of the mechanical transition (#514);
-   no manual action. It **hard-fails the cut** if the `tmux-tell-claude vX.Y.Z` example
-   line is missing — if you restructure that README block, update the regex in
-   `release.yml`. For a fully-manual cut, do the bump by hand.
-4. **Deprecation eligibility check.** Run `./scripts/deprecations.sh --for
-   v<X.Y.Z>` and confirm the cleared-for-removal list matches intent. If a
-   listed surface is NOT being removed this cut, document the extension reason
-   in the cut PR — the two-minor floor is a guarantee, not a ceiling
+Every change-carrying PR drops a `changelog.d/<issue>.<type>.md` fragment per
+the [CHANGELOG entries §Fragments](#changelog-entries) convention. The toolkit
+assembles them at cut time; there's no per-PR CHANGELOG.md edit anymore.
+Landing the PR is enough — the next merge to main updates the rolling PR
+automatically.
+
+Deprecations follow the same fragment shape (`changelog.d/<issue>.deprecated.md`)
+and honor the ADR-0008 two-minor floor. Run `./scripts/deprecations.sh --for
+<projected-version>` against the *assembled* `[Unreleased]` before merging the
+rolling PR; a deprecation that lives only as a `.deprecated.md` fragment is
+invisible to `deprecations.sh` until the toolkit has assembled it (the rolling
+PR body carries the assembled view).
+
+### Pre-merge gate on the rolling PR
+
+Before merging the rolling PR, run through this checklist. Fires on the rolling
+PR, not per-commit. Items are N/A-able for a cut with no impact on that axis —
+but tick them explicitly; don't skip.
+
+1. **Cold-Read the assembled body.** Apply the
+   [Cold-Read Prompt](https://docs.saratow.net/books/tmux-tell/page/cold-read-prompt-changelog-verifier)
+   to the rolling PR body. The reader-simulated critique surfaces
+   over-narration, missing highlights, and structural noise before the release
+   page inherits it. Pilot fits this best (cold-outside-view discipline). Post-
+   #687 fold: this is the load-bearing brevity gate; the fragment-brevity rule
+   in [CHANGELOG entries](#changelog-entries) enforces it inbound, the Cold-
+   Read enforces it outbound.
+2. **Prelude present.** Confirm the projected `## [X.Y.Z]` section opens with
+   a narrative prelude + `Headlines:` per [CHANGELOG entries](#changelog-entries).
+   The toolkit extracts everything before the first `### ` as the curated
+   release body, so an empty prelude hard-fails the draft (#427). If the
+   rolling PR body doesn't yet carry the prelude, edit it there — the toolkit
+   preserves it on assemble.
+3. **Deprecation eligibility.** `./scripts/deprecations.sh --for
+   <projected-version>` — confirm the cleared-for-removal list matches intent
    ([ADR-0008](docs/adr/0008-deprecation-policy.md) §Discretion clause).
-5. **Pre-commit checks.** `gofmt -l .` clean; `go vet ./...` clean; `go test
-   -race -count=1 ./...` green.
-6. **Docs-coherence check.** Verify the operator-facing surfaces *beyond* this
-   diff per [docs/release-cut-checklist.md](docs/release-cut-checklist.md):
-   BookStack (Service Inventory p88, Release & Deploy p193, the *tmux-tell* book),
-   `/srv/CLAUDE.md` (alcatraz-infra — a separate repo/commit), and any sister
-   chamber `CLAUDE.md` (flag the chamber; don't edit). The release-prep PR body
-   carries the compact checkbox version. Items are N/A-able — a no-doc-impact cut
-   ticks them fast — but don't skip it for "small" cuts; that's the drift vector.
-   Salience, not machine-enforcement (#495).
-7. **Arc42 section staleness.** Scan this cut's changes against the
-   `revisit-triggers` frontmatter of the [Arc42 sections](docs/arc42/): did any
-   section's named trigger fire (a component
-   added/removed, the `PaneProfile` shape moved, a new ADR to anchor, a new
-   risk/term)? If so, pull the section update into this cut. Most cuts are no-op.
-   Sibling to step 6 at the per-cut review-gate axis — salience, not
-   machine-enforcement (#386).
-8. **Cut PR.** Open the cut PR; reviewer approves; merge on green.
-9. **Publish the auto-draft.** Merging the cut PR fires `release-draft.yml`,
-   which creates a **draft** Forgejo release whose body is the `[<X.Y.Z>]`
-   section's narrative prelude + `Headlines:` (the curated surface per #426), with
-   the merge-commit SHA pinned as `target_commitish`. Review the draft in the
-   releases UI and click **Publish** — Forgejo creates the `v<X.Y.Z>` tag from the
-   draft. No manual `git tag && git push`; the Publish click is the act of
-   shipping (#418).
-10. **Deploy fires automatically.** `release: published` triggers
-   `release-publish.yml`, which re-validates the tag and chains `deploy.yml` (via
-   `workflow_call`) to run `install.sh` + bootstrap on the alcatraz-host runner.
-   Watch the deploy job's smoke step; for a manual redeploy or rollback, dispatch
-   `deploy.yml` with `ref=<tag>`.
+4. **Docs-coherence.** Verify operator-facing surfaces beyond this diff per
+   [docs/release-cut-checklist.md](docs/release-cut-checklist.md): BookStack
+   (Service Inventory p88, Release & Deploy p193, the *tmux-tell* book),
+   `/srv/CLAUDE.md` (alcatraz-infra — separate repo/commit), sister chamber
+   `CLAUDE.md` (flag the chamber; don't edit). The rolling PR body carries the
+   compact checkbox version. Salience, not machine-enforcement (#495).
+5. **Arc42 staleness.** Scan against `revisit-triggers` frontmatter of the
+   [Arc42 sections](docs/arc42/) — did any section's named trigger fire?
+   Salience, not machine-enforcement (#386).
+6. **CI green.** `test / lint + build + test` + `manifest-check` all green on
+   the rolling PR head. If required checks don't fire on push (Forgejo anti-
+   recursion), `RELEASE_TOOLKIT_TOKEN` may need provisioning per
+   [release-toolkit#273](https://git.frankenbit.de/frankenbit/release-toolkit/issues/273).
+
+### Merge → publish → deploy
+
+Merge the rolling PR. Under `publish_mode=immediate` (default), Forgejo creates
+the `v<X.Y.Z>` release + tag on merge, fires `release: published`, and
+`release-publish.yml` chains `deploy.yml` onto alcatraz-host. Watch the deploy
+job's smoke step; for a manual redeploy or rollback, dispatch `deploy.yml` with
+`ref=<tag>`.
+
+Under `publish_mode=draft`, the cut creates a draft release; reviewer reads the
+draft body in the UI; **Publish** click creates the tag and fires the deploy
+chain. Same substrate downstream; the click is the gate.
 
 Deprecation-policy hygiene per ADR-0008 (the two-minor floor + the structured
-`### Deprecated` format from §Amendment B) is enforced at step 4 — the
-derive-script is the operator's surface for "which surfaces did I promise
-two cycles ago, and is this the cut where they come off?".
+`### Deprecated` format from §Amendment B) is enforced at the pre-merge
+eligibility check — the derive-script is the operator's surface for "which
+surfaces did I promise two cycles ago, and is this the cut where they come
+off?".
 
 ### Amending a release after Publish
 
