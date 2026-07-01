@@ -11,6 +11,7 @@ import (
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/provider"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
@@ -177,7 +178,7 @@ func runRefreshAllMcpsWithStoreOptions(ctx context.Context, s *store.Store,
 
 	for _, a := range agents {
 		entry := refreshAgentEntry{Name: a.Name, Method: refreshMethodControlMacro}
-		provider, _, providerErr := s.ProviderCapConfig(ctx, a.Name)
+		providerID, _, providerErr := s.ProviderCapConfig(ctx, a.Name)
 		if providerErr != nil {
 			entry.OK = false
 			entry.Error = fmt.Sprintf("read provider config: %v", providerErr)
@@ -187,7 +188,7 @@ func runRefreshAllMcpsWithStoreOptions(ctx context.Context, s *store.Store,
 			continue
 		}
 
-		if provider == "openai" {
+		if providerID == provider.OpenAI {
 			entry.Method = refreshMethodCodexSessionRestart
 			if err := refreshCodexSession(ctx, a, opts); err != nil {
 				entry.OK = false
@@ -202,7 +203,7 @@ func runRefreshAllMcpsWithStoreOptions(ctx context.Context, s *store.Store,
 			continue
 		}
 
-		if provider == "" {
+		if providerID == "" {
 			entry.Warning = "provider empty; used legacy control macro, which may be a no-op for Codex adapters"
 		}
 		ctrlRes, ctrlErr := doControl(ctx, s, controlParams{

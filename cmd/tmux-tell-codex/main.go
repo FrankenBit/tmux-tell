@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/cli"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/provider"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
@@ -85,6 +86,6 @@ func codexProfile() cli.Profile {
 		// Provider for the #448 per-provider concurrency cap — Codex consumes
 		// OpenAI's API, a separate provider pool from Claude's Anthropic, so the
 		// two adapters' caps are accounted independently.
-		Provider: "openai",
+		Provider: provider.OpenAI,
 	}
 }

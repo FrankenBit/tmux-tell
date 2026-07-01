@@ -1,6 +1,9 @@
 package cli
 
-import "git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
+import (
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/provider"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
+)
 
 // Profile carries the per-adapter identity that distinguishes one CLI adapter
 // binary (tmux-tell-claude, tmux-tell-codex, …) from another while the shared
@@ -101,5 +104,5 @@ var active = Profile{
 	// implements the full slash surface, so nil ("supports all", #420) is correct
 	// and future-command-proof.
 	Pane:     tmuxio.ClaudePaneProfile(),
-	Provider: "anthropic",
+	Provider: provider.Anthropic,
 }

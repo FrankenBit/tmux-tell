@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/provider"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
@@ -41,22 +42,23 @@ type poolThrottle struct {
 // (Bosun-ratified 2026-06-20); tuning is empirical — if a pool's cadence
 // misbehaves, file a follow-up with Loki evidence rather than guessing here.
 //
-// The pool key is the agent's `provider` (#448) — it MUST be the literal string
-// each adapter writes via SetProvider, because resolveFanoutOffsets keys on the
-// raw provider with no transform. There is no shared provider constant, so these
-// keys are hand-synced to the adapter literals:
-//   - "anthropic"  ← cmd/tmux-tell-claude/main.go (Provider: "anthropic")
-//   - "openai"     ← cmd/tmux-tell-codex/main.go  (Provider: "openai")
+// The pool key is the agent's `provider` (#448) — it MUST be the value each
+// adapter writes via SetProvider, because resolveFanoutOffsets keys on the raw
+// provider with no transform. Since #600 those values are the canonical
+// constants in internal/provider (provider.Anthropic ← cmd/tmux-tell-claude,
+// provider.OpenAI ← cmd/tmux-tell-codex), so a key can no longer drift from the
+// adapter literal — a typo is now a compile error, not silent dead code.
 //
-// A key that doesn't match a real provider literal is dead code: its pool's
-// recipients fall through to unknownThrottle and the intended tuning never
-// applies (the #597 bug — codex was keyed "openai-codex", matched nothing, and
-// silently got the unknown throttle instead of its own). TestPoolKeysMatchAdapterProviders
-// pins the match. The external #448/#543 rate-limit layer keys on the same
-// literals — that shared key is the whole point of design-call-2 (#580).
+// A key that doesn't match a real provider is dead code: its pool's recipients
+// fall through to unknownThrottle and the intended tuning never applies (the
+// #597 bug — codex was keyed "openai-codex", matched nothing, and silently got
+// the unknown throttle instead of its own). TestPoolKeysMatchAdapterProviders
+// enumerates provider.All() to pin the match. The external #448/#543 rate-limit
+// layer keys on the same values — that shared key is the whole point of
+// design-call-2 (#580).
 var poolThrottles = map[string]poolThrottle{
-	"anthropic": {threshold: 5, delay: 400 * time.Millisecond},
-	"openai":    {threshold: 2, delay: 1500 * time.Millisecond},
+	provider.Anthropic: {threshold: 5, delay: 400 * time.Millisecond},
+	provider.OpenAI:    {threshold: 2, delay: 1500 * time.Millisecond},
 }
 
 // unknownPool is the fail-safe pool for a recipient whose provider is unset

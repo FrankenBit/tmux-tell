@@ -3,32 +3,33 @@ package cli
 import (
 	"testing"
 	"time"
+
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/provider"
 )
 
 // anthropic/codex defaults, named here so the tests read against the policy
 // rather than hard-coded magic numbers (and fail loudly if the defaults move).
 var (
-	aThr = poolThrottles["anthropic"].threshold
-	aDel = poolThrottles["anthropic"].delay
-	cThr = poolThrottles["openai"].threshold
+	aThr = poolThrottles[provider.Anthropic].threshold
+	aDel = poolThrottles[provider.Anthropic].delay
+	cThr = poolThrottles[provider.OpenAI].threshold
 )
 
 // TestPoolKeysMatchAdapterProviders is the #597 regression guard: the throttle
-// pool keys MUST be the literal `provider` strings the adapters write, or a
-// pool's recipients silently fall through to unknownThrottle (the bug — codex
-// keyed "openai-codex" matched nothing → unknown throttle instead of its own).
-// There is no shared provider constant to import, so this test hard-codes the
-// adapter literals (from cmd/tmux-tell-{claude,codex}/main.go) as the source of
-// truth and asserts each resolves to its intended, non-unknown throttle. If an
-// adapter's Provider literal changes, or a key drifts, this fails.
+// pool keys MUST be the `provider` values the adapters write, or a pool's
+// recipients silently fall through to unknownThrottle (the bug — codex keyed
+// "openai-codex" matched nothing → unknown throttle instead of its own). Since
+// #600 the adapter literals live in internal/provider, so this test enumerates
+// provider.All() as the source of truth: every known provider MUST resolve to
+// its own non-unknown throttle, and no pool key may drift off the canonical set.
 func TestPoolKeysMatchAdapterProviders(t *testing.T) {
 	cases := []struct {
-		provider string // the literal the adapter writes via SetProvider
+		provider string // a provider constant (internal/provider)
 		wantThr  int
 		wantDel  time.Duration
 	}{
-		{"anthropic", 5, 400 * time.Millisecond}, // cmd/tmux-tell-claude/main.go
-		{"openai", 2, 1500 * time.Millisecond},   // cmd/tmux-tell-codex/main.go
+		{provider.Anthropic, 5, 400 * time.Millisecond}, // cmd/tmux-tell-claude/main.go
+		{provider.OpenAI, 2, 1500 * time.Millisecond},   // cmd/tmux-tell-codex/main.go
 	}
 	for _, c := range cases {
 		got, throttled := throttleForPool(normPool(c.provider))
@@ -41,6 +42,27 @@ func TestPoolKeysMatchAdapterProviders(t *testing.T) {
 		}
 		if got.threshold != c.wantThr || got.delay != c.wantDel {
 			t.Errorf("provider %q throttle = {%d, %v}, want {%d, %v}", c.provider, got.threshold, got.delay, c.wantThr, c.wantDel)
+		}
+	}
+
+	// Enumerator drift-guard: every canonical provider MUST have its own
+	// non-unknown throttle. Adding a provider constant without a poolThrottles
+	// entry fails here — the co-addition #600 makes structural.
+	for _, p := range provider.All() {
+		if got, throttled := throttleForPool(normPool(p)); !throttled ||
+			(got.threshold == unknownThrottle.threshold && got.delay == unknownThrottle.delay) {
+			t.Errorf("provider.All() member %q has no dedicated throttle — add a poolThrottles entry", p)
+		}
+	}
+
+	// And no pool key may drift off the canonical set (a stray key is dead code).
+	known := map[string]bool{}
+	for _, p := range provider.All() {
+		known[p] = true
+	}
+	for key := range poolThrottles {
+		if !known[key] {
+			t.Errorf("poolThrottles has key %q not in provider.All() — dead key (the #597 drift class)", key)
 		}
 	}
 }

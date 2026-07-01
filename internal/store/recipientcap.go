@@ -1,5 +1,7 @@
 package store
 
+import "git.frankenbit.de/frankenbit/tmux-tell/internal/provider"
+
 // recipientQueueCapByProvider holds per-provider floors for the recipient-queue
 // cap (#412). A sender passes a cap (the default capRecipientQueue = 5, or a
 // `--max-recipient-queue` override); checkCapsInTx floors that value UP to the
@@ -24,7 +26,7 @@ package store
 // right trade for a message bus. The cadence fix that would let the cooldown
 // shrink is tracked separately as #592 (substrate busy-lease).
 var recipientQueueCapByProvider = map[string]int{
-	"openai": 20, // codex
+	provider.OpenAI: 20, // codex
 }
 
 // recipientQueueCapFloor returns the minimum recipient-queue cap for a provider,

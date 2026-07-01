@@ -18,6 +18,7 @@ import (
 	"os"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/cli"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/provider"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
@@ -47,6 +48,6 @@ func claudeProfile() cli.Profile {
 		Pane: tmuxio.ClaudePaneProfile(),
 		// Provider for the #448 per-provider concurrency cap — Claude consumes
 		// Anthropic's API.
-		Provider: "anthropic",
+		Provider: provider.Anthropic,
 	}
 }
