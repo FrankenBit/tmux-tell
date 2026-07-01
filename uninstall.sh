@@ -22,9 +22,9 @@
 # Re-running is safe: missing units, missing files, and missing data
 # directories are all no-ops with an informational log line.
 #
-# Refuses to run when CWD is the data directory or a parent of the
-# binary — protects against the foot-gun of running the script from
-# the very tree it would delete.
+# Refuses to run from inside the data directory — protects against the
+# foot-gun of running the script from the very tree it would delete
+# (the guard checks CWD against ${DATADIR}, resolved below).
 #
 # Companion to install.sh (#14); fulfils the uninstall AC tracked as
 # #80 (filed when the M6 install issue's "Uninstall path documented"
@@ -182,7 +182,10 @@ fi
 #
 # `systemctl --user` needs to talk to the operator's session manager. In
 # --system mode we start as root and drop to the operator with XDG_RUNTIME_DIR
-# pointed at their runtime dir; in the default user-space mode we ARE the
+# + DBUS_SESSION_BUS_ADDRESS pointed at their session bus (both are needed —
+# without the bus address the stop/disable silently no-ops under `|| true`,
+# orphaning the mailmen we then remove the binary+template from underneath);
+# in the default user-space mode we ARE the
 # operator, so we call systemctl --user directly (our own session, and
 # `sudo -u $self` would needlessly demand sudo). Mirrors install.sh's #636
 # privilege-drop split.
@@ -190,6 +193,7 @@ if [[ "$SYSTEM" -eq 1 ]]; then
     sysctl_user() {
         sudo -u "$OPERATOR_USER" \
             XDG_RUNTIME_DIR="/run/user/${OPERATOR_UID}" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${OPERATOR_UID}/bus" \
             systemctl --user "$@"
     }
 else
