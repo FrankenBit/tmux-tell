@@ -97,6 +97,21 @@ const (
 	reasonBacklogDraining pingReason = "backlog_draining"
 )
 
+// allPingReasons enumerates every pingReason. Keep it in sync with the consts
+// above and with describe(): TestPingReason_DescribeExhaustive asserts that
+// every listed reason resolves to a human phrase, so a new reason added
+// without a describe() case is caught at PR time instead of silently falling
+// through to the raw-string default. (Go has no compile-time enum reflection;
+// a reason added to neither this slice nor describe() is the residual gap —
+// co-locating the slice with the consts makes that omission unlikely.)
+var allPingReasons = []pingReason{
+	reasonPaneDead,
+	reasonMailmanDown,
+	reasonStuck,
+	reasonBlockedDelivery,
+	reasonBacklogDraining,
+}
+
 // pingClass is the coarse reachability classification (#366) layered over the
 // fine-grained pingReason. Where pingReason answers "what specific condition?"
 // (the recovery-routing contract), pingClass answers "is the substrate

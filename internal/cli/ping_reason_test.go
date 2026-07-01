@@ -201,3 +201,17 @@ func TestPingResult_JSONOmitsReasonOnOK(t *testing.T) {
 		}
 	})
 }
+
+// TestPingReason_DescribeExhaustive guards that every pingReason resolves to a
+// human phrase (#365): describe() has a `default: return string(r)` fallback
+// that degrades gracefully, but a new reason const added without a matching
+// case would silently ship the raw enum value in the CLI suffix. Asserting the
+// phrase differs from the raw string catches that fall-through at PR time.
+func TestPingReason_DescribeExhaustive(t *testing.T) {
+	for _, r := range allPingReasons {
+		got := r.describe()
+		if got == "" || got == string(r) {
+			t.Errorf("pingReason %q: describe() returned %q — fell through to the raw-string default; add a case in describe()", r, got)
+		}
+	}
+}

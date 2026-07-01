@@ -31,7 +31,7 @@ func TestOpenDBHandle_FindsOpenDB(t *testing.T) {
 	defer f.Close() //nolint:errcheck // best-effort close
 	wantInode := inodeOf(t, dbPath)
 
-	path, inode, deleted, found := openDBHandle(os.Getpid())
+	path, inode, deleted, found, _ := openDBHandle(os.Getpid())
 	if !found {
 		t.Fatal("openDBHandle did not find the open *.db handle")
 	}
@@ -63,7 +63,7 @@ func TestOpenDBHandle_OrphanInode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	path, inode, deleted, found := openDBHandle(os.Getpid())
+	path, inode, deleted, found, _ := openDBHandle(os.Getpid())
 	if !found {
 		t.Fatal("openDBHandle lost the handle after unlink — orphan inode must stay visible")
 	}

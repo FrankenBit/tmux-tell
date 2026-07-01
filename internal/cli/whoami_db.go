@@ -62,13 +62,15 @@ func procExe(pid int) string {
 //
 // The inode comes from syscall.Stat on the /proc fd symlink, which follows to
 // the actual open file — so it resolves the live inode even when the file has
-// been unlinked (the orphan case). found=false means no .db handle is open
-// (e.g. an in-memory store, or the process hasn't opened the DB).
-func openDBHandle(pid int) (path string, inode uint64, deleted, found bool) {
+// been unlinked (the orphan case). found=false with a nil readErr means no
+// .db handle is open (e.g. an in-memory store, or the process hasn't opened
+// the DB); a non-nil readErr means /proc/<pid>/fd was unreadable (permission
+// or a since-exited race) — the binding is UNKNOWN, not empty.
+func openDBHandle(pid int) (path string, inode uint64, deleted, found bool, readErr error) {
 	fdDir := fmt.Sprintf("/proc/%d/fd", pid)
 	entries, err := os.ReadDir(fdDir)
 	if err != nil {
-		return "", 0, false, false
+		return "", 0, false, false, err
 	}
 	for _, e := range entries {
 		link := filepath.Join(fdDir, e.Name())
@@ -86,9 +88,9 @@ func openDBHandle(pid int) (path string, inode uint64, deleted, found bool) {
 		if err := syscall.Stat(link, &st); err == nil {
 			ino = st.Ino
 		}
-		return clean, ino, del, true
+		return clean, ino, del, true, nil
 	}
-	return "", 0, false, false
+	return "", 0, false, false, nil
 }
 
 // collectBinding assembles the dbBinding for a pid by reading /proc. withStart
@@ -99,8 +101,14 @@ func collectBinding(pid int, withStart bool) dbBinding {
 	if withStart && !processStart.IsZero() {
 		b.StartedAt = processStart.UTC().Format(time.RFC3339)
 	}
-	if path, inode, deleted, found := openDBHandle(pid); found {
+	if path, inode, deleted, found, readErr := openDBHandle(pid); found {
 		b.DBPath, b.DBInode, b.DBDeleted = path, inode, deleted
+	} else if readErr != nil {
+		// A /proc/<pid>/fd we couldn't read (permission, or the process exited
+		// mid-walk). Distinct from "no DB open" — the binding is unknown, and a
+		// doctor/whoami report that says so beats one that silently implies the
+		// process has no DB handle (#373).
+		b.Note = fmt.Sprintf("could not read /proc/%d/fd: %v", pid, readErr)
 	} else {
 		b.Note = "no open *.db handle (in-memory store, or DB not yet opened)"
 	}

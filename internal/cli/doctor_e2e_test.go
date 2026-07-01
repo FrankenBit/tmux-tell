@@ -60,7 +60,7 @@ func TestDoctor_E2E_FlagsOrphanedMCP(t *testing.T) {
 	// Wait for the mcp process to actually open the DB handle.
 	opened := false
 	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-		if _, _, _, found := openDBHandle(mcp.Process.Pid); found {
+		if _, _, _, found, _ := openDBHandle(mcp.Process.Pid); found {
 			opened = true
 			break
 		}

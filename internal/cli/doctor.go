@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -177,23 +178,17 @@ func renderDoctorReport(stdout io.Writer, rep doctorReport) {
 //
 // Usage: tmux-tell-claude doctor [--format text|json]
 func runDoctorCLI(args []string, stdout, stderr io.Writer) int {
-	format := "text"
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--format":
-			if i+1 < len(args) {
-				format = args[i+1]
-				i++
-			}
-		case "--format=text":
-			format = "text"
-		case "--format=json":
-			format = "json"
-		default:
-			fmt.Fprintf(stderr, "usage: %s doctor [--format text|json]\n", active.BinaryName)
-			return exitUsage
-		}
+	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	formatFlag := fs.String("format", "text", "output format: text|json")
+	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
+		return exitUsage
 	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "usage: %s doctor [--format text|json]\n", active.BinaryName)
+		return exitUsage
+	}
+	format := *formatFlag
 	switch format {
 	case "", "text", "json":
 	default:
