@@ -1,11 +1,11 @@
 name: release-publish
 
-# Triggered when a Forgejo release transitions to published — operator
-# clicks Publish on the draft created by the release-toolkit cut
-# (reusable-release.yml, publish_mode: draft), or on a manually-created
-# release. Chains deploy.yml via workflow_call,
-# passing the release's tag as the deploy ref. Closes the v0.17.0 cut
-# automation loop.
+# Triggered when a Forgejo release transitions to published. In the default
+# immediate path the release-toolkit cut publishes on release-prep-PR merge
+# and this fires straight away; in the opt-in draft path (publish_mode: draft)
+# it fires when the operator clicks Publish on the draft. It also fires on a
+# manually-created release. Chains deploy.yml via workflow_call, passing the
+# release's tag as the deploy ref. Closes the v0.17.0 cut automation loop.
 #
 # Why `release: published` rather than `push: tags`: Forgejo's release
 # UI is the canonical source-of-truth for what shipped; the tag is the
@@ -17,8 +17,10 @@ name: release-publish
 #
 # The split (full cut automation loop, post-#617 release-toolkit adoption):
 # - release.yml: push (or workflow_dispatch) → release-toolkit consumer
-#   wrapper → release-decide → rolling release-prep PR; merging it cuts a
-#   DRAFT release (reusable-release.yml, publish_mode: draft)
+#   wrapper → release-decide → rolling release-prep PR; merging it publishes
+#   the release immediately (reusable-release.yml, publish_mode: immediate —
+#   the default since #701; pass publish_mode: draft to restore the
+#   click-to-Publish gate)
 # - release-publish.yml (this file): release-published → deploy chain
 # - deploy.yml: workflow_call invoked above OR workflow_dispatch direct
 #

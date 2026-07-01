@@ -6,16 +6,27 @@ name: release
 # push opens/updates the rolling release-prep PR, and merging that PR cuts the
 # release.
 #
-# publish_mode: draft preserves tmux-tell's operator-Publish gate (ADR-0003
-# Gate-3): the cut creates a DRAFT release; the operator clicks Publish, Forgejo
-# creates the tag and fires `release: published`, and release-publish.yml chains
-# deploy.yml onto alcatraz-host (unchanged). Switching to immediate would
-# auto-deploy on every rolling-PR merge - a safety regression, not a
-# simplification (tmux-tell#617 D1).
+# publish_mode defaults to `immediate`: on release-prep-PR merge the toolkit
+# publishes the release directly, Forgejo creates the tag and fires
+# `release: published`, and release-publish.yml chains deploy.yml onto
+# alcatraz-host (unchanged). Merge is the gate.
+#
+# This reverses the original draft default (#617 D1). The draft step was
+# intended as an operator review window, but the review empirically moved
+# upstream to PR-body inspection at merge time (e.g. the v0.27.0 Cold-Read
+# damping applied to PR #687's body before merge) — the draft-then-Publish
+# ceremony added no catch value it wasn't already getting at merge, so the
+# de facto pattern became "operator delegates the Publish click." Immediate
+# matches that practice (#701). (The "ADR-0003 Gate-3" the old comment cited
+# was a phantom reference — ADR-0003 is naming; no ADR defines a "Gate-3.")
+#
+# The opt-back-to-draft path is preserved: pass `publish_mode: draft` via
+# workflow_dispatch when a genuine draft review window is wanted — that still
+# creates a DRAFT release the operator must click Publish on before deploy fires.
 #
 # workflow_dispatch is retained as an emergency-cut fallback for
 # substrate-critical paths (operator-approved belt-and-suspenders, #617 D2).
-# On a push (no inputs) publish_mode falls back to draft.
+# On a push (no inputs) publish_mode falls back to immediate.
 on:
   push:
     branches: [main]
@@ -33,9 +44,9 @@ on:
         default: 'false'
         type: string
       publish_mode:
-        description: 'Publish mode (draft | immediate) - draft keeps the operator-Publish deploy gate'
+        description: 'Publish mode (draft | immediate) - immediate publishes on merge (default); draft keeps the operator-Publish deploy gate'
         required: false
-        default: 'draft'
+        default: 'immediate'
         type: string
 
 jobs:
@@ -46,4 +57,4 @@ jobs:
       runs_on:       go
       bump_override: ${{ inputs.bump_override }}
       dry_run:       ${{ inputs.dry_run }}
-      publish_mode:  ${{ inputs.publish_mode || 'draft' }}
+      publish_mode:  ${{ inputs.publish_mode || 'immediate' }}
