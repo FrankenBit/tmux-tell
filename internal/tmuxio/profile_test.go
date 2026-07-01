@@ -254,6 +254,38 @@ func TestAgentState_CodexEmptyComposer_StrippedSentinel_Idle(t *testing.T) {
 	}
 }
 
+// TestAgentState_CodexEmptyComposer_CursorLessFallback pins the SECOND #690
+// enforcement site. When the cursor query doesn't land on the input row (here
+// cursorY out of range — the shape a resize/transition can produce, which is
+// exactly when the operator-witnessed wedge is most likely), the cursor-aware
+// branch is skipped and the classifier drops to the cursor-less isInputRowQuiet
+// fallback. That fallback must ALSO recognize the bare `›` (stripped empty
+// composer) as StateIdle rather than falling through to StateUnknown — the
+// second CutPrefix site cutPromptSentinel fixes. Mutation anchor: reverting the
+// helper to plain CutPrefix flips this to StateUnknown too.
+func TestAgentState_CodexEmptyComposer_CursorLessFallback(t *testing.T) {
+	setActivePaneProfileForTest(t, CodexPaneProfile())
+	fastTemporalDelta(t)
+
+	pane := "history\n  context\n›\n  gpt-5.5 default · /srv/codex/lookout\n"
+	// cursorY = -1 is out of range, so the cursor-aware block is skipped and the
+	// classifier falls to the cursor-less isInputRowQuiet path.
+	fr := newAgentStateRunner([]string{pane, pane}, 2, -1)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%9")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (bare `›` via cursor-less fallback); evidence=%q", state, ev.Reason)
+	}
+	if !strings.Contains(ev.Reason, "cursor-less fallback") {
+		t.Errorf("Reason = %q, want it to name the cursor-less fallback path", ev.Reason)
+	}
+}
+
 // TestCodexWorkingPattern_MatchesMarker pins the #590 codex working-marker regex
 // against the empirical marker bytes and the negative cases it must NOT match.
 // The pattern keys on the `Working (` … `esc to interrupt)` phrase pair on a
