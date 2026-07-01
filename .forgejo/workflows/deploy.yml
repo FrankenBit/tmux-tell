@@ -96,15 +96,18 @@ jobs:
       - name: deploy via wrapper (codex adapter, binary + mailman restart)
         # #436: the release builds BOTH adapter binaries, so the deploy must roll
         # both — claude-only left the codex binary a version behind every cut
-        # (caught at v0.17.0). `--no-bootstrap`: no per-agent codex config + no
-        # second refresh-all-mcps wave (the claude step already fired one). No
-        # `--prune-orphans`: the claude step's fleet-wide orphan walk already ran.
-        # The codex install path now restarts running codex mailmen via the
-        # restart-mailmen primitive, so the new codex binary is EFFECTIVE (not
-        # just on disk) — the #393 effectiveness lesson applied to codex. The
-        # call omits --allow-stale-mailmen, so a restart failure is FATAL: the
-        # step fails loud rather than greening a stale-mailman state (Lookout
-        # #439 — the post-deploy smoke's `--version` only proves file-on-disk).
+        # (caught at v0.17.0). `--no-bootstrap`: same runner-context reason as
+        # the claude step (#656) — the runner can't see chamber panes to fire
+        # substrate-refresh, so it's deferred to the operator's manual
+        # `tmux-tell-claude bootstrap --prune-orphans` post-deploy. No
+        # `--prune-orphans` on either step here: orphan walk is bootstrap-only
+        # and belongs on the operator's manual pass. The codex install path
+        # restarts running codex mailmen via the restart-mailmen primitive, so
+        # the new codex binary is EFFECTIVE (not just on disk) — the #393
+        # effectiveness lesson applied to codex. The call omits
+        # --allow-stale-mailmen, so a restart failure is FATAL: the step fails
+        # loud rather than greening a stale-mailman state (Lookout #439 — the
+        # post-deploy smoke's `--version` only proves file-on-disk).
         run: |
           sudo /srv/scripts/deploy-tmux-tell.sh \
             "$GITHUB_WORKSPACE" \
