@@ -33,6 +33,26 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.28.0] — 2026-07-01
+
+### Added
+
+- **`set-session-id` — a side-effect-free session-id backfill** (#644): new CLI subcommand `set-session-id --name <chamber> --session-id <UUID>` and MCP method `tmux-tell.set_session_id` write ONLY the `session_id` column for a target chamber, without the `attention_state` (#224) and `stuck_reason` (#298) clears `register` performs. Lets an orchestrator populate a stale chamber's session id **on-behalf** — e.g. for #626 Phase 3 migration — without erasing its real signals (a pane at `awaiting_operator`, a parked mailman). The CLI self-discovers the id from the target pane's process tree when `--session-id` is omitted; the MCP surface requires an explicit id.
+
+### Changed
+
+- **Session-id discovery is now uniform across adapters** (#643): every adapter reads a single adapter-neutral `TMUX_TELL_SESSION_ID` env var, and Claude's former native `CLAUDE_CODE_SESSION_ID` self-discovery is dropped. **Requires the launch wrapper to inject the var** (alcatraz-infra#105); existing Claude chambers acquire it on their next wrapper launch. A raw non-wrapper `claude --resume` launch resolves via the name-based fallback, as before.
+
+- **Codex delivery verify is now load-adaptive** (#674): the post-Enter verify loop reads its existing per-poll frame-delta to hold the resubmit Enter until the pane settles and to keep polling while a paste is still mid-ingest, so a heavy paste submits within its own mailman cycle instead of deferring to the next visit. Codex-specific; Claude unaffected. The load-reliability property is confirmed by post-deploy observation under real codex load, not point-in-time tests.
+
+### Fixed
+
+- **Codex active turns no longer false-classify as `Idle`** (#590): the pane-state classifier now matches codex's persistent `◦ Working` status row before the frame-change and cursor logic, so a slow-changing busy frame is no longer read as paste-safe idle. Codex-specific; Claude unaffected.
+
+- **Idle codex panes with no ghost-text no longer misclassify as `StateUnknown`** (#690): the empty-composer prompt-sentinel match now tolerates `capture-pane`'s stripped trailing space, so a genuinely-idle pane is read as paste-safe instead of the mailman deferring all inbound delivery. Codex-specific; Claude unaffected.
+
+- **The load-adaptive verify loop no longer panics on an empty retry schedule** (#695): `SetRetrySchedule([])` no longer drives an out-of-range index into #674's extension. Unreachable in production (the schedule is only ever set from `DeriveRetrySchedule`, always non-empty); guards a self-introduced regression from #674.
+
 ## [0.27.0] — 2026-07-01
 
 ### Added
