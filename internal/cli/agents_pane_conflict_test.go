@@ -49,9 +49,15 @@ func TestPaneConflicts_NoFalsePositives(t *testing.T) {
 func TestAgentsListing_FlagsAndWarnsOnPaneConflict(t *testing.T) {
 	s := newCmdTestStore(t)
 	ctx := context.Background()
-	// Seed two rows on the same pane. UpsertAgent's #549 Fix-2a would normally
-	// supersede, so write the colliding row via the raw DB to simulate a future
-	// bypass path (the exact scenario this backstop guards).
+	// Seed two rows on the same pane. UpsertAgent's #549 Fix-2a supersedes at
+	// register time, and #595's UNIQUE(pane_id) index now forecloses even a raw
+	// bypass write — so the only way a duplicate-pane row can exist is as a
+	// LEGACY row predating the index (the migration's cleanup NULLs such rows at
+	// the next Open(), but until then the read-side warning is what surfaces it).
+	// Reconstruct that legacy state by dropping the index before the raw seed.
+	if _, err := s.DB().ExecContext(ctx, `DROP INDEX idx_agents_pane_id`); err != nil {
+		t.Fatalf("drop index to reconstruct legacy dup state: %v", err)
+	}
 	if err := s.UpsertAgent(ctx, "alice", "%5"); err != nil {
 		t.Fatalf("seed alice: %v", err)
 	}

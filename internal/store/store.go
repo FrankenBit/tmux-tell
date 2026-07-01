@@ -259,6 +259,28 @@ var migrations = []string{
 	// nullable (NULL until the first compact / first count).
 	`ALTER TABLE agents ADD COLUMN last_self_compact_at TEXT`,
 	`ALTER TABLE agents ADD COLUMN self_compact_counted_at TEXT`,
+	// #595: schema-level UNIQUE(pane_id) as defense-in-depth for
+	// one-pane-one-identity (#549). The #564 tx-clear in UpsertAgent already
+	// prevents duplicate pane_id rows in the register path; this makes the
+	// invariant machine-enforced, so any FUTURE code path that sets pane_id
+	// while bypassing that clear surfaces as a DB-layer error instead of the
+	// silent duplicate-pane-row drift. Complements #565's read-side warning
+	// (the operator-visible backstop) with a write-side one.
+	//
+	// Two idempotent steps, in order. SQLite can't ALTER TABLE ADD CONSTRAINT,
+	// so the invariant is a UNIQUE INDEX (NULLs are distinct in SQLite, so the
+	// many pane-less dormant rows the displaced-to-NULL pattern produces never
+	// collide — exactly the compatibility the constraint needs). The cleanup
+	// UPDATE runs FIRST so the index creation can't fail Open() on a legacy DB
+	// that carried a pre-#564 duplicate: it NULLs every duplicate pane_id row
+	// except the lowest-rowid survivor — the same displaced-to-NULL recovery
+	// #564 does per-register, applied once at migration time. On an
+	// already-clean DB (the expected post-#564 state) it matches no rows and is
+	// a no-op; re-running it after the index exists is likewise a no-op.
+	`UPDATE agents SET pane_id = NULL
+	 WHERE pane_id IS NOT NULL
+	   AND rowid NOT IN (SELECT MIN(rowid) FROM agents WHERE pane_id IS NOT NULL GROUP BY pane_id)`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_pane_id ON agents(pane_id)`,
 }
 
 // Close releases the underlying database handle.
