@@ -245,12 +245,14 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "WARN register: clear stuck_reason: %v\n", err)
 	}
 	// #626 Phase 1b: self-discover the intrinsic session identity. An explicit
-	// --session-id wins; otherwise walk the registering pane's process tree for
-	// CLAUDE_CODE_SESSION_ID. When found, store it as the primary exact match
-	// key for delivery resolution. When NOT found (claude not up yet at launch,
-	// a non-Claude CLI, or a bare pane), leave session_id untouched — a prior
-	// value is preserved, and a never-set one stays empty so delivery uses the
-	// name-based fallback (#626 AC6). Non-fatal: registration already succeeded.
+	// --session-id wins (the launch wrapper passes the UUID it minted); otherwise
+	// walk the registering pane's process tree for the wrapper-injected
+	// TMUX_TELL_SESSION_ID (#643 — same UUID the wrapper --setenv's tree-wide).
+	// When found, store it as the primary exact match key for delivery
+	// resolution. When NOT found (a raw non-wrapper launch, or a bare pane),
+	// leave session_id untouched — a prior value is preserved, and a never-set
+	// one stays empty so delivery uses the name-based fallback (#626 AC6).
+	// Non-fatal: registration already succeeded.
 	sessionID := *sessionIDFlag
 	if sessionID == "" && resolvedPane != "" {
 		if sid, ok := discover.New().SessionIDForPane(ctx, resolvedPane); ok {

@@ -8,8 +8,8 @@ import (
 )
 
 // TestLookupBySessionID: the primary exact-match resolution path (#626 Phase
-// 1b). Each pane's process carries a CLAUDE_CODE_SESSION_ID; lookup resolves
-// the pane hosting a given session UUID, and nothing else.
+// 1b). Each pane's process carries the wrapper-injected TMUX_TELL_SESSION_ID;
+// lookup resolves the pane hosting a given session UUID, and nothing else.
 func TestLookupBySessionID(t *testing.T) {
 	prev := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
 		return []byte("%1\t100\tBosun\tclaude\n" +
@@ -20,7 +20,7 @@ func TestLookupBySessionID(t *testing.T) {
 	w := &Walker{
 		ChildrenReader: func(int) []int { return nil },
 		EnvironReader: func(pid int, key string) (string, bool) {
-			if key != ClaudeSessionIDEnv {
+			if key != NeutralSessionIDEnv {
 				return "", false
 			}
 			switch pid {
@@ -61,7 +61,7 @@ func TestSessionIDForPane(t *testing.T) {
 	w := &Walker{
 		ChildrenReader: func(int) []int { return nil },
 		EnvironReader: func(pid int, key string) (string, bool) {
-			if key == ClaudeSessionIDEnv && pid == 200 {
+			if key == NeutralSessionIDEnv && pid == 200 {
 				return "BBB-uuid", true
 			}
 			return "", false
@@ -96,7 +96,7 @@ func TestSessionIDForPane_DescendantWalk(t *testing.T) {
 			return nil
 		},
 		EnvironReader: func(pid int, key string) (string, bool) {
-			if key == ClaudeSessionIDEnv && pid == 701 {
+			if key == NeutralSessionIDEnv && pid == 701 {
 				return "CHILD-uuid", true
 			}
 			return "", false
@@ -130,9 +130,10 @@ func TestSessionID_NilEnvironReader(t *testing.T) {
 	}
 }
 
-// TestLookupBySessionID_NeutralVar: a CLI with no NATIVE session var but the
-// wrapper-injected TMUX_TELL_SESSION_ID (codex/aichat, #626 Phase 2) resolves
-// by the neutral var — same delivery path, different source env var.
+// TestLookupBySessionID_NeutralVar: session-id resolution is adapter-agnostic —
+// a non-claude adapter pane (codex/aichat, a `node` process) resolves by the
+// same wrapper-injected TMUX_TELL_SESSION_ID as a claude pane. The pane's CLI
+// type is irrelevant to the walk (#643: one var, every adapter).
 func TestLookupBySessionID_NeutralVar(t *testing.T) {
 	prev := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
 		return []byte("%8\t800\tlookout\tnode\n"), nil
@@ -157,9 +158,14 @@ func TestLookupBySessionID_NeutralVar(t *testing.T) {
 	}
 }
 
-// TestSessionID_NativeWinsOverNeutral: the pathological both-set case resolves
-// to the native var, per sessionIDEnvKeys priority order.
-func TestSessionID_NativeWinsOverNeutral(t *testing.T) {
+// TestSessionID_NativeVarNotRecognized pins the #643 drop: a pane whose process
+// carries ONLY Claude's former native CLAUDE_CODE_SESSION_ID (a raw non-wrapper
+// `claude --resume` launch — no TMUX_TELL_SESSION_ID injected) self-discovers
+// NOTHING. Session-id discovery reads the wrapper-injected neutral var alone; a
+// native-only pane falls through to name-based resolution instead. Mutation
+// anchor: re-adding the native var to the discovery keys makes SessionIDForPane
+// resolve "NATIVE-uuid" here and flips both want-empty assertions.
+func TestSessionID_NativeVarNotRecognized(t *testing.T) {
 	prev := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
 		return []byte("%1\t100\tBosun\tclaude\n"), nil
 	})
@@ -168,20 +174,19 @@ func TestSessionID_NativeWinsOverNeutral(t *testing.T) {
 	w := &Walker{
 		ChildrenReader: func(int) []int { return nil },
 		EnvironReader: func(pid int, key string) (string, bool) {
-			if pid != 100 {
-				return "", false
-			}
-			switch key {
-			case ClaudeSessionIDEnv:
+			// Only the former native var is present; the wrapper-injected
+			// neutral var is absent (the raw non-wrapper launch shape).
+			if key == "CLAUDE_CODE_SESSION_ID" && pid == 100 {
 				return "NATIVE-uuid", true
-			case NeutralSessionIDEnv:
-				return "NEUTRAL-uuid", true
 			}
 			return "", false
 		},
 		MaxDepth: 3,
 	}
-	if got, ok := w.SessionIDForPane(context.Background(), "%1"); !ok || got != "NATIVE-uuid" {
-		t.Errorf("both-set should prefer native = %q,%v; want NATIVE-uuid,true", got, ok)
+	if got, ok := w.SessionIDForPane(context.Background(), "%1"); ok || got != "" {
+		t.Errorf("native-only pane self-discovered %q,%v; want \"\",false (native dropped in #643)", got, ok)
+	}
+	if got, _ := w.LookupBySessionID(context.Background(), "NATIVE-uuid"); got != "" {
+		t.Errorf("native-only pane resolved by session-id lookup = %q; want \"\" (native dropped)", got)
 	}
 }

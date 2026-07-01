@@ -181,13 +181,14 @@ type Agent struct {
 	// from Name (the canonical routing key): render-only, never a routing key.
 	// Empty when the agent never asserted one (the UI falls back to Name).
 	DisplayName string
-	// SessionID is the intrinsic Claude session identity (#626 Phase 1b):
-	// CLAUDE_CODE_SESSION_ID (a UUID), self-discovered from the registering
-	// pane's process tree. When non-empty it is the PRIMARY, exact match key
-	// for resolving which pane currently hosts this agent's session (vs the
-	// fuzzy `claude --resume <name>` argv match). Empty = legacy / not-yet-
-	// discovered -> the resolver falls back to the name-based discover path
-	// and logs a deprecation notice (AC6). Set via SetSessionID at register.
+	// SessionID is the intrinsic session identity (#626 Phase 1b): the UUID the
+	// launch wrapper mints and injects as TMUX_TELL_SESSION_ID (#643), passed at
+	// register and self-discovered from the registering pane's process tree. When
+	// non-empty it is the PRIMARY, exact match key for resolving which pane
+	// currently hosts this agent's session (vs the fuzzy `claude --resume <name>`
+	// argv match). Empty = legacy / not-yet-discovered -> the resolver falls back
+	// to the name-based discover path and logs a deprecation notice (AC6). Set
+	// via SetSessionID at register.
 	SessionID string
 	// Metabolism is the chamber's self-reported context-throughput state (#621):
 	// "" (no self-report; default) | warming | saturating | compact-pending. The

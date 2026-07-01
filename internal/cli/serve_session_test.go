@@ -44,8 +44,9 @@ func deliverRunner(bodyMu *sync.Mutex, body *string, paneSeen *atomic.Value) fun
 
 // TestServe_SessionID_ResolvesAndDelivers: the agent's row points at a stale
 // pane (%4, now bare), but its self-discovered session-id lives in %7 — whose
-// process carries CLAUDE_CODE_SESSION_ID but NOT `--resume surveyor` and has a
-// generic title. So ONLY the session-id path can resolve it; the name path
+// process carries the wrapper-injected TMUX_TELL_SESSION_ID but NOT `--resume
+// surveyor` and has a generic title. So ONLY the session-id path can resolve it;
+// the name path
 // would find surveyor nowhere and block. Delivery to %7 proves the session-id
 // primary resolution won, healed the registry, and skipped the name drift-check.
 func TestServe_SessionID_ResolvesAndDelivers(t *testing.T) {
@@ -64,7 +65,7 @@ func TestServe_SessionID_ResolvesAndDelivers(t *testing.T) {
 		},
 		ChildrenReader: func(int) []int { return nil },
 		EnvironReader: func(pid int, key string) (string, bool) {
-			if key == discover.ClaudeSessionIDEnv && pid == 700 {
+			if key == discover.NeutralSessionIDEnv && pid == 700 {
 				return "SURV-uuid", true
 			}
 			return "", false
@@ -133,7 +134,7 @@ func TestServe_SessionID_StaleFallsBackToName(t *testing.T) {
 		ChildrenReader: func(int) []int { return nil },
 		EnvironReader: func(pid int, key string) (string, bool) {
 			// %4 runs a DIFFERENT session (NEW-uuid), not the stored GONE-uuid.
-			if key == discover.ClaudeSessionIDEnv && pid == 400 {
+			if key == discover.NeutralSessionIDEnv && pid == 400 {
 				return "NEW-uuid", true
 			}
 			return "", false

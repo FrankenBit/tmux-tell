@@ -167,9 +167,10 @@ func (s *Store) SetDisplayName(ctx context.Context, name, displayName string) er
 	return nil
 }
 
-// SetSessionID persists an agent's self-discovered Claude session identity
-// (#626 Phase 1b): CLAUDE_CODE_SESSION_ID, read from the registering pane's
-// process tree. When non-empty it is the primary exact match key for
+// SetSessionID persists an agent's intrinsic session identity (#626 Phase 1b):
+// the wrapper-injected TMUX_TELL_SESSION_ID UUID (#643), passed at register or
+// read from the registering pane's process tree. When non-empty it is the
+// primary exact match key for
 // session-as-addressee resolution; "" clears it (back to the name-fallback
 // path). Returns ErrNotFound if no agent with that name is registered.
 //

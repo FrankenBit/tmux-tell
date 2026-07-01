@@ -21,25 +21,22 @@ import (
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
-// ClaudeSessionIDEnv is the process-env var Claude Code exports carrying the
-// session UUID — Claude's *native* session identity (#626 Phase 1b).
-const ClaudeSessionIDEnv = "CLAUDE_CODE_SESSION_ID"
-
 // NeutralSessionIDEnv is the adapter-neutral session-id var the chamber launch
-// wrappers inject for CLIs with no native session identity (codex, aichat —
-// #626 Phase 2). The wrapper mints a UUID at launch, passes it to `register
-// --session-id`, and `--setenv`s it into the launched process environ so the
-// delivery-time discover walk reads it the same way it reads Claude's native
-// var. Adapter-neutral name (not tool-prefixed) so one var serves every
-// no-native-id adapter.
+// wrappers inject into every launched chamber's process tree (claude, codex,
+// aichat — #626 Phase 2 + #643). The wrapper mints a UUID at launch, passes it
+// to `register --session-id`, and `--setenv`s it into the launched process
+// environ so the delivery-time discover walk reads it uniformly for every
+// adapter. Adapter-neutral name (not tool-prefixed) because one var serves
+// every adapter.
+//
+// This is the sole session-id source. It supersedes Claude's former native
+// CLAUDE_CODE_SESSION_ID self-discovery (#626 Phase 1b), dropped in #643: that
+// path latched the launch-era id from long-lived MCP-server children (a pane's
+// tree carries multiple CLAUDE_CODE_SESSION_ID values) and was fragile to
+// MCP-server lifecycle. When the wrapper-injected var is absent (e.g. a raw
+// non-wrapper `claude --resume` launch) session-id discovery finds nothing and
+// resolution falls back to the name-based path — see #643 for the rationale.
 const NeutralSessionIDEnv = "TMUX_TELL_SESSION_ID"
-
-// sessionIDEnvKeys are the process-env vars that carry a chamber's intrinsic
-// session id, in resolution priority order: a CLI's native var first, then the
-// wrapper-injected neutral var. First non-empty wins. A pane hosts one CLI, so
-// in practice only one is ever set; the order only disambiguates the
-// pathological both-set case (prefer the native one).
-var sessionIDEnvKeys = []string{ClaudeSessionIDEnv, NeutralSessionIDEnv}
 
 // Source describes which strategy produced an agent name. Used for tests
 // and so callers can log the resolution path.
@@ -379,7 +376,7 @@ func (w *Walker) cmdlineDescendantSearch(pid, depth int) (string, bool) {
 }
 
 // sessionIDDescendantSearch walks pid + descendants up to MaxDepth looking for
-// a session-id env var (sessionIDEnvKeys, in priority order) in the process
+// the wrapper-injected session-id env var (NeutralSessionIDEnv) in the process
 // environ. Returns the first non-empty value. Mirrors cmdlineDescendantSearch
 // but reads environ. A nil EnvironReader (session-id discovery disabled)
 // returns ("", false).
@@ -387,10 +384,8 @@ func (w *Walker) sessionIDDescendantSearch(pid, depth int) (string, bool) {
 	if pid <= 0 || w.EnvironReader == nil {
 		return "", false
 	}
-	for _, key := range sessionIDEnvKeys {
-		if v, ok := w.EnvironReader(pid, key); ok && v != "" {
-			return v, true
-		}
+	if v, ok := w.EnvironReader(pid, NeutralSessionIDEnv); ok && v != "" {
+		return v, true
 	}
 	if depth >= w.MaxDepth {
 		return "", false
@@ -403,11 +398,11 @@ func (w *Walker) sessionIDDescendantSearch(pid, depth int) (string, bool) {
 	return "", false
 }
 
-// SessionIDForPane resolves the Claude session UUID hosted in a single pane by
-// walking that pane's process tree for CLAUDE_CODE_SESSION_ID. Used at register
-// time for self-discovery (#626 Phase 1b). Returns ("", false) when no live
-// Claude session is found in the pane (bare shell, non-Claude CLI, env unset,
-// or session-id discovery disabled).
+// SessionIDForPane resolves the session UUID hosted in a single pane by walking
+// that pane's process tree for the wrapper-injected NeutralSessionIDEnv. Used
+// at register time for self-discovery (#626 Phase 1b; wrapper-injected since
+// #643). Returns ("", false) when no injected session-id is found in the pane
+// (bare shell, a raw non-wrapper launch, env unset, or discovery disabled).
 func (w *Walker) SessionIDForPane(ctx context.Context, paneID string) (string, bool) {
 	panes, err := tmuxio.ListPanesWithPID(ctx)
 	if err != nil {

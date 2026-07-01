@@ -214,12 +214,12 @@ var migrations = []string{
 	// paste-unsafe states OTHER than rate/usage (copy-mode, awaiting-operator,
 	// unknown, compaction) are still honored. Default 0 = normal deferral.
 	`ALTER TABLE messages ADD COLUMN force_rate_limited INTEGER NOT NULL DEFAULT 0`,
-	// #626 Phase 1b: intrinsic session identity. The Claude session UUID
-	// (CLAUDE_CODE_SESSION_ID), self-discovered from the registering pane's
-	// process tree at register time. The primary, exact match key for
-	// session-as-addressee delivery (vs the fuzzy `claude --resume <name>`
-	// argv match). Empty default = a legacy / not-yet-discovered registration
-	// -> delivery falls back to the name-based discover path (#626 AC6).
+	// #626 Phase 1b: intrinsic session identity. The wrapper-injected session
+	// UUID (TMUX_TELL_SESSION_ID, #643), passed at register and self-discovered
+	// from the registering pane's process tree at register time. The primary,
+	// exact match key for session-as-addressee delivery (vs the fuzzy `claude
+	// --resume <name>` argv match). Empty default = a legacy / not-yet-discovered
+	// registration -> delivery falls back to the name-based discover path (#626 AC6).
 	`ALTER TABLE agents ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`,
 	// #621: first-class self-reported metabolism. A chamber self-reports an
 	// intentional context-throughput state that the auto-observer (observed_state,
