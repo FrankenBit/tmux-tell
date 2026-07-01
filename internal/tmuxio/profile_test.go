@@ -236,6 +236,11 @@ func TestCodexWorkingPattern_MatchesMarker(t *testing.T) {
 		"◦ Working (0s • esc to interrupt)",
 		"  ◦ Working (3s • esc to interrupt)  ",
 		"Working (7s - esc to interrupt)", // separator glyph drifted; still matches
+		// Real captures from Lookout's 2026-07-01 sleep-12 persistence probe
+		// (13/13 samples carried the pair). The leading glyph alternated ◦ ↔ •
+		// across samples — glyph-only detection would be brittle; the pair holds:
+		"◦ Working (14s • esc to interrupt)",
+		"• Working (26s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close",
 	} {
 		if !re.MatchString(s) {
 			t.Errorf("CodexWorkingPattern should match working row %q", s)
