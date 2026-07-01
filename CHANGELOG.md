@@ -33,6 +33,33 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.29.0] — 2026-07-01
+
+### Added
+
+- Add explicit send-response receipts so CLI and MCP callers can distinguish enqueue acceptance from dispatch and paste-confirmation evidence (#614).
+
+
+- **send**: expose substrate-layer receipt
+
+### Changed
+
+- **One-pane-one-identity is now schema-enforced** (#595): the `agents` table carries a `UNIQUE(pane_id)` index, so any code path that writes a duplicate pane binding (bypassing the register-time clear) fails at the DB layer instead of drifting silently. Pane-less dormant rows are unaffected — multiple NULL `pane_id`s coexist by design. No action needed: a legacy DB carrying a pre-existing duplicate is healed automatically on first start (the displaced rows are released to dormant/pane-less).
+
+CONTRIBUTING.md §Release-cuts rewritten for the toolkit flow (push → rolling PR → merge → publish); fragment-brevity rule added; Cold-Read prompt moved to BookStack. Closes #628.
+
+- **The `tmux-tell_control` self-compaction verb is now `compact`, not `sleep`** (#646): the bus verb for the `/compact` mechanism was renamed for substrate-honesty — the verb now equals the primitive it emits, dropping the anthropomorphic `sleep` framing (agents context-reset, they don't biologically rest). No action required: `sleep` keeps working as a deprecated alias through v1.0 — it resolves to the unchanged `/compact`, carries a `deprecated` field in the response, and logs a greppable `WARN deprecated_control_macro`. Prefer `compact` in new usage: `control(command=compact)` (MCP) and `--command compact` (CLI), plus `resume_with` on a self-`compact`.
+
+docs/grafana bus-traffic dashboard broadened its 6 Loki selectors to match both claude and codex mailman services (`tmux-tell-(claude|codex)-mailman@…`), so codex chambers (carpenter, lookout) surface alongside claude chambers in the recipient/sender/bytes/warning/tail panels — closes the codex-mailman blindspot observed on the alcatraz-infra#101 dashboard provisioning (#678).
+
+### Fixed
+
+healthscan probes now route to the agent's actual mailman unit instead of the hardcoded claude prefix (#708). `internal/healthscan.Scanner` gained an optional `Resolve func(name) string` field; the `health` + `status --today` CLIs inject a resolver that reads each agent's persisted provider (#448) and picks the `tmux-tell-codex-mailman@…` prefix for codex chambers (provider=openai), falling back to claude otherwise. Codex chambers (carpenter, lookout) previously showed as silent (`CrashCount=0` + zero journal lines) even when unhealthy, because the scanner queried a non-existent claude unit. Docs: CONTRIBUTING.md pre-flight updated to the per-chamber-clone reality (`/srv/claude/<chamber>/tmux-tell/`) — the shared `/srv/tmux-msg/` checkout was retired when chambers migrated (#434 SUPERSEDED-BY-EVOLUTION).
+
+### Internal
+
+- **provider**: shared provider-constant enumerator (#600)
+
 ## [0.28.0] — 2026-07-01
 
 ### Added
