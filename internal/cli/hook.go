@@ -103,7 +103,7 @@ func doHookContext(ctx context.Context, s *store.Store, agent, eventName string,
 	//
 	// Substrate-honesty caveat (#249 N2): "by construction" holds at the
 	// substrate→hook-helper boundary (we mark before the JSON is written to
-	// stdout). It trusts the hook-helper→Claude boundary: if Claude reads the
+	// stdout). It trusts the hook-helper→agent boundary: if the agent reads the
 	// JSON but crashes before injecting additionalContext, the row stays
 	// delivered+verified=1 yet was never seen — and RecoverDelivering can't help
 	// (the row is `delivered`, not `delivering`). v1 trusts Claude Code's hook
