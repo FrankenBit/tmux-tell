@@ -190,8 +190,11 @@ func runDoctorCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	format := *formatFlag
 	switch format {
-	case "", "text", "json":
+	case "text", "json":
 	default:
+		// Reject an explicit empty --format= too (consistent with rejecting any
+		// other bad value; base rejected it via the hand-rolled default branch).
+		// Bare `doctor` still defaults to text via the flag default, not "".
 		return writeJSONError(stdout, stderr, fmt.Sprintf("unknown --format: %s", format), exitUsage)
 	}
 
