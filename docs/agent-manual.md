@@ -215,6 +215,23 @@ The diagnostic-playbook's sender-outbox-first discipline is as useful from insid
 a pane as from outside it — distinguish "I didn't send" from "it didn't deliver"
 from "they didn't act" before you escalate.
 
+### Diagnostics — turning on `TMUX_TELL_DEBUG`
+
+When a `ping` or other diagnostic result looks wrong and the normal output isn't
+telling you why, re-run it with `TMUX_TELL_DEBUG=1` set. That turns on verbose
+debug lines (to stderr) on the substrate's diagnostics-heavy paths — for example
+`ping`'s evidence-gather logs each best-effort probe that dropped an error (an
+agent lookup that missed, a state probe that came back empty) instead of silently
+degrading to a zero value. Any non-empty value enables it; unset (the default)
+keeps the output quiet.
+
+```bash
+TMUX_TELL_DEBUG=1 tmux-tell-claude ping some-agent
+```
+
+It's safe to leave off in normal use — the gated lines are for actively chasing a
+diagnostic that doesn't add up, not routine operation.
+
 ---
 
 ## Claiming work — so two of you don't collide

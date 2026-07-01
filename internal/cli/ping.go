@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"time"
 
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/debug"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/identity"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/notify"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
@@ -387,13 +389,20 @@ func gatherPingEvidence(ctx context.Context, s *store.Store, agent string) pingE
 	ev := pingEvidence{}
 	if a, err := s.GetAgent(ctx, agent); err == nil {
 		ev.StuckReason = a.StuckReason
+	} else if debug.Enabled() {
+		log.Printf("evidence-gather: agent %q lookup err=%v", agent, err)
 	}
 	ev.MailmanActive = mailmanActive(ctx, agent)
 	if d, err := s.RecipientQueueDepth(ctx, agent); err == nil {
 		ev.QueueDepth = d
+	} else if debug.Enabled() {
+		log.Printf("evidence-gather: agent %q queue-depth err=%v", agent, err)
 	}
-	st, _ := resolveAgentState(ctx, s, agent)
+	st, err := resolveAgentState(ctx, s, agent)
 	ev.CurrentState = st.State
+	if err != nil && debug.Enabled() {
+		log.Printf("evidence-gather: agent %q state-resolve err=%v", agent, err)
+	}
 	return ev
 }
 

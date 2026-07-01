@@ -1951,6 +1951,41 @@ deprecation-with-functioning-alias preserves K-counter progress; only removal
 resets it. The live per-release record lives in the tracker at
 [#163](https://git.frankenbit.de/frankenbit/tmux-tell/issues/163).
 
+## Debugging: `TMUX_TELL_DEBUG`
+
+Set `TMUX_TELL_DEBUG` to any non-empty value (`1`, `true`, …) to turn on verbose
+debug logging on the substrate's diagnostics-heavy paths; empty or unset (the
+default) keeps them quiet. The gate is a single helper — `internal/debug.Enabled()`
+— and each participating site guards its extra logging on it:
+
+```go
+if debug.Enabled() {
+    log.Printf("evidence-gather: agent %q lookup err=%v", agent, err)
+}
+```
+
+Debug lines go to stderr (Go's default `log` output). They surface best-effort
+probe failures that are *routine* in normal operation — a lookup that misses, a
+state probe that comes back empty — and are therefore dropped silently by
+default, but are exactly what you want when a diagnostic result looks wrong.
+
+**Scope is deliberately narrow (α, [#681](https://git.frankenbit.de/frankenbit/tmux-tell/issues/681)).**
+Only genuinely-diagnostic paths gate on `TMUX_TELL_DEBUG`, not every dropped
+error in the codebase — a broad gate would bury the signal. Widen it
+deliberately as new diagnostic surfaces warrant, using the same `if
+debug.Enabled()` guard.
+
+| Site | Emits when set | Status |
+|------|----------------|--------|
+| `ping` evidence-gather (`gatherPingEvidence`) | per-probe drop behind an UNREACHABLE ping: agent-lookup / queue-depth / state-resolve errors | wired |
+| doctor `/proc` walk, discover, state-classifier fallbacks, deliver-verify retries | — | eligible; adopt when next touched |
+
+Enable it for a single command:
+
+```bash
+TMUX_TELL_DEBUG=1 tmux-tell-claude ping some-agent
+```
+
 ## Migrating from `tmux-msg`
 
 The project was renamed `tmux-msg` → **`tmux-tell`** in v0.18.0 (#440) — the
