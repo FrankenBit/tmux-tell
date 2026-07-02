@@ -1,0 +1,24 @@
+name: fragment-check
+
+# Consumer-side PR gate for the release-toolkit fragment-kind
+# discipline (release-toolkit#271). Fails PR CI when any file under
+# `changelog.d/` uses a kind outside the accepted set
+# (added / changed / deprecated / removed / fixed / security / internal).
+#
+# Catches `.documentation.md`-style typos at PR time instead of at
+# the next release-prep run, avoiding a rename-recovery PR to unblock
+# the cut. Empirical anchor is right here in this repo: #655
+# (unknown-kind fragment) → #658 (rename recovery), 2026-06-30 —
+# which is exactly what motivated the release-toolkit substrate.
+# release-toolkit#271 + release-toolkit#280.
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['changelog.d/**']
+
+jobs:
+  check:
+    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-changelog-fragment-check.yml@v0.20.0
+    with:
+      runs_on:     go
