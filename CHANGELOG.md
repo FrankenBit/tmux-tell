@@ -33,6 +33,18 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.30.0] — 2026-07-09
+
+### Added
+
+- **Auto-restart a chamber that exits after a tmux-tell-triggered `/compact`** (#730): opt-in per chamber via `register --auto-restart` or `set-auto-restart on` (default off). When a control-verb `/compact` the substrate delivered leads the chamber to exit to a bare shell (the post-compact bailout shape), the mailman detects the adapter is gone — `pane_current_command` reads as a shell, an adapter-agnostic signal that needs no host-PS1 parsing — and relaunches it via the registered `relaunch_cmd`, sharing the repaired #285 restart primitive. Operator-initiated `/exit` never flows through a control row, so it is left untouched (the natural exit *is* the escape hatch; no extra machinery). The relaunch command is a verbatim string the substrate stays indifferent to (`chamber-claude.sh Bosun` today → `claude --resume Bosun` once the wrapper is deprecated). Note: only the `claude` and `codex` adapter binaries exist — `aichat` is a discover-heuristic, not an adapter.
+
+### Fixed
+
+- **Post-shrink chamber respawn no longer strands a bare shell** (#285): the bounded respawn restarted panes with `tmux respawn-pane -k` (no command), which re-runs `pane_start_command` — under tmux-resurrect that is the resurrect restore (`cat …; exec -l /bin/bash`), i.e. a **bare shell**, never the chamber. Every non-skipped respawn therefore timed out waiting for an adapter that never came back (empirically: Bosun — the only chamber with `respawn_after_shrinks>0` — bailed to a shell on 2026-07-06 and 2026-07-09). The retired `respawn-pane -k` is replaced by a `send-keys <relaunch_cmd>` into the post-exit bare shell: the substrate cannot infer the launch command, so it is now registered per chamber via `register --relaunch-cmd '<cmd>'` or `set-relaunch-cmd`. A threshold fire with no registered `relaunch_cmd` logs and skips rather than exiting a chamber it cannot restart, and the exit-to-bare-shell is now positively observed (`pane_current_command`) before the relaunch send-keys instead of blind-slept.
+
+- **respawn**: retire respawn-pane -k for send-keys relaunch; add #730 auto-restart co-trigger (#731)
+
 ## [0.29.0] — 2026-07-01
 
 ### Added
