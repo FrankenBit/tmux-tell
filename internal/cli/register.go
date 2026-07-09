@@ -52,9 +52,30 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		"update non-pane fields (delivery_mode, alias, etc.) without touching the stored pane_id. "+
 			"Intended for acting-on-behalf scenarios (e.g. Bosun flipping another chamber's delivery_mode) "+
 			"where the caller is NOT the registered pane. Mutually exclusive with --pane. (#403)")
+	relaunchCmd := fs.String("relaunch-cmd", "",
+		"the command the mailman send-keys into a post-exit bare shell to restart this chamber "+
+			"(#285/#730), e.g. 'chamber-claude.sh Bosun' or 'claude --resume Bosun'. Required for the "+
+			"#285 shrink-threshold respawn and the #730 auto-restart co-trigger to actually relaunch — "+
+			"the substrate cannot infer it (under tmux-resurrect pane_start_command is the resurrect restore). "+
+			"Only applied when the flag is explicitly passed, so a bare re-register never wipes a stored value.")
+	autoRestart := fs.Bool("auto-restart", false,
+		"arm the #730 co-trigger: a tmux-tell-triggered /compact that exits this chamber is auto-relaunched "+
+			"via --relaunch-cmd. Only applied when explicitly passed (default off; operator/wrapper opt-in).")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
+	// Track which of the opt-in relaunch flags were explicitly passed so a bare
+	// re-register (the wrapper auto-registers every launch) never resets a stored
+	// relaunch_cmd / auto_restart to the flag zero-value.
+	relaunchCmdSet, autoRestartSet := false, false
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "relaunch-cmd":
+			relaunchCmdSet = true
+		case "auto-restart":
+			autoRestartSet = true
+		}
+	})
 
 	if *name == "" {
 		return writeJSONError(stdout, stderr, "--name required", exitUsage)
@@ -220,6 +241,20 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 	if err := s.SetDeliveryMode(ctx, *name, *deliveryMode); err != nil {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("set delivery_mode: %v", err), exitInternal)
+	}
+	// #285/#730 relaunch config — only when the flag was explicitly passed, so a
+	// bare re-register preserves a previously-registered value (see fs.Visit above).
+	// Non-fatal: registration already succeeded; a failed tunable write is awkward
+	// but doesn't break the bus.
+	if relaunchCmdSet {
+		if err := s.SetRelaunchCmd(ctx, *name, *relaunchCmd); err != nil {
+			fmt.Fprintf(stderr, "WARN register: set relaunch_cmd: %v\n", err)
+		}
+	}
+	if autoRestartSet {
+		if err := s.SetAutoRestart(ctx, *name, *autoRestart); err != nil {
+			fmt.Fprintf(stderr, "WARN register: set auto_restart: %v\n", err)
+		}
 	}
 	// #224: auto-clear any prior attention_state on (re)register. The chamber
 	// is back and ready; whatever it was awaiting is presumed resolved (or

@@ -285,6 +285,22 @@ var migrations = []string{
 	 WHERE pane_id IS NOT NULL
 	   AND rowid NOT IN (SELECT MIN(rowid) FROM agents WHERE pane_id IS NOT NULL GROUP BY pane_id)`,
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_pane_id ON agents(pane_id)`,
+	// #285/#730: the repaired relaunch primitive. respawn-pane -k (the original
+	// #285 restart leg) re-runs pane_start_command, which under tmux-resurrect is
+	// the resurrect restore (`cat …; exec -l /bin/bash`) — a bare shell, NOT the
+	// chamber (root cause in #285 comment). The substrate therefore cannot INFER
+	// the launch command; it must be registered. relaunch_cmd is the exact command
+	// the mailman send-keys into the post-exit bare shell to restart the chamber
+	// (e.g. `chamber-claude.sh Bosun` today → `claude --resume Bosun` post-wrapper-
+	// deprecation — the substrate stays indifferent to its shape). Empty = the
+	// relaunch primitive is unconfigured, so a threshold/co-trigger fire logs+skips
+	// rather than stranding a bare shell. auto_restart is the #730 per-chamber
+	// co-trigger flag: 1 = a tmux-tell-triggered /compact that leads to a chamber
+	// exit is auto-relaunched; 0 (default) = only the #285 shrink-threshold path
+	// relaunches. Default 0 so merging the feature never changes a live chamber's
+	// behavior until the operator opts in (mirrors respawn_after_shrinks).
+	`ALTER TABLE agents ADD COLUMN relaunch_cmd TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE agents ADD COLUMN auto_restart INTEGER NOT NULL DEFAULT 0`,
 }
 
 // Close releases the underlying database handle.

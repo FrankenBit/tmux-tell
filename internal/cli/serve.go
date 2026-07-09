@@ -1362,7 +1362,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if cerr != nil {
 				logger.Printf("self_compact_count_err agent=%s err=%v", opts.Agent, cerr)
 			} else if counted && respawnIfThresholdReached(stopCtx, s, defaultRespawnOps(), logger, opts.Agent,
-				a.PaneID, "self-compact", count, a.RespawnAfterShrinks, watchdogPing) {
+				a.PaneID, a.RelaunchCmd, "self-compact", count, a.RespawnAfterShrinks, watchdogPing) {
 				return exitOK
 			}
 		}
@@ -2143,6 +2143,24 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				if !settled {
 					logger.Printf("post_compact_stability_ceiling id=%s — pane not stably idle within %s; proceeding (pre-paste gate backstops)",
 						msg.PublicID, opts.PostCompactPause)
+
+					// #730 co-trigger: a tmux-tell-triggered /compact that never
+					// settled to idle may have EXITED the chamber to a bare shell
+					// (the Bosun-bailout shape). When the chamber opted into
+					// auto_restart and registered a relaunch_cmd, probe for that bare
+					// shell and, if present, relaunch via the shared primitive (the
+					// same send-keys path #285 uses). A chamber that merely compacted
+					// slowly (still running, no shell) falls through awaitExit's
+					// window as a no-op. Gated on isCompactControl so a /clear (whose
+					// respawn path is #285 PR1) isn't double-handled.
+					if isCompactControl(msg) && a.AutoRestart && a.RelaunchCmd != "" {
+						logger.Printf("auto_restart_probe id=%s agent=%s pane=%s - triggered /compact did not settle; checking for chamber exit to relaunch",
+							msg.PublicID, opts.Agent, paneForDelivery)
+						if _, autoStopped := relaunchAfterExit(stopCtx, s, defaultRespawnOps(), logger,
+							opts.Agent, paneForDelivery, a.RelaunchCmd, autoRestartExitWindow, watchdogPing); autoStopped {
+							return exitOK
+						}
+					}
 				}
 			}
 			// #285 PR1: a bus-delivered clear is a counted context-shrink event.
@@ -2161,7 +2179,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				if ierr != nil {
 					logger.Printf("respawn_count_err agent=%s err=%v", opts.Agent, ierr)
 				} else if respawnIfThresholdReached(stopCtx, s, defaultRespawnOps(), logger, opts.Agent,
-					paneForDelivery, "clear", count, a.RespawnAfterShrinks, watchdogPing) {
+					paneForDelivery, a.RelaunchCmd, "clear", count, a.RespawnAfterShrinks, watchdogPing) {
 					return exitOK
 				}
 			}
@@ -2642,6 +2660,19 @@ func isSessionResetControl(msg *store.Message) bool {
 // not per macro row.
 func isClearControl(msg *store.Message) bool {
 	return msg.Kind == store.KindControl && strings.TrimSpace(msg.Body) == "/clear"
+}
+
+// isCompactControl returns true when msg is a bus-delivered bare `/compact`
+// control row — the #730 auto-restart co-trigger. A tmux-tell-TRIGGERED /compact
+// is itself the discriminator that separates "the substrate reset this session"
+// from an operator-typed /exit (which never flows through a control row): only
+// the former arms the per-chamber auto_restart relaunch, so operator-initiated
+// exits are left alone with no escape-hatch machinery. /clear is EXCLUDED — its
+// respawn path is #285 PR1 (isClearControl), a counted shrink event, not an
+// exit-watch; gating on /compact keeps the two triggers from double-handling a
+// single clear.
+func isCompactControl(msg *store.Message) bool {
+	return msg.Kind == store.KindControl && strings.TrimSpace(msg.Body) == "/compact"
 }
 
 // Stability-gate tunables for the post-/compact wait (#622). Package vars so

@@ -25,6 +25,42 @@ func PaneCurrentPath(ctx context.Context, pane string) (string, error) {
 	return path, nil
 }
 
+// PaneCurrentCommand returns the command name of the process currently in the
+// foreground of pane (tmux's `#{pane_current_command}`) — e.g. "claude",
+// "codex", "node", or a shell like "bash" once the adapter has exited. Unlike a
+// capture-pane/PS1 read this is adapter-agnostic and needs no host-shell-specific
+// prompt parsing: it is the #285/#730 "has the adapter exited to a shell?" probe.
+// An empty result (no error) means tmux reported no current command (a dead or
+// transitional pane); callers treat that as "not a shell" (not yet safe to
+// relaunch) rather than an error.
+func PaneCurrentCommand(ctx context.Context, pane string) (string, error) {
+	if pane == "" {
+		return "", errors.New("tmuxio: pane required")
+	}
+	out, err := tmuxRun(ctx, nil, "display-message", "-p", "-t", pane, "#{pane_current_command}")
+	if err != nil {
+		return "", fmt.Errorf("tmuxio: display-message pane_current_command: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return strings.TrimRight(string(out), "\r\n"), nil
+}
+
+// shellProcessNames is the set of interactive-shell command names a chamber pane
+// falls back to once its adapter process exits. tmux reports login shells
+// (`exec -l /bin/bash`) with the leading '-' stripped, so the bare names suffice.
+var shellProcessNames = map[string]bool{
+	"bash": true, "sh": true, "zsh": true, "fish": true,
+	"dash": true, "ksh": true, "ash": true, "tcsh": true, "csh": true,
+}
+
+// IsShellProcess reports whether cmd (a PaneCurrentCommand value) is an
+// interactive shell — i.e. the adapter has exited and the pane is back at a bare
+// shell prompt, ready for a `send-keys <relaunch_cmd>` restart. Positively
+// matching the small, stable set of shells is more robust than trying to
+// enumerate every adapter/runtime process name (claude, codex, node, …).
+func IsShellProcess(cmd string) bool {
+	return shellProcessNames[strings.TrimPrefix(cmd, "-")]
+}
+
 // RespawnPane replaces pane with command via `tmux respawn-pane -k`. tmux takes
 // command as a shell string; callers own quoting of any interpolated values.
 func RespawnPane(ctx context.Context, pane, command string) error {
@@ -40,22 +76,12 @@ func RespawnPane(ctx context.Context, pane, command string) error {
 	return nil
 }
 
-// RespawnPaneOriginal restarts pane via `tmux respawn-pane -k` with NO command,
-// so tmux re-runs the command the pane was ORIGINALLY created with (#285). This
-// is the load-bearing distinction from RespawnPane: for a chamber launched via
-// the memory-cap wrapper (chamber-claude.sh → systemd-run --scope … claude), the
-// original command IS the wrapper invocation, so re-running it preserves the
-// cgroup memory cap (alcatraz-infra#50) AND the launch-time register hygiene —
-// exactly what "process restarted with original cmdline" in the #285 sequencing
-// requires. Passing an explicit reconstructed command would drop the wrapper and
-// launch a bare, uncapped claude. The -k force-kills any process still occupying
-// the pane (the force-kill fallback after a graceful /exit that didn't complete).
-func RespawnPaneOriginal(ctx context.Context, pane string) error {
-	if pane == "" {
-		return errors.New("tmuxio: pane required")
-	}
-	if out, err := tmuxRun(ctx, nil, "respawn-pane", "-k", "-t", pane); err != nil {
-		return fmt.Errorf("tmuxio: respawn-pane (original): %w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
+// RespawnPaneOriginal (retired, #285/#730) used `tmux respawn-pane -k` with NO
+// command to re-run the pane's ORIGINAL creation command. Its load-bearing
+// assumption — that the original command is the memory-cap wrapper — is false
+// under tmux-resurrect, where pane_start_command is the resurrect restore
+// (`cat …; exec -l /bin/bash`), so respawn-pane -k produced a BARE SHELL, never
+// the chamber (root cause of the #285 respawn-bailout incident). The restart path
+// now send-keys a registered relaunch_cmd into the post-exit shell instead; see
+// internal/cli/respawn.go relaunchAfterExit. Removed rather than deprecated —
+// respawnChamber was its only caller.

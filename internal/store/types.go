@@ -230,6 +230,23 @@ type Agent struct {
 	// counter family (respawn_shrink_count + this watermark), preserving PR1's
 	// single-flight race-freedom.
 	SelfCompactCountedAt string
+	// RelaunchCmd is the #285/#730 repaired-relaunch command: the exact string the
+	// mailman `send-keys` into the post-exit bare shell to restart the chamber
+	// (e.g. `chamber-claude.sh Bosun` → `claude --resume Bosun`). Required because
+	// the substrate cannot infer the launch command from the pane — under tmux-
+	// resurrect pane_start_command is the resurrect restore, so the retired
+	// respawn-pane -k produced a bare shell (root cause, #285). Empty (default) =
+	// unconfigured → a threshold/co-trigger fire logs+skips rather than stranding a
+	// bare shell. Set via SetRelaunchCmd / register --relaunch-cmd.
+	RelaunchCmd string
+	// AutoRestart is the #730 per-chamber co-trigger flag. true = a tmux-tell-
+	// triggered /compact (control verb) that leads to a chamber exit is auto-
+	// relaunched via RelaunchCmd; false (default) = only the #285 shrink-threshold
+	// path relaunches. Operator-initiated /exit bypasses the substrate's control
+	// state, so it is never auto-restarted regardless of this flag. Set via
+	// SetAutoRestart / register --auto-restart. Default false so merging never
+	// changes a live chamber's behavior until opt-in (mirrors RespawnAfterShrinks).
+	AutoRestart bool
 }
 
 // Delivery-mode constants. Constrained string set; see Agent.DeliveryMode

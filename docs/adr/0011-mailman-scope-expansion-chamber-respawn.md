@@ -156,10 +156,51 @@ load-bearing project pattern. A *failed* application — a proposal that's clear
 desirable yet fails a fence — is the signal to amend this ADR (relax the fence and
 record why) rather than quietly route around it.
 
+## Amendment (2026-07-09): `respawn-pane -k` retired for `send-keys <relaunch_cmd>` (#285/#730)
+
+The **decision stands** — chamber respawn remains admissible under the three
+fences, and both fences 1 and 3 are unchanged. This amendment corrects **fence 2's
+stated mechanism**, which carried a latent bug, and records the #730 co-trigger.
+
+**Root cause.** Fence 2 above described the restart as `tmux respawn-pane -k`
+"(pane preserved, original cmdline)", on the assumption that the pane's original
+command is the memory-cap wrapper. That assumption is **false under tmux-resurrect**:
+every chamber pane's `pane_start_command` is the resurrect restore
+(`cat …/resurrect/…; exec -l /bin/bash`), so `respawn-pane -k` (no command) re-ran
+*that* — a **bare shell**, never the chamber. Empirically, the only chamber with
+`respawn_after_shrinks > 0` (Bosun) bailed to a bare shell on every non-skipped
+respawn (2026-07-06, 2026-07-09; `respawn_done ready=false` in both), which is the
+incident originally filed as #730.
+
+**Corrected mechanism.** The substrate cannot *infer* the launch command from the
+pane, so it is now **registered per chamber** (`relaunch_cmd`, via
+`register --relaunch-cmd` / `set-relaunch-cmd`) and the restart is a
+`send-keys <relaunch_cmd>` into the post-exit bare shell (positively observed via
+`pane_current_command`, not blind-slept). This is **more** fence-2-native, not less:
+`send-keys` is the mailman's own delivery primitive, whereas `respawn-pane -k` was
+the one genuinely-new call the original build introduced. A threshold fire with no
+registered `relaunch_cmd` logs and skips rather than exiting a chamber it cannot
+restart.
+
+**#730 co-trigger (still fence-1-observable).** A control-verb `/compact` the
+substrate *delivered* that leads the chamber to exit to a bare shell now
+auto-relaunches when the chamber opted in (`auto_restart`). The trigger is the
+substrate's own delivered `/compact` (fence 1 holds — an operator-typed `/exit`
+never flows through a control row, so it is left alone); the carriage is the shared
+`send-keys` relaunch (fence 2). **Fence 3 still holds**: `set-relaunch-cmd` /
+`set-auto-restart` are *config* setters (they register the command / arm the flag),
+NOT an on-demand "restart this chamber now" lever — nothing new asks the bus to
+respawn out of nowhere.
+
+Anchor: root-cause analysis in #285 (comment thread) + #730; implementation shares
+one `relaunchAfterExit` primitive across the threshold trigger and the co-trigger.
+
 ## References
 
 - #285 (this feature — post-compact chamber respawn; carries the implementation
-  contract and the AC list)
+  contract and the AC list; the 2026-07-09 amendment retires respawn-pane -k)
+- #730 (auto-restart co-trigger — control-verb /compact using the shared relaunch
+  primitive)
 - #227 (deferred-delivery primitive — the post-compact handoff the respawn pathway
   threads through)
 - #249 / ADR-0009 (hook-context delivery — the `PostCompact` hook composes with

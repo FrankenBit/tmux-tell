@@ -1006,6 +1006,36 @@ tmux-tell-claude set-respawn-after-shrinks --name pilot 0
 # A chamber can self-target (no --name) from inside its own pane.
 ```
 
+**Register a `relaunch_cmd` first (#285/#730) — respawn skips without it.** The
+substrate cannot infer a chamber's launch command from its pane (under
+tmux-resurrect `pane_start_command` is the resurrect restore, a bare shell — the
+reason the retired `respawn-pane -k` produced a bare shell instead of the chamber).
+So the restart `send-keys` a **registered** command into the post-exit shell:
+
+```bash
+# What the mailman types to restart the chamber (verbatim; substrate-indifferent).
+tmux-tell-claude set-relaunch-cmd --name pilot 'chamber-claude.sh Pilot'
+# …or, once the wrapper is deprecated: 'claude --resume Pilot'.
+# Also settable at launch: register --relaunch-cmd '<cmd>' (only overwrites when
+# explicitly passed, so a bare re-register never wipes a stored value).
+```
+
+A threshold fire with no registered `relaunch_cmd` logs `respawn_skip_no_relaunch_cmd`
+and does **not** `/exit` — it never kills a chamber it can't bring back.
+
+**Auto-restart after a triggered `/compact` (#730).** A separate opt-in co-trigger
+(default off) that shares the same relaunch primitive: when a control-verb
+`/compact` the substrate *delivered* leads the chamber to exit to a bare shell (the
+post-compact bailout shape), the mailman relaunches it. Operator-typed `/exit`
+never flows through a control row, so it is left alone — the natural exit *is* the
+escape hatch.
+
+```bash
+tmux-tell-claude set-auto-restart --name bosun on    # arm (needs relaunch_cmd set)
+tmux-tell-claude set-auto-restart --name bosun off   # disarm
+# Also settable at launch: register --auto-restart.
+```
+
 **What counts as a shrink event.** Two triggers feed the one shared counter:
 
 - **Bus-delivered `/clear`** (the `control clear --for-task` primitive) — the
@@ -1065,15 +1095,22 @@ pass after a self-compact is counted:
 
 1. **Idle gate** — proceed only if the pane is idle *now*; never respawn under
    an open operator turn (the counter is retained so a later clear retries).
-2. **Graceful `/exit`** so claude flushes its (just-cleared) transcript.
-3. **Bounded exit grace**, then **`tmux respawn-pane -k` with the pane's
-   original cmdline** — re-running the launch command preserves the memory-cap
-   wrapper (a bare `claude --resume` would drop the cgroup cap).
-4. **Session-id re-establishment (#626)** — the old session-id is now dead, so
+2. **Guard: a `relaunch_cmd` must be registered** — otherwise skip here (log
+   `respawn_skip_no_relaunch_cmd`) without `/exit`ing: never kill a chamber that
+   can't be restarted.
+3. **Graceful `/exit`** so claude flushes its (just-cleared) transcript.
+4. **Await the bare shell, then `send-keys <relaunch_cmd>`** — the exit-to-shell
+   is positively observed via `pane_current_command` (not blind-slept), then the
+   registered command is typed into that shell. This replaces the retired
+   `respawn-pane -k` (which re-ran `pane_start_command` — under tmux-resurrect the
+   resurrect restore, i.e. a bare shell, never the chamber; the #285 root-cause
+   bug). Typing the registered command preserves whatever the operator launches
+   with, wrapper or not.
+5. **Session-id re-establishment (#626)** — the old session-id is now dead, so
    it is cleared; delivery falls back to name-resolution (which the bare-shell
    guard, #638, makes safe during boot) until the restarted chamber
    re-registers a fresh session-id on launch.
-5. **Bounded ready wait** for the restarted claude to reach a live prompt, then
+6. **Bounded ready wait** for the restarted claude to reach a live prompt, then
    the counter resets. Because the serve loop is single-flight and the respawn
    is synchronous, nothing delivers to the dying process — the clear macro's
    follow-up `/rename` and any #227 deferred rows land on the *ready* new one.
@@ -1994,7 +2031,9 @@ CREATE TABLE agents (
   respawn_after_shrinks INTEGER NOT NULL DEFAULT 0, -- #285 per-chamber respawn threshold N; 0 = disabled (opt-in)
   respawn_shrink_count  INTEGER NOT NULL DEFAULT 0, -- #285 counted context-shrink events since the last respawn
   last_self_compact_at    TEXT,                    -- #285 PR2 self-compact signal: the post-compaction hook stamps this (sqliteTimeFormat UTC)
-  self_compact_counted_at TEXT                     -- #285 PR2 mailman-owned watermark of the last self-compact it counted (never hook-written)
+  self_compact_counted_at TEXT,                    -- #285 PR2 mailman-owned watermark of the last self-compact it counted (never hook-written)
+  relaunch_cmd     TEXT NOT NULL DEFAULT '',       -- #285/#730 command send-keys into a post-exit bare shell to restart the chamber; '' = unconfigured (respawn skips)
+  auto_restart     INTEGER NOT NULL DEFAULT 0      -- #730 co-trigger flag: 1 = a tmux-tell-triggered /compact that exits the chamber is auto-relaunched; 0 = off (opt-in)
   -- … later additive columns (provider/observed_state #448, display_name #556, session_id #626) omitted for brevity
 );
 

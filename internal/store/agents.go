@@ -120,10 +120,11 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 		metabolismSetAt sql.NullString
 		lastCompactAt   sql.NullString
 		compactCounted  sql.NullString
+		autoRestart     int
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count, last_self_compact_at, self_compact_counted_at FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount, &lastCompactAt, &compactCounted)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count, last_self_compact_at, self_compact_counted_at, relaunch_cmd, auto_restart FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount, &lastCompactAt, &compactCounted, &a.RelaunchCmd, &autoRestart)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -144,6 +145,7 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 	if compactCounted.Valid {
 		a.SelfCompactCountedAt = compactCounted.String
 	}
+	a.AutoRestart = autoRestart != 0
 	return &a, nil
 }
 
@@ -241,7 +243,7 @@ func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) e
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count, last_self_compact_at, self_compact_counted_at FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count, last_self_compact_at, self_compact_counted_at, relaunch_cmd, auto_restart FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -258,8 +260,9 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 			metabolismSetAt sql.NullString
 			lastCompactAt   sql.NullString
 			compactCounted  sql.NullString
+			autoRestart     int
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount, &lastCompactAt, &compactCounted); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount, &lastCompactAt, &compactCounted, &a.RelaunchCmd, &autoRestart); err != nil {
 			return nil, err
 		}
 		if pane.Valid {
@@ -277,6 +280,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 		if compactCounted.Valid {
 			a.SelfCompactCountedAt = compactCounted.String
 		}
+		a.AutoRestart = autoRestart != 0
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -378,6 +382,51 @@ func (s *Store) SetRespawnAfterShrinks(ctx context.Context, name string, n int) 
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET respawn_after_shrinks = ? WHERE name = ?`,
 		n, name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
+}
+
+// SetRelaunchCmd persists the #285/#730 relaunch command — the exact string the
+// mailman send-keys into a post-exit bare shell to restart the chamber. An empty
+// cmd is allowed (clears/leaves the primitive unconfigured, so a threshold/
+// co-trigger fire logs+skips rather than stranding a bare shell). Returns
+// ErrNotFound if no agent with that name is registered.
+//
+// Does not bump updated_at: an operational tunable, not a discovery-relevant
+// change (mirrors SetRespawnAfterShrinks).
+func (s *Store) SetRelaunchCmd(ctx context.Context, name, cmd string) error {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET relaunch_cmd = ? WHERE name = ?`,
+		cmd, name)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return fmt.Errorf("store: agent %q: %w", name, ErrNotFound)
+	}
+	return nil
+}
+
+// SetAutoRestart persists the #730 per-chamber co-trigger flag: when true, a
+// tmux-tell-triggered /compact that leads to a chamber exit is auto-relaunched
+// via the registered relaunch_cmd. Returns ErrNotFound if no agent with that
+// name is registered.
+//
+// Does not bump updated_at: an operational tunable, not a discovery-relevant
+// change (mirrors SetRespawnAfterShrinks).
+func (s *Store) SetAutoRestart(ctx context.Context, name string, on bool) error {
+	v := 0
+	if on {
+		v = 1
+	}
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents SET auto_restart = ? WHERE name = ?`,
+		v, name)
 	if err != nil {
 		return err
 	}

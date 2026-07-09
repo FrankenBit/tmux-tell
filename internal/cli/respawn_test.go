@@ -12,16 +12,21 @@ import (
 )
 
 // recordingOps is a scripted respawnOps: agentState returns `states` in order
-// (the last entry repeats once exhausted), and sendExit/respawn record their
-// call counts + return the configured errors.
+// (the last entry repeats once exhausted); sendExit records its call count;
+// awaitExit returns the scripted `exited`; relaunch records its call count AND
+// captures the command it was asked to send-keys (the #285/#730 repaired
+// primitive — the retired respawn-pane -k took no command, the root-cause bug).
 type recordingOps struct {
 	states      []tmuxio.State
 	stateErr    error
 	stateIdx    int
 	sendExitN   int
 	sendExitErr error
-	respawnN    int
-	respawnErr  error
+	exited      bool // what awaitExit returns (did the adapter reach a bare shell?)
+	awaitExitN  int
+	relaunchN   int
+	relaunchCmd string // the command relaunch was asked to send-keys
+	relaunchErr error
 }
 
 func (r *recordingOps) toOps() respawnOps {
@@ -41,7 +46,15 @@ func (r *recordingOps) toOps() respawnOps {
 			return st, nil
 		},
 		sendExit: func(_ context.Context, _ string) error { r.sendExitN++; return r.sendExitErr },
-		respawn:  func(_ context.Context, _ string) error { r.respawnN++; return r.respawnErr },
+		awaitExit: func(_ context.Context, _ string, _ time.Duration) bool {
+			r.awaitExitN++
+			return r.exited
+		},
+		relaunch: func(_ context.Context, _ string, cmd string) error {
+			r.relaunchN++
+			r.relaunchCmd = cmd
+			return r.relaunchErr
+		},
 	}
 }
 
@@ -49,12 +62,13 @@ func (r *recordingOps) toOps() respawnOps {
 // run in milliseconds. Restores on cleanup.
 func fastRespawnTunables(t *testing.T) {
 	t.Helper()
-	pe, prt, ppe := respawnExitGrace, respawnReadyTimeout, respawnPollEvery
+	pe, prt, ppe, arw := respawnExitGrace, respawnReadyTimeout, respawnPollEvery, autoRestartExitWindow
 	respawnExitGrace = 1 * time.Millisecond
 	respawnReadyTimeout = 30 * time.Millisecond
 	respawnPollEvery = 1 * time.Millisecond
+	autoRestartExitWindow = 1 * time.Millisecond
 	t.Cleanup(func() {
-		respawnExitGrace, respawnReadyTimeout, respawnPollEvery = pe, prt, ppe
+		respawnExitGrace, respawnReadyTimeout, respawnPollEvery, autoRestartExitWindow = pe, prt, ppe, arw
 	})
 }
 
@@ -85,98 +99,153 @@ func respawnTestStore(t *testing.T, sessionID string) *store.Store {
 
 func discardLogger() *log.Logger { return log.New(io.Discard, "", 0) }
 
-// Happy path: idle pane → /exit sent → respawn-pane called → stale session-id
-// cleared (#626 re-establishment) → shrink counter reset → returns not-stopped.
+const testRelaunchCmd = "chamber-claude.sh Pilot"
+
+// Happy path: idle pane → relaunch_cmd present → /exit sent → bare shell observed
+// → relaunch send-keys the REGISTERED command → stale session-id cleared (#626)
+// → shrink counter reset → returns not-stopped. Mutation anchor: if relaunch
+// send-keys the wrong string (or nothing — the retired respawn-pane -k behaviour),
+// the relaunchCmd assert reds.
 func TestRespawnChamber_HappyPath(t *testing.T) {
 	fastRespawnTunables(t)
 	s := respawnTestStore(t, "old-session-uuid")
-	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}}
+	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true}
 
-	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", 0)
+	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", testRelaunchCmd, 0)
 	if stopped {
 		t.Fatal("stopped = true, want false on the happy path")
 	}
 	if ops.sendExitN != 1 {
 		t.Errorf("sendExit called %d times, want 1 (graceful /exit)", ops.sendExitN)
 	}
-	if ops.respawnN != 1 {
-		t.Errorf("respawn called %d times, want 1", ops.respawnN)
+	if ops.relaunchN != 1 {
+		t.Errorf("relaunch called %d times, want 1", ops.relaunchN)
+	}
+	if ops.relaunchCmd != testRelaunchCmd {
+		t.Errorf("relaunch cmd = %q, want %q (must send-keys the REGISTERED command, not respawn-pane -k)",
+			ops.relaunchCmd, testRelaunchCmd)
 	}
 	a, _ := s.GetAgent(context.Background(), "pilot")
 	if a.SessionID != "" {
-		t.Errorf("SessionID = %q after respawn, want cleared (#626 re-establishment)", a.SessionID)
+		t.Errorf("SessionID = %q after relaunch, want cleared (#626 re-establishment)", a.SessionID)
 	}
 	if a.RespawnShrinkCount != 0 {
-		t.Errorf("RespawnShrinkCount = %d after respawn, want 0 (reset)", a.RespawnShrinkCount)
+		t.Errorf("RespawnShrinkCount = %d after relaunch, want 0 (reset)", a.RespawnShrinkCount)
 	}
 }
 
 // Idle-gate: a non-idle pane (operator working/typing) SKIPS the respawn — no
-// /exit, no respawn-pane, and neither the session-id nor the counter is touched,
-// so a later clear retries. Mutation anchor: dropping the `state != StateIdle`
-// guard fires the respawn under an open turn and flips the sendExit/respawn
-// asserts.
+// /exit, no awaitExit, no relaunch, and neither the session-id nor the counter is
+// touched. Mutation anchor: dropping the `state != StateIdle` guard fires under an
+// open turn and flips the call-count asserts.
 func TestRespawnChamber_SkipsWhenNotIdle(t *testing.T) {
 	fastRespawnTunables(t)
 	s := respawnTestStore(t, "old-session-uuid")
-	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateWorking}}
+	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateWorking}, exited: true}
 
-	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", 0)
+	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", testRelaunchCmd, 0)
 	if stopped {
 		t.Fatal("stopped = true, want false")
 	}
-	if ops.sendExitN != 0 || ops.respawnN != 0 {
-		t.Errorf("sendExit=%d respawn=%d, want 0/0 (respawn skipped under a non-idle pane)", ops.sendExitN, ops.respawnN)
+	if ops.sendExitN != 0 || ops.relaunchN != 0 {
+		t.Errorf("sendExit=%d relaunch=%d, want 0/0 (skipped under a non-idle pane)", ops.sendExitN, ops.relaunchN)
 	}
 	a, _ := s.GetAgent(context.Background(), "pilot")
 	if a.SessionID != "old-session-uuid" {
 		t.Errorf("SessionID = %q, want preserved (no respawn happened)", a.SessionID)
 	}
 	if a.RespawnShrinkCount != 2 {
-		t.Errorf("RespawnShrinkCount = %d, want 2 preserved (counter retained for a later clear)", a.RespawnShrinkCount)
+		t.Errorf("RespawnShrinkCount = %d, want 2 preserved (counter retained for a later trigger)", a.RespawnShrinkCount)
 	}
 }
 
-// respawn-pane failure: the counter is NOT reset and the session-id is NOT
-// cleared (both mutations live AFTER a successful respawn), so a later clear
-// retries the whole pathway.
-func TestRespawnChamber_RespawnFailureRetainsState(t *testing.T) {
+// relaunch_cmd guard: threshold reached + idle pane, but NO registered relaunch
+// command → the pathway must NOT send /exit (killing a chamber it can't relaunch
+// strands a bare shell — the exact bug this replaces). No /exit, no awaitExit, no
+// relaunch; counter + session preserved. Mutation anchor: dropping the empty-cmd
+// guard fires /exit (sendExitN==1) and strands the chamber.
+func TestRespawnChamber_SkipsWhenNoRelaunchCmd(t *testing.T) {
+	fastRespawnTunables(t)
+	s := respawnTestStore(t, "old-session-uuid")
+	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true}
+
+	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", "" /*no relaunch_cmd*/, 0)
+	if stopped {
+		t.Fatal("stopped = true, want false")
+	}
+	if ops.sendExitN != 0 || ops.awaitExitN != 0 || ops.relaunchN != 0 {
+		t.Errorf("sendExit=%d awaitExit=%d relaunch=%d, want 0/0/0 (never /exit a chamber we cannot relaunch)",
+			ops.sendExitN, ops.awaitExitN, ops.relaunchN)
+	}
+	a, _ := s.GetAgent(context.Background(), "pilot")
+	if a.SessionID != "old-session-uuid" || a.RespawnShrinkCount != 2 {
+		t.Errorf("state mutated: session=%q count=%d, want preserved/2", a.SessionID, a.RespawnShrinkCount)
+	}
+}
+
+// No bare shell: /exit is sent but the adapter never exits to a shell within the
+// grace window (awaitExit=false). The chamber is left running — NO relaunch, and
+// the session-id + counter are preserved so a later cycle retries. Mutation anchor:
+// relaunching without confirming the bare shell would type the launch command into
+// a live adapter.
+func TestRespawnChamber_NoBareShellSkipsRelaunch(t *testing.T) {
+	fastRespawnTunables(t)
+	s := respawnTestStore(t, "old-session-uuid")
+	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: false}
+
+	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", testRelaunchCmd, 0)
+	if stopped {
+		t.Fatal("stopped = true, want false")
+	}
+	if ops.sendExitN != 1 {
+		t.Errorf("sendExit=%d, want 1 (we DID try a graceful exit)", ops.sendExitN)
+	}
+	if ops.relaunchN != 0 {
+		t.Errorf("relaunch=%d, want 0 (no bare shell observed → never send-keys into a live adapter)", ops.relaunchN)
+	}
+	a, _ := s.GetAgent(context.Background(), "pilot")
+	if a.SessionID != "old-session-uuid" || a.RespawnShrinkCount != 2 {
+		t.Errorf("state mutated: session=%q count=%d, want preserved/2 (chamber left running)", a.SessionID, a.RespawnShrinkCount)
+	}
+}
+
+// relaunch failure: the send-keys relaunch errors → the counter is NOT reset (the
+// reset lives AFTER a successful relaunch), so a later cycle retries.
+func TestRespawnChamber_RelaunchFailureRetainsCounter(t *testing.T) {
 	fastRespawnTunables(t)
 	s := respawnTestStore(t, "old-session-uuid")
 	ops := &recordingOps{
-		states:     []tmuxio.State{tmuxio.StateIdle},
-		respawnErr: context.DeadlineExceeded, // any non-nil error
+		states:      []tmuxio.State{tmuxio.StateIdle},
+		exited:      true,
+		relaunchErr: context.DeadlineExceeded, // any non-nil error
 	}
 
-	_ = respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", 0)
-	if ops.respawnN != 1 {
-		t.Errorf("respawn attempted %d times, want 1", ops.respawnN)
+	_ = respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", testRelaunchCmd, 0)
+	if ops.relaunchN != 1 {
+		t.Errorf("relaunch attempted %d times, want 1", ops.relaunchN)
 	}
 	a, _ := s.GetAgent(context.Background(), "pilot")
-	if a.SessionID != "old-session-uuid" {
-		t.Errorf("SessionID = %q after failed respawn, want preserved", a.SessionID)
-	}
 	if a.RespawnShrinkCount != 2 {
-		t.Errorf("RespawnShrinkCount = %d after failed respawn, want 2 retained", a.RespawnShrinkCount)
+		t.Errorf("RespawnShrinkCount = %d after failed relaunch, want 2 retained", a.RespawnShrinkCount)
 	}
 }
 
-// Ready-timeout: the restarted claude never reaches idle within the ready
-// window, so the pathway TIMES OUT but still proceeds (respawn already fired) —
-// clearing the session-id and resetting the counter. The bare-shell guard +
-// name-resolution backstop delivery until the chamber actually comes up.
+// Ready-timeout: the restarted chamber never reaches idle within the ready window,
+// so the pathway TIMES OUT but still completes (relaunch already fired) — clearing
+// the session-id and resetting the counter. The bare-shell guard + name-resolution
+// backstop delivery until the chamber is actually up.
 func TestRespawnChamber_ReadyTimeoutStillCompletes(t *testing.T) {
 	fastRespawnTunables(t)
 	s := respawnTestStore(t, "old-session-uuid")
 	// idle for the gate, then never idle → ready wait times out.
-	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle, tmuxio.StateWorking}}
+	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle, tmuxio.StateWorking}, exited: true}
 
-	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", 0)
+	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", testRelaunchCmd, 0)
 	if stopped {
 		t.Fatal("stopped = true, want false (timeout proceeds, not stops)")
 	}
-	if ops.respawnN != 1 {
-		t.Errorf("respawn called %d times, want 1", ops.respawnN)
+	if ops.relaunchN != 1 {
+		t.Errorf("relaunch called %d times, want 1", ops.relaunchN)
 	}
 	a, _ := s.GetAgent(context.Background(), "pilot")
 	if a.SessionID != "" {
@@ -187,24 +256,65 @@ func TestRespawnChamber_ReadyTimeoutStillCompletes(t *testing.T) {
 	}
 }
 
+// relaunchAfterExit is the shared tail used by BOTH the #285 threshold respawn and
+// the #730 co-trigger. Directly exercise it: a bare shell observed → relaunch with
+// the registered command + session cleared + relaunched=true; NO bare shell →
+// relaunched=false, no relaunch, session preserved (the #730 "chamber didn't exit,
+// normal /compact" no-op).
+func TestRelaunchAfterExit(t *testing.T) {
+	fastRespawnTunables(t)
+
+	t.Run("bare shell → relaunch", func(t *testing.T) {
+		s := respawnTestStore(t, "old-session-uuid")
+		ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true}
+		relaunched, stopped := relaunchAfterExit(context.Background(), s, ops.toOps(), discardLogger(),
+			"pilot", "%6", testRelaunchCmd, autoRestartExitWindow, 0)
+		if !relaunched || stopped {
+			t.Fatalf("relaunched=%v stopped=%v, want true/false", relaunched, stopped)
+		}
+		if ops.relaunchN != 1 || ops.relaunchCmd != testRelaunchCmd {
+			t.Errorf("relaunchN=%d cmd=%q, want 1 / %q", ops.relaunchN, ops.relaunchCmd, testRelaunchCmd)
+		}
+		a, _ := s.GetAgent(context.Background(), "pilot")
+		if a.SessionID != "" {
+			t.Errorf("SessionID=%q, want cleared", a.SessionID)
+		}
+	})
+
+	t.Run("no bare shell → no-op", func(t *testing.T) {
+		s := respawnTestStore(t, "old-session-uuid")
+		ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: false}
+		relaunched, stopped := relaunchAfterExit(context.Background(), s, ops.toOps(), discardLogger(),
+			"pilot", "%6", testRelaunchCmd, autoRestartExitWindow, 0)
+		if relaunched || stopped {
+			t.Fatalf("relaunched=%v stopped=%v, want false/false", relaunched, stopped)
+		}
+		if ops.relaunchN != 0 {
+			t.Errorf("relaunchN=%d, want 0 (chamber still running)", ops.relaunchN)
+		}
+		a, _ := s.GetAgent(context.Background(), "pilot")
+		if a.SessionID != "old-session-uuid" {
+			t.Errorf("SessionID=%q, want preserved (no relaunch)", a.SessionID)
+		}
+	})
+}
+
 // respawnIfThresholdReached is the shared tail of both shrink triggers (PR1 clear
 // + PR2 self-compact). It fires the respawn ONLY when count >= threshold. Below
-// threshold it must not touch the pane at all (no /exit, no respawn-pane) — a
-// counted-but-not-yet-triggering shrink. Mutation anchor: flipping the `count >=
-// threshold` comparison fires a respawn on the sub-threshold case and flips the
-// call-count asserts.
+// threshold it must not touch the pane at all. Mutation anchor: flipping the
+// `count >= threshold` comparison fires a respawn on the sub-threshold case.
 func TestRespawnIfThresholdReached_Routing(t *testing.T) {
 	fastRespawnTunables(t)
 
 	// Below threshold: no respawn, no pane touch, returns not-stopped.
 	s := respawnTestStore(t, "old-session-uuid") // counter seeded at 2
-	below := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}}
+	below := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true}
 	if stopped := respawnIfThresholdReached(context.Background(), s, below.toOps(), discardLogger(),
-		"pilot", "%6", "self-compact", 2 /*count*/, 3 /*threshold*/, 0); stopped {
+		"pilot", "%6", testRelaunchCmd, "self-compact", 2 /*count*/, 3 /*threshold*/, 0); stopped {
 		t.Fatal("stopped = true below threshold, want false")
 	}
-	if below.sendExitN != 0 || below.respawnN != 0 {
-		t.Errorf("below threshold: sendExit=%d respawn=%d, want 0/0", below.sendExitN, below.respawnN)
+	if below.sendExitN != 0 || below.relaunchN != 0 {
+		t.Errorf("below threshold: sendExit=%d relaunch=%d, want 0/0", below.sendExitN, below.relaunchN)
 	}
 	a, _ := s.GetAgent(context.Background(), "pilot")
 	if a.RespawnShrinkCount != 2 || a.SessionID != "old-session-uuid" {
@@ -214,13 +324,13 @@ func TestRespawnIfThresholdReached_Routing(t *testing.T) {
 
 	// At threshold: fires the respawn (idle pane → full pathway → counter reset).
 	s2 := respawnTestStore(t, "old-session-uuid")
-	at := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}}
+	at := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true}
 	if stopped := respawnIfThresholdReached(context.Background(), s2, at.toOps(), discardLogger(),
-		"pilot", "%6", "self-compact", 3 /*count*/, 3 /*threshold*/, 0); stopped {
+		"pilot", "%6", testRelaunchCmd, "self-compact", 3 /*count*/, 3 /*threshold*/, 0); stopped {
 		t.Fatal("stopped = true at threshold happy path, want false")
 	}
-	if at.sendExitN != 1 || at.respawnN != 1 {
-		t.Errorf("at threshold: sendExit=%d respawn=%d, want 1/1 (respawn fired)", at.sendExitN, at.respawnN)
+	if at.sendExitN != 1 || at.relaunchN != 1 {
+		t.Errorf("at threshold: sendExit=%d relaunch=%d, want 1/1 (respawn fired)", at.sendExitN, at.relaunchN)
 	}
 	a2, _ := s2.GetAgent(context.Background(), "pilot")
 	if a2.RespawnShrinkCount != 0 {
@@ -229,8 +339,6 @@ func TestRespawnIfThresholdReached_Routing(t *testing.T) {
 }
 
 // isClearControl matches ONLY a bare `/clear` control row (the PR1 trigger).
-// /compact is excluded (self-compact detection is PR2); the clear macro's
-// `/rename` second row and ordinary messages are excluded (one count per clear).
 func TestIsClearControl(t *testing.T) {
 	cases := []struct {
 		kind store.Kind
@@ -248,6 +356,29 @@ func TestIsClearControl(t *testing.T) {
 		got := isClearControl(&store.Message{Kind: c.kind, Body: c.body})
 		if got != c.want {
 			t.Errorf("isClearControl(kind=%v body=%q) = %v, want %v", c.kind, c.body, got, c.want)
+		}
+	}
+}
+
+// isCompactControl matches ONLY a bare `/compact` control row (the #730 co-trigger
+// discriminator). /clear is excluded (its respawn path is #285 PR1), and a
+// message-kind /compact is excluded (not a substrate-triggered control).
+func TestIsCompactControl(t *testing.T) {
+	cases := []struct {
+		kind store.Kind
+		body string
+		want bool
+	}{
+		{store.KindControl, "/compact", true},
+		{store.KindControl, " /compact ", true}, // trimmed
+		{store.KindControl, "/clear", false},
+		{store.KindControl, "/rename Pilot task", false},
+		{store.KindMessage, "/compact", false}, // operator-typed, not a control row
+	}
+	for _, c := range cases {
+		got := isCompactControl(&store.Message{Kind: c.kind, Body: c.body})
+		if got != c.want {
+			t.Errorf("isCompactControl(kind=%v body=%q) = %v, want %v", c.kind, c.body, got, c.want)
 		}
 	}
 }

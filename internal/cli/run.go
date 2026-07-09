@@ -194,6 +194,10 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runSetMetabolismCLI(args[1:], stdout, stderr)
 	case "set-respawn-after-shrinks":
 		return runSetRespawnAfterShrinksCLI(args[1:], stdout, stderr)
+	case "set-relaunch-cmd":
+		return runSetRelaunchCmdCLI(args[1:], stdout, stderr)
+	case "set-auto-restart":
+		return runSetAutoRestartCLI(args[1:], stdout, stderr)
 	case "set-session-id":
 		return runSetSessionIDCLI(args[1:], stdout, stderr)
 	case "register":
