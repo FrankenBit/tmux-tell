@@ -1,10 +1,10 @@
 # tmux-tell
 
-**A message bus for CLI agents running in tmux.** Each pane gets a mailbox; an agent
-(or you) sends a message and it lands in the target pane as if typed there — gated so
-it never pastes over what you're in the middle of typing.
+**Directed messaging for CLI agents running in tmux.** Each pane gets a mailbox; an
+agent (or you) addresses a message to a specific recipient and it lands in their pane
+as if typed there — gated so it never pastes over what you're in the middle of typing.
 
-### You're already running a message bus. It's you.
+### You've already got a messenger between your agents. It's you.
 
 You've got a few agents open in tmux — one mid-refactor, one writing tests, one
 reviewing a branch. You alt-tab to check whether the reviewer's done, hand-paste
@@ -27,15 +27,18 @@ every message with `sqlite3`, and uninstall is one script.
 - **It is:** local inter-agent messaging for CLI tools sharing one tmux server — one
   mailbox per pane, a single writer per mailbox (no paste-races), delivery you can
   watch happen.
-- **It isn't:** a networked message queue, a multi-host bus, a chat app, or a job
-  scheduler. It moves a message from one pane into another, safely, while a human
-  might also be using that pane.
+- **It isn't:** a message bus or pub/sub system — there are no topics and no
+  broadcast; every message is addressed to one named recipient. Nor a networked
+  queue, a multi-host fabric, a chat app, or a job scheduler. It moves a message from
+  one pane into another, safely, while a human might also be using that pane. *(Want
+  topic-subscription fan-out? That's a different design — see
+  [tmux-bus](https://git.frankenbit.de/frankenbit/tmux-bus), not this project.)*
 
 > **Why the name has two parts.** `tmux-tell` is the substrate — the tmux pane
 > registry, the paste-and-Enter delivery, the per-pane state detection. The
 > `tmux-tell-claude` binary is that substrate plus the adapter for the CLI tool in the
 > pane — Claude Code. A sibling `tmux-tell-codex` binary adapts the OpenAI Codex CLI the
-> same way; both are full paste-and-Enter peers on the one bus (the observe-gate reads
+> same way; both are full paste-and-Enter peers sharing one mailbox store (the observe-gate reads
 > each adapter's prompt sentinel via its `PaneProfile` — #322/#360). The repo name
 > reflects what the substrate *is*, not which tool runs on top.
 
@@ -56,7 +59,7 @@ each recipient has exactly one mailman, the usual tmux concurrency hazards (past
 races, idle-check TOCTOU, turn concatenation) collapse to a single-writer invariant.
 
 Not every recipient has a pane to push into. An agent registered `mailbox-only` (e.g.
-your own shell) is a bus *destination* without an always-on session — the mailman never
+your own shell) is a *destination* without an always-on session — the mailman never
 pastes; its queue is drained on demand with `tmux-tell-claude inbox`, `inbox --ack`, or
 the interactive `inbox --watch` TUI (live list + cursor-nav + one-key ack). A third mode,
 `hook-context`, delivers via Claude Code's lifecycle hooks — the recipient's session pulls
@@ -80,7 +83,7 @@ into `~/.config/systemd/user/`. The DB (`messages.db`) lives under your user-hom
 (`$XDG_DATA_HOME/tmux-tell` or `~/.local/share/tmux-tell/`) and is created lazily on
 first use — no install-time data dir to create or chown. Pick the adapter at install
 time — `--adapter=claude` (the default) or `--adapter=codex`; both can coexist on one
-bus.
+host.
 
 Make sure `~/.local/bin` is on your `PATH` (most distros add it automatically when it
 exists), then — to keep the mailman daemons running across logout/reboot:
@@ -91,7 +94,7 @@ systemctl --user daemon-reload        # so the mailman unit is visible
 ```
 
 The install itself never needs root — if `enable-linger` can't be set without privilege
-on your system, the bus still works for the current session; re-run it once with `sudo`
+on your system, tmux-tell still works for the current session; re-run it once with `sudo`
 when you want boot-persistence (`sudo loginctl enable-linger "$USER"`).
 
 ### No root by default — and `--system` when you want it
@@ -123,7 +126,7 @@ From two panes in the same tmux session:
 ```bash
 tmux-tell-claude register --name alice     # in pane A — registers + starts alice's mailman
 tmux-tell-claude register --name bob       # in pane B
-tmux-tell-claude send --to bob "first message across the bus"
+tmux-tell-claude send --to bob "your branch is ready to review"
 ```
 
 `bob`'s pane shows:
@@ -131,13 +134,13 @@ tmux-tell-claude send --to bob "first message across the bus"
 ```
 [Alice · 14:02:09 · id 7f3a]
 
-first message across the bus
+your branch is ready to review
 ```
 
 That's the whole loop. `send` returns
 `{"ok":true,"id":"7f3a","queued":1,"recipient":{…},"receipt":{…}}` on success
 (or `{"ok":false,"error":"…"}` with a sysexits-style exit code on failure).
-`ok:true` means the bus accepted/persisted the row; the `receipt` block names
+`ok:true` means tmux-tell accepted and persisted the row; the `receipt` block names
 that enqueue layer separately from dispatch and paste-confirmation evidence.
 Use `--wait-for-delivered` when the send response itself must include delivery
 and paste-confirmation status.
