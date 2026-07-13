@@ -41,7 +41,7 @@ This is a verbatim substring of the `docs/why.md` hook — the line the operator
 *hand-pastes* in the pain scene ("You copy a line out of one pane and hand-paste
 *"heads up — the API changed, look at what I just pushed"* into another"). The
 demo body drops the "heads up — " lead and keeps the rest byte-for-byte, so it
-shows that *exact* message delivered **safely by the bus** instead of by hand.
+shows that *exact* message delivered **safely, agent-to-agent** instead of by hand.
 That through-line — the problem in prose, the solution in motion, same message —
 is the point. It parses in under 3 seconds, no project context or SHA-decoding
 needed.

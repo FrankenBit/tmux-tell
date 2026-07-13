@@ -1,6 +1,6 @@
 # Why tmux-tell?
 
-## You're already running a message bus. It's you.
+## Your agents already have a coordination layer. It's you.
 
 You've got a few agents open in tmux. One's mid-refactor. One's writing tests
 against an interface the first one hasn't finished. A third is reviewing a branch.
@@ -17,7 +17,8 @@ slowest, most forgettable part of your own setup.
 
 ## What if they could just tell each other?
 
-tmux-tell is a small message bus for CLI agents running in tmux. Each pane gets a
+tmux-tell is directed messaging for CLI agents running in tmux — each message is
+addressed to one named recipient. No topics, no broadcast. Each pane gets a
 mailbox. An agent — or you — sends a message, and it lands in the target pane as
 if it were typed there:
 
@@ -84,7 +85,7 @@ tmux-tell is `send-keys` with the sharp edges filed off:
   knows it landed, the recipient can grep the history.
 - **You address by name, not pane.** Panes get renumbered; `bob` stays `bob`.
 
-`send-keys` is the primitive. tmux-tell is the bus you'd end up building on top of it
+`send-keys` is the primitive. tmux-tell is what you'd end up building on top of it
 anyway — the waiting, the serialization, the delivery record, the names.
 
 ### …a single session with subagents?
@@ -125,10 +126,10 @@ git clone https://github.com/FrankenBit/tmux-tell && cd tmux-tell
 make build && ./install.sh               # user-space install (no root); --system for /usr/local
 systemctl --user daemon-reload           # so the mailman unit is visible
 
-# register two panes (one command in each), then send across the bus
+# register two panes (one command in each), then send from one to the other
 tmux-tell-claude register --name alice         # in pane A
 tmux-tell-claude register --name bob           # in pane B
-tmux-tell-claude send --to bob "first message across the bus"
+tmux-tell-claude send --to bob "first message, addressed to bob"
 ```
 
 That's the whole pitch: stop hand-carrying status between your agents. Let them talk.
