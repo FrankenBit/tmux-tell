@@ -1764,7 +1764,7 @@ allowlist of specific (sender, recipient) pairs.
 
 | command | self | peer | note |
 |---|---|---|---|
-| `compact` | ✓ | ✗ | self-only — peers can't truncate your context (the bus verb for `/compact`; see the [glossary](glossary.md#compact)) |
+| `compact` | ✓ | ✗ | self-only — peers can't truncate your context (the control verb for `/compact`; see the [glossary](glossary.md#compact)) |
 | `rename`  | ✓ | ✓ | useful for `<Project> #<Issue>` tab automation |
 | `cost`    | ✓ | ✗ | self-only — output goes to the recipient |
 | `help`    | ✓ | ✓ | harmless either way |

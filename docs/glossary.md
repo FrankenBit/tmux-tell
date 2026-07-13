@@ -15,22 +15,30 @@ Entries are alphabetical.
 
 ## compact
 
-**`compact` is the bus verb for the Claude Code `/compact` mechanism** — an agent
+**`compact` is the control verb for the Claude Code `/compact` mechanism** — an agent
 asking its own session to consolidate its context at a quiescent point. Invoked
 via `control(command=compact)` (MCP) or `tmux-tell-claude control --command compact`
 (CLI).
 
-### Bus verb vs CLI primitive — keep them distinct
+> **The substrate spells it three ways, and they are all this one thing.** The Go
+> type is `control.Command` (`internal/control/control.go`), the MCP parameter is
+> `command=`, and the deprecation log key is `deprecated_control_macro`. This
+> glossary says **control verb** and not "command" on purpose: the thing a control
+> verb must stay distinct from is a slash-**command** (next section), and naming
+> both sides "command" would collapse precisely the distinction that section
+> exists to draw.
 
-`compact` (the bus verb) is a **whitelist key the control surface resolves**; it
+### Control verb vs CLI primitive — keep them distinct
+
+`compact` (the control verb) is a **whitelist key the control surface resolves**; it
 is not the same layer as `/compact` (the Claude Code slash-command that lands in
 the pane). They share a name deliberately — the verb equals the primitive it emits,
 which is exactly the substrate-honesty #646 was after — but they live at different
 layers. Everything keyed on the *emitted primitive* — the mailman's
 `--post-compact-pause` settle window, the `isCompactControl` detection, the
 `post-compaction self-handoff` deferral (`deliver_after=resume`) — keys on the
-literal `/compact` text and is untouched by any bus-verb rename. When you read
-"`compact`" as a control verb think *the bus verb an agent calls*; when you read
+literal `/compact` text and is untouched by any control-verb rename. When you read
+"`compact`" think *the control verb an agent calls*; when you read
 "/compact" think *the slash-command that lands in the pane*.
 
 ### Deprecated `sleep` alias
@@ -56,7 +64,7 @@ compact *its own* context, but no agent can compact another's. Truncating a peer
 working context mid-task is not a thing one agent gets to decide for another. There
 is deliberately **no peer-target form and no `request_compact` primitive** — an
 agent that thinks a peer should compact just *offers* the suggestion in a normal
-bus message and lets that peer decide when its own context is at a quiescent point.
+message and lets that peer decide when its own context is at a quiescent point.
 
 ### Not the same as `pause` (different mechanism, different layer)
 

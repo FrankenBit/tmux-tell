@@ -15,7 +15,7 @@ func TestCanonicalize_DeprecatedAliases(t *testing.T) {
 		"mcp-disable-tmux-msg":  "mcp-disable-tmux-tell",
 		"mcp-enable-tmux-msg":   "mcp-enable-tmux-tell",
 		"/MCP-Restart-Tmux-Msg": "mcp-restart-tmux-tell", // trim/slash/lowercase too
-		"sleep":                 "compact",               // #646 sleep→compact bus-verb rename
+		"sleep":                 "compact",               // #646 sleep→compact control-verb rename
 		"/SLEEP":                "compact",               // trim/slash/lowercase on the new alias too
 	}
 	for in, want := range aliases {

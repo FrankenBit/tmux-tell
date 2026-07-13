@@ -68,7 +68,7 @@ func codexProfile() cli.Profile {
 		// slash-command surface captured in #420 (2026-06-14) — `/compact`,
 		// `/rename`, `/clear`, `/help` EXIST; `/cost` (use `/status`) and `/mcp …`
 		// are MISSING. `/compact` is additionally test-load-bearing (codex chambers
-		// compact via the bus `compact` verb → `/compact`). Per the ship-no-guessed-
+		// compact via the `compact` control verb → `/compact`). Per the ship-no-guessed-
 		// literals discipline (#504): an over-broad inclusion would re-open the
 		// #419 false-paste pollution, so the set is grounded in that operator
 		// characterization rather than assumed.
