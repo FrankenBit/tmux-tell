@@ -1,6 +1,6 @@
 # Diagnostic playbook: when a agent says "I missed a message"
 
-When a agent reports a missing bus message, the instinct is to assume
+When a agent reports a missing message, the instinct is to assume
 tmux-tell dropped or corrupted it. The existing bug catalog reflects
 that — [#59](https://git.frankenbit.de/frankenbit/tmux-tell/issues/59)
 covers Enter-injection corruption when the receiver is at a Claude prompt,
@@ -11,14 +11,14 @@ But the 2026-06-03 incident that surfaced this playbook showed a third
 category: **sender-side gaps**, where the agent's own flow skipped the
 `tmux-tell.send` call entirely. No DB row, no mailman delivery attempt,
 no failure trace. The external action (a Forgejo PR filing) had happened
-cleanly; the corresponding bus notification simply was never inserted.
+cleanly; the corresponding notification simply was never inserted.
 
-A "bus is broken" narrative was forwarded as recovered substrate before
+A "tmux-tell is broken" narrative was forwarded as recovered substrate before
 the actual DB was checked. The recovery path took the wrong shape.
 
 This playbook captures the triage so the **next** time a agent reports
-a missing message, the answer to "did the bus drop it?" lands in under
-five minutes instead of seeding a bus-recovery investigation.
+a missing message, the answer to "did tmux-tell drop it?" lands in under
+five minutes instead of seeding a substrate-recovery investigation.
 
 ## Discipline framing
 
@@ -39,16 +39,16 @@ Walk three checks in order. **Stop and act** the moment the first one
 identifies the gap; don't continue to the next layer.
 
 > **Quick pre-check (#144).** Before the deep triage, confirm the
-> receiver is even reachable on the bus: `tmux-tell-claude ping <receiver>`.
+> receiver is even reachable: `tmux-tell-claude ping <receiver>`.
 > It probes daemon-up + pane-live without pasting into the pane. A
 > `failed`/`timeout` here means the receiver's mailman is down or its
 > pane is gone — fix that first; the outbox triage below assumes a
-> live bus. A `delivered` here rules reachability out and points the
+> reachable receiver. A `delivered` here rules reachability out and points the
 > investigation at the sender-side / receiver-processing layers.
 
 ### 1. Did the sender actually send?
 
-The SQLite store is the authoritative record of what reached the bus.
+The SQLite store is the authoritative record of what reached tmux-tell.
 Replace the placeholders with the alleged sender and a tight time
 window. Bounds are UTC (tmux-tell stores ISO UTC timestamps);
 convert from local if needed.
@@ -76,15 +76,15 @@ Decision tree on the result:
 
 | Result                                        | What it means                                                                       | Next action                                                                                                                       |
 |-----------------------------------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
-| **No row**                                    | Sender never reached the bus. Agent-side flow gap.                                | **Stop investigating tmux-tell.** Probe the sender agent's state at the alleged send time.                                  |
-| **`state = 'delivered'`**                     | Bus did its job.                                                                    | Cross-check the receiver pane's state at `delivered_at`. The receiver may not have processed it (UI race, popup collision #59).   |
-| **`state = 'failed'`**                        | Bus tried and failed cleanly.                                                       | Check the `error` column. The `delivered_in_input_box` notification path should have fired — if it didn't, that's a separate gap.   |
+| **No row**                                    | Sender never reached tmux-tell. Agent-side flow gap.                                | **Stop investigating tmux-tell.** Probe the sender agent's state at the alleged send time.                                  |
+| **`state = 'delivered'`**                     | tmux-tell did its job.                                                              | Cross-check the receiver pane's state at `delivered_at`. The receiver may not have processed it (UI race, popup collision #59).   |
+| **`state = 'failed'`**                        | tmux-tell tried and failed cleanly.                                                 | Check the `error` column. The `delivered_in_input_box` notification path should have fired — if it didn't, that's a separate gap.   |
 | **`state = 'queued'` / `'delivering'` stale** | Genuine delivery stall.                                                             | File a fresh bug citing the row's `public_id` + the receiver's mailman journal excerpt from §2.                                   |
 
 ### 2. Did the receiver's mailman try to deliver?
 
 If §1 found a row, §2 confirms whether the mailman daemon attempted
-delivery. The mailman log is the authoritative record of what the bus
+delivery. The mailman log is the authoritative record of what tmux-tell
 tried to put on the receiver's pane.
 
 ```bash
@@ -108,7 +108,7 @@ public_id from §1.
   with the receiver pane's state.
 - **Delivering, no delivered, no WARN**: mailman is mid-delivery or
   stalled. Capture `systemctl --user status tmux-tell-claude-mailman@<receiver>`
-  + the `delivered_at` (or lack of it) in the DB row, file as a bus
+  + the `delivered_at` (or lack of it) in the DB row, file as a delivery
   stall.
 - **No `delivering` line at all**: row exists in the DB but the mailman
   never picked it up. Daemon may not have been running. Capture
@@ -121,9 +121,9 @@ filing, a BookStack page update, a deploy, a Surveyor review), check
 the external system in the same window.
 
 The 2026-06-03 incident's key signal: Pilot's PR #305 was filed on
-Forgejo at 15:57 local, but Pilot's last bus message was at 15:23 local
+Forgejo at 15:57 local, but Pilot's last message was at 15:23 local
 — the agent had gone silent ~34 minutes *before* the external action.
-The PR existed; the corresponding bus notification simply hadn't been
+The PR existed; the corresponding notification simply hadn't been
 fired.
 
 Common cross-checks:
@@ -137,9 +137,9 @@ Common cross-checks:
 
 Outcomes:
 
-- **External action at alleged time, no bus message**: gap in the
+- **External action at alleged time, no message**: gap in the
   agent's flow (the post-action notification step was skipped or
-  unreachable from where the agent landed). Not a bus problem.
+  unreachable from where the agent landed). Not a tmux-tell problem.
 - **External action at a *different* time than the operator
   remembers**: gap in the operator's mental model. Easier to recover
   from — verify the actual time, re-align the narrative.
@@ -153,7 +153,7 @@ row + the journal. When the failure is *reproducible* — you can trigger the
 send again — skip the reconstruction and watch it live:
 
 ```bash
-# all bus traffic, live (Ctrl-C to stop)
+# all message traffic, live (Ctrl-C to stop)
 tmux-tell-claude tail
 
 # narrow to the pair you suspect, then re-trigger the send
@@ -173,9 +173,9 @@ history before going live; `--format json` pipes into `jq`. It's a read-only
 poll over the SQLite store (rowid-polling, WAL-safe), so it never perturbs
 delivery — run it alongside a live repro freely.
 
-## When this playbook DOES escalate to "bus-side"
+## When this playbook DOES escalate to "substrate-side"
 
-The bus IS the failure point when:
+tmux-tell IS the failure point when:
 
 - §1 returns a row with `state` stuck in `queued` or `delivering`
   significantly past `created_at`, AND §2 shows the mailman is healthy
@@ -186,7 +186,7 @@ The bus IS the failure point when:
   UI consumed it as something else — sibling failure mode to #59)
 - §1 returns a row with `state = 'failed'` AND the `error` column says
   something tmux-tell-specific (e.g., `can't find pane`, drift
-  unrecoverable) — these are real bus-side failure modes worth filing
+  unrecoverable) — these are real substrate-side failure modes worth filing
 
 In each case, file with the `public_id`, the journal excerpt, and the
 operator's recollection of the alleged send time so the report is
@@ -210,7 +210,7 @@ When a `tmux-tell-claude send` command reports `delivery: state=failed` and the
 mailman log shows
 `WARN drift_detected_unrecoverable id=… agent=… registered_pane=… runs=… — discover couldn't find <name> anywhere`,
 the substrate's safety machinery is working: the registered agent name doesn't
-match any reachable pane's self-declared title, so the bus refuses to paste
+match any reachable pane's self-declared title, so tmux-tell refuses to paste
 rather than risk delivering to the wrong pane.
 
 This is a **real safety event**, not a bug. Drift detection treats
@@ -315,7 +315,7 @@ doesn't touch them — they keep their pre-deploy open file handle.
 but the recipient's mailman sees `queue_depth = 0` (and the message never
 arrives). Both are correct *within their own DB* — the sender's MCP is writing
 to an orphaned inode no mailman reads. Forgejo/other surfaces look fine; only
-the bus-side delivery is lost. Pre-#348, diagnosing this meant `/proc/PID/exe`
+the substrate-side delivery is lost. Pre-#348, diagnosing this meant `/proc/PID/exe`
 archeology + `pgrep -af tmux-tell-claude` + `sqlite3` on the canonical path.
 
 **Triage primitive — `tmux-tell-claude doctor`.** One command walks every live
@@ -435,7 +435,7 @@ the pane.
 - [#63](https://git.frankenbit.de/frankenbit/tmux-tell/issues/63)
   — mid-typing collision
 - [`failure-modes.md`](./failure-modes.md) §3 — observable diagnostics
-  scoped to bus-side failure modes
+  scoped to substrate-side failure modes
 - [`README.md`](../README.md) §"Diagnosing a failed or unverified
   message" — sibling recipe for the case where step §1 returns a
   `failed` row

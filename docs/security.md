@@ -6,7 +6,7 @@
 > #35 closes.
 >
 > Surveyor's three cross-project review rounds (the original
-> #28/#29/#30/#31 series on the message bus, plus the v0.2.1
+> #28/#29/#30/#31 series on tmux-tell, plus the v0.2.1
 > Q(a)/Q(b) pass) carry most of the structural framing this doc
 > makes explicit; the response commits — `20d7c33`, `5178a81`,
 > `3e16ba2`, `4c6171f` — are the durable artifacts of those rounds.
@@ -15,8 +15,8 @@
 
 tmux-tell is designed for a **single-operator homelab** trust
 model: one human (the operator) has shell access to one host
-(alcatraz). Anything that has shell access is fully trusted. The
-bus enforces caps, scope rules, and atomicity for the operator's
+(alcatraz). Anything that has shell access is fully trusted.
+tmux-tell enforces caps, scope rules, and atomicity for the operator's
 benefit (catching their own bugs, preventing prompt-injected agents
 from cascading damage); it does NOT authenticate identity, defend
 against external attackers, or attempt cryptographic integrity.
@@ -27,14 +27,14 @@ decision marked **load-bearing** in Section 3.
 
 Mapped against the code as of v0.2.1.
 
-### 1.1 Operator ↔ Bus
+### 1.1 Operator ↔ tmux-tell
 
 ```
 ┌───────────┐  shell access (sudo, file I/O, systemd)  ┌──────────────┐
-│ Operator  │ ───────────────────────────────────────► │     Bus      │
+│ Operator  │ ───────────────────────────────────────► │  tmux-tell   │
 │           │                                          │ (mailmen +   │
 │           │ ◄─────────────────────────────────────── │  store +     │
-└───────────┘  journalctl, sqlite3, tmux-tell-claude CLI     │  MCP server) │
+└───────────┘  journalctl, sqlite3, tmux-tell-claude   │  MCP server) │
                                                        └──────────────┘
 ```
 
@@ -42,24 +42,24 @@ Mapped against the code as of v0.2.1.
   includes direct INSERT into `messages.db`, killing/restarting
   mailmen, editing whitelist source code, rewriting agent
   registrations.
-- **What's enforced**: nothing on this boundary. The bus has no
+- **What's enforced**: nothing on this boundary. tmux-tell has no
   authority over the operator.
 - **What would break the model**: operator account compromise (SSH
   key theft, malware on the operator's workstation). Out of scope —
   see §2.
 
-### 1.2 Bus ↔ Agents (Claude Code sessions in tmux panes)
+### 1.2 tmux-tell ↔ Agents (Claude Code sessions in tmux panes)
 
 ```
 ┌──────────────┐  MCP stdio / tmux-tell-claude CLI  ┌────────────────────┐
-│   Bus        │ ───────────────────────────► │  Agent (Claude     │
+│   tmux-tell  │ ───────────────────────────► │  Agent (Claude     │
 │              │                              │  Code session)     │
 │              │ ◄─────────────────────────── │  in tmux pane      │
 └──────────────┘  send-keys / paste-buffer    └────────────────────┘
 ```
 
 - **What's trusted**: the agent's MCP child process inherits
-  `$TMUX_PANE` from tmux, which the bus uses for identity
+  `$TMUX_PANE` from tmux, which tmux-tell uses for identity
   resolution.
 - **What's enforced**:
   - Identity precedence: explicit override (`--from`,
@@ -78,7 +78,7 @@ Mapped against the code as of v0.2.1.
 ### 1.3 Agent ↔ Agent (peer messages + peer control)
 
 ```
-┌──────────┐                 Bus                  ┌──────────┐
+┌──────────┐              tmux-tell               ┌──────────┐
 │ Sender   │ ───► tmux-tell.send ─► mailman ─────► │ Receiver │
 │ Agent    │                                      │ Agent    │
 │          │ ───► tmux-tell.control (peer-scope) ─►│          │
@@ -95,14 +95,14 @@ Mapped against the code as of v0.2.1.
     macro synthesises a disable+enable pair atomically (#28). Raw
     `mcp-disable-tmux-tell` is self-only specifically to prevent a
     prompt-injected peer from denying-of-service another agent's
-    bus connection.
+    MCP connection.
   - Silent-drift detection (#37): before delivery, the mailman
     confirms the registered pane is still running the expected
     agent's `--resume` value. Mismatch → reroute (recoverable) OR
     `MarkFailed` (default since v0.2.1 per the autonomous-receiver
     threat model articulated in Surveyor's Q(b) review).
 - **What's trusted**: the recipient agent's prompt-injection
-  resistance. The bus passes message bodies through unchanged; if
+  resistance. tmux-tell passes message bodies through unchanged; if
   the body contains an instruction the recipient acts on, that's a
   recipient-side problem.
 
@@ -139,7 +139,7 @@ single-operator homelab deployment on alcatraz.
 
 ### 2.1 Not in scope
 
-- **External network attackers.** The bus binds to localhost +
+- **External network attackers.** tmux-tell binds to localhost +
   unix sockets; tmux is host-local; SQLite is a file. Network
   reach requires shell access first.
 - **Curious siblings / household members.** Single operator;
@@ -147,7 +147,7 @@ single-operator homelab deployment on alcatraz.
 - **Supply-chain attacks on Go modules.** Out of scope at this
   scale; mitigated by `go.sum` pinning but not actively defended.
 - **Side-channel attacks** (timing, cache, etc.). Not relevant for
-  a homelab message bus.
+  a homelab message substrate.
 
 ### 2.2 In scope
 
@@ -171,7 +171,7 @@ single-operator homelab deployment on alcatraz.
   considering wider deployment must revisit.
 - **No body content scanning.** A compromised agent CAN send
   arbitrary message bodies. The recipient's prompt-injection
-  resistance is the boundary, not the bus.
+  resistance is the boundary, not tmux-tell.
 - **No rate limiting beyond the 5/2 caps.** A compromised agent
   could repeatedly send-then-wait-for-delivery as a slow trickle.
   Caps prevent burst; nothing prevents sustained low-rate noise.
@@ -186,7 +186,7 @@ single-operator homelab deployment on alcatraz.
 
 For each design choice that's safe ONLY under the single-operator
 homelab trust model, name it explicitly. Surveyor's cross-project
-review threads (on the message bus) plus Admin's response commits
+review threads (conducted over tmux-tell) plus Admin's response commits
 cited in §6 are the audit trail; this section makes them load-bearing
 in one place.
 
@@ -235,7 +235,7 @@ in one place.
   `~/.local/share/tmux-tell/messages.db`), not the former system-global
   `/var/lib/tmux-msg/`. This makes the substrate's *storage* trust
   boundary exactly congruent with the *identity* model above: both are
-  scoped to the operator's UID. tmux is per-user by design, and the bus
+  scoped to the operator's UID. tmux is per-user by design, and tmux-tell
   now matches — the DB is readable/writable only by the operator's UID
   by virtue of its location, with no install-time chown to align
   ownership and no shared-space path for a second UID to reach. A
@@ -274,7 +274,7 @@ in one place.
 
 - **Code**: systemd template `tmux-tell-claude-mailman@.service`; one
   instance per agent.
-- **Trusted**: systemd ensures exactly-one-instance; the bus
+- **Trusted**: systemd ensures exactly-one-instance; tmux-tell
   doesn't enforce single-writer at the store level.
 - **What would break it**: running two mailmen for the same agent
   manually; a buggy systemd unit that allows multiple instances.
@@ -379,6 +379,6 @@ and gets updated in lockstep with code).
 | Term                     | Meaning                                                                            |
 |--------------------------|------------------------------------------------------------------------------------|
 | Trust model              | The set of assumptions the design relies on (single operator, shell-access trust). |
-| Trust boundary           | An interface across which trust changes (operator vs bus, handler vs store, etc.). |
+| Trust boundary           | An interface across which trust changes (operator vs substrate, handler vs store, etc.). |
 | Load-bearing assumption  | A design decision that's only correct under the trust model. Naming them makes the cost of trust-model change explicit. |
 | Sentinel                 | A value that signals a special code path rather than being interpreted literally. The `mcp-restart-tmux-tell` Text field is one. |
