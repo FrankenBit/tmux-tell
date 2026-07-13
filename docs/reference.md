@@ -2,7 +2,7 @@
 
 The full operator manual: every command, flag, and edge-case semantic. The
 [README](../README.md) is the landing page (pitch → install → first message); this
-is the reference you reach for once you're running the bus. For the observe-gate's
+is the reference you reach for once you're running tmux-tell. For the observe-gate's
 decision matrix and tuning knobs see [`observe-gate.md`](observe-gate.md); for
 missing-message triage see [`diagnostic-playbook.md`](diagnostic-playbook.md).
 
@@ -45,7 +45,7 @@ confabulation is still verifying own dispatch claims against actual tool-call
 results; the receipt block is the substrate-side complement.
 
 When the send carries `--reply-to <id>`, the response adds a **`thread_freshness`**
-block — the crossed-message guard. Async bus traffic means replies cross in
+block — the crossed-message guard. Async message traffic means replies cross in
 flight: you `reply_to` a thread-state that an inbound you haven't read may already have
 superseded. The block reports `{stale, newer_in_thread[], you_replied_to,
 latest_in_thread}`, where `newer_in_thread` lists messages in the reply chain that are
@@ -63,7 +63,7 @@ struct contract that later disposition features extend.
 
 To confirm a freshly-registered agent is reachable *without* sending it a message,
 `tmux-tell-claude ping bob` probes daemon-up + pane-live (no pane paste) — see
-[Reachability probe](#commands) under Operating the bus.
+[Reachability probe](#commands).
 
 ## Message rendering
 
@@ -177,7 +177,7 @@ Each registered agent has a `delivery_mode`:
 | **`mailbox-only`** | does not paste (no pane to push into); messages stay queued | the recipient **polls** `tmux-tell-claude inbox` / `tmux-tell.inbox` to read them |
 | **`hook-context`** | does not paste; messages stay queued for the recipient's own hook to pull | the recipient's Claude session **injects** pending messages as `additionalContext` on its next turn, via a SessionStart/UserPromptSubmit hook (#249) |
 
-`mailbox-only` makes a plain shell a bus *destination* without an always-on agent
+`mailbox-only` makes a plain shell a message *destination* without an always-on agent
 session — e.g. your own shell: agents `send to=you` and you read when you choose. Set
 it via MCP (`register … delivery_mode=mailbox-only`), CLI (`register --name you
 --delivery-mode mailbox-only`), or a per-agent TOML block. Precedence (highest wins):
@@ -190,7 +190,7 @@ it via MCP (`register … delivery_mode=mailbox-only`), CLI (`register --name yo
 default is correct when a chamber registers *itself* — `$TMUX_PANE` is that chamber's own
 pane. It is wrong when one chamber registers another: QM running
 `register --name lookout --delivery-mode mailbox-only --force` from pane `%7` would
-silently overwrite Lookout's stored `pane_id=%8` with `%7`, corrupting the bus identity.
+silently overwrite Lookout's stored `pane_id=%8` with `%7`, corrupting the registered identity.
 
 Two flags protect against this:
 
@@ -352,7 +352,7 @@ Pick the adapter at install time (both can coexist):
 
 Each adapter gets its own mailman unit template (`tmux-tell-<adapter>-mailman@.service`)
 and shares the one message DB, so a `claude` agent and a `codex` agent register/send/
-receive on the same bus.
+receive through the same substrate.
 
 ### Claude Code — `tmux-tell-claude`
 
@@ -568,7 +568,7 @@ its adapter shows the banner and the chamber sits *stuck mid-turn* — the inter
 not resume on its own (neither Claude Code nor codex auto-retries today), so historically the
 operator had to type `continue` by hand. The mailman now does this automatically. It rides the
 **same #448 self-observe probe** that publishes `observed_state` (and that #621's metabolism
-auto-clear rides) — so it fires **regardless of whether a bus message is queued**, resuming the
+auto-clear rides) — so it fires **regardless of whether a message is queued**, resuming the
 chamber's *own* interrupted turn rather than only unblocking a pending delivery. The flow, per
 rate-limit episode:
 
@@ -681,10 +681,10 @@ doesn't inherit them.
 integration notes — Codex hook events with `additionalContext` support: `SessionStart`,
 `UserPromptSubmit`, `PostToolUse`.*
 
-## Bus host-locality
+## Host-locality
 
-The bus is **host-local**: one SQLite DB per host, per user (#308). There is no
-substrate-default cross-host bus. The MCP server and the DB share a machine;
+tmux-tell is **host-local**: one SQLite DB per host, per user (#308). There is no
+substrate-default cross-host messaging. The MCP server and the DB share a machine;
 the mailmen and the panes they paste into share a machine. Substrate scope is
 exactly the operator's tmux server on that host — see
 [`security.md` §3.2](./security.md) for the load-bearing identity invariant
@@ -705,11 +705,11 @@ Within that host, the substrate talks to exactly **one** tmux server: the
 **default socket**. Every tmux call the binary makes is a bare `tmux …` with no
 `-L`/`-S` flag (`internal/tmuxio/{panes,clients,deliver}.go`), so `register`,
 `discover`, the pane-status probe, and delivery all see only panes on the
-default socket. Panes on a **`-L <name>`** socket are invisible to the bus: a
+default socket. Panes on a **`-L <name>`** socket are invisible to tmux-tell: a
 mailman can't find them (it spawn-fails or loops), and `discover` won't register
 them.
 
-To run the bus on an **isolated** socket anyway — a sandbox, a demo rig, CI —
+To run tmux-tell on an **isolated** socket anyway — a sandbox, a demo rig, CI —
 set **`TMUX_TMPDIR`**, not `-L`. Bare `tmux` honors `TMUX_TMPDIR` for its
 default-socket directory, so the whole stack (server, mailmen, `discover`,
 delivery) lands on the isolated socket together. `-L`/`-S` do **not** work for
@@ -717,12 +717,12 @@ this; only `TMUX_TMPDIR` does.
 
 ### SSH'd panes are one-way carriers
 
-When a tmux pane runs an SSH session to a remote host, the bus sees it as a
+When a tmux pane runs an SSH session to a remote host, tmux-tell sees it as a
 regular pane: the mailman pastes bytes into the pane, SSH transports those
 bytes to the remote-end, the remote process receives them as terminal input.
-**This is bus-on-host → SSH-transport → remote-input — not bus-to-bus
-communication.** The return path (remote process trying to participate in the
-bus on the alcatraz side) is **not** substrate-default behavior.
+**This is local-delivery → SSH-transport → remote-input — not bus-to-bus
+communication.** The return path (remote process trying to participate in
+tmux-tell on the alcatraz side) is **not** substrate-default behavior.
 
 The framing matters: an operator encountering an SSH'd pane in their tmux
 might assume the substrate offers cross-host messaging, expect a reply path,
@@ -737,20 +737,20 @@ design discussion).
 When a chamber's pane runs an SSH session, the operator has three
 substrate-honest choices:
 
-**Pattern A — Leave unregistered.** The bus doesn't try to deliver to the
+**Pattern A — Leave unregistered.** tmux-tell doesn't try to deliver to the
 pane; operator watches the pane manually and relays SSH'd content back to
-local bus chambers as needed. Cleanest separation; lowest substrate-coupling.
+local chambers as needed. Cleanest separation; lowest substrate-coupling.
 Best for short-lived remote experiments.
 
-**Pattern B — Register `mailbox-only`.** Local bus chambers can `send` to the
+**Pattern B — Register `mailbox-only`.** Local chambers can `send` to the
 remote pane; messages queue but the substrate doesn't paste them. Operator
 reads them via `inbox --watch` or similar and relays replies manually. Good
 for operator-mediated bidirectional exchange where the operator is the
-human-in-the-loop translator between local-bus and remote-terminal.
+human-in-the-loop translator between local delivery and remote terminal.
 
 **Pattern C — Register `paste-and-enter`.** Local mailman pastes bytes
 through the SSH session; one-way carriage to the remote chamber's input
-stream. The remote-end can't participate in the local bus by default — for
+stream. The remote-end can't participate in local messaging by default — for
 that, see [#310](https://git.frankenbit.de/frankenbit/tmux-tell/issues/310)
 (Remote MCP mode, opt-in).
 
@@ -767,15 +767,15 @@ that locked in this section's framing:
 ### The Remote MCP mode exception
 
 A separate opt-in mode where the remote-end's MCP routes its tool calls back
-to the bus via reverse-SSH tunnel is tracked at
+to tmux-tell via reverse-SSH tunnel is tracked at
 [#310](https://git.frankenbit.de/frankenbit/tmux-tell/issues/310).
-**Explicitly not "cross-host bus"** — the bus stays host-local; the MCP
+**Explicitly not "cross-host bus"** — tmux-tell stays host-local; the MCP
 becomes a remote-router via operator-configured tunnel. Remote MCP mode is
 *not* default substrate behavior — it requires explicit operator configuration
 (SSH tunnel setup, reverse-port allocation, MCP-route override).
 
 Operators who want bidirectional participation from a remote chamber should
-treat Remote MCP mode as the canonical path, *not* expect the default bus to
+treat Remote MCP mode as the canonical path, *not* expect default delivery to
 extend across hosts.
 
 ## Verified vs unverified deliveries
@@ -826,7 +826,7 @@ tmux-tell-claude sent   [--since DUR] [--state STATE] [--to AGENT] [--awaiting-r
 tmux-tell-claude track  ID [--watch]                     # delivery state of one message
 tmux-tell-claude get    ID                               # fetch a processed message by id
 tmux-tell-claude status [--today]                        # paused state + queue depths per agent
-tmux-tell-claude stats  [--window all|7d|1h] [--agent X] [--pair]  # on-demand bus-traffic aggregates
+tmux-tell-claude stats  [--window all|7d|1h] [--agent X] [--pair]  # on-demand message-traffic aggregates
 tmux-tell-claude digest [--since today|week|24h] [--counterparty X]  # campaign-arc narrative summary
 tmux-tell-claude tail   [--from X] [--to Y] [--kind K] [--state S]   # live cross-chamber firehose
 tmux-tell-claude state  --agent AGENT                    # probe an agent's current activity
@@ -838,7 +838,7 @@ tmux-tell-claude log    --thread ID                      # a reply chain, flat-c
 tmux-tell-claude thread ID [--format tree|json]          # a reply chain, as a parent→child tree
 tmux-tell-claude stranded list|show|prune                # recover flushed operator paste snapshots
 tmux-tell-claude discover                                # re-derive agents.pane_id from tmux
-tmux-tell-claude register --name <agent> [--pane <id>] [--force]  # register a pane on the bus
+tmux-tell-claude register --name <agent> [--pane <id>] [--force]  # register a pane with tmux-tell
 tmux-tell-claude unregister --name <agent> [--purge-queue] [--force]  # remove agent + stop mailman (#289)
 tmux-tell-claude flag-operator "<body>"                  # signal this chamber needs operator attention (#224)
 tmux-tell-claude clear-operator-flag                     # clear this chamber's awaiting_operator flag
@@ -973,7 +973,7 @@ clearing it there would erase the signal the moment it's reported.)
 **Operator side.** `tmux-tell-claude agents` includes a `METABOLISM` column
 showing each chamber's self-report with its legend emoji ("-" when none).
 
-**Emoji legend** (composes with #620's bus-emoji conventions; the canonical
+**Emoji legend** (composes with #620's emoji conventions; the canonical
 single source is `store.MetabolismEmoji`, so a glyph swap touches one place):
 
 | state | emoji |
@@ -1038,11 +1038,11 @@ tmux-tell-claude set-auto-restart --name bosun off   # disarm
 
 **What counts as a shrink event.** Two triggers feed the one shared counter:
 
-- **Bus-delivered `/clear`** (the `control clear --for-task` primitive) — the
-  mailman observes it on delivery, no detection subsystem needed (the bus is the
-  source of truth). Counted inline in the delivery path.
+- **Substrate-delivered `/clear`** (the `control clear --for-task` primitive) — the
+  mailman observes it on delivery, no detection subsystem needed (the message store
+  is the source of truth). Counted inline in the delivery path.
 - **Self-run `/compact`** (auto or manual) — chamber-driven, so it is *not*
-  bus-delivered and can't be counted on delivery. Instead the chamber's
+  substrate-delivered and can't be counted on delivery. Instead the chamber's
   post-compaction hook records a signal and the mailman counts it on its
   self-observation pass (see the wiring below). Catches the unattended
   auto-compaction that accumulates heap over long uptimes.
@@ -1090,7 +1090,7 @@ out-of-pane wiring. A hook wired for an unregistered chamber fails loud rather
 than silently dropping the signal.
 
 **The respawn sequence** — fired when the counter reaches `N`, either inline
-right after a bus `/clear` settles to a stable idle, or on the self-observation
+right after a delivered `/clear` settles to a stable idle, or on the self-observation
 pass after a self-compact is counted:
 
 1. **Idle gate** — proceed only if the pane is idle *now*; never respawn under
@@ -1115,7 +1115,7 @@ pass after a self-compact is counted:
    is synchronous, nothing delivers to the dying process — the clear macro's
    follow-up `/rename` and any #227 deferred rows land on the *ready* new one.
 
-The scope fences (why this belongs in the bus at all) are ADR-0011's three-fence
+The scope fences (why this belongs in the substrate at all) are ADR-0011's three-fence
 test: the trigger is an in-substrate event (not a standalone `respawn` verb),
 the carriage work is already the mailman's, and there is deliberately no
 standalone restart lever.
@@ -1230,7 +1230,7 @@ propagation failure immediately visible.
 
 ## Moving the DB safely (#343)
 
-The bus DB at `~/.local/share/tmux-tell/messages.db` (or wherever `CLAUDE_MSG_DB`
+The message DB at `~/.local/share/tmux-tell/messages.db` (or wherever `CLAUDE_MSG_DB`
 points) is a SQLite database in **WAL mode**. The on-disk representation is
 actually three files:
 
@@ -1243,9 +1243,9 @@ messages.db-shm    ← shared-memory index for WAL access
 A plain `mv messages.db /new/location/` **leaves the `-wal` and `-shm`
 sidecars at the old path**. Mailmen restarted against `/new/location/messages.db`
 read the pre-checkpoint state, losing every write since the last automatic
-checkpoint (typically minutes-to-hours of bus history). This actually happened
+checkpoint (typically minutes-to-hours of message history). This actually happened
 during the v0.16.0 alcatraz deploy ([#343](https://git.frankenbit.de/frankenbit/tmux-tell/issues/343)
-provenance) — ~14 hours of bus messages stranded in an orphaned WAL.
+provenance) — ~14 hours of messages stranded in an orphaned WAL.
 
 **The substrate-honest deploy recipe** is checkpoint-then-move, with all
 mailmen stopped so no one is writing to the WAL while the move runs:
@@ -1311,7 +1311,7 @@ Without `refresh-all-mcps`, the substrate ends up in **two-DB split-brain**:
 chamber MCPs write to the ghost inode, mailmen read from the canonical path,
 neither side surfaces the divergence. This actually happened during the
 v0.16.0 alcatraz deploy ([#349](https://git.frankenbit.de/frankenbit/tmux-tell/issues/349)
-provenance) — 2+ hours of bus messages from one chamber stranded on a ghost
+provenance) — 2+ hours of messages from one chamber stranded on a ghost
 inode until the post-deploy investigation surfaced it.
 
 **Release-notes touching DB-path moves must mention the
@@ -1529,7 +1529,7 @@ tmux-tell-claude wait-for-reply "$ask_id" --timeout 60s   # blocks until bob rep
   block.
 
 The same three are MCP tools (`tmux-tell.ask` / `wait_for_reply` / `check_replies`).
-Implementation note: in tmux-tell's multi-process bus the reply is written by a
+Implementation note: in tmux-tell's multi-process design the reply is written by a
 *different* process than the one waiting, so `wait_for_reply` is a substrate-side
 **poll-backed** blocking seam (a literal sqlite `update_hook` only fires
 intra-connection); the blocking-call shape is the contract, the poll is an
@@ -1557,7 +1557,7 @@ Note: `ask` also sets `expects_reply=1` — the column is shared. `send --expect
 is the non-blocking form; `ask` is the blocking form that additionally waits for the
 reply via `wait_for_reply`.
 
-**Bus-traffic stats.** `tmux-tell-claude stats` is the in-terminal "show me the bus
+**Traffic stats.** `tmux-tell-claude stats` is the in-terminal "show me the traffic
 right now" surface — on-demand aggregates computed straight from the local
 `messages.db`, complementing the continuous observability stack that owns
 dashboard trends. The default reports a per-agent table (sent / received /
@@ -1588,7 +1588,7 @@ a heuristic, not ground truth: the substrate can't know if a conversation is
 the list. System chrome (`delivery_failure_notice`, `dedupe_notice`, `stranded_draft`, `ping`) is
 excluded from thread analysis.
 
-**Live tail.** `tmux-tell-claude tail` is the cross-chamber firehose — all bus traffic,
+**Live tail.** `tmux-tell-claude tail` is the cross-chamber firehose — all message traffic,
 live, filtered to what you care about. It's the view the per-mailman journals and
 single-message `track` couldn't give: when a bug spans two chambers, `tail --from X
 --to Y` shows the correlated stream in one terminal. New rows print as they're
@@ -1615,7 +1615,7 @@ vs ~0.7s per message) — the #449 post-deliver cooldown is load-bearing collisi
 protection that cannot be safely shrunk under the current classifier (codex false-idles
 mid-turn, [#590](https://git.frankenbit.de/frankenbit/tmux-tell/issues/590)). A deeper
 queue trades the *rejection* (message lost, sender re-sends) for *honest delay* (the
-message drains slowly) — the right trade for a bus. It does **not** speed codex delivery
+message drains slowly) — the right trade for a message substrate. It does **not** speed codex delivery
 up: that cadence work is the substrate busy-lease tracked separately as
 [#592](https://git.frankenbit.de/frankenbit/tmux-tell/issues/592) (the fix that would
 let the cooldown shrink). The floor is resolved at the single in-transaction
@@ -1635,7 +1635,7 @@ recovery is best-effort on big pastes.
 
 **When a message seems to go missing,** walk the sender-first triage in
 [`docs/diagnostic-playbook.md`](docs/diagnostic-playbook.md) — it starts from the
-SQLite store (did the send reach the bus at all?) before the receiver's mailman
+SQLite store (did the send reach the store at all?) before the receiver's mailman
 journal.
 
 ## Use from Claude Code (MCP): details
@@ -1857,10 +1857,10 @@ tmux-tell-claude unregister --name alcatraz --force --purge-queue
   the count. Pass `--force` / `force: true` to override. This prevents accidentally
   discarding mail that hasn't been delivered yet.
 - **`--purge-queue`** drops only `queued` messages addressed to the agent. Delivered and
-  failed audit rows (the bus's forensic history) are preserved regardless.
+  failed audit rows (the forensic history) are preserved regardless.
 - **Sender history.** Messages *sent by* the unregistered agent (where it was
   `from_agent`) stay in the `messages` table — `from_agent` doesn't reference a live
-  agents row. The bus history is forensic record, not live state.
+  agents row. The message history is forensic record, not live state.
 
 **MCP:** `tmux-tell.unregister({name, purge_queue?, force?})`
 
@@ -1881,14 +1881,14 @@ class).
 By default the MCP server and the message DB share a machine — a tool call writes
 to the local store. When you SSH from your local tmux into a Claude session on
 another host, that assumption breaks: the remote session's MCP server runs on the
-remote host, against a DB isolated from your bus. Delivery *into* the remote pane
-already works (the bus pastes over the SSH transport); the gap is the **return
+remote host, against a DB isolated from yours. Delivery *into* the remote pane
+already works (the mailman pastes over the SSH transport); the gap is the **return
 path** — the remote session sending back to your chambers.
 
 Remote MCP mode closes it. It's an **opt-in deviation** from the
 MCP-and-DB-share-a-machine default, gated on one env var: when
 `$TMUX_TELL_REMOTE_HOST` is set, the MCP server forwards *every* tool call back to
-the originating bus's `tmux-tell-claude` over a reverse-SSH tunnel, instead of
+the originating host's `tmux-tell-claude` over a reverse-SSH tunnel, instead of
 opening a local store. Without the env var the MCP behaves as a local standalone
 on whatever host it runs on — remote mode is never inferred.
 
@@ -1909,14 +1909,14 @@ TMUX_TELL_REMOTE_HOST=alex@localhost:7777 claude
 That's it. Port `7777` is the default — `$TMUX_TELL_REMOTE_HOST=alex@localhost`
 (no port) works identically. Identity is the remote session's tmux session name
 (`tmux display-message -p "#S"`), which Claude and codex set to the chamber name
-natively — so a session named `Admin` sends as `Admin` on your bus, no extra
+natively — so a session named `Admin` sends as `Admin` to your chambers, no extra
 config.
 
 A convenience alias for `~/.bashrc` (operator-owned, not a shipped wrapper — you
 see exactly what it does):
 
 ```bash
-# Connect to <host> with bidirectional tmux-tell bus participation
+# Connect to <host> with bidirectional tmux-tell participation
 tmux-tell-ssh() {
     ssh -R 7777:localhost:22 -o "SendEnv TMUX_TELL_REMOTE_HOST" "alex@$1"
 }
@@ -1928,7 +1928,7 @@ tmux-tell-ssh() {
   forward). An `ssh://` scheme prefix is tolerated.
 - **Explicit identity override:** `$TMUX_AGENT_NAME=caymans-admin` — for CLIs
   that don't auto-name their tmux session (e.g. aichat), or when the session name
-  doesn't match the desired bus name. The override wins over the session-name
+  doesn't match the desired agent name. The override wins over the session-name
   query. With neither resolvable, the server **fails loud at startup** rather than
   forwarding as nobody.
 - **Custom SSH user / socket / config:** standard SSH config applies — the
@@ -1945,7 +1945,7 @@ to a local call — no per-tool translation, no schema drift.
 Two consequences worth knowing:
 
 - **Pane-introspection forwards too.** `agents`, `whoami`, and `agent_state` query
-  the *originating* host's tmux (the bus you're a remote participant on), not the
+  the *originating* host's tmux (the host you're a remote participant on), not the
   remote host's — which is exactly what a remote participant wants to see.
 - **SSH is fail-loud and per-call.** A down tunnel surfaces as a tool error, never
   a silent success. Connections are fresh per call (no pooling) — simple and
@@ -1971,10 +1971,10 @@ setup *is* the bridge gesture.
 
 > **Trust model.** `$TMUX_PANE` is settable by anything with shell access, and the
 > registry has no per-pane authentication. This widens *convenience*, not *security* —
-> the model is "whoever has shell access is trusted," same as the rest of the bus.
+> the model is "whoever has shell access is trusted," same as the rest of tmux-tell.
 > Don't run it on a box where that isn't true.
 
-**Canonical names & aliases.** The bus addresses agents by canonical short name. The
+**Canonical names & aliases.** tmux-tell addresses agents by canonical short name. The
 discover walker, though, reads the name from `<cli> --resume <name>` in the process
 tree — so a session launched as `--resume "My Long Session Name"` produces a running
 name that won't match a short canonical. Register an alias to bridge it:
@@ -1993,7 +1993,7 @@ than guess — add an explicit alias on the one you meant.
 SQLite (WAL mode), three tables. The DB lives under the operator's user-home
 (#308): `$XDG_DATA_HOME/tmux-tell/messages.db` when `$XDG_DATA_HOME` is set, else
 `~/.local/share/tmux-tell/messages.db`. Override with `--db` or `$CLAUDE_MSG_DB`.
-The binary creates the directory lazily on first open. This keeps the bus's
+The binary creates the directory lazily on first open. This keeps tmux-tell's
 trust boundary congruent with tmux's per-user model (no shared-space path, no
 install-time chown) and lets sandbox-by-default adapters (codex) write the DB
 without per-write escalation.
@@ -2060,7 +2060,7 @@ first open. `go build` and the mailman daemons run as you, exactly as before.
 Running the default install **as root is rejected** — it would install into
 root's home or chown your files to root; use `--system` if you want a root
 install. `loginctl enable-linger` is the one step that may need privilege: in
-user mode it is best-effort (the bus works for the current session regardless;
+user mode it is best-effort (tmux-tell works for the current session regardless;
 re-run with `sudo` for boot-persistence).
 
 `--system` reproduces the historical behavior — binary root-owned at
@@ -2079,7 +2079,7 @@ operator). There is **no hardcoded fallback** — if it resolves to nothing or t
 different target user, set it explicitly: `OPERATOR_USER=alice ./install.sh`.
 
 That boundary is the whole point of shipping the installer as a readable
-shell script: the same "audit it in an afternoon" property the bus itself
+shell script: the same "audit it in an afternoon" property the substrate itself
 offers applies to the install story too — by default you grant **no** root at
 all, and `--system` is a single, visible, auditable opt-in.
 
