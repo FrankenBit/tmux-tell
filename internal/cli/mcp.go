@@ -118,7 +118,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 	srv := mcp.NewServer("tmux-tell", "0.1.0")
 
 	srv.RegisterTool("tmux-tell.send",
-		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient,receipt}: ok:true / receipt.enqueue means the bus accepted and persisted the row; it is NOT a paste-confirmation claim. The recipient sees it once their mailman delivers. The recipient block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-tell.message_status; with wait_for_delivered the receipt.dispatch and receipt.paste_confirmed layers report the observed delivery/paste evidence. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155). Set quick=true to render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block — for routine acks where typing-overhead-to-signal ratio is high (#154). Multi-recipient: pass to as an array (e.g. [\"bosun\",\"surveyor\"]) to fan the message to multiple recipients in a single call — each recipient gets its own message id; the response shape changes to {ok,messages:[{to,id,queued,recipient,receipt,...},...]} (#158).",
+		"Queue a message for another agent (sender resolved from $TMUX_AGENT_NAME or $TMUX_PANE→registry). Returns {ok,id,queued,recipient,receipt}: ok:true / receipt.enqueue means tmux-tell accepted and persisted the row; it is NOT a paste-confirmation claim. The recipient sees it once their mailman delivers. The recipient block reports send-time disposition (registered/alive/delivery_mode/mailman_running/pane_status). Confirm delivery synchronously with wait_for_delivered, or after the fact with tmux-tell.message_status; with wait_for_delivered the receipt.dispatch and receipt.paste_confirmed layers report the observed delivery/paste evidence. Set reply_to to thread under an earlier message — when you do, the response adds a \"thread_freshness\" block flagging whether the thread moved since you last spoke (crossed-message guard, #155). Set quick=true to render compact single-line chrome (✓ Sender · [re X ·] body) in the recipient's pane instead of the full bracket-header block — for routine acks where typing-overhead-to-signal ratio is high (#154). Multi-recipient: pass to as an array (e.g. [\"bosun\",\"surveyor\"]) to fan the message to multiple recipients in a single call — each recipient gets its own message id; the response shape changes to {ok,messages:[{to,id,queued,recipient,receipt,...},...]} (#158).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -234,7 +234,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpInboxHandler(s))
 
 	srv.RegisterTool("tmux-tell.message_status",
-		"Look up the delivery state of a sent message by its public_id. Returns created_at + delivered_at + error so the sender can see whether the bus has handed off the row yet.",
+		"Look up the delivery state of a sent message by its public_id. Returns created_at + delivered_at + error so the sender can see whether the row has been handed off yet.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -245,7 +245,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpMessageStatusHandler(s))
 
 	srv.RegisterTool("tmux-tell.get",
-		"Fetch a processed message by ID — recovery path for swallowed deliveries (#111). The bus stores message bodies; if the paste landed in a state that obscured the visible delivery (mid-AskUserQuestion, popup open, recipient mid-compaction), retrieving by ID returns the full body + metadata. Accepts full public_id or short prefix (4-char IDs from delivery headers work). Access: sender OR recipient OR allowlisted agent (`privileged-agents` in /etc/tmux-tell/config.toml). Not-found and not-authorized return the same error class to prevent existence leaks.",
+		"Fetch a processed message by ID — recovery path for swallowed deliveries (#111). The store keeps message bodies; if the paste landed in a state that obscured the visible delivery (mid-AskUserQuestion, popup open, recipient mid-compaction), retrieving by ID returns the full body + metadata. Accepts full public_id or short prefix (4-char IDs from delivery headers work). Access: sender OR recipient OR allowlisted agent (`privileged-agents` in /etc/tmux-tell/config.toml). Not-found and not-authorized return the same error class to prevent existence leaks.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -277,7 +277,7 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpClearOperatorFlagHandler(s))
 
 	srv.RegisterTool("tmux-tell.register",
-		"Register this (or another) pane on the bus. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-bus-participant scenario). The response includes `queued`: the number of messages already waiting for this agent at register time (#151) — a fresh or post-restart session learns it has backlog without a separate inbox poll; check it and run tmux-tell.inbox if >0. When that backlog exists, the don't-flood policy (#204) keeps the mailman from pasting the whole queue at once: by default it leaves the backlog queued and delivers a single `📬 N queued` nudge (the `on-register-backlog` TOML knob can switch to auto-delivering the newest N). The response then also carries `backlog_policy`, `backlog_skipped`, and `backlog_nudge`.",
+		"Register this (or another) pane with tmux-tell. Pane defaults to $TMUX_PANE; start_mailman defaults true UNLESS delivery_mode is `mailbox-only` (in which case it defaults to false — no daemon needed for the operator-as-recipient scenario). The response includes `queued`: the number of messages already waiting for this agent at register time (#151) — a fresh or post-restart session learns it has backlog without a separate inbox poll; check it and run tmux-tell.inbox if >0. When that backlog exists, the don't-flood policy (#204) keeps the mailman from pasting the whole queue at once: by default it leaves the backlog queued and delivers a single `📬 N queued` nudge (the `on-register-backlog` TOML knob can switch to auto-delivering the newest N). The response then also carries `backlog_policy`, `backlog_skipped`, and `backlog_nudge`.",
 		registerToolSchema(),
 		mcpRegisterHandler(s))
 

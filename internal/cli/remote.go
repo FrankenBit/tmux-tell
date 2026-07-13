@@ -32,11 +32,11 @@ var shellSafeIdentityRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 // here is the single chokepoint that keeps the forward shell-safe.
 func validateRemoteIdentity(name string) error {
 	if name == "" {
-		return errors.New("remote MCP mode: resolved bus identity is empty")
+		return errors.New("remote MCP mode: resolved agent identity is empty")
 	}
 	if !shellSafeIdentityRe.MatchString(name) {
 		return fmt.Errorf(
-			"remote MCP mode: bus identity %q is not a single shell-safe token "+
+			"remote MCP mode: agent identity %q is not a single shell-safe token "+
 				"([A-Za-z0-9._-], starting alphanumeric) — it crosses to the originating host's "+
 				"login shell via ssh, so whitespace would truncate it (silent mis-attribution) and "+
 				"shell metacharacters would be interpreted; set $TMUX_AGENT_NAME to a single-token name",
@@ -47,7 +47,7 @@ func validateRemoteIdentity(name string) error {
 
 // Remote MCP mode (#310). When $TMUX_TELL_REMOTE_HOST is set, the MCP server
 // runs on a remote host reached over a reverse-SSH tunnel and forwards every
-// tool call back to the originating bus's tmux-tell-claude. The forwarding is
+// tool call back to the originating host's tmux-tell-claude. The forwarding is
 // universal — one mechanism for all tools — rather than a per-tool dispatcher:
 // the remote server mirrors each tool's name+schema but replaces its handler
 // with forwardTool, which shells `tmux-tell-claude __remote-mcp-recv` over SSH.
@@ -72,7 +72,7 @@ const (
 type remoteConfig struct {
 	Host     string // [user@]host reached over SSH
 	Port     int    // reverse-tunnel port
-	Identity string // bus name this session sends AS on the originating bus
+	Identity string // the name this session sends AS on the originating host
 }
 
 // parseRemoteHost parses $TMUX_TELL_REMOTE_HOST in the form [user@]host[:port].
@@ -100,7 +100,7 @@ func parseRemoteHost(env string) (host string, port int, err error) {
 }
 
 // remoteSessionName queries the local tmux session name (`#S`). Claude and codex
-// set it natively to the chamber name, so it doubles as the bus identity. Held
+// set it natively to the chamber name, so it doubles as the agent identity. Held
 // in a var so tests can stub it.
 var remoteSessionName = func(ctx context.Context) (string, error) {
 	out, err := exec.CommandContext(ctx, "tmux", "display-message", "-p", "#S").Output()
@@ -110,7 +110,7 @@ var remoteSessionName = func(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// resolveRemoteIdentity determines the bus name this remote session sends as.
+// resolveRemoteIdentity determines the name this remote session sends as.
 // Precedence: an explicit $TMUX_AGENT_NAME (or legacy $CLAUDE_AGENT_NAME)
 // override — for CLIs that don't auto-name their tmux session — then the tmux
 // session name. Fails loud when neither resolves: a remote session with no
@@ -127,8 +127,8 @@ func resolveRemoteIdentity(ctx context.Context) (string, error) {
 	}
 	if name == "" {
 		return "", errors.New(
-			"remote MCP mode: cannot resolve bus identity — set $TMUX_AGENT_NAME to the name " +
-				"this session sends AS on the originating bus, or run inside a tmux whose session " +
+			"remote MCP mode: cannot resolve agent identity — set $TMUX_AGENT_NAME to the name " +
+				"this session sends AS on the originating host, or run inside a tmux whose session " +
 				"name is that identity")
 	}
 	// The identity crosses the originating host's login shell via ssh — it must
@@ -154,7 +154,7 @@ var sshRun = func(ctx context.Context, host string, port int, remoteArgs []strin
 	return outBuf.Bytes(), errBuf.Bytes(), err
 }
 
-// forwardTool forwards one MCP tool call to the originating bus over SSH. The
+// forwardTool forwards one MCP tool call to the originating host over SSH. The
 // tool name and resolved identity ride as flags; the tool's JSON arguments ride
 // on stdin; the receiver's JSON result comes back on stdout and is passed
 // through opaquely (re-marshalled at the MCP layer for the client).
@@ -182,7 +182,7 @@ func forwardTool(ctx context.Context, cfg remoteConfig, toolName string, args js
 }
 
 // newRemoteMCPServer builds an MCP server whose every tool forwards to the
-// originating bus. It mirrors the canonical tool metadata (names/descriptions/
+// originating host. It mirrors the canonical tool metadata (names/descriptions/
 // schemas) so remote clients see exactly the local tool surface, then swaps in
 // forwardTool for each handler.
 func newRemoteMCPServer(cfg remoteConfig) *mcp.Server {

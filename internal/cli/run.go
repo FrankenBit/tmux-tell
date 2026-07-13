@@ -34,7 +34,7 @@ Subcommands:
   inbox   List queued messages for an agent
   sent    List messages sent by this agent (outbox view)
   status  Show paused state + queue depths across all agents (--today for journal-sourced today counts)
-  stats   On-demand bus-traffic aggregates from the local DB (per-agent counts, latency, top pairs)
+  stats   On-demand message-traffic aggregates from the local DB (per-agent counts, latency, top pairs)
   digest  Campaign-arc narrative summary: by-counterparty threads + in-flight follow-ups (#161)
   tail    Live cross-chamber firehose with compositional filters (#148)
   health  One-command per-agent health audit from journalctl + systemd (#42)
@@ -45,7 +45,7 @@ Subcommands:
   set-pane-name  Assert this pane's display-name title (mirrors tmux-tell.set_pane_name; #556)
   set-metabolism Self-report this chamber's metabolism (mirrors tmux-tell.set_metabolism; #621)
   set-session-id Field-specific session-id backfill; does NOT register (mirrors tmux-tell.set_session_id; #644)
-  register   Register this (or another) pane on the bus (mirrors tmux-tell.register; #116)
+  register   Register this (or another) pane with tmux-tell (mirrors tmux-tell.register; #116)
   unregister Remove an agent from the registry + stop its mailman (mirrors tmux-tell.unregister; #289)
   serve   Run the mailman daemon for one agent
   pause   Halt one or all mailman daemons

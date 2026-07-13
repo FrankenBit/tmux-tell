@@ -116,7 +116,7 @@ func runStatsWithStore(ctx context.Context, s *store.Store, w store.StatsWindow,
 }
 
 func renderStatsText(w io.Writer, res statsResult, showPairs bool) {
-	fmt.Fprintf(w, "Bus traffic — window %s\n\n", res.Window)
+	fmt.Fprintf(w, "Message traffic — window %s\n\n", res.Window)
 
 	header := []string{"AGENT", "SENT", "RECEIVED", "DELIVERED", "FAILED", "QUEUED", "P50"}
 	rows := make([][]string, 0, len(res.Agents))

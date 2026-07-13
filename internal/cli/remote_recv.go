@@ -24,7 +24,7 @@ func runRemoteRecvCLI(args []string, stdin io.Reader, stdout, stderr io.Writer) 
 	fs := flag.NewFlagSet(remoteRecvSubcommand, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	tool := fs.String("tool", "", "MCP tool name to dispatch (e.g. tmux-tell.send)")
-	from := fs.String("from", "", "bus identity the remote session sends as")
+	from := fs.String("from", "", "agent identity the remote session sends as")
 	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage

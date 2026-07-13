@@ -277,7 +277,7 @@ func renderDigestText(w io.Writer, res digestResult, counterparty string) {
 	if counterparty != "" {
 		scope = fmt.Sprintf(" — %s", counterparty)
 	}
-	fmt.Fprintf(w, "Bus digest%s — window %s\n\n", scope, res.Window)
+	fmt.Fprintf(w, "Message digest%s — window %s\n\n", scope, res.Window)
 
 	header := []string{"COUNTERPARTY", "SENT", "RECEIVED", "THREADS", "CLOSED", "IN-FLIGHT"}
 	rows := make([][]string, 0, len(res.Counterparties))

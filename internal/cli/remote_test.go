@@ -304,7 +304,7 @@ func TestRunRemoteMCP_NoIdentityFailsLoud(t *testing.T) {
 	if exit == exitOK {
 		t.Fatalf("exit = %d, want non-OK when identity unresolvable", exit)
 	}
-	if !strings.Contains(stderr.String(), "cannot resolve bus identity") {
+	if !strings.Contains(stderr.String(), "cannot resolve agent identity") {
 		t.Errorf("stderr = %s, want identity fail-loud message", stderr.String())
 	}
 }

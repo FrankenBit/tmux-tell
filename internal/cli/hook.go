@@ -131,9 +131,9 @@ func doHookContext(ctx context.Context, s *store.Store, agent, eventName string,
 func renderHookContext(msgs []store.Message) string {
 	var b strings.Builder
 	if len(msgs) == 1 {
-		b.WriteString("📨 1 message from the tmux-msg bus:\n")
+		b.WriteString("📨 1 message from tmux-tell:\n")
 	} else {
-		fmt.Fprintf(&b, "📨 %d messages from the tmux-msg bus:\n", len(msgs))
+		fmt.Fprintf(&b, "📨 %d messages from tmux-tell:\n", len(msgs))
 	}
 	for _, m := range msgs {
 		b.WriteString("\n")

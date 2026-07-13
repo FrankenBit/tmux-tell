@@ -342,7 +342,7 @@ func mergeCodexConfig(configPath, agentName string, dryRun bool) (hooksWritten, 
 			if existingAgentName := entry.Env["TMUX_AGENT_NAME"]; existingAgentName != "" {
 				warnings = append(warnings, fmt.Sprintf(
 					"mcp_servers.tmux-tell.env.TMUX_AGENT_NAME is %q; global MCP agent pins "+
-						"apply to every Codex chamber and can misattribute bus sends — "+
+						"apply to every Codex chamber and can misattribute sends — "+
 						"remove it to use parent-pane identity resolution (#553)",
 					existingAgentName))
 			}
