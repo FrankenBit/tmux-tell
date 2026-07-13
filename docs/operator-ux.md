@@ -5,19 +5,19 @@
 > point-in-time UX audit from v0.2.1, kept as a record; the canonical home for the
 > quality principles it gestures at (Approachability, Inspectability) is §10, and
 > several findings have since been addressed. Admin-led per the lead/verify split in
-> bus message id 8117. Surveyor shape-verify complete (issue #36, comment 58673 —
+> message id 8117. Surveyor shape-verify complete (issue #36, comment 58673 —
 > approved shape with four formatting/dimensional notes plus the §4 `message_status`
 > 1.0-candidate verdict). This version applied N1-N4 + the §7 ordering disclosure.
 >
 > **Scope**: catalog rough edges from heavy operator use across two
-> days of running the bus for four agents. Each finding has a
+> days of running tmux-tell for four agents. Each finding has a
 > severity tag (`paper-cut` / `friction` / `blocker`). Concrete
 > follow-up issues will be filed for everything `friction` or above;
 > `paper-cut` items are recorded here for future batching.
 
 ## Method
 
-The operator (Alex) ran the bus across four agents (Bosun, Surveyor,
+The operator (Alex) ran tmux-tell across four agents (Bosun, Surveyor,
 Pilot, Admin) through two cycles of:
 
 - Routine sends + replies
@@ -178,7 +178,7 @@ candidates" list (when that list exists; CHANGELOG `[Unreleased]`'s
 
 ## 5. Documentation operator-walkthrough
 
-A new operator picking up the bus tomorrow: what would they hit?
+A new operator picking up tmux-tell tomorrow: what would they hit?
 
 | Step                                | Documented?     | Friction                                                                                                    |
 |-------------------------------------|-----------------|-------------------------------------------------------------------------------------------------------------|
@@ -226,7 +226,7 @@ follow-ups").
   them to un-pause. Correct as designed.
 - **`reset --confirm` requires the literal flag, not interactive
   prompt.** Initial reaction: "verbose." Realized: scripts and
-  the bus shouldn't be able to fire this by accident; the literal
+  the substrate shouldn't be able to fire this by accident; the literal
   flag is the right safety. Stays.
 
 ## 7. Follow-up checklist
@@ -262,7 +262,7 @@ differently. The ordering is informative, not canonical.
 
 ## What this audit does NOT cover (out of scope)
 
-- Big UX redesigns (a TUI for the bus, a web dashboard for the
+- Big UX redesigns (a TUI for tmux-tell, a web dashboard for the
   audit log, etc.). Different conversation.
 - Re-litigating naming decisions that are stable (the `tmux-tell.*`
   namespace is keeping; the open question is consistency for new

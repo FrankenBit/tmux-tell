@@ -1,7 +1,7 @@
-# The agent's manual: living on the bus from inside a pane
+# The agent's manual: life inside a registered pane
 
 You are a Claude Code (or Codex) session running in a tmux pane that's
-registered as an agent on the bus. Other sessions can reach you; you can reach
+registered as an agent with tmux-tell. Other sessions can reach you; you can reach
 them. This is the manual for that reality — what you can do, when, and why —
 written for the session that has to *live* with it, not the operator standing
 outside it.
@@ -21,7 +21,7 @@ is the inside view.
 
 ## Who you are — and how that can quietly go wrong
 
-Your identity on the bus resolves in a fixed precedence:
+Your identity resolves in a fixed precedence:
 
 1. an explicit override (`--from` on a send, `--as` on whoami),
 2. **`$TMUX_AGENT_NAME`** if it's set in your environment,
@@ -129,11 +129,11 @@ choices that change the interaction shape — reach for them deliberately:
   operator-facing text like "I dispatched X," cite the actual returned id/receipt
   from the tool call rather than reconstructing the claim from memory.
 - **Fan-out:** pass `to` as an array to send one message to several recipients —
-  each gets its own row. That's fan-out, not broadcast; the bus stays
+  each gets its own row. That's fan-out, not broadcast; delivery stays
   point-to-point underneath.
 
 Full signatures and the rest of the flags are in [`reference.md`](reference.md).
-The discipline that *isn't* in the flags: the bus is the right surface for
+The discipline that *isn't* in the flags: tmux-tell is the right surface for
 **ephemeral coordination** (heads-ups, design back-and-forth, "hold your rebase")
 and the *wrong* one for **discoverable persistent state** — see "Claiming work"
 below.
@@ -184,7 +184,7 @@ semantics are in [`reference.md`](reference.md).
 
 ---
 
-## When the bus gets weird — reading it from your side
+## When things get weird — reading it from your side
 
 You'll see odd states. Most are benign and self-explaining once you know the
 shapes:
@@ -242,14 +242,14 @@ diagnostic that doesn't add up, not routine operation.
 ## Claiming work — so two of you don't collide
 
 If you draw work from a shared issue tracker that more than one party can
-dispatch from, the bus is the *wrong* place to announce "I've got this." A claim
-sent over the bus is visible only to whoever was addressed and awake; a dispatcher
+dispatch from, tmux-tell is the *wrong* place to announce "I've got this." A claim
+sent over tmux-tell is visible only to whoever was addressed and awake; a dispatcher
 scanning the tracker an hour later sees nothing, and hands your issue to someone
 else. That collision has actually happened.
 
 The convention: **when you start substantive work on an issue — after you pick it
 up, before you open the branch — assign the issue to yourself** on the tracker.
-The assignee field is the durable, queryable claim; the bus carries the
+The assignee field is the durable, queryable claim; tmux-tell carries the
 *conversation*, the tracker carries the *state*. The full discipline (and the
 weaker label/comment fallbacks) is [`chamber-dispatch.md`](chamber-dispatch.md).
 
@@ -264,4 +264,4 @@ weaker label/comment fallbacks) is [`chamber-dispatch.md`](chamber-dispatch.md).
 | To triage "a message went missing" | [`diagnostic-playbook.md`](diagnostic-playbook.md) |
 | What pane-based identity does and doesn't guarantee | [`security.md`](security.md) |
 | The claim-before-you-branch dispatch convention | [`chamber-dispatch.md`](chamber-dispatch.md) |
-| The view from *outside*, running the bus | [`operator-manual.md`](operator-manual.md) |
+| The view from *outside*, running tmux-tell | [`operator-manual.md`](operator-manual.md) |

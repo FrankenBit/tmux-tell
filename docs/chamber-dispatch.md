@@ -3,8 +3,8 @@
 This is a coordination convention for **multi-agent deployments** where several
 agents (here, the alcatraz "chambers" — one Claude instance per tmux pane) draw
 work from a shared issue tracker, and more than one party can hand out that work.
-It is not a tmux-tell feature; it is a discipline that sits *next to* the bus and
-covers a gap the bus deliberately doesn't fill. It uses the project-overlay
+It is not a tmux-tell feature; it is a discipline that sits *next to* tmux-tell
+and covers a gap it deliberately doesn't fill. It uses the project-overlay
 "chamber" vocabulary, which per [ADR-0005](adr/0005-substrate-honest-terminology.md)
 is intentionally *outside* the substrate-neutral surface — so this doc is
 deliberately **not** part of the [Arc42](arc42/) architecture spine (which
@@ -15,23 +15,23 @@ don't need this.
 
 ## The gap
 
-The bus is the right surface for **coordination conversations**: rapid
+tmux-tell is the right surface for **coordination conversations**: rapid
 back-and-forth on a design fork, a merge-window heads-up, "I'm about to force-push,
 hold your rebase." Those are ephemeral and addressed to a known recipient.
 
-The bus is the *wrong* surface for **discoverable persistent state** — facts a
+tmux-tell is the *wrong* surface for **discoverable persistent state** — facts a
 party who isn't in the conversation needs to find later, by looking. "This issue is
-mine right now" is exactly that kind of fact. A claim announced on the bus is
+mine right now" is exactly that kind of fact. A claim announced in a message is
 visible only to whoever was addressed and awake when it was sent; a dispatcher
 scanning the tracker an hour later for "is anyone on this?" sees nothing.
 
 That gap produced a real collision (2026-06-07): one chamber was mid-rewrite on an
-issue under an operator dispatch routed over the bus, while a dispatcher — seeing no
+issue under an operator dispatch routed over tmux-tell, while a dispatcher — seeing no
 assignee, no label, no comment on the issue — handed the same issue to a second
 chamber. Both worked ~30 min before it surfaced. No work was lost (the rewrite
 rebased cleanly over the other PR), but the duplicated effort was avoidable.
 
-Root cause: **the claim lived on the bus, not on the issue.**
+Root cause: **the claim lived in a message, not on the issue.**
 
 ## The convention: assignee-on-claim
 
@@ -63,8 +63,8 @@ curl -s -H "Authorization: token $TOKEN" \
   "$FORGEJO/api/v1/repos/<owner>/<repo>/issues/<N>" | jq '.assignees[].login'
 ```
 
-If it's non-empty, the issue is already claimed: route through the current assignee
-on the bus *first* — confirm they've handed it back or stalled — rather than
+If it's non-empty, the issue is already claimed: message the current assignee
+*first* — confirm they've handed it back or stalled — rather than
 dispatching a second agent onto it.
 
 This is a convention, not enforcement. A dispatcher who knowingly re-dispatches a
@@ -107,7 +107,7 @@ inherits it rather than re-deriving it:
    first — both issues, both authors, timestamps — instead of assuming yours is
    canonical.
 2. **Surface the divergence**, briefly, where the other party will see it (a
-   comment on the dup, a bus line) — "this overlaps #N, I think #N is the keeper."
+   comment on the dup, a message) — "this overlaps #N, I think #N is the keeper."
 3. **Defer to merged-reality.** Whichever tracker is further along — has the
    assignee, the richer body, the downstream references, the in-flight PR — is the
    keeper. Close the other as a duplicate pointing at it. The tie-break is
@@ -130,8 +130,8 @@ it transferable.
 **Forward-watch, not dup-rate.** The success metric for this discipline is that
 **resolution stays cheap** (a crossing resolves in seconds, no rework), *not* that
 crossings stop happening. A measurable rise in resolution cost across reviews is
-the signal that something heavier — e.g. a file-time visibility broadcast on the
-bus — is worth building. Until then it isn't: a mandated "announce every filing"
+the signal that something heavier — e.g. a file-time visibility broadcast to every
+agent — is worth building. Until then it isn't: a mandated "announce every filing"
 step adds friction to chase a gain the cheap-resolution norm already delivers, and
 drifts back toward the prevention posture this discipline deliberately retired.
 
@@ -144,7 +144,7 @@ drifts back toward the prevention posture this discipline deliberately retired.
 - Mid-work handoffs between agents — this convention assumes one agent holds an
   issue end-to-end. Re-assignment handoffs are a separate shape.
 - **Preventing crossings.** A file-time title-prefix lock, a "only the reviewer
-  files" rule, or a mandated file-time bus broadcast were all considered and
+  files" rule, or a mandated file-time broadcast were all considered and
   declined: at this crew's cadence crossings are ambient and cheap to resolve, so
   prevention costs more friction than the overlap it removes. Cheap resolution (the
   section above) is the chosen posture; the broadcast re-opens only if forward-watch

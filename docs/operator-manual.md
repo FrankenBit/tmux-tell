@@ -1,7 +1,7 @@
 # The operator's manual: running tmux-tell, day 0 to day N
 
 You've cloned the repo. This is the walkthrough that takes you from there to a
-bus you trust — install, first agent, first message, the first time something
+setup you trust — install, first agent, first message, the first time something
 looks wrong, and the rhythm of living with it afterward.
 
 It is deliberately **not** a command reference. [`reference.md`](reference.md)
@@ -43,7 +43,7 @@ system:
   service mesh, no broker.
 - **A SQLite database** — your mailbox store, at
   `~/.local/share/tmux-tell/messages.db`. Every message is a row. You can read
-  the entire bus with `sqlite3`; there is nothing else holding state.
+  every message with `sqlite3`; there is nothing else holding state.
 - **A systemd *user* unit** — the mailman template
   (`tmux-tell-claude-mailman@.service`). One instance per registered agent
   watches that agent's pane and delivers to it. **User**, not system — it runs
@@ -60,7 +60,7 @@ journalctl --user -u 'tmux-tell-claude-mailman@*' -n 50 | grep claude_msg_db
 ```
 
 If that path isn't the one you expect, *stop here and fix it* — almost every
-"the bus ate my message" story downstream is really two processes reading two
+"tmux-tell ate my message" story downstream is really two processes reading two
 different files. (You'll meet the worst version of this on Day N.) The exact
 resolution order and the override knobs are in
 [`reference.md`](reference.md) under DB binding.
@@ -69,7 +69,7 @@ resolution order and the override knobs are in
 
 ## Your first agent — register a pane
 
-A pane isn't on the bus until you register it:
+A pane isn't reachable until you register it:
 
 ```bash
 tmux-tell-claude register --name alice    # run this *in* the pane you mean
@@ -81,7 +81,8 @@ address `alice`, never a pane number (panes get renumbered when you split or
 close; the name doesn't). And it starts `alice`'s **mailman**: the per-recipient
 daemon that will watch this pane and deliver messages into it.
 
-Register a second pane as `bob` the same way, and you have a two-station bus.
+Register a second pane as `bob` the same way, and you have two agents that can
+reach each other.
 
 The identity binding is `name → $TMUX_PANE → registry`. That's load-bearing and
 it's also the thing that *drifts* — if a pane respawns or a session is rebuilt,
@@ -139,7 +140,7 @@ Worked instance: alcatraz-infra's `chamber-claude.sh` follows this convention
 ## Your first message — send it, watch it land, read the row
 
 ```bash
-tmux-tell-claude send --to bob "first message across the bus"
+tmux-tell-claude send --to bob "first message, addressed to bob"
 ```
 
 Switch to `bob`'s pane. If `bob` is idle, the line appears almost at once, headed
@@ -148,13 +149,13 @@ with who sent it and when:
 ```
 [Alice · 14:02:09 · id 7f3a]
 
-first message across the bus
+first message, addressed to bob
 ```
 
 If you were *mid-typing* in `bob`'s pane when it arrived, you'd have seen
 something better: a single 📫 in the input row, the message **held**, and then —
 the moment you paused — the text landing in the now-clear prompt. That waiting is
-the [**observe-gate**](observe-gate.md), the feature that makes a bus delivering
+the [**observe-gate**](observe-gate.md), the feature that makes delivery
 into a pane *you might also be using* livable instead of infuriating. It's worth
 reading that doc early; it's the part of the design that's genuinely unusual.
 
@@ -176,24 +177,25 @@ machine and the `track`/`status`/`tail` commands that read it live in
 
 ## Your first failure — the reflex, not the fix
 
-It will happen: someone says "I never got that message." Before you suspect the
-bus, build the one reflex that saves the most time — **check the sender's outbox
-first.**
+It will happen: someone says "I never got that message." Before you suspect
+tmux-tell, build the one reflex that saves the most time — **check the sender's
+outbox first.**
 
-The question is almost never "did the bus lose it?" and almost always "which of
+The question is almost never "did tmux-tell lose it?" and almost always "which of
 these three happened?":
 
 1. The sender never actually sent (the row isn't there).
-2. The bus delivered, but the *action* the message was supposed to trigger didn't
+2. tmux-tell delivered, but the *action* the message was supposed to trigger didn't
    happen (the agent got it and dropped it).
-3. The bus genuinely failed mid-delivery (rare, and it says so — fail-loud).
+3. tmux-tell genuinely failed mid-delivery (rare, and it says so — fail-loud).
 
 You rule those out *in that order*, because the first two are far more common
 than the third and cost nothing to check. The structured triage — the exact
 SQLite query, the `journalctl` check, the cross-system verification — is
 [`diagnostic-playbook.md`](diagnostic-playbook.md), and it is genuinely good;
 don't reinvent it. What this manual gives you is the **reflex**: *sender-outbox
-first, escalate to the bus last.* Most "lost message" reports die at step 1 or 2.
+first, escalate to the substrate last.* Most "lost message" reports die at step 1
+or 2.
 
 When the *recipient* is the suspect, there's a cheaper probe than any of those:
 `tmux-tell-claude ping AGENT` checks reachability without sending anything, and
@@ -205,8 +207,8 @@ mailman down, stuck, or pane dead). One call tells you whether to **wait** or to
 **act**. The `PENDING` case is the same observe-gate hold that turns a delivery
 into `delivered_in_input_box`, seen from the prober's side — healthy, not lost.
 
-One specific early-days gremlin worth naming, because it looks like a bus bug and
-isn't: **drift**. If a sender's message is *refused* with a mismatch warning, the
+One specific early-days gremlin worth naming, because it looks like a tmux-tell
+bug and isn't: **drift**. If a sender's message is *refused* with a mismatch warning, the
 sender's pane title and its registration have diverged (a respawn, a rebuild).
 The fix is `discover` to re-register; the playbook's drift section walks it.
 
@@ -214,7 +216,7 @@ The fix is `discover` to re-register; the playbook's drift section walks it.
 
 ## What you can lean on — and what you can't
 
-Run the bus a few days and you'll want to know exactly how much trust it has
+Run tmux-tell a few days and you'll want to know exactly how much trust it has
 earned. The honest accounting:
 
 **Lean on these.** Single host, single tmux server — everything is local, no
@@ -323,4 +325,4 @@ lets you *trust* it while it's running.
 | What has broken before, and what to watch | [`failure-modes.md`](failure-modes.md) |
 | The day-to-day rough edges (and non-problems) | [`operator-ux.md`](operator-ux.md) |
 | Why this exists at all / whether you need it | [`why.md`](why.md) |
-| The view from *inside* an agent on the bus | [`agent-manual.md`](agent-manual.md) |
+| The view from *inside* a registered agent | [`agent-manual.md`](agent-manual.md) |

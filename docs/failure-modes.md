@@ -2,7 +2,7 @@
 
 > **Status: DRAFT (incorporates Surveyor structural review per
 > comment 58662 on issue #34, 2026-05-31).** Author: Admin per
-> posture (b)-with-substance agreed on bus id 8d2f. Structural-
+> posture (b)-with-substance agreed on message id 8d2f. Structural-
 > reshape proposals S1-S5 from the review are merged into this
 > revision; sweep finding on §1 row 5/6 fix-commit-sharing is
 > clarified in the table notes.
@@ -283,7 +283,7 @@ surfaces):
 
 - **`OperatorInputRowGate`**: the gate's contract is
   "input-row-quiet", not "pane-quiet". Recipient-busy is explicitly
-  not the bus's concern.
+  not tmux-tell's concern.
 - **`ProbeAccumulationDuringActivity`**: probes never get
   backspaced during `DeltaInputActivity` iterations — they
   accumulate visibly as the "I see you" handshake.
@@ -311,4 +311,4 @@ has empirical data of its own.
 | Discipline pin | Test that asserts an architectural commitment (not behaviour). |
 | Audit trail | The sequence of commits + reviews + journal entries that traces an incident's full history. |
 | Soft-fail vs fail-loud | Soft-fail: log a WARN and continue. Fail-loud: MarkFailed and surface to the sender. |
-| Silent-bad-delivery | A message that the bus marks delivered but reaches the wrong recipient. The 2026-05-31 incident class. |
+| Silent-bad-delivery | A message that tmux-tell marks delivered but reaches the wrong recipient. The 2026-05-31 incident class. |

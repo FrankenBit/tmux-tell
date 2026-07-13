@@ -1,6 +1,6 @@
 # The observe-gate: operator's guide
 
-When you send a bus message to an agent that's mid-turn, mid-`/compact`, or
+When you send a message to an agent that's mid-turn, mid-`/compact`, or
 mid-typing, tmux-tell doesn't just paste it in and hope. Before each delivery the
 mailman runs the **observe-gate** — a near-read-only check (one optional `📫`
 nudge when you're typing, opt-out via `notify-emoji-disabled`; see §"When
@@ -127,7 +127,7 @@ observe-gate removes is the *pane mutation* the old gate inflicted while observi
 ## When you're typing: the 📫 notification (#95)
 
 The old gate's probe dashes had an accidental virtue: they were a *visible* sign
-that a bus message was queued behind your typing. The observe-gate is invisible by
+that a message was queued behind your typing. The observe-gate is invisible by
 design — so v0.4.0 added a deliberate, minimal signal in its place.
 
 The first time the gate sees you mid-typing (`awaiting-operator`) in a delivery
@@ -138,7 +138,7 @@ input row. That's it:
 - **No cleanup.** The mailman never tracks or removes the 📫. You either notice and
   backspace it (the gate keeps waiting for you to finish), or you notice and finish
   your message (the 📫 rides along into what you send — and recipients know it means
-  *"the sender had a bus message waiting while they typed"*), or you don't notice at
+  *"the sender had a message waiting while they typed"*), or you don't notice at
   all. All three are fine by design.
 
 To turn it off for an agent, set **`notify-emoji-disabled = true`** (default
@@ -146,23 +146,23 @@ To turn it off for an agent, set **`notify-emoji-disabled = true`** (default
 
 ## The stale-draft flush (and why it's careful)
 
-If you start typing in an agent's pane and then walk away, a queued bus message
+If you start typing in an agent's pane and then walk away, a queued message
 can't wait forever. After your input row sits **unchanged for `input-stale-threshold`
 (default 2 minutes)**, the gate decides the draft is abandoned and proceeds — but it
 will **not** silently destroy what you typed. The flush is a three-path decision
 (`cmd/tmux-tell-claude/serve.go`, `internal/tmuxio/observe_gate.go`):
 
 1. **(c) Clear-paste-archive — the primary path.** The gate snapshots your input-row
-   content into the bus as a `kind=stranded_draft` row, **self-addressed to the same
+   content into the store as a `kind=stranded_draft` row, **self-addressed to the same
    agent** (cap-bypass, so a full inbox can't drop it), then sends `Ctrl+U` to clear
-   the row and pastes the bus message.
+   the row and pastes the incoming message.
 2. **(a) Append — the fallback.** If that archive write fails, the mailman *skips the
    clear* and pastes onto your content (you get a compound message) rather than risk
    losing your draft.
 3. **(b) Clear-and-discard — rejected.** Blindly `Ctrl+U`-ing without archiving is
    explicitly refused in the code, because the content in your input row might be a
-   *half-delivered bus message* from a prior failed delivery — a blind clear could
-   destroy bus content, not just operator content. The safe paths always archive
+   *half-delivered message* from a prior failed delivery — a blind clear could
+   destroy delivered content, not just operator content. The safe paths always archive
    before clearing.
 
 **Multi-line drafts** are captured in full (#96). The gate walks from the sentinel
@@ -174,7 +174,7 @@ the first line, so a multi-line draft got truncated at flush — that's fixed.
 
 Because the snapshot is **self-addressed**, the agent's own mailman delivers it
 right back into the agent's pane — so the **primary recovery is inline**: your
-cleared draft reappears as a `kind=stranded_draft` bus message, carrying the content
+cleared draft reappears as a `kind=stranded_draft` message, carrying the content
 verbatim plus the `public_id` of the delivery that triggered the flush. Usually you
 just see it.
 
@@ -253,7 +253,7 @@ tracked in [#124](https://git.frankenbit.de/frankenbit/tmux-tell/issues/124).)
 ## See also
 
 - README [§Delivery semantics: the observe-gate](../README.md#delivery-semantics-the-observe-gate) — the concise reference
-- [`diagnostic-playbook.md`](diagnostic-playbook.md) — when an agent says "I missed a message" (sender-side vs bus-side triage)
+- [`diagnostic-playbook.md`](diagnostic-playbook.md) — when an agent says "I missed a message" (sender-side vs substrate-side triage)
 - `CHANGELOG.md` `[0.3.0]` (#92/#93 gate), `[0.4.0]` (#94 sweep + strict TOML, #95 📫, #96 multi-line)
 - Source: `internal/tmuxio/observe_gate.go`, `internal/tmuxio/state.go`, `cmd/tmux-tell-claude/serve.go`
 - Releases: [v0.3.0](https://git.frankenbit.de/frankenbit/tmux-tell/releases/tag/v0.3.0) · [v0.4.0](https://git.frankenbit.de/frankenbit/tmux-tell/releases/tag/v0.4.0)

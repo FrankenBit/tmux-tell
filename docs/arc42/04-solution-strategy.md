@@ -26,7 +26,7 @@ This is *the shape of the answer* — distinct from §1 (*what* we want) and
 ## Cross-cutting strategic choices
 
 - **Atomic delivery via paste-and-enter.** The target CLIs don't expose IPC, so the
-  bus types into their input the way a human would — the lowest-common-denominator
+  substrate types into their input the way a human would — the lowest-common-denominator
   channel. Adapters whose TUI can't be safely pasted into use **hook-context**
   delivery instead (injection at a turn boundary), keeping the substrate uniform
   ([ADR-0009](../adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md)).

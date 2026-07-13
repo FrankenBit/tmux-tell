@@ -18,14 +18,14 @@ substrate change coins a load-bearing term, it lands here with a gloss and a lin
 - **Adapter** — the per-LLM-CLI layer (`cmd/tmux-tell-<name>` binary + `Profile`)
   that knows one CLI's TUI quirks; swappable without touching the substrate. See
   [§2](02-architecture-constraints.md), [ADR-0009](../adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md).
-- **Agent** — a registered tmux pane on the bus (one mailbox per agent). The
+- **Agent** — a registered tmux pane (one mailbox per agent). The
   substrate term for what the chamber-level docs call a *chamber*; the two refer
   to the same per-pane LLM-CLI session. See *chamber vs agent*, [ADR-0005](../adr/0005-substrate-honest-terminology.md).
 
 ## B
 
 - **bootstrap** — the binary subcommand `install.sh` runs (as the operator) to wire
-  a fully-working bus in one invocation: daemon-reload, stale-DB detect, discover,
+  a fully-working setup in one invocation: daemon-reload, stale-DB detect, discover,
   enable+restart mailmen, orphan-prune, refresh MCPs. See [§7](07-deployment-view.md).
 
 ## C
@@ -64,7 +64,7 @@ substrate change coins a load-bearing term, it lands here with a gloss and a lin
 - **`PaneProfile` / Profile** — the per-adapter abstraction carrying a CLI's TUI
   traits (paste-collapse marker, MCP-slash-command support, settle-delay, …) so the
   substrate stays vendor-agnostic. See [ADR-0009](../adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md).
-- **paste-and-enter** — the lowest-common-denominator delivery: the bus types a
+- **paste-and-enter** — the lowest-common-denominator delivery: the mailman types a
   message into a CLI's input the way a human would, then submits it. See [§2](02-architecture-constraints.md).
 
 ## R
@@ -75,7 +75,7 @@ substrate change coins a load-bearing term, it lands here with a gloss and a lin
 
 ## S
 
-- **Substrate** — the vendor- and delivery-method-agnostic core (the SQLite bus +
+- **Substrate** — the vendor- and delivery-method-agnostic core (the SQLite store +
   mailmen + shared `internal/` code) below the adapter boundary. The substrate-vs-
   adapter boundary is architectural law. See [ADR-0009](../adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md).
 

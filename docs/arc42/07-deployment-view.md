@@ -18,7 +18,7 @@ it does not replace the `install.sh` comments or [docs/operator-manual.md](../op
 
 ```
 host (single UID)
-├── ~/.local/share/tmux-tell/messages.db        ← the bus (SQLite, WAL)
+├── ~/.local/share/tmux-tell/messages.db        ← the store (SQLite, WAL)
 ├── /etc/tmux-tell/config.toml                   ← per-agent config (settle-delay, …)
 ├── systemd --user
 │   ├── tmux-tell-claude-mailman@<NAME>.service  ← one mailman per claude agent
@@ -27,7 +27,7 @@ host (single UID)
     └── panes ── each a registered agent (claude / codex adapter binary + MCP)
 ```
 
-- **The bus** is a single SQLite file at the XDG-default path
+- **The store** is a single SQLite file at the XDG-default path
   `~/.local/share/tmux-tell/messages.db` (canonical since #308). Both the
   systemd-managed mailmen and the chamber MCP servers resolve only this default
   path.
@@ -45,7 +45,7 @@ description below is that `--system` path.
 
 `sudo ./install.sh --system` builds + installs the adapter binaries and the
 systemd templates, then drops privileges and runs the **`bootstrap`** subcommand,
-which wires a fully-working bus in one invocation:
+which wires a fully-working setup in one invocation:
 
 1. `systemctl --user daemon-reload`
 2. stale-DB detect (delegates to `db migrate` if a pre-#308 DB is found)

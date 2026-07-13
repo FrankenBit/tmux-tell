@@ -36,7 +36,7 @@ for depth.
 
 | Package | Responsibility |
 |---|---|
-| `store` | the SQLite bus — messages, agents, lifecycle; WAL + `BEGIN IMMEDIATE` cap enforcement |
+| `store` | the SQLite message store — messages, agents, lifecycle; WAL + `BEGIN IMMEDIATE` cap enforcement |
 | `cli` | command surface + the **mailman** delivery loop (per-recipient, single-writer) |
 | `tmuxio` | tmux interaction — `capture-pane`, cursor query, `paste-buffer`, send-keys |
 | `identity` | the sender-resolution chain (`TMUX_AGENT_NAME` → `TMUX_PANE` → registry) |

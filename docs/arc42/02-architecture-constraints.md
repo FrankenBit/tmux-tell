@@ -20,8 +20,8 @@ architectural law in an ADR. They were previously scattered across ADRs,
 | Constraint | Why it binds | Source |
 |---|---|---|
 | **Single host, per-UID** | The trust boundary is OS-level: a per-user SQLite DB + per-user systemd units. No network listener, no multi-host bus. | [ADR-0014](../adr/0014-tmux-tell-scope-and-cross-host-reach.md) §What-it-IS 1/7 |
-| **tmux is the runtime substrate** | Agents are CLI TUIs in tmux panes; delivery *is* a tmux paste into a pane. No tmux → no bus. | ADR-0014 §IS 1–2 |
-| **paste-and-enter is the lowest-common-denominator delivery** | The target CLIs don't natively support IPC, so the bus types into their input the way a human would. | ADR-0009 |
+| **tmux is the runtime substrate** | Agents are CLI TUIs in tmux panes; delivery *is* a tmux paste into a pane. No tmux → no delivery. | ADR-0014 §IS 1–2 |
+| **paste-and-enter is the lowest-common-denominator delivery** | The target CLIs don't natively support IPC, so tmux-tell types into their input the way a human would. | ADR-0009 |
 | **hook-context is the required mode for paste-incapable adapters** | An adapter whose TUI can't be safely pasted into receives via its hook channel instead — a complementary delivery mode that keeps the substrate uniform. | [ADR-0009](../adr/0009-hook-context-delivery-substrate-vs-adapter-boundary.md) |
 | **SQLite is the only datastore** | One file, WAL-journaled, `sqlite3`-auditable; durability via WAL + `BEGIN IMMEDIATE`. No external DB. | ADR-0014 §IS 3 |
 | **Go is the implementation language** | Single static binary per adapter; shared substrate in `internal/`. | repo layout |

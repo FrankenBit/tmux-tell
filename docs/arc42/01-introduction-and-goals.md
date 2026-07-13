@@ -11,14 +11,15 @@ revisit-triggers:
 
 ## What tmux-tell is
 
-tmux-tell is a **per-user TUI-paste coordination bus for operator-launched
+tmux-tell is **per-user TUI-paste directed messaging for operator-launched
 LLM-CLI sessions attached to tmux panes on a single host** (the binding scope
 statement is [ADR-0014](../adr/0014-tmux-tell-scope-and-cross-host-reach.md)).
 Each pane gets a mailbox; an agent — or the operator — sends a message and it
 lands in the target pane as if typed there, *waiting for a safe moment* so it
 never clobbers a half-written line or fires into a running turn.
 
-The narrative pitch (the "you are already the message bus" framing, the
+The narrative pitch (the *"Your agents already have a coordination layer. It's
+you."* framing, the
 `send-keys`-with-the-sharp-edges-filed-off comparison, and the honest
 when-not-to-use-it trade) lives in **[docs/why.md](../why.md)** — that is the
 depth for this section; §1 carries only the goals hierarchy.
@@ -28,7 +29,7 @@ depth for this section; §1 carries only the goals hierarchy.
 1. **Don't clobber the human.** Delivery defers while the operator is typing or
    a turn is running (the [observe-gate](../observe-gate.md)); if no safe moment
    is found within the budget, it delivers anyway and *says so* — fail-loud,
-   never fail-silent. This is the goal that makes the bus usable rather than
+   never fail-silent. This is the goal that makes tmux-tell usable rather than
    infuriating.
 2. **Never over-claim delivery.** A message is marked `delivered` only when a
    verify step confirms the paste landed; otherwise it is honestly marked (e.g.
@@ -47,7 +48,7 @@ depth for this section; §1 carries only the goals hierarchy.
 | Stakeholder | Concern |
 |---|---|
 | **Operator** | Runs the panes; must not be clobbered; wants auditability + one-script uninstall |
-| **Agent (chamber)** | Sends/receives across the bus; needs provable sender identity + honest delivery state |
+| **Agent (chamber)** | Sends/receives messages; needs provable sender identity + honest delivery state |
 | **Adapter author** | Adds a new LLM-CLI without touching the substrate |
 | **Downstream (Binnacle)** | Consumes tmux-tell as an external Go module ([ADR-0007](../adr/0007-binnacle-coexist-external-contract.md)) |
 
