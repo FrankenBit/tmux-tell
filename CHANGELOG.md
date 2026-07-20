@@ -33,6 +33,41 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.31.0] — 2026-07-20
+
+### Added
+
+- **strings**: reframe 'bus'-as-category in user-facing strings (Refs #744) (#752)
+
+### Changed
+
+None.
+
+### Fixed
+
+- **CI now fires on the rolling release PR** (#769) — the release-toolkit pin was stuck at `v0.20.0`, which predates the upstream fix (`v0.26.0`) that unsets the `actions/checkout`-persisted URL-scoped credential before pushing `release-prep/rolling`. Without that unset, the bot's PAT header lost git's precedence battle to the persisted one, so the rolling push went out under the synthetic `forgejo-actions` system token — and Forgejo's anti-recursion safeguard suppresses workflow triggering for system-token events. Net effect: **zero** runs on the rolling PR, so its required `test / lint + build + test (pull_request)` check never appeared and the release cut could not merge. All three pinned release-toolkit workflows (`reusable-release`, `reusable-manifest-check`, `reusable-changelog-fragment-check`) move to `v0.32.0` in lockstep; input interfaces and job/secret shapes verified identical, and `publish_mode` is passed explicitly so the upstream default flip (`immediate` → `draft`) does not apply.
+
+
+- **deploy**: sudo the relocated /usr/local/sbin wrapper path (post #190/#191/#198)
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
+### Security
+
+- **Unregister a chamber whose auto-restart relaunch fails** (#761) — when an `auto_restart` respawn's `relaunch_cmd` types successfully into the post-`/exit` shell but starts no chamber (e.g. a bare basename not on the mailman's `systemd --user` PATH), the pane is left a bare shell. The agent was previously kept registered, so the mailman kept delivering bus messages into that shell (each line executed as a command). The respawn pathway now confirms the chamber actually came back via the ground-truth liveness signal — a resolvable `TMUX_TELL_SESSION_ID` in the pane's process tree (inject-at-fork, absent in any bare shell) — rather than the spoofable `AgentState` idle read, and **unregisters** the agent when it did not, closing the scheduled paste-to-bash exposure. First of two #761 fixes (this closes the *scheduled* exposure; the delivery-path liveness gate closes the class).
+
+- **Never paste into a bare shell, however its tmux title reads** (#761) — the delivery path resolved a target pane via cmdline → tmux **title** → window-name, and the title/window sources are stale metadata that outlive a dead adapter. A pane whose claude had exited but whose title still carried the chamber name therefore resolved as that chamber and received `paste-and-enter`, executing every line of the bus message as a shell command. The existing #626 bare-shell block could not see this: it fires only when the pane resolves to *no* agent, which a stale title defeats. Delivery on the non-session path now requires a **live-process signal** in the target pane — a running `claude --resume`, or a wrapper-injected `TMUX_TELL_SESSION_ID` — and blocks otherwise, as a safety invariant that bypasses `--drift-soft-fail` (like the #626 block). The gate is deliberately agent-agnostic ("live claude or bare shell?"); agent attribution remains the drift check's job, so a genuine drift onto a live wrong-agent pane stays governed by `--drift-soft-fail` policy. Refusals are counted by the new `tmux_tell_delivery_refused_liveness_total{agent,reason}` metric. Second of two #761 fixes (the first unregisters a chamber whose auto-restart relaunch fails); together they close the paste-to-bash class.
+
 ## [0.30.0] — 2026-07-09
 
 ### Added
