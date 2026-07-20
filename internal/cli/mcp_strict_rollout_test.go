@@ -89,6 +89,49 @@ var noArgTools = []string{
 	"tmux-tell.whoami_db",
 }
 
+// TestMCP_EveryRegisteredTool_FailsLoud is the SELF-COMPLETING guard for the
+// #753 universal invariant. The completeness/fail-loud tests above drive a
+// hand-maintained slice — they prove "every tool IN the list rejects unknown
+// params", not "every REGISTERED tool does". A 24th tool whose handler forgets
+// decodeStrictArgs would land in neither slice, both tests would skip it, and
+// silent param-drop returns under a green suite — the exact filtered-population
+// shape the ~16→23 scope-correction caught, one level up.
+//
+// So this enumerates the ACTUAL registry (Server.ToolList()) and, for every
+// registered tool, (1) asserts it fails loud on an unknown param — a direct
+// proof that holds for tools not yet in any slice — and (2) cross-checks it is
+// in a coverage slice, so its VALID params also get completeness-checked. A new
+// tool reds this until it both decodes strictly and is added to a slice; the
+// invariant defends itself instead of resting on a snapshot.
+func TestMCP_EveryRegisteredTool_FailsLoud(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "alice")
+
+	covered := map[string]bool{"tmux-tell.send": true, "tmux-tell.ask": true}
+	for _, tc := range strictRolloutTools {
+		covered[tc.name] = true
+	}
+	for _, n := range noArgTools {
+		covered[n] = true
+	}
+
+	for _, tool := range newMCPServer(newCmdTestStore(t, "alice", "bob")).ToolList() {
+		name := tool.Name
+		t.Run(name, func(t *testing.T) {
+			s := newCmdTestStore(t, "alice", "bob")
+			got := callMCPTool(t, s, name, map[string]any{"__nope__": true})
+			text, _ := got["_text"].(string)
+			if got["_isError"] != true || !strings.Contains(text, `unknown parameter "__nope__"`) {
+				t.Errorf("registered tool %q does not fail loud on an unknown param (got=%v) — "+
+					"it is missing a decodeStrictArgs call; the #753 universal invariant has a gap", name, got)
+			}
+			if !covered[name] {
+				t.Errorf("registered tool %q is not in strictRolloutTools ∪ noArgTools ∪ {send,ask} — "+
+					"add it so its valid documented params get completeness-checked too", name)
+			}
+		})
+	}
+}
+
 // TestMCP_NoArgTools_RejectUnknownParams pins both directions for the no-arg
 // tools: an empty call is still accepted (io.EOF → zero-valued empty struct),
 // and an unknown param is rejected by name rather than silently ignored.
