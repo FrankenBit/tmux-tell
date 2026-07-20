@@ -48,6 +48,10 @@ func TestServe_DriftDetectionWithCanonicalAlias(t *testing.T) {
 		paneSeen atomic.Value
 	)
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		// #761 gate reads pane_current_command; this pane models a live adapter.
+		if len(args) > 0 && args[0] == "display-message" {
+			return []byte("node\n"), nil
+		}
 		switch args[0] {
 		case "load-buffer":
 			if stdin != nil {
@@ -164,6 +168,10 @@ func TestServe_SilentDriftDetectionAtDelivery(t *testing.T) {
 		paneSeen atomic.Value // tracks the pane id paste-buffer was called against
 	)
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		// #761 gate reads pane_current_command; this pane models a live adapter.
+		if len(args) > 0 && args[0] == "display-message" {
+			return []byte("node\n"), nil
+		}
 		switch args[0] {
 		case "load-buffer":
 			if stdin != nil {
@@ -274,6 +282,10 @@ func TestServe_DriftUnrecoverable_FailLoud(t *testing.T) {
 	}
 
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		// #761 gate reads pane_current_command; this pane models a live adapter.
+		if len(args) > 0 && args[0] == "display-message" {
+			return []byte("node\n"), nil
+		}
 		return nil, nil
 	})
 	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
@@ -349,6 +361,10 @@ func TestServe_DriftUnrecoverable_SoftFailEscapeHatch(t *testing.T) {
 	}
 
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		// #761 gate reads pane_current_command; this pane models a live adapter.
+		if len(args) > 0 && args[0] == "display-message" {
+			return []byte("node\n"), nil
+		}
 		// Make paste-buffer at %4 succeed (existing test shape).
 		switch args[0] {
 		case "load-buffer", "paste-buffer", "send-keys", "delete-buffer":
@@ -444,6 +460,10 @@ func TestServe_BareShell_NoLiveSession_BlocksUnconditionally(t *testing.T) {
 
 	var pasted atomic.Bool
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		// #761 gate reads pane_current_command; this pane models a BARE SHELL.
+		if len(args) > 0 && args[0] == "display-message" {
+			return []byte("bash\n"), nil
+		}
 		if len(args) > 0 && args[0] == "paste-buffer" {
 			pasted.Store(true)
 		}
@@ -537,6 +557,10 @@ func TestServe_BareShell_StaleTitle_BlocksLivenessGate(t *testing.T) {
 
 	var pasted atomic.Bool
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		// #761 gate reads pane_current_command; this pane models a BARE SHELL.
+		if len(args) > 0 && args[0] == "display-message" {
+			return []byte("bash\n"), nil
+		}
 		if len(args) > 0 && args[0] == "paste-buffer" {
 			pasted.Store(true)
 		}
@@ -748,6 +772,10 @@ func TestServe_BareShell_SessionRelocated_Reroutes(t *testing.T) {
 		paneSeen atomic.Value
 	)
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		// #761 gate reads pane_current_command; this pane models a live adapter.
+		if len(args) > 0 && args[0] == "display-message" {
+			return []byte("node\n"), nil
+		}
 		switch args[0] {
 		case "load-buffer":
 			if stdin != nil {
@@ -848,6 +876,10 @@ func TestServe_BareShell_LookupError_BlocksUnconditionally(t *testing.T) {
 
 	var pasted atomic.Bool
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		// #761 gate reads pane_current_command; this pane models a BARE SHELL.
+		if len(args) > 0 && args[0] == "display-message" {
+			return []byte("bash\n"), nil
+		}
 		if len(args) > 0 && args[0] == "paste-buffer" {
 			pasted.Store(true)
 		}
@@ -927,6 +959,10 @@ func TestServe_BareShell_LookupAmbiguous_BlocksUnderSoftFail(t *testing.T) {
 
 	var pasted atomic.Bool
 	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		// #761 gate reads pane_current_command; this pane models a BARE SHELL.
+		if len(args) > 0 && args[0] == "display-message" {
+			return []byte("bash\n"), nil
+		}
 		if len(args) > 0 && args[0] == "paste-buffer" {
 			pasted.Store(true)
 		}

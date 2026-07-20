@@ -1660,12 +1660,14 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		// would receive paste-and-enter — executing the bus message body as shell
 		// commands (the #761 exploit). The #626 block above catches only the
 		// running=="" arm, which a stale title defeats. Before delivering on the
-		// non-session path, require a LIVE-PROCESS signal in the target pane: a
-		// running `claude --resume` or a wrapper-injected session-id.
+		// non-session path, require that the pane's FOREGROUND process is not an
+		// interactive shell — the hazard's actual mechanism, since paste-and-enter
+		// executes as commands only into a shell.
 		//
-		// AGENT-AGNOSTIC by design: this asks "live claude or bare shell?", NOT
-		// "the right chamber?" — attribution is the drift block's job, which ran
-		// above. So a genuine drift onto a live WRONG-agent pane stays governed by
+		// ADAPTER-NEUTRAL by design: it asks "would a paste execute as shell
+		// commands?", NOT "which adapter is this?" (a claude-specific form refused
+		// live CODEX chambers) and NOT "the right chamber?" — attribution is the
+		// drift block's job, which ran above. So a genuine drift onto a live WRONG-agent pane stays governed by
 		// --drift-soft-fail policy (not blocked here), while a bare shell is blocked
 		// unconditionally. A session-resolved delivery already proved liveness
 		// (sessionResolved) and skips this. Like the #626 block, this is a SAFETY
@@ -1674,7 +1676,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			if walker == nil {
 				walker = discover.New()
 			}
-			if !walker.PaneHostsLiveClaude(opCtx, paneForDelivery) {
+			if !walker.PaneAcceptsPaste(opCtx, paneForDelivery) {
 				reason := "no_live_session: target pane hosts no live agent process (bare shell / stale title); delivery blocked to prevent bare-shell paste (#761)"
 				logger.Printf("WARN no_live_session_liveness_gate id=%s agent=%s pane=%s - pane matches only via stale metadata, no live claude/session-id; blocking bare-shell paste (#761)",
 					msg.PublicID, opts.Agent, paneForDelivery)

@@ -3,124 +3,77 @@ package discover
 import (
 	"context"
 	"errors"
+	"io"
 	"testing"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
 )
 
-// TestPaneHostsLiveClaude is the #761 delivery-path liveness primitive. It must
-// distinguish a LIVE claude process from a BARE SHELL — and specifically must NOT
-// be fooled by a stale tmux title/window-name, which outlives the dead process
-// and is exactly what let the mailman paste bus content into bash.
+// TestPaneAcceptsPaste is the #761 delivery-path gate. It keys on the hazard's
+// actual mechanism — paste-and-enter executes the body as shell commands only
+// when the pane's FOREGROUND process is an interactive shell — and must NOT key
+// on which adapter is running, nor on tmux metadata that outlives a dead process.
 //
-// The axis the bug lives on is "a bare shell that still RESOLVES to the agent"
-// (via title), not merely "a bare shell" — so the stale-title arm is the load-
-// bearing one; a title-less bare shell was already caught by the #626 block.
-func TestPaneHostsLiveClaude(t *testing.T) {
+// The codex row is the load-bearing one: a LIVE chamber that the earlier
+// claude-specific gate REFUSED (denial of service, lookout 2026-07-20), because
+// codex's argv is `codex … resume` (positional, no `--resume`) and its pane
+// carried no wrapper-injected session-id. Adapter-neutrality is what it buys.
+func TestPaneAcceptsPaste(t *testing.T) {
 	cases := []struct {
-		name     string
-		panes    string // list-panes -F output: id\tpid\ttitle\tcurrent_cmd
-		cmdline  map[int]string
-		environ  map[int]string // pid → TMUX_TELL_SESSION_ID
-		pane     string
-		want     bool
-		whyFalse string
+		name string
+		cmd  string // what pane_current_command reports
+		want bool
 	}{
-		{
-			name:    "live claude --resume → true",
-			panes:   "%4\t400\tsurveyor\tclaude\n",
-			cmdline: map[int]string{400: "claude\x00--resume\x00surveyor\x00"},
-			pane:    "%4",
-			want:    true,
-		},
-		{
-			name:    "bare shell with STALE AGENT-NAMED TITLE → false (the #761 exploit)",
-			panes:   "%4\t400\tsurveyor\tbash\n", // title lies; claude is gone
-			cmdline: map[int]string{400: "bash\x00"},
-			pane:    "%4",
-			want:    false,
-		},
-		{
-			name:    "bare shell, no title → false",
-			panes:   "%4\t400\t\tbash\n",
-			cmdline: map[int]string{400: "bash\x00"},
-			pane:    "%4",
-			want:    false,
-		},
-		{
-			name:    "fresh chamber: no --resume but session-id env → true",
-			panes:   "%4\t400\tsurveyor\tclaude\n",
-			cmdline: map[int]string{400: "claude\x00"},
-			environ: map[int]string{400: "FRESH-uuid"},
-			pane:    "%4",
-			want:    true,
-		},
-		{
-			name:    "live claude for a DIFFERENT agent → true (agent-agnostic; attribution is the drift block's job)",
-			panes:   "%4\t400\tPilot\tclaude\n",
-			cmdline: map[int]string{400: "claude\x00--resume\x00Pilot\x00"},
-			pane:    "%4",
-			want:    true,
-		},
-		{
-			name:    "pane absent from the walk → false (fail closed)",
-			panes:   "%9\t900\tother\tclaude\n",
-			cmdline: map[int]string{900: "claude\x00--resume\x00other\x00"},
-			pane:    "%4",
-			want:    false,
-		},
+		{"live claude (node) → accept", "node", true},
+		{"live CODEX (node) → accept — the regression this fixes", "node", true},
+		{"bare bash → REFUSE (the #761 exploit surface)", "bash", false},
+		{"login shell '-bash' → REFUSE (dash-stripped)", "-bash", false},
+		{"zsh → REFUSE", "zsh", false},
+		{"fish → REFUSE", "fish", false},
+		{"non-shell TUI (less) → accept (#719 territory, not #761)", "less", true},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			prev := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
-				return []byte(c.panes), nil
+			prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, _ ...string) ([]byte, error) {
+				return []byte(c.cmd + "\n"), nil
 			})
-			t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prev) })
+			t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
 
-			w := &Walker{
-				CmdlineReader: func(pid int) (string, error) {
-					if v, ok := c.cmdline[pid]; ok {
-						return v, nil
-					}
-					return "", errors.New("no fake")
-				},
-				ChildrenReader: func(int) []int { return nil },
-				MaxDepth:       1,
-			}
-			if c.environ != nil {
-				w.EnvironReader = func(pid int, key string) (string, bool) {
-					if key != NeutralSessionIDEnv {
-						return "", false
-					}
-					v, ok := c.environ[pid]
-					return v, ok
-				}
-			}
-
-			if got := w.PaneHostsLiveClaude(context.Background(), c.pane); got != c.want {
-				t.Errorf("PaneHostsLiveClaude(%s) = %v, want %v", c.pane, got, c.want)
+			w := &Walker{ChildrenReader: func(int) []int { return nil }, MaxDepth: 1}
+			if got := w.PaneAcceptsPaste(context.Background(), "%4"); got != c.want {
+				t.Errorf("PaneAcceptsPaste(cmd=%q) = %v, want %v", c.cmd, got, c.want)
 			}
 		})
 	}
 }
 
-// TestPaneHostsLiveClaude_WalkErrorFailsClosed: when the pane list cannot be read
-// at all, the liveness question is UNANSWERABLE — and a check that cannot verify
-// must never authorize a paste-and-enter. Returns false (block), not true.
-// Mutation anchor: flipping the error arm to `true` reds this.
-func TestPaneHostsLiveClaude_WalkErrorFailsClosed(t *testing.T) {
-	prev := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+// TestPaneAcceptsPaste_FailsClosed: when the pane's current command cannot be
+// read the question is unanswerable, and a gate that cannot verify must not
+// authorize a paste-and-enter. Mutation anchor: returning true on the error arm
+// reds this.
+func TestPaneAcceptsPaste_FailsClosed(t *testing.T) {
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, _ ...string) ([]byte, error) {
 		return nil, errors.New("tmux is down")
 	})
-	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prev) })
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
 
-	w := &Walker{
-		CmdlineReader:  func(int) (string, error) { return "claude\x00--resume\x00surveyor\x00", nil },
-		ChildrenReader: func(int) []int { return nil },
-		MaxDepth:       1,
+	w := &Walker{ChildrenReader: func(int) []int { return nil }, MaxDepth: 1}
+	if w.PaneAcceptsPaste(context.Background(), "%4") {
+		t.Error("PaneAcceptsPaste = true when the pane command could not be read; want false (fail closed)")
 	}
-	if w.PaneHostsLiveClaude(context.Background(), "%4") {
-		t.Error("PaneHostsLiveClaude = true on a walk error; want false (fail closed — cannot verify ⇒ must not authorize a paste)")
+}
+
+// TestPaneAcceptsPaste_EmptyCommandFailsClosed: an empty pane_current_command is
+// could-not-determine, not "safe". Same third-state discipline as the error arm.
+func TestPaneAcceptsPaste_EmptyCommandFailsClosed(t *testing.T) {
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, _ ...string) ([]byte, error) {
+		return []byte("\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	w := &Walker{ChildrenReader: func(int) []int { return nil }, MaxDepth: 1}
+	if w.PaneAcceptsPaste(context.Background(), "%4") {
+		t.Error("PaneAcceptsPaste = true on an empty pane command; want false (could-not-determine ⇒ refuse)")
 	}
 }

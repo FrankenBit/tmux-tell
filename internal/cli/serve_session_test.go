@@ -37,6 +37,13 @@ func deliverRunner(bodyMu *sync.Mutex, body *string, paneSeen *atomic.Value) fun
 			bodyMu.Lock()
 			defer bodyMu.Unlock()
 			return []byte(*body), nil
+		case "display-message":
+			// pane_current_command for the #761 gate (PaneAcceptsPaste). These
+			// harnesses model panes hosting a LIVE adapter, so report a non-shell
+			// foreground process — "node" is what both claude and codex show. A
+			// test modelling a BARE SHELL must override this with "bash", which is
+			// what makes its refusal fire for the right reason.
+			return []byte("node\n"), nil
 		}
 		return nil, nil
 	}

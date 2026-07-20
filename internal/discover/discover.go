@@ -295,41 +295,38 @@ func (w *Walker) PaneAgentNameWithCanonicals(ctx context.Context, paneID string,
 	return "", false, nil
 }
 
-// PaneHostsLiveClaude reports whether paneID currently hosts a LIVE claude
-// process — the #761 delivery-path bare-shell gate. It returns true iff the
-// pane's process tree carries a live-process signal a bare shell cannot fake:
+// PaneAcceptsPaste reports whether paneID can safely receive a paste-and-enter —
+// the #761 delivery-path gate. It is keyed on the HAZARD'S ACTUAL MECHANISM:
+// paste-and-enter executes the message body as shell commands ONLY when the
+// pane's FOREGROUND process is an interactive shell. Anything else holding the
+// terminal (claude, codex, or any other adapter TUI) receives the paste as input
+// to that program — no command execution.
 //
-//   - ANY `claude --resume <name>` in the tree (SourceCmdline — a running
-//     adapter), OR
-//   - a wrapper-injected TMUX_TELL_SESSION_ID env (SessionIDForPane) — the signal
-//     a FRESH chamber (launched with no --resume in argv) or a chamber re-resumed
-//     under a new id carries.
+// So the question is "is the foreground process a shell?", NOT "which adapter is
+// this?". That makes the gate ADAPTER-NEUTRAL by construction, which the earlier
+// claude-specific form was not: it accepted only a `claude --resume` cmdline or a
+// wrapper-injected session-id, so a LIVE CODEX chamber — argv `codex … resume`
+// (positional, no `--resume`) launched without the wrapper, hence no session-id
+// env — presented exactly like a bare shell and was REFUSED. That was a
+// denial-of-service regression against a working chamber (lookout, 2026-07-20),
+// not a caught hazard.
 //
-// It is deliberately AGENT-AGNOSTIC: agent-attribution (is the live claude the
-// RIGHT chamber?) is the drift block's job, and the drift block runs before this
-// gate. This gate answers only "is this a live claude or a bare shell?" — so that
-// a genuine drift onto a live WRONG-agent pane (which --drift-soft-fail may choose
-// to deliver to) is NOT blocked here, while a bare shell with a lingering
-// agent-named tmux TITLE — metadata that outlives the dead process, the #761
-// paste-to-bash exploit surface — IS blocked. Deliberately ignores SourceTitle /
-// SourceWindowName. Fails CLOSED (false) when the pane cannot be walked: a
-// liveness check that cannot verify must not authorize a paste-and-enter.
-func (w *Walker) PaneHostsLiveClaude(ctx context.Context, paneID string) bool {
-	all, err := w.WalkAll(ctx)
-	if err != nil {
-		return false // cannot verify liveness → fail closed (#761)
+// Deliberately ignores the tmux TITLE and window-name: stale metadata outlives
+// the dead process, and a bare shell wearing an agent-named title is the #761
+// exploit surface. Fails CLOSED when the pane's command cannot be read — a gate
+// that cannot verify must not authorize a paste.
+//
+// Scope: this answers "would a paste execute as shell commands?", NOT "is the
+// chamber at a work prompt and able to act on it?". A pane sitting in an adapter
+// MODAL (or in `less`, `vim`, …) accepts the paste without executing it, and is
+// allowed here — that is a delivery-correctness question tracked separately
+// (#719), not the #761 security question.
+func (w *Walker) PaneAcceptsPaste(ctx context.Context, paneID string) bool {
+	cmd, err := tmuxio.PaneCurrentCommand(ctx, paneID)
+	if err != nil || cmd == "" {
+		return false // cannot verify → fail closed (#761)
 	}
-	for _, r := range all {
-		if r.PaneID == paneID && r.Source == SourceCmdline {
-			return true // a live `claude --resume <any>` process; not title/window
-		}
-	}
-	// No live cmdline process; a wrapper-injected session-id is the other
-	// live-process signal (fresh launch / re-resumed under a new id — no --resume).
-	if _, ok := w.SessionIDForPane(ctx, paneID); ok {
-		return true
-	}
-	return false
+	return !tmuxio.IsShellProcess(cmd)
 }
 
 // exactMatches returns every canonical whose name OR any alias is
