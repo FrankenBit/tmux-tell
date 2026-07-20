@@ -33,6 +33,36 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.31.1] — 2026-07-20
+
+### Added
+
+None.
+
+### Changed
+
+None.
+
+### Fixed
+
+- **Unknown-parameter fail-loud now covers every MCP tool** (#753 phase 2) — following the `send`/`ask` fix, all remaining tmux-tell MCP tools now reject an unknown or mistyped parameter with `ok:false` (naming the key) instead of silently dropping it. This closes the invariant universally: the 17 argument-bearing tools (`ping`, `agent_state`, `set_pane_name`, `set_metabolism`, `set_session_id`, `flush_deferred`, `wait_for_reply`, `check_replies`, `resend`, `message_status`, `get`, `control`, `register`, `unregister`, `flag_operator`, and the two formerly error-swallowing tools `agents`/`inbox`) plus the 4 no-argument tools (`whoami`, `status`, `clear_operator_flag`, `whoami_db`). Every documented parameter and every empty/absent-args call still work unchanged — each tool's input struct was verified (by an executable completeness test, not a one-time reading) to cover its full registered schema first, so no valid call is newly rejected.
+
+- **Unknown MCP tool parameters now fail loud instead of silently vanishing** (#753) — Go's `encoding/json` drops unknown fields by default, so an invented parameter (e.g. `cc`, which agents reach for to fan-out — but tmux-tell spells fan-out as `to` being an array, #158) evaporated while the call still returned `ok:true`: a silent partial-send, the worst failure shape for a coordination bus (five chambers once built off a contract they never received). `send` and `ask` now reject any unknown top-level parameter with `ok:false` naming the offending key, and `cc`/`bcc` get a targeted "fan-out is `to` as an array" hint. Absent/empty args and every documented parameter still work unchanged. These are the first two tools of the surface (where the mistake bites hardest); the shared strict-decode helper is ready to extend to the rest once each tool's input struct is confirmed to cover its schema.
+
+- **The #761 delivery gate no longer refuses live codex chambers** (#761) — the first form of the gate accepted only a `claude --resume <name>` cmdline or a wrapper-injected `TMUX_TELL_SESSION_ID`. A live **codex** chamber has neither: its argv is `codex … resume` (positional, so no `--resume` to parse), and a chamber restarted outside `chamber-codex.sh` carries no session-id env. Such a pane presented exactly like a bare shell with a stale title and was blocked — a denial of service against a working chamber, observed against `lookout` on 2026-07-20. The gate now keys on the hazard's actual mechanism instead: **paste-and-enter executes the body as shell commands only when the pane's foreground process is an interactive shell**, so it asks "would a paste execute as commands?" rather than "which adapter is this?". Adapter-neutral by construction, one fewer signal to keep in sync per adapter, and the bare-shell exploit stays blocked (both directions mutation-verified). Renamed `PaneHostsLiveClaude` → `PaneAcceptsPaste` to match what it actually decides. Still fails closed when the pane's command cannot be read, and still ignores tmux title/window-name. Panes sitting in an adapter modal are accepted here — whether a chamber can *act* on a delivery is #719, not #761.
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.31.0] — 2026-07-20
 
 ### Added
