@@ -502,6 +502,220 @@ func TestServe_BareShell_NoLiveSession_BlocksUnconditionally(t *testing.T) {
 	}
 }
 
+// TestServe_BareShell_StaleTitle_BlocksLivenessGate is the #761 regression and
+// the exploit case the #626 block CANNOT see. The pane is a bare shell (claude
+// is gone) but its tmux TITLE still carries the agent name — metadata that
+// outlives the dead process. discover.Resolve therefore returns the agent via
+// SourceTitle, so the drift check reads running == opts.Agent and every arm of
+// the #626 block (which fires only on running == "") is bypassed. Pre-#761 this
+// pasted the message body straight into bash, executing each line as a shell
+// command (2026-07-14 incident + the confirmed live repro).
+//
+// The liveness gate must BLOCK: no live claude process and no wrapper session-id
+// in the pane = bare shell, regardless of what the title claims. Mutation anchor:
+// removing the PaneHostsLiveClaude gate in serve.go reds this test (the payload
+// gets pasted). The `touch` body is the harmless stand-in for the adversarial
+// payload named in #761's AC.
+func TestServe_BareShell_StaleTitle_BlocksLivenessGate(t *testing.T) {
+	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		// %4 runs bash, but the TITLE still says "surveyor" (stale metadata).
+		return []byte("%4\t400\tsurveyor\tbash\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+	walker := &discover.Walker{
+		CmdlineReader: func(pid int) (string, error) {
+			if pid == 400 {
+				return "bash\x00", nil // claude is GONE — no --resume anywhere
+			}
+			return "", errors.New("no fake")
+		},
+		ChildrenReader: func(int) []int { return nil },
+		// No EnvironReader wired ⇒ no TMUX_TELL_SESSION_ID in the pane either.
+		MaxDepth: 1,
+	}
+
+	var pasted atomic.Bool
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		if len(args) > 0 && args[0] == "paste-buffer" {
+			pasted.Store(true)
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "surveyor", "%4") // stale: %4 is a bare shell now
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "surveyor", Body: "touch /tmp/tmux-tell-761-owned",
+	})
+
+	opts := fastOpts("surveyor")
+	opts.DriftCheckDisabled = false
+	opts.DriftSoftFail = true // safety invariant: blocks even under the escape hatch
+	opts.Walker = walker
+
+	stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		f, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+		})
+		if len(f) >= 1 {
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	if pasted.Load() {
+		t.Fatalf("paste-buffer fired — the body was pasted into a BARE SHELL (#761 exploit); log=%s", logbuf.String())
+	}
+	delivered, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "surveyor", State: store.StateDelivered, Limit: 10,
+	})
+	if len(delivered) != 0 {
+		t.Errorf("delivered = %d, want 0 (NEVER paste to a bare shell, however the title reads)", len(delivered))
+	}
+	failed, _ := s.ListMessages(ctx, store.ListFilter{
+		ToAgent: "surveyor", State: store.StateFailed, Limit: 10,
+	})
+	if len(failed) != 1 {
+		t.Fatalf("failed = %d, want 1 (stale-title bare shell must block); log=%s", len(failed), logbuf.String())
+	}
+	if !strings.Contains(logbuf.String(), "no_live_session_liveness_gate") {
+		t.Errorf("expected no_live_session_liveness_gate log; got %s", logbuf.String())
+	}
+}
+
+// TestServe_LivenessGate_DeliversToLiveChambers is the other half of the #761
+// control row: the gate must say YES, not only NO. Both live shapes that reach
+// the non-session delivery path must still deliver.
+//
+//	(a) re-resumed chamber — a live `claude --resume surveyor` whose stored
+//	    session-id is STALE (it re-resumed under a new id). This is the case a
+//	    naive "stored session-id must resolve" gate would have blocked, breaking
+//	    every post-/compact chamber; measured before implementing.
+//	(b) fresh chamber — launched with NO --resume in argv (so the cmdline carries
+//	    no agent name), identified only by the wrapper-injected session-id env.
+func TestServe_LivenessGate_DeliversToLiveChambers(t *testing.T) {
+	t.Run("re-resumed chamber (live cmdline, stale stored session-id)", func(t *testing.T) {
+		prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+			return []byte("%4\t400\tsurveyor\tclaude\n"), nil
+		})
+		t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+		walker := &discover.Walker{
+			CmdlineReader: func(pid int) (string, error) {
+				if pid == 400 {
+					return "claude\x00--resume\x00surveyor\x00", nil // ALIVE
+				}
+				return "", errors.New("no fake")
+			},
+			ChildrenReader: func(int) []int { return nil },
+			EnvironReader: func(pid int, key string) (string, bool) {
+				if key == discover.NeutralSessionIDEnv && pid == 400 {
+					return "NEW-uuid", true // re-resumed under a NEW id
+				}
+				return "", false
+			},
+			MaxDepth: 1,
+		}
+
+		var (
+			bodyMu   sync.Mutex
+			body     string
+			paneSeen atomic.Value
+		)
+		prev := tmuxio.SetTmuxRunner(deliverRunner(&bodyMu, &body, &paneSeen))
+		t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+		s, _ := store.Open(":memory:")
+		t.Cleanup(func() { _ = s.Close() })
+		ctx := context.Background()
+		_ = s.UpsertAgent(ctx, "alice", "%1")
+		_ = s.UpsertAgent(ctx, "surveyor", "%4")
+		_ = s.SetSessionID(ctx, "surveyor", "GONE-uuid") // stale stored id
+		_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "surveyor", Body: "hello"})
+
+		opts := fastOpts("surveyor")
+		opts.DriftCheckDisabled = false
+		opts.Walker = walker
+
+		stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+		waitDelivered(t, s, "surveyor")
+		stop()
+		wait()
+
+		d, _ := s.ListMessages(ctx, store.ListFilter{ToAgent: "surveyor", State: store.StateDelivered, Limit: 10})
+		if len(d) != 1 {
+			t.Fatalf("delivered = %d, want 1 (a LIVE re-resumed chamber must still receive); log=%s", len(d), logbuf.String())
+		}
+		if seen := paneSeen.Load(); seen != "%4" {
+			t.Errorf("paste pane = %v, want %%4", seen)
+		}
+	})
+
+	t.Run("fresh chamber (no --resume; session-id env only)", func(t *testing.T) {
+		prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+			// Title carries the name (that's how the drift check attributes it);
+			// argv has NO --resume, so liveness rests on the session-id env.
+			return []byte("%4\t400\tsurveyor\tclaude\n"), nil
+		})
+		t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+
+		walker := &discover.Walker{
+			CmdlineReader: func(pid int) (string, error) {
+				if pid == 400 {
+					return "claude\x00", nil // fresh launch: no --resume
+				}
+				return "", errors.New("no fake")
+			},
+			ChildrenReader: func(int) []int { return nil },
+			EnvironReader: func(pid int, key string) (string, bool) {
+				if key == discover.NeutralSessionIDEnv && pid == 400 {
+					return "FRESH-uuid", true // wrapper-injected at fork
+				}
+				return "", false
+			},
+			MaxDepth: 1,
+		}
+
+		var (
+			bodyMu   sync.Mutex
+			body     string
+			paneSeen atomic.Value
+		)
+		prev := tmuxio.SetTmuxRunner(deliverRunner(&bodyMu, &body, &paneSeen))
+		t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+		s, _ := store.Open(":memory:")
+		t.Cleanup(func() { _ = s.Close() })
+		ctx := context.Background()
+		_ = s.UpsertAgent(ctx, "alice", "%1")
+		_ = s.UpsertAgent(ctx, "surveyor", "%4") // no stored session-id (legacy row)
+		_, _ = s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "surveyor", Body: "hello"})
+
+		opts := fastOpts("surveyor")
+		opts.DriftCheckDisabled = false
+		opts.Walker = walker
+
+		stop, wait, logbuf := runServeInBackgroundOpts(t, s, opts)
+		waitDelivered(t, s, "surveyor")
+		stop()
+		wait()
+
+		d, _ := s.ListMessages(ctx, store.ListFilter{ToAgent: "surveyor", State: store.StateDelivered, Limit: 10})
+		if len(d) != 1 {
+			t.Fatalf("delivered = %d, want 1 (a fresh chamber with a session-id must receive); log=%s", len(d), logbuf.String())
+		}
+	})
+}
+
 // TestServe_BareShell_SessionRelocated_Reroutes: the registered pane went
 // bare-shell, but the addressed session is alive in a DIFFERENT pane
 // (operator restarted it elsewhere). The mailman re-discovers it across

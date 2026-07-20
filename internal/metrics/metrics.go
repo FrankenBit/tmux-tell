@@ -71,6 +71,7 @@ type Metrics struct {
 	queueDepth                 *prometheus.GaugeVec
 	loopIterations             *prometheus.CounterVec
 	pasteUnsafeAborts          *prometheus.CounterVec
+	deliveryRefusedLiveness    *prometheus.CounterVec
 	mailmanStuck               *prometheus.GaugeVec
 	providerDefer              *prometheus.CounterVec
 	providerDeferInflight      *prometheus.GaugeVec
@@ -122,6 +123,10 @@ func New() *Metrics {
 		pasteUnsafeAborts: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tmux_tell_paste_unsafe_aborts_total",
 			Help: "Total pre-paste TOCTOU aborts: the gate passed, then the pane became paste-unsafe before paste, by agent and reason. Steady-state rate_limited/usage_limited parks are counted by their gauges, not here.",
+		}, []string{"agent", "reason"}),
+		deliveryRefusedLiveness: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tmux_tell_delivery_refused_liveness_total",
+			Help: "Total deliveries refused because the target pane hosts no live agent process — a bare shell / stale tmux title, not a running claude (#761 delivery-path liveness gate). Distinct from paste_unsafe_aborts (a transient pane-state TOCTOU): this is a hard no-live-session refusal. A non-zero rate means a chamber's pane went bare while still registered — the paste-to-bash exposure the gate blocks. Labels: agent, reason.",
 		}, []string{"agent", "reason"}),
 		mailmanStuck: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tmux_tell_mailman_stuck",
@@ -178,6 +183,7 @@ func New() *Metrics {
 		m.queueDepth,
 		m.loopIterations,
 		m.pasteUnsafeAborts,
+		m.deliveryRefusedLiveness,
 		m.mailmanStuck,
 		m.providerDefer,
 		m.providerDeferInflight,
@@ -401,6 +407,17 @@ func (m *Metrics) IncPasteUnsafeAbort(agent, reason string) {
 		return
 	}
 	m.pasteUnsafeAborts.WithLabelValues(agent, reason).Inc()
+}
+
+// IncDeliveryRefusedLiveness bumps the #761 delivery-path liveness-refusal
+// counter: a delivery blocked because the target pane hosts no live agent
+// process (a bare shell / stale tmux title). reason is a stable label
+// (no_live_session_liveness_gate).
+func (m *Metrics) IncDeliveryRefusedLiveness(agent, reason string) {
+	if m == nil {
+		return
+	}
+	m.deliveryRefusedLiveness.WithLabelValues(agent, reason).Inc()
 }
 
 // SetMailmanStuck sets tmux_tell_mailman_stuck for the agent (#300).

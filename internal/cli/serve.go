@@ -1653,6 +1653,45 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			}
 		}
 
+		// #761 delivery-path bare-shell gate. The name-based drift block above
+		// resolves paneForDelivery via cmdline → tmux TITLE → window-name. The
+		// title/window sources are stale METADATA that outlive a dead process, so a
+		// bare shell with a lingering agent-named title resolves as the agent and
+		// would receive paste-and-enter — executing the bus message body as shell
+		// commands (the #761 exploit). The #626 block above catches only the
+		// running=="" arm, which a stale title defeats. Before delivering on the
+		// non-session path, require a LIVE-PROCESS signal in the target pane: a
+		// running `claude --resume` or a wrapper-injected session-id.
+		//
+		// AGENT-AGNOSTIC by design: this asks "live claude or bare shell?", NOT
+		// "the right chamber?" — attribution is the drift block's job, which ran
+		// above. So a genuine drift onto a live WRONG-agent pane stays governed by
+		// --drift-soft-fail policy (not blocked here), while a bare shell is blocked
+		// unconditionally. A session-resolved delivery already proved liveness
+		// (sessionResolved) and skips this. Like the #626 block, this is a SAFETY
+		// invariant and bypasses --drift-soft-fail.
+		if !opts.DriftCheckDisabled && !sessionResolved {
+			if walker == nil {
+				walker = discover.New()
+			}
+			if !walker.PaneHostsLiveClaude(opCtx, paneForDelivery) {
+				reason := "no_live_session: target pane hosts no live agent process (bare shell / stale title); delivery blocked to prevent bare-shell paste (#761)"
+				logger.Printf("WARN no_live_session_liveness_gate id=%s agent=%s pane=%s - pane matches only via stale metadata, no live claude/session-id; blocking bare-shell paste (#761)",
+					msg.PublicID, opts.Agent, paneForDelivery)
+				if mferr := s.MarkFailed(opCtx, msg.PublicID, reason); mferr != nil {
+					logger.Printf("mark_failed_err id=%s err=%v", msg.PublicID, mferr)
+				}
+				maybeInsertFailureNotice(opCtx, s, logger,
+					opts.NotifyOnFailed, opts.Agent, msg, "failed", reason)
+				m.IncDeliveryRefusedLiveness(opts.Agent, "no_live_session_liveness_gate")
+				m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateFailed)
+				if stopOrSleep(stopCtx, opts.InterMessageDelay) {
+					return exitOK
+				}
+				continue
+			}
+		}
+
 		// Recipient-side dedupe (#157 PR2). Before entering the observe-gate
 		// (which may hold for seconds), check whether a prior delivery attempt
 		// for the same body from the same sender landed as delivered_in_input_box

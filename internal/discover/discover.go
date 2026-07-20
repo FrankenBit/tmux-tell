@@ -295,6 +295,43 @@ func (w *Walker) PaneAgentNameWithCanonicals(ctx context.Context, paneID string,
 	return "", false, nil
 }
 
+// PaneHostsLiveClaude reports whether paneID currently hosts a LIVE claude
+// process — the #761 delivery-path bare-shell gate. It returns true iff the
+// pane's process tree carries a live-process signal a bare shell cannot fake:
+//
+//   - ANY `claude --resume <name>` in the tree (SourceCmdline — a running
+//     adapter), OR
+//   - a wrapper-injected TMUX_TELL_SESSION_ID env (SessionIDForPane) — the signal
+//     a FRESH chamber (launched with no --resume in argv) or a chamber re-resumed
+//     under a new id carries.
+//
+// It is deliberately AGENT-AGNOSTIC: agent-attribution (is the live claude the
+// RIGHT chamber?) is the drift block's job, and the drift block runs before this
+// gate. This gate answers only "is this a live claude or a bare shell?" — so that
+// a genuine drift onto a live WRONG-agent pane (which --drift-soft-fail may choose
+// to deliver to) is NOT blocked here, while a bare shell with a lingering
+// agent-named tmux TITLE — metadata that outlives the dead process, the #761
+// paste-to-bash exploit surface — IS blocked. Deliberately ignores SourceTitle /
+// SourceWindowName. Fails CLOSED (false) when the pane cannot be walked: a
+// liveness check that cannot verify must not authorize a paste-and-enter.
+func (w *Walker) PaneHostsLiveClaude(ctx context.Context, paneID string) bool {
+	all, err := w.WalkAll(ctx)
+	if err != nil {
+		return false // cannot verify liveness → fail closed (#761)
+	}
+	for _, r := range all {
+		if r.PaneID == paneID && r.Source == SourceCmdline {
+			return true // a live `claude --resume <any>` process; not title/window
+		}
+	}
+	// No live cmdline process; a wrapper-injected session-id is the other
+	// live-process signal (fresh launch / re-resumed under a new id — no --resume).
+	if _, ok := w.SessionIDForPane(ctx, paneID); ok {
+		return true
+	}
+	return false
+}
+
 // exactMatches returns every canonical whose name OR any alias is
 // exactly `running`. Length is the ambiguity signal: 0 = no match,
 // 1 = unambiguous, >1 = ambiguous (Q(a) Surveyor review).
