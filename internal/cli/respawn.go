@@ -5,6 +5,7 @@ import (
 	"log"
 	"time"
 
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/discover"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/sdnotify"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/tmuxio"
@@ -22,9 +23,11 @@ var (
 	// within this window the chamber is left running (no bare shell stranded).
 	respawnExitGrace = 8 * time.Second
 	// respawnReadyTimeout bounds the wait for the restarted claude to reach a
-	// live idle prompt. On timeout the pathway proceeds anyway — the bare-shell
-	// guard (#638) + name-resolution fallback backstop delivery until the
-	// chamber is up, so no message is mis-delivered in the meantime.
+	// live idle prompt. On timeout the pathway does NOT blindly proceed: it checks
+	// the ground-truth liveness signal (a resolvable TMUX_TELL_SESSION_ID in the
+	// pane) and, if the chamber did not actually come back, unregisters the agent
+	// so the mailman stops delivering into the bare shell (#761). A slow-but-alive
+	// claude (session-id present, prompt not yet idle) is kept and proceeds.
 	respawnReadyTimeout = 90 * time.Second
 	// respawnPollEvery is the poll cadence for the ready wait.
 	respawnPollEvery = 1 * time.Second
@@ -65,6 +68,14 @@ type respawnOps struct {
 	// re-ran pane_start_command — under tmux-resurrect the resurrect restore, i.e.
 	// a bare shell, never the chamber (root cause, #285).
 	relaunch func(ctx context.Context, pane, cmd string) error
+	// sessionForPane reports whether the pane's process tree currently hosts a
+	// wrapper-injected TMUX_TELL_SESSION_ID — the GROUND-TRUTH liveness signal a
+	// successful relaunch re-establishes (inject-at-fork) and a bare shell cannot
+	// fake. Used post-relaunch to decide whether the chamber actually came back
+	// (#761): AgentState is a spoofable proxy at this seam (a residual adapter TUI
+	// frame reads StateIdle on a dead pane), so the relaunch-succeeded decision
+	// keys on the session-id, not on the idle read.
+	sessionForPane func(ctx context.Context, pane string) (string, bool)
 }
 
 // defaultRespawnOps wires the production tmuxio operations: a read-only
@@ -86,6 +97,9 @@ func defaultRespawnOps() respawnOps {
 		relaunch: func(ctx context.Context, pane, cmd string) error {
 			return tmuxio.SendKeys(ctx, pane, cmd)
 		},
+		sessionForPane: func(ctx context.Context, pane string) (string, bool) {
+			return discover.New().SessionIDForPane(ctx, pane)
+		},
 	}
 }
 
@@ -106,11 +120,14 @@ func defaultRespawnOps() respawnOps {
 //  3. Graceful /exit — ask the adapter to shut down cleanly so it flushes its
 //     transcript before dying.
 //     4-7. relaunchAfterExit — await the post-exit bare shell, send-keys the
-//     relaunch command, clear the dead session-id (#626), and wait for the
-//     restarted chamber to reach a live idle prompt. Shared with the #730
-//     control-verb co-trigger.
+//     relaunch command, clear the dead session-id (#626), wait for the restarted
+//     chamber to reach a live idle prompt, and confirm it actually came back via
+//     the ground-truth session-id signal — UNREGISTERING the agent if the
+//     relaunch failed to start a chamber, so the mailman never delivers into the
+//     stranded bare shell (#761). Shared with the #730 control-verb co-trigger.
 //  8. Reset the shrink counter — the cycle restarts (only on a completed
-//     relaunch).
+//     relaunch; a failed relaunch unregisters instead, so there is no counter to
+//     reset).
 //
 // Returns stopped=true when stopCtx was cancelled mid-pathway (the caller should
 // return from the serve loop). The pane-id does not change: send-keys relaunches
@@ -171,14 +188,18 @@ func respawnChamber(stopCtx context.Context, s *store.Store, ops respawnOps,
 // relaunchAfterExit is the shared tail of the #285 threshold respawn and the #730
 // control-verb co-trigger. It (a) waits up to window for the adapter to have
 // exited to a bare shell (awaitExit), (b) send-keys the relaunch command, (c)
-// clears the now-dead session-id so delivery falls back to name-resolution
-// (bare-shell-guarded during boot, #626 — the restarted chamber re-establishes a
-// fresh session-id on self-register, dodging the #643 launch-era-id latching),
-// and (d) waits (bounded) for the restarted chamber to reach a live idle prompt.
+// clears the now-dead session-id so a stale id can't mis-resolve while the
+// chamber boots (the restarted chamber re-establishes a fresh session-id on
+// self-register, dodging the #643 launch-era-id latching), (d) waits (bounded)
+// for the restarted chamber to reach a live idle prompt, and (e) confirms via
+// the ground-truth liveness signal that the chamber actually came back.
 //
-// relaunched=true iff a bare shell was observed AND the relaunch send-keys
-// succeeded (the ready-wait outcome is logged but never flips this — the
-// bare-shell guard + name-resolution backstop delivery until the chamber is up).
+// relaunched=true iff the pane hosts a resolvable TMUX_TELL_SESSION_ID after the
+// wait (a live wrapper-launched chamber). If it does NOT — the relaunch_cmd
+// failed to start a chamber (e.g. bare basename not on PATH) and the pane is a
+// bare shell — the agent is UNREGISTERED (fail-closed, #761) and relaunched=false,
+// because the send-keys "succeeded" but produced no chamber, and the old
+// name-resolution backstop does not hold against a stale agent-named title.
 // stopped reflects stopCtx cancellation mid-pathway.
 func relaunchAfterExit(stopCtx context.Context, s *store.Store, ops respawnOps,
 	logger *log.Logger, agent, pane, relaunchCmd string, window, watchdogPing time.Duration) (relaunched, stopped bool) {
@@ -207,8 +228,35 @@ func relaunchAfterExit(stopCtx context.Context, s *store.Store, ops respawnOps,
 	if ready == respawnStopped {
 		return true, true
 	}
+
+	// Ground-truth liveness gate (#761). A successful relaunch re-establishes a
+	// resolvable TMUX_TELL_SESSION_ID in the pane's process tree (the wrapper
+	// injects it at fork and self-registers); a FAILED relaunch — e.g. a
+	// relaunch_cmd that is a bare basename not on the mailman's PATH, which
+	// send-keys types successfully but the shell cannot run — leaves a bare shell
+	// that carries none. AgentState is a SPOOFABLE proxy at this seam: a residual
+	// adapter TUI frame reads StateIdle on a dead pane (#761), so respawnReady
+	// alone cannot tell a live chamber from a bare shell, and respawnTimedOut on
+	// its own was the old "proceed anyway" that left the chamber registered-and-
+	// dead. Key the decision on the decidable fact instead. If the pane hosts no
+	// injected session-id, the relaunch did not bring the chamber back: UNREGISTER
+	// so the mailman stops delivering bus content into the bare shell (the
+	// paste-to-bash class), rather than falling back to the stale name/title — a
+	// backstop #761 proves does not hold. Fail-closed here is recoverable: the
+	// operator's next wrapper launch re-registers the chamber; leaving it
+	// registered-and-dead is the security hole.
+	if _, live := ops.sessionForPane(stopCtx, pane); !live {
+		logger.Printf("respawn_relaunch_failed_unregister agent=%s pane=%s ready=%v - relaunch did not restore a resolvable session-id (bare shell); unregistering to prevent bare-shell paste (#761)",
+			agent, pane, ready)
+		if _, err := s.DeleteAgent(stopCtx, agent); err != nil {
+			logger.Printf("respawn_unregister_err agent=%s err=%v - agent left registered; delivery may still target the bare shell",
+				agent, err)
+		}
+		return false, stopCtx.Err() != nil
+	}
+
 	if ready == respawnTimedOut {
-		logger.Printf("respawn_ready_timeout agent=%s pane=%s within=%s - proceeding; bare-shell guard + name-resolution backstop delivery until the chamber is up",
+		logger.Printf("respawn_ready_timeout agent=%s pane=%s within=%s - proceeding; session-id resolves in the pane so the chamber is coming up",
 			agent, pane, respawnReadyTimeout)
 	}
 	return true, false

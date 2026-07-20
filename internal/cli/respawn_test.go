@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log"
 	"testing"
@@ -27,6 +28,11 @@ type recordingOps struct {
 	relaunchN   int
 	relaunchCmd string // the command relaunch was asked to send-keys
 	relaunchErr error
+	// sessionLive is what sessionForPane returns: true = the pane hosts a
+	// resolvable TMUX_TELL_SESSION_ID after the relaunch (the chamber came back);
+	// false = a bare shell (relaunch failed to start a chamber → #761 unregister).
+	sessionLive     bool
+	sessionForPaneN int
 }
 
 func (r *recordingOps) toOps() respawnOps {
@@ -54,6 +60,13 @@ func (r *recordingOps) toOps() respawnOps {
 			r.relaunchN++
 			r.relaunchCmd = cmd
 			return r.relaunchErr
+		},
+		sessionForPane: func(_ context.Context, _ string) (string, bool) {
+			r.sessionForPaneN++
+			if r.sessionLive {
+				return "fresh-session-uuid", true
+			}
+			return "", false
 		},
 	}
 }
@@ -109,7 +122,9 @@ const testRelaunchCmd = "chamber-claude.sh Pilot"
 func TestRespawnChamber_HappyPath(t *testing.T) {
 	fastRespawnTunables(t)
 	s := respawnTestStore(t, "old-session-uuid")
-	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true}
+	// sessionLive: the relaunched chamber re-established a resolvable session-id
+	// (the ground-truth liveness gate passes → agent kept, counter reset).
+	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true, sessionLive: true}
 
 	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", testRelaunchCmd, 0)
 	if stopped {
@@ -230,15 +245,19 @@ func TestRespawnChamber_RelaunchFailureRetainsCounter(t *testing.T) {
 	}
 }
 
-// Ready-timeout: the restarted chamber never reaches idle within the ready window,
-// so the pathway TIMES OUT but still completes (relaunch already fired) — clearing
-// the session-id and resetting the counter. The bare-shell guard + name-resolution
-// backstop delivery until the chamber is actually up.
+// Ready-timeout, but the chamber IS alive: the restarted chamber never reaches
+// idle within the ready window (slow to settle), so the pathway TIMES OUT — but
+// the ground-truth liveness gate finds a resolvable session-id in the pane, so the
+// chamber is coming up and the pathway completes (session-id cleared for the fresh
+// self-register, counter reset). This is the "slow-but-alive" case that must NOT
+// unregister; the failed-relaunch (bare-shell) case is TestRelaunchAfterExit_
+// FailedRelaunchUnregisters.
 func TestRespawnChamber_ReadyTimeoutStillCompletes(t *testing.T) {
 	fastRespawnTunables(t)
 	s := respawnTestStore(t, "old-session-uuid")
-	// idle for the gate, then never idle → ready wait times out.
-	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle, tmuxio.StateWorking}, exited: true}
+	// idle for the gate, then never idle → ready wait times out; sessionLive → the
+	// chamber is up (just slow), so the liveness gate keeps it registered.
+	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle, tmuxio.StateWorking}, exited: true, sessionLive: true}
 
 	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", testRelaunchCmd, 0)
 	if stopped {
@@ -266,7 +285,7 @@ func TestRelaunchAfterExit(t *testing.T) {
 
 	t.Run("bare shell → relaunch", func(t *testing.T) {
 		s := respawnTestStore(t, "old-session-uuid")
-		ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true}
+		ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true, sessionLive: true}
 		relaunched, stopped := relaunchAfterExit(context.Background(), s, ops.toOps(), discardLogger(),
 			"pilot", "%6", testRelaunchCmd, autoRestartExitWindow, 0)
 		if !relaunched || stopped {
@@ -299,6 +318,77 @@ func TestRelaunchAfterExit(t *testing.T) {
 	})
 }
 
+// #761 — a relaunch that does NOT bring the chamber back (relaunch_cmd is a bare
+// basename not on the mailman's PATH: send-keys "succeeds" typing it, the shell
+// prints command-not-found and stays a bare shell) must UNREGISTER the agent, so
+// the mailman never delivers bus content into the stranded bare shell. The
+// ground-truth signal is the ABSENCE of a resolvable session-id in the pane
+// (sessionLive=false); AgentState is deliberately NOT trusted here — a residual
+// adapter TUI frame reads StateIdle on a dead pane. Mutation anchor: dropping the
+// sessionForPane gate / DeleteAgent leaves the agent registered → the GetAgent
+// ErrNotFound assert reds. Both the StateIdle-reading and the timed-out bare shell
+// must unregister.
+func TestRelaunchAfterExit_FailedRelaunchUnregisters(t *testing.T) {
+	fastRespawnTunables(t)
+
+	t.Run("idle-reading bare shell (residual frame) unregisters", func(t *testing.T) {
+		s := respawnTestStore(t, "old-session-uuid")
+		// exited: bare shell observed; relaunch send-keys succeeds (no error);
+		// StateIdle would fool AgentState — but sessionLive=false is the truth.
+		ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true, sessionLive: false}
+		relaunched, stopped := relaunchAfterExit(context.Background(), s, ops.toOps(), discardLogger(),
+			"pilot", "%6", testRelaunchCmd, autoRestartExitWindow, 0)
+		if relaunched || stopped {
+			t.Fatalf("relaunched=%v stopped=%v, want false/false (failed relaunch)", relaunched, stopped)
+		}
+		if ops.relaunchN != 1 {
+			t.Errorf("relaunchN=%d, want 1 (send-keys DID fire — it just didn't start a chamber)", ops.relaunchN)
+		}
+		if ops.sessionForPaneN == 0 {
+			t.Error("sessionForPane never consulted — the liveness gate must run")
+		}
+		if _, err := s.GetAgent(context.Background(), "pilot"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("agent still registered after failed relaunch (err=%v), want ErrNotFound (unregistered #761)", err)
+		}
+	})
+
+	t.Run("timed-out bare shell unregisters", func(t *testing.T) {
+		s := respawnTestStore(t, "old-session-uuid")
+		// idle for the gate, then never idle → ready wait times out; sessionLive=false
+		// → bare shell, relaunch failed → unregister (NOT the old "proceed anyway").
+		ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle, tmuxio.StateWorking}, exited: true, sessionLive: false}
+		relaunched, _ := relaunchAfterExit(context.Background(), s, ops.toOps(), discardLogger(),
+			"pilot", "%6", testRelaunchCmd, autoRestartExitWindow, 0)
+		if relaunched {
+			t.Error("relaunched=true, want false (timed-out bare shell = failed relaunch)")
+		}
+		if _, err := s.GetAgent(context.Background(), "pilot"); !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("agent still registered (err=%v), want ErrNotFound", err)
+		}
+	})
+}
+
+// #761 at the full respawnChamber level: a threshold respawn whose relaunch fails
+// to start a chamber unregisters the agent (fail-closed) rather than resetting the
+// counter on a registered-and-dead chamber. Mutation anchor: without the gate the
+// agent survives (counter reset) and the GetAgent ErrNotFound assert reds.
+func TestRespawnChamber_FailedRelaunchUnregisters(t *testing.T) {
+	fastRespawnTunables(t)
+	s := respawnTestStore(t, "old-session-uuid")
+	ops := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true, sessionLive: false}
+
+	stopped := respawnChamber(context.Background(), s, ops.toOps(), discardLogger(), "pilot", "%6", testRelaunchCmd, 0)
+	if stopped {
+		t.Fatal("stopped = true, want false")
+	}
+	if ops.relaunchN != 1 {
+		t.Errorf("relaunchN=%d, want 1 (relaunch attempted)", ops.relaunchN)
+	}
+	if _, err := s.GetAgent(context.Background(), "pilot"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("agent still registered after failed relaunch (err=%v), want ErrNotFound (unregistered #761)", err)
+	}
+}
+
 // respawnIfThresholdReached is the shared tail of both shrink triggers (PR1 clear
 // + PR2 self-compact). It fires the respawn ONLY when count >= threshold. Below
 // threshold it must not touch the pane at all. Mutation anchor: flipping the
@@ -323,8 +413,9 @@ func TestRespawnIfThresholdReached_Routing(t *testing.T) {
 	}
 
 	// At threshold: fires the respawn (idle pane → full pathway → counter reset).
+	// sessionLive → the relaunched chamber came back (liveness gate passes).
 	s2 := respawnTestStore(t, "old-session-uuid")
-	at := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true}
+	at := &recordingOps{states: []tmuxio.State{tmuxio.StateIdle}, exited: true, sessionLive: true}
 	if stopped := respawnIfThresholdReached(context.Background(), s2, at.toOps(), discardLogger(),
 		"pilot", "%6", testRelaunchCmd, "self-compact", 3 /*count*/, 3 /*threshold*/, 0); stopped {
 		t.Fatal("stopped = true at threshold happy path, want false")
