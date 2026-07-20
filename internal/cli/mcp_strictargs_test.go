@@ -32,6 +32,12 @@ func TestDecodeStrictArgs(t *testing.T) {
 		{name: "empty object ok", args: `{}`, wantTo: ""},
 		{name: "malformed json errors", args: `{"to":`,
 			wantErr: true, errHas: []string{"tmux-tell.test", "invalid args"}},
+		// json.Decoder stops at the first value and ignores the rest — LOOSER
+		// than Unmarshal. decodeStrictArgs rejects the trailing object so an
+		// unknown key smuggled after a valid object (`{...}{"cc":"x"}`) can't
+		// slip past the very check the decoder exists for.
+		{name: "trailing data after object errors", args: `{"to":"bob"}{"cc":"x"}`,
+			wantErr: true, errHas: []string{"tmux-tell.test", "trailing data"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -128,17 +134,33 @@ func TestMCP_Ask_UnknownParam_FailsLoud(t *testing.T) {
 // TestMCP_Send_ValidOptionalParams_StillOk guards the other direction: strict
 // decode must NOT reject documented optional params. An incomplete input struct
 // would newly-break valid calls — this is the completeness canary for send.
+//
+// It must exercise EVERY documented send param, not a subset: the axis under
+// test is "strict decode accepts all 12 registered params", and a key it omits
+// is exactly where future struct/schema drift would newly-reject a valid call
+// with no test reddening (the fake-test shape — name claims more than body
+// checks). All 12 send params (#158 `to`, body, reply_to, no_reply_expected,
+// quick, strict, wait_for_delivered, timeout, block_on_stale, deliver_after,
+// expects_reply, priority) are present; reference/duration params carry benign
+// empty values so the assertion isolates strict-decode acceptance from unrelated
+// downstream validation. This is the canary shape to carry to the other 16 tools.
 func TestMCP_Send_ValidOptionalParams_StillOk(t *testing.T) {
 	t.Setenv("TMUX_AGENT_NAME", "alice")
 	s := newCmdTestStore(t, "alice", "bob")
 
 	got := callMCPTool(t, s, "tmux-tell.send", map[string]any{
-		"to":                "bob",
-		"body":              "hi",
-		"quick":             true,
-		"no_reply_expected": true,
-		"priority":          "high",
-		"expects_reply":     false,
+		"to":                 "bob",
+		"body":               "hi",
+		"reply_to":           "",
+		"no_reply_expected":  true,
+		"quick":              true,
+		"strict":             false,
+		"wait_for_delivered": false,
+		"timeout":            "",
+		"block_on_stale":     false,
+		"deliver_after":      "",
+		"expects_reply":      false,
+		"priority":           "high",
 	})
 	if got["ok"] != true {
 		t.Errorf("valid optional params must still succeed; got=%v", got)

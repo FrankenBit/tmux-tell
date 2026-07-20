@@ -737,8 +737,18 @@ func decodeStrictArgs(tool string, args json.RawMessage, dst any) error {
 	dec := json.NewDecoder(bytes.NewReader(args))
 	dec.DisallowUnknownFields()
 	err := dec.Decode(dst)
-	if err == nil || errors.Is(err, io.EOF) {
+	if errors.Is(err, io.EOF) {
 		return nil // io.EOF == empty/absent args → leave dst zero-valued
+	}
+	if err == nil {
+		// json.Decoder stops at the end of the first JSON value and silently
+		// ignores anything after it — LOOSER than json.Unmarshal, on the very
+		// axis this decoder exists to tighten. Reject trailing data (e.g.
+		// `{"to":"bob"}{"cc":"x"}`) so "strict" holds end-to-end.
+		if dec.More() {
+			return fmt.Errorf("%s: invalid args: unexpected trailing data after the arguments object", tool)
+		}
+		return nil
 	}
 	if field, ok := unknownFieldName(err); ok {
 		msg := fmt.Sprintf("%s: unknown parameter %q", tool, field)
