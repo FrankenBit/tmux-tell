@@ -1,7 +1,7 @@
 name: deploy
 
 # Manual deploy to alcatraz via the dedicated host-mode Forgejo runner +
-# /srv/scripts/deploy-tmux-tell.sh wrapper (alcatraz-infra #392). Operator
+# /usr/local/sbin/deploy-tmux-tell.sh wrapper (alcatraz-infra #392). Operator
 # triggers from the Forgejo Actions UI with an optional `ref` input to pin
 # the deploy to a specific tag / commit. No automatic trigger by design —
 # auto-deploy-on-push is a follow-up once the manual path is established
@@ -87,7 +87,7 @@ jobs:
         # loses --prune-orphans on the runner path (bootstrap is where the
         # orphan walk lives); operator's manual bootstrap post-deploy picks it up.
         run: |
-          sudo /srv/scripts/deploy-tmux-tell.sh \
+          sudo /usr/local/sbin/deploy-tmux-tell.sh \
             "$GITHUB_WORKSPACE" \
             --adapter=claude \
             --system \
@@ -109,7 +109,7 @@ jobs:
         # loud rather than greening a stale-mailman state (Lookout #439 — the
         # post-deploy smoke's `--version` only proves file-on-disk).
         run: |
-          sudo /srv/scripts/deploy-tmux-tell.sh \
+          sudo /usr/local/sbin/deploy-tmux-tell.sh \
             "$GITHUB_WORKSPACE" \
             --adapter=codex \
             --system \
