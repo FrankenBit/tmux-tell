@@ -19,6 +19,6 @@ on:
 
 jobs:
   check:
-    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-changelog-fragment-check.yml@v0.20.0
+    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-changelog-fragment-check.yml@v0.32.0
     with:
       runs_on:     go
