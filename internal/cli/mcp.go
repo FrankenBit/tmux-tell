@@ -724,6 +724,65 @@ func mcpIdentityError() error {
 		pane, active.BinaryName)
 }
 
+// decodeStrictArgs decodes an MCP tool's JSON arguments into dst, rejecting any
+// unknown top-level parameter with a fail-loud error that names the offending
+// key (#753). Go's encoding/json silently drops unknown fields by default, so an
+// invented parameter (`cc`, `bcc`, `broadcast`, …) used to evaporate while the
+// call still returned ok:true — a silent partial-send, the worst failure shape
+// for a coordination bus. Absent/empty args are NOT an error (dst is left
+// zero-valued so the handler's own required-field checks run); malformed JSON and
+// unknown fields ARE. Mirrors the queue-full path's fail-loud contract
+// (ErrRecipientQueueFull) applied to the one door that was left unlatched.
+func decodeStrictArgs(tool string, args json.RawMessage, dst any) error {
+	dec := json.NewDecoder(bytes.NewReader(args))
+	dec.DisallowUnknownFields()
+	err := dec.Decode(dst)
+	if err == nil || errors.Is(err, io.EOF) {
+		return nil // io.EOF == empty/absent args → leave dst zero-valued
+	}
+	if field, ok := unknownFieldName(err); ok {
+		msg := fmt.Sprintf("%s: unknown parameter %q", tool, field)
+		if hint := unknownParamHint(field); hint != "" {
+			msg += " — " + hint
+		}
+		return errors.New(msg)
+	}
+	return fmt.Errorf("%s: invalid args: %w", tool, err)
+}
+
+// unknownFieldName extracts the field name from encoding/json's
+// DisallowUnknownFields error, whose message is exactly `json: unknown field
+// "<name>"`. The stdlib exposes the name only through this (non-localized,
+// version-stable) string, so it is parsed here rather than reconstructed — and
+// pinned by TestUnknownFieldName_MatchesStdlib, which builds the real error, so a
+// stdlib wording change reds a test instead of silently degrading the message.
+// Either way the call still fails loud: decodeStrictArgs's fallback wraps the raw
+// error when this returns false.
+func unknownFieldName(err error) (string, bool) {
+	const prefix = `json: unknown field "`
+	s := err.Error()
+	if !strings.HasPrefix(s, prefix) {
+		return "", false
+	}
+	s = strings.TrimPrefix(s, prefix)
+	i := strings.LastIndexByte(s, '"')
+	if i < 0 {
+		return "", false
+	}
+	return s[:i], true
+}
+
+// unknownParamHint returns a targeted correction for the highest-value near-miss
+// params. `cc`/`bcc` are the natural words for fan-out, which tmux-tell spells as
+// `to` being an array (#158) — the exact mistake that filed #753.
+func unknownParamHint(field string) string {
+	switch field {
+	case "cc", "bcc":
+		return `fan-out is "to" as an array, e.g. to: ["bosun","surveyor"] (#158)`
+	}
+	return ""
+}
+
 func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
 		To               json.RawMessage `json:"to"` // string or []string (#158)
@@ -741,8 +800,8 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.send", args, &in); err != nil {
+			return nil, err
 		}
 		priority, perr := store.ParsePriority(in.Priority)
 		if perr != nil {
@@ -1045,8 +1104,8 @@ func mcpAskHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.ask", args, &in); err != nil {
+			return nil, err
 		}
 		from, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
