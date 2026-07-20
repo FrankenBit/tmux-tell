@@ -225,8 +225,8 @@ func mcpFlagOperatorHandler(s *store.Store) func(ctx context.Context, args json.
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.flag_operator", args, &in); err != nil {
+			return nil, err
 		}
 		if in.Body == "" {
 			return nil, fmt.Errorf("body required (the question or choice for the operator)")

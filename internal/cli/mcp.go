@@ -385,8 +385,8 @@ func mcpPingHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.ping", args, &in); err != nil {
+			return nil, err
 		}
 		if in.Agent == "" {
 			return nil, fmt.Errorf("agent required")
@@ -422,8 +422,8 @@ func mcpAgentStateHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("parse args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.agent_state", args, &in); err != nil {
+			return nil, err
 		}
 		if in.Agent == "" {
 			return nil, fmt.Errorf("agent required")
@@ -449,8 +449,8 @@ func mcpSetPaneNameHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.set_pane_name", args, &in); err != nil {
+			return nil, err
 		}
 		res, err := setPaneName(ctx, s, "", in.Name)
 		if err != nil {
@@ -472,8 +472,8 @@ func mcpSetMetabolismHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.set_metabolism", args, &in); err != nil {
+			return nil, err
 		}
 		caller, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
@@ -503,8 +503,8 @@ func mcpSetSessionIDHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.set_session_id", args, &in); err != nil {
+			return nil, err
 		}
 		res, err := setSessionID(ctx, s,
 			strings.TrimSpace(in.Name), strings.TrimSpace(in.SessionID), false)
@@ -1087,8 +1087,8 @@ func mcpFlushDeferredHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.flush_deferred", args, &in); err != nil {
+			return nil, err
 		}
 		if in.Trigger == "" {
 			in.Trigger = deferTriggerResume
@@ -1144,8 +1144,8 @@ func mcpWaitForReplyHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.wait_for_reply", args, &in); err != nil {
+			return nil, err
 		}
 		if in.AskID == "" {
 			return nil, fmt.Errorf("ask_id required")
@@ -1172,8 +1172,8 @@ func mcpCheckRepliesHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.check_replies", args, &in); err != nil {
+			return nil, err
 		}
 		if in.AskID == "" {
 			return nil, fmt.Errorf("ask_id required")
@@ -1196,8 +1196,8 @@ func mcpResendHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.resend", args, &in); err != nil {
+			return nil, err
 		}
 		return doResendMCP(ctx, s, resendParams{OriginalID: in.ID, Force: in.Force})
 	}
@@ -1272,8 +1272,8 @@ func mcpMessageStatusHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.message_status", args, &in); err != nil {
+			return nil, err
 		}
 		// doTrack returns the struct directly; the MCP framework
 		// json.Marshals handler returns (internal/mcp/server.go:212),
@@ -1289,8 +1289,8 @@ func mcpGetHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.get", args, &in); err != nil {
+			return nil, err
 		}
 		requester, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
@@ -1317,8 +1317,8 @@ func mcpControlHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.control", args, &in); err != nil {
+			return nil, err
 		}
 		from, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
@@ -1361,7 +1361,9 @@ func mcpAgentsHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		_ = json.Unmarshal(args, &in)
+		if err := decodeStrictArgs("tmux-tell.agents", args, &in); err != nil {
+			return nil, err
+		}
 		live, err := tmuxio.LivePanes(ctx)
 		if err != nil {
 			return nil, err
@@ -1452,7 +1454,9 @@ func mcpInboxHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		_ = json.Unmarshal(args, &in)
+		if err := decodeStrictArgs("tmux-tell.inbox", args, &in); err != nil {
+			return nil, err
+		}
 		name, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
 			return nil, err
@@ -1522,8 +1526,8 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.register", args, &in); err != nil {
+			return nil, err
 		}
 		if in.Name == "" {
 			return nil, fmt.Errorf("name required")
@@ -1697,8 +1701,8 @@ func mcpUnregisterHandler(s *store.Store) mcp.ToolHandler {
 	}
 	return func(ctx context.Context, args json.RawMessage) (any, error) {
 		var in input
-		if err := json.Unmarshal(args, &in); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
+		if err := decodeStrictArgs("tmux-tell.unregister", args, &in); err != nil {
+			return nil, err
 		}
 		if in.Name == "" {
 			return nil, fmt.Errorf("name required")
