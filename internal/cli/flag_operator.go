@@ -246,7 +246,10 @@ func mcpFlagOperatorHandler(s *store.Store) func(ctx context.Context, args json.
 // mcpClearOperatorFlagHandler is the MCP-side surface for
 // `tmux-tell.clear_operator_flag` (#224).
 func mcpClearOperatorFlagHandler(s *store.Store) func(ctx context.Context, args json.RawMessage) (any, error) {
-	return func(ctx context.Context, _ json.RawMessage) (any, error) {
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		if err := decodeStrictArgs("tmux-tell.clear_operator_flag", args, &struct{}{}); err != nil {
+			return nil, err
+		}
 		from, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
 			return nil, err

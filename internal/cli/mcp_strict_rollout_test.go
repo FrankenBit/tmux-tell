@@ -76,3 +76,43 @@ func TestMCP_StrictRollout_FailsLoud(t *testing.T) {
 		})
 	}
 }
+
+// noArgTools are the four MCP tools whose registered inputSchema is
+// {"properties":{}} — they take no arguments. They previously ignored args
+// entirely (`_ json.RawMessage`), silently swallowing any param; they now
+// decode a strict empty struct so the fail-loud invariant is universal (no
+// tmux-tell MCP tool silently drops a parameter).
+var noArgTools = []string{
+	"tmux-tell.whoami",
+	"tmux-tell.status",
+	"tmux-tell.clear_operator_flag",
+	"tmux-tell.whoami_db",
+}
+
+// TestMCP_NoArgTools_RejectUnknownParams pins both directions for the no-arg
+// tools: an empty call is still accepted (io.EOF → zero-valued empty struct),
+// and an unknown param is rejected by name rather than silently ignored.
+func TestMCP_NoArgTools_RejectUnknownParams(t *testing.T) {
+	t.Setenv("TMUX_AGENT_NAME", "alice")
+	for _, name := range noArgTools {
+		t.Run(name, func(t *testing.T) {
+			// Empty call: must not be rejected as an unknown-param error.
+			s := newCmdTestStore(t, "alice", "bob")
+			got := callMCPTool(t, s, name, map[string]any{})
+			if text, _ := got["_text"].(string); strings.Contains(text, "unknown parameter") {
+				t.Errorf("%s: empty call wrongly rejected: %q", name, text)
+			}
+
+			// Bogus param: must fail loud, naming the key.
+			s2 := newCmdTestStore(t, "alice", "bob")
+			bad := callMCPTool(t, s2, name, map[string]any{"__nope__": true})
+			if bad["_isError"] != true {
+				t.Fatalf("%s: unknown param must fail loud, got=%v", name, bad)
+			}
+			text, _ := bad["_text"].(string)
+			if !strings.Contains(text, `unknown parameter "__nope__"`) {
+				t.Errorf("%s: error %q should name the unknown key __nope__", name, text)
+			}
+		})
+	}
+}

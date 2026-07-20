@@ -121,7 +121,10 @@ func collectBinding(pid int, withStart bool) dbBinding {
 // access at all, just /proc on self — so it's safe to expose to peers and can't
 // itself be misrouted by a stale binding.
 func mcpWhoamiDBHandler() mcp.ToolHandler {
-	return func(_ context.Context, _ json.RawMessage) (any, error) {
+	return func(_ context.Context, args json.RawMessage) (any, error) {
+		if err := decodeStrictArgs("tmux-tell.whoami_db", args, &struct{}{}); err != nil {
+			return nil, err
+		}
 		return collectBinding(os.Getpid(), true), nil
 	}
 }

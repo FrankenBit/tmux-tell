@@ -1404,7 +1404,10 @@ func mcpAgentsHandler(s *store.Store) mcp.ToolHandler {
 }
 
 func mcpWhoamiHandler(s *store.Store) mcp.ToolHandler {
-	return func(ctx context.Context, _ json.RawMessage) (any, error) {
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		if err := decodeStrictArgs("tmux-tell.whoami", args, &struct{}{}); err != nil {
+			return nil, err
+		}
 		name, err := resolveMCPIdentity(ctx, s)
 		if err != nil {
 			return nil, err
@@ -1774,7 +1777,10 @@ func mcpUnregisterHandler(s *store.Store) mcp.ToolHandler {
 }
 
 func mcpStatusHandler(s *store.Store) mcp.ToolHandler {
-	return func(ctx context.Context, _ json.RawMessage) (any, error) {
+	return func(ctx context.Context, args json.RawMessage) (any, error) {
+		if err := decodeStrictArgs("tmux-tell.status", args, &struct{}{}); err != nil {
+			return nil, err
+		}
 		agents, err := s.ListAgents(ctx)
 		if err != nil {
 			return nil, err
