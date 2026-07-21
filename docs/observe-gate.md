@@ -127,7 +127,7 @@ exported as `tmux_tell_copymode_defer_total{agent}` and
 > layout signal is therefore **the cursor position on the prompt row**, not the
 > glyph alone. This PR hardens the *pre-paste classifier* only; the *post-paste*
 > verify-token handshake on Win11-rendered panes (the `delivered_in_input_box`
-> resend behavior) is a separate concern tracked on #729's comment thread.
+> resend behavior) is a separate concern tracked in **#787**.
 
 ## Latency: fast when idle, patient when busy
 
