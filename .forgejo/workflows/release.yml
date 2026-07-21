@@ -49,6 +49,16 @@ on:
         default: 'immediate'
         type: string
 
+# MINIMUM release-toolkit VERSION (#737): v0.32.0+ required. release-toolkit
+# @v0.32.0 pulls in release-toolkit#450 which consolidated PREP_SUBJECT_RE into
+# scripts/lib/prep-subject.sh with an OPTIONAL "prepare " prefix group —
+# `(prepare[[:space:]]+)?` — so both the older `chore(release): prepare vX.Y.Z`
+# and newer `chore(release): vX.Y.Z` PR-title shapes fire the cut. Any older
+# pin re-opens the v0.30.0 skip-gate class (2026-07-09): release-bot emitted
+# the short-form title, workflow required the "prepare " keyword, cut silently
+# no-op'd. Do NOT downgrade below v0.32.0 without verifying the PREP_SUBJECT_RE
+# in the target version matches the release-prep template it will run against.
+
 jobs:
   release:
     uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-release.yml@v0.32.0
