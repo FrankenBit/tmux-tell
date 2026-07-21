@@ -690,6 +690,37 @@ func (s *Store) RecipientQueueDepth(ctx context.Context, toAgent string) (int, e
 	return n, err
 }
 
+// RecipientOldestPendingAt returns the created_at (sqliteTimeFormat, RFC3339-
+// like) of the OLDEST still-pending real deliverable addressed to toAgent —
+// queued or delivering — and ok=false when the queue holds no such deliverable.
+// It powers the #719(A) freshness alert: age past --mailman-stale-threshold is
+// the "queued but mailman silent" divergence smell.
+//
+// Two deliberate scope choices:
+//   - state IN (queued, delivering) covers both freeze signatures the alert
+//     targets: the revert-loop (rows bounce queued↔delivering) and a row stuck
+//     mid-flight in delivering.
+//   - kind IN (message, control) EXCLUDES the synthetic notice kinds
+//     (delivery_failure_notice, stranded_draft, ping, dedupe_notice,
+//     backlog_announce, stuck_chamber_notice). A pile of auto-generated notices
+//     must not itself read as a stale queue and re-trigger an alert — the same
+//     notice-loop-prevention discipline KindDeliveryFailureNotice applies.
+func (s *Store) RecipientOldestPendingAt(ctx context.Context, toAgent string) (string, bool, error) {
+	toAgent = CanonicalName(toAgent)
+	var ts sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT MIN(created_at) FROM messages
+		   WHERE to_agent = ? AND state IN (?, ?) AND kind IN (?, ?)`,
+		toAgent, StateQueued, StateDelivering, KindMessage, KindControl).Scan(&ts)
+	if err != nil {
+		return "", false, err
+	}
+	if !ts.Valid || ts.String == "" {
+		return "", false, nil
+	}
+	return ts.String, true, nil
+}
+
 // RecipientLastDelivered returns the timestamp (RFC3339) of the most recent
 // delivery to toAgent and ok=false when there is none in retained history
 // (#348). A delivery is any row that reached state=delivered — both the

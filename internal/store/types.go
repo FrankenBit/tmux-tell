@@ -77,6 +77,20 @@ const (
 	// a freshly-restarted session it has mail waiting without the mailman
 	// flooding the pane with the whole pre-existing backlog at once.
 	KindBacklogAnnounce Kind = "backlog_announce"
+	// KindStuckChamberNotice marks the synthetic alert the mailman self-emits
+	// when its own inbound queue shows the "queued but mailman silent"
+	// divergence smell (#719(A)): a real message/control deliverable has sat
+	// undelivered past --mailman-stale-threshold while the recipient pane is
+	// NOT in a known legitimate hold (rate/usage-limit, awaiting-operator,
+	// compaction-rest, copy-mode). Addressed to the configured conductor
+	// (--mailman-alert-to), edge-triggered (one per freeze episode). Like the
+	// other synthetic kinds it rides the normal mailman loop; unlike a paste
+	// delivery a bus insert needs no live recipient pane, so a chamber whose
+	// own TUI is wedged can still emit this alert about itself. Excluded from
+	// the freshness signal's own oldest-pending query so a pile of these
+	// notices cannot itself read as a stale queue (same notice-loop-prevention
+	// discipline as KindDeliveryFailureNotice).
+	KindStuckChamberNotice Kind = "stuck_chamber_notice"
 )
 
 // Message mirrors a row in the messages table. Timestamps are kept as

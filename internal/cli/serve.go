@@ -59,6 +59,19 @@ const (
 	// mid-/compact that re-registers within a couple of cycles never reaches 3).
 	// A value <= 0 disables the transition (bare pre-#783 retry).
 	defaultSessionStaleThreshold = 3
+	// defaultMailmanStaleThreshold is how long a real deliverable may sit
+	// queued/delivering to this chamber before the #719(A) freshness alert
+	// flags it (edge-triggered notice to the configured conductor). Normal
+	// delivery is sub-second (DeliverTimeout 5s); the anchor incident was ~5h
+	// of silent stale queue, so a threshold of minutes converts multi-hour
+	// silence into a prompt alert. 10m is generous enough never to fire on a
+	// normal delivery lull or a short backoff — false positives are prevented
+	// by the legitimate-hold STATE exclusions, not by threshold slack — while
+	// tight enough that a real freeze surfaces fast. A value <= 0 disables the
+	// alert. Emission is additionally gated on a configured --mailman-alert-to
+	// target (empty = feature dormant), so the substrate default bakes in no
+	// deployment-specific chamber name.
+	defaultMailmanStaleThreshold = 10 * time.Minute
 	// defaultStuckPollInterval is how often a parked mailman re-reads its
 	// agent row to notice a `register --force` clear. No tmux probe — a
 	// plain DB read — so a tight-ish cadence costs nothing.
@@ -145,6 +158,24 @@ var sessionStaleRetryInterval = 90 * time.Second
 func setSessionStaleRetryIntervalForTest(d time.Duration) time.Duration {
 	prev := sessionStaleRetryInterval
 	sessionStaleRetryInterval = d
+	return prev
+}
+
+// freshnessCheckInterval throttles the #719(A) freshness sweep — the cadence at
+// which the mailman runs its cheap MIN(created_at) queue-age query. This is the
+// detection LATENCY past --mailman-stale-threshold, not the threshold itself:
+// on a 10m threshold a 30s sweep flags a freeze within ~30s of it crossing. The
+// (more expensive) pane-state probe fires only when a queue is already found
+// stale, so the steady-state cost of this sweep is a single DB read. A var (not
+// const) so tests can shrink it off the second scale, mirroring
+// sessionStaleRetryInterval.
+var freshnessCheckInterval = 30 * time.Second
+
+// setFreshnessCheckIntervalForTest replaces freshnessCheckInterval for test
+// isolation and returns the previous value so the caller can restore it.
+func setFreshnessCheckIntervalForTest(d time.Duration) time.Duration {
+	prev := freshnessCheckInterval
+	freshnessCheckInterval = d
 	return prev
 }
 
@@ -554,6 +585,25 @@ type serveOpts struct {
 	// <= 0 disables the transition (the loop keeps the bare #105 retry, i.e. the
 	// pre-#783 behavior), kept as an escape hatch.
 	SessionStaleThreshold int
+	// MailmanStaleThreshold is how long a real deliverable (message/control)
+	// may sit queued/delivering to this chamber before the #719(A) freshness
+	// alert edge-fires a KindStuckChamberNotice to AlertTo. Default
+	// defaultMailmanStaleThreshold (10m). A value <= 0 disables the alert.
+	// Detection is self-observed (this mailman watches its OWN inbound queue),
+	// so it catches the wedge signatures where delivery stops advancing
+	// (revert-loop, stuck-delivering, a live-but-Unknown pane) — NOT the
+	// false-idle-consumed shape where a modal eats pastes and delivery falsely
+	// advances (that is the classifier's job, #719(B)), and NOT a fully dead
+	// mailman (which cannot self-report — a distinct observer follow-up).
+	MailmanStaleThreshold time.Duration
+	// AlertTo is the conductor agent that receives #719(A) freshness alerts.
+	// Empty (the substrate default) leaves the alert DORMANT so no
+	// deployment-specific chamber name is baked into the substrate — a
+	// deployment activates it via `mailman-alert-to = "<conductor>"` in
+	// config.toml. A value equal to this mailman's own Agent is ignored (a
+	// chamber cannot usefully alert itself about its own wedge: the notice
+	// would queue into the same wedged inbox).
+	AlertTo string
 	// StuckPollInterval is how often a parked (stuck) mailman re-reads its
 	// own agent row to notice a `register --force` clear. While stuck the
 	// mailman issues NO tmux probes — this is a pure DB read on a slow
@@ -672,6 +722,10 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"number of consecutive `can't find pane` probe failures before the mailman parks itself in the #291 stuck state (stops probing tmux entirely; visible in `agents`, cleared via `register --force`). Exponential backoff applies on every failure regardless; this is the cutover to zero-probe parking. 0 disables parking (backoff-only). Per-agent TOML knob: `stuck-threshold = N`.")
 	sessionStaleThreshold := fs.Int("session-stale-threshold", defaultSessionStaleThreshold,
 		"number of consecutive session-stale aborts (registered session-id resolves to no live pane → name-resolved pane classifies unknown → #105 pre-paste-safety refuses) before the mailman parks itself with reason `session-stale` (#783). Lower than --stuck-threshold because each iteration burns the full ~5min gate MaxWait. Parked mailman is visible in `agents` and cleared via `register --force` (the same re-register that refreshes the stale session-id). 0 disables the transition (bare #105 retry). Per-agent TOML knob: `session-stale-threshold = N`.")
+	mailmanStaleThreshold := fs.Duration("mailman-stale-threshold", defaultMailmanStaleThreshold,
+		"#719(A) freshness alert: how long a real deliverable (message/control) may sit queued/delivering to this chamber before the mailman edge-fires a `stuck_chamber_notice` to --mailman-alert-to. Normal delivery is sub-second; the anchor freeze was ~5h of silent stale queue. False positives are prevented by legitimate-hold STATE exclusions (rate/usage-limit, awaiting-operator, compaction-rest, copy-mode), not threshold slack. 0 disables the alert. Emission also requires --mailman-alert-to to be set. Per-agent TOML knob: `mailman-stale-threshold = \"10m\"`.")
+	mailmanAlertTo := fs.String("mailman-alert-to", "",
+		"#719(A) the conductor agent that receives freshness alerts. Empty (the default) leaves the alert DORMANT so no deployment-specific chamber name is baked into the substrate — set it (e.g. `mailman-alert-to = \"bosun\"` in config.toml) to activate. A value equal to this mailman's own agent is ignored (a chamber can't usefully alert itself about its own wedge). Per-agent TOML knob: `mailman-alert-to = \"bosun\"`.")
 	stuckPollInterval := fs.Duration("stuck-poll-interval", defaultStuckPollInterval,
 		"how often a parked (stuck) mailman re-reads its agent row to notice a `register --force` clear. While stuck the mailman issues NO tmux probes — this is a pure DB read. Per-agent TOML knob: `stuck-poll-interval = \"5s\"`.")
 	spinGuardThreshold := fs.Int("spin-guard-threshold", defaultSpinGuardThreshold,
@@ -758,6 +812,12 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if !flagWasSet(fs, "session-stale-threshold") {
 		*sessionStaleThreshold = config.ResolveInt(cfg, *agent, "session-stale-threshold", *sessionStaleThreshold)
+	}
+	if !flagWasSet(fs, "mailman-stale-threshold") {
+		*mailmanStaleThreshold = config.ResolveDuration(cfg, *agent, "mailman-stale-threshold", *mailmanStaleThreshold)
+	}
+	if !flagWasSet(fs, "mailman-alert-to") {
+		*mailmanAlertTo = config.ResolveString(cfg, *agent, "mailman-alert-to", *mailmanAlertTo)
 	}
 	if !flagWasSet(fs, "stuck-poll-interval") {
 		*stuckPollInterval = config.ResolveDuration(cfg, *agent, "stuck-poll-interval", *stuckPollInterval)
@@ -930,6 +990,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		DedupeWindow:                dedupeWindow,
 		StuckThreshold:              *stuckThreshold,
 		SessionStaleThreshold:       *sessionStaleThreshold,
+		MailmanStaleThreshold:       *mailmanStaleThreshold,
+		AlertTo:                     *mailmanAlertTo,
 		StuckPollInterval:           *stuckPollInterval,
 		SpinGuardThreshold:          *spinGuardThreshold,
 		SpinGuardWindow:             *spinGuardWindow,
@@ -1173,6 +1235,17 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	// unpark can match the label.  Empty = gauge is at 0 (or not yet seen).
 	lastStuckReason := ""
 
+	// #719(A) freshness-alert loop state. lastFreshnessCheck throttles the
+	// queue-age sweep to freshnessCheckInterval. lastFreshnessAlerted is the
+	// per-episode edge-trigger latch: set true when a stuck-chamber notice
+	// fires, reset to false the moment the queue is no longer stale (drained or
+	// a delivery advanced) so a later, distinct freeze re-alerts — one notice
+	// per freeze episode, never a per-sweep storm. Mirrors the lastStuckReason
+	// transition-mirroring above. Zero-value time = "never swept", so the first
+	// eligible iteration sweeps immediately.
+	var lastFreshnessCheck time.Time
+	lastFreshnessAlerted := false
+
 	// Serve-loop spin guard (#496). progressedLastIter carries the previous
 	// iteration's progress (a claimed message) into this iteration's top-of-loop
 	// check, so the pure spinGuard.record stays the single decision point. Seed
@@ -1407,6 +1480,54 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		}
 
 		pruneProviderDeferStart(opCtx, s, m, active.Provider, deferStart)
+
+		// #719(A) freshness alert. Self-observed: this mailman watches its OWN
+		// inbound queue for the "queued but mailman silent" divergence smell — a
+		// real deliverable sitting queued/delivering past MailmanStaleThreshold.
+		// StuckReason=="" and !Paused are already guaranteed by the continues
+		// above, so a parked/#783 chamber is excluded here (that path owns its
+		// own #300 surface). Cheap in steady state: only the MIN(created_at) DB
+		// query runs per sweep; the pane-state probe fires solely once a queue is
+		// found stale, i.e. only when on the verge of alerting. Dormant unless a
+		// conductor (AlertTo) is configured and it isn't this mailman itself.
+		if opts.MailmanStaleThreshold > 0 && opts.AlertTo != "" && opts.AlertTo != opts.Agent &&
+			time.Since(lastFreshnessCheck) >= freshnessCheckInterval {
+			now := time.Now()
+			lastFreshnessCheck = now
+			oldestAt, hasPending, ferr := s.RecipientOldestPendingAt(opCtx, opts.Agent)
+			switch {
+			case ferr != nil:
+				logger.Printf("freshness_check_failed agent=%s err=%v", opts.Agent, ferr)
+			case !hasPending:
+				lastFreshnessAlerted = false // queue drained → episode over, re-arm
+			default:
+				age, ok := freshnessAge(oldestAt, now)
+				switch {
+				case !ok:
+					logger.Printf("freshness_parse_failed agent=%s created_at=%q", opts.Agent, oldestAt)
+				case age <= opts.MailmanStaleThreshold:
+					lastFreshnessAlerted = false // delivery is progressing → re-arm
+				case !lastFreshnessAlerted && a.PaneID != "":
+					// Stale. Probe the pane once to exclude legitimate holds
+					// (rate/usage-limit, awaiting-operator, compaction-rest,
+					// copy-mode). Idle/Working/Unknown — and a probe error — are
+					// alert-eligible (conservative-toward-detection: a stale queue
+					// is the real anomaly, and we don't get to assume a health we
+					// couldn't confirm).
+					fCtx, fCancel := context.WithTimeout(opCtx, 2*time.Second)
+					st, _, perr := tmuxio.AgentState(fCtx, a.PaneID)
+					fCancel()
+					if perr == nil && tmuxio.IsPasteUnsafe(st) && st != tmuxio.StateUnknown {
+						// Legitimate hold — not frozen, don't alert. The latch
+						// stays disarmed so it fires when the hold lifts if the
+						// queue is still stale.
+					} else {
+						sendStuckChamberNotice(opCtx, s, logger, opts.Agent, opts.AlertTo, oldestAt, age, st, perr)
+						lastFreshnessAlerted = true
+					}
+				}
+			}
+		}
 
 		// #285 PR2 self-compact detection. A self-/compact is chamber-driven, not
 		// bus-delivered, so it can't be counted inline on delivery like the clear
@@ -2607,6 +2728,73 @@ func renderFailureNoticeBody(msg *store.Message, failureKind, reason string) str
 	}
 	return fmt.Sprintf(":warning: %s → %s %s: %s — resend %s",
 		msg.PublicID, msg.ToAgent, headline, reason, msg.PublicID)
+}
+
+// freshnessAge parses a stored created_at (sqliteTimeFormat / RFC3339-like,
+// fractional seconds — the same shape agents.go parses for mailman-idle) and
+// returns now-created_at. ok=false on a parse failure so the caller logs it
+// rather than treating an unparseable stamp as "0 age" (which would silently
+// suppress every alert).
+func freshnessAge(createdAt string, now time.Time) (time.Duration, bool) {
+	t, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return 0, false
+	}
+	return now.Sub(t), true
+}
+
+// freshnessStateLabel renders the pre-alert pane-probe outcome for the #719(A)
+// notice body and log line — the observed state, or the probe error when the
+// pane couldn't be classified (which is itself alert-eligible).
+func freshnessStateLabel(probeState tmuxio.State, probeErr error) string {
+	if probeErr != nil {
+		return "probe failed (" + probeErr.Error() + ")"
+	}
+	return probeState.String()
+}
+
+// renderStuckChamberNoticeBody builds the operator-facing #719(A) freshness
+// alert. self is the chamber whose inbound queue has stalled; oldestAt/age
+// locate the oldest undelivered deliverable; probeState/probeErr report what
+// the pane looked like at detection.
+func renderStuckChamberNoticeBody(self, oldestAt string, age time.Duration, probeState tmuxio.State, probeErr error) string {
+	return fmt.Sprintf(
+		":warning: Chamber %s looks frozen — delivery has stalled\n"+
+			"  Oldest undelivered message queued at %s (%s ago)\n"+
+			"  Pane state at detection: %s\n"+
+			"  The mailman is live but this chamber's inbound queue is not draining. "+
+			"Check the pane for a modal / restart-mode prompt / hang, then clear it or `register --force`.",
+		self, oldestAt, age.Round(time.Second), freshnessStateLabel(probeState, probeErr))
+}
+
+// sendStuckChamberNotice edge-fires the #719(A) freshness alert: a
+// KindStuckChamberNotice from the wedged chamber (self) to the configured
+// conductor. A bus insert needs no live recipient pane, so the alert reaches
+// the conductor even when THIS chamber's own TUI is wedged. The kind is
+// excluded from RecipientOldestPendingAt's query, so the notice cannot itself
+// feed the staleness signal that produced it.
+func sendStuckChamberNotice(
+	ctx context.Context,
+	s *store.Store,
+	logger *log.Logger,
+	self, conductor, oldestAt string,
+	age time.Duration,
+	probeState tmuxio.State,
+	probeErr error,
+) {
+	body := renderStuckChamberNoticeBody(self, oldestAt, age, probeState, probeErr)
+	res, err := s.InsertNotice(ctx, store.InsertParams{
+		FromAgent: self,
+		ToAgent:   conductor,
+		Body:      body,
+		Kind:      store.KindStuckChamberNotice,
+	})
+	if err != nil {
+		logger.Printf("stuck_chamber_notice_failed agent=%s to=%s err=%v", self, conductor, err)
+		return
+	}
+	logger.Printf("stuck_chamber_notice_sent agent=%s to=%s id=%s age=%s state=%s",
+		self, conductor, res.PublicID, age.Round(time.Second), freshnessStateLabel(probeState, probeErr))
 }
 
 // handlePing processes a kind=ping reachability probe (#144). It runs
