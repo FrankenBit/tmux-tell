@@ -346,6 +346,17 @@ func (s *Store) Close() error { return s.db.Close() }
 // DB exposes the raw *sql.DB. Subcommand code should prefer the typed
 // methods on Store; this hatch exists for testing and the rare ad-hoc
 // query.
+//
+// #721 invariant — scope stated at the point it can breach: do NOT run
+// agent-name-keyed SQL through this hatch (anything matching agents.name or a
+// message's to_agent / from_agent). Routing identity is canonicalized
+// (CanonicalName: lower+trim) ONLY inside the typed Store methods, so a raw
+// query here would compare a caller's un-canonicalized string against the
+// canonical stored keys and silently misroute — the exact case-sensitivity
+// bug #721 removes. The store-boundary completeness ("no name/to_agent SQL
+// exists outside internal/store") is grep-true today precisely because this
+// door isn't used that way; keep it so. Ad-hoc queries here must key on
+// case-stable columns (public_id, pane_id, session_id, id, timestamps).
 func (s *Store) DB() *sql.DB { return s.db }
 
 // generatePublicID returns a random 4-hex-character identifier
