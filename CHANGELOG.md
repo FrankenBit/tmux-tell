@@ -33,6 +33,36 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.31.2] — 2026-07-21
+
+### Added
+
+None.
+
+### Changed
+
+None.
+
+### Fixed
+
+- **Agent identity is now case-insensitive** (#721) — the bus routing key (an agent's registered name, and every message's sender/recipient) is canonicalized to lowercase, so an agent that (re)registers under a different casing than a prior run — `MyAgent` after `myagent` — resolves to ONE identity instead of a phantom second registration that shadowed the live one. This closes a silent message-loss hole on the resume-registration path: a `deliver_after=register` message staged under one casing, or an immediate send addressed to another, no longer stalls in `deferred` or fails with `unknown recipient` on a case mismatch. Display is unchanged (names still render title-cased, and an agent may assert an exact `display_name`). A one-time migration normalizes any pre-existing mixed-case rows so the change is transparent on upgrade.
+
+- **Idle Claude panes rendered under Windows 11 now classify correctly** (#729) — a Claude Code session hosted by a Windows 11 terminal (including ssh-relayed panes) paints its prompt as plain ASCII `> ` instead of Linux's `❯ ` (U+276F + NBSP), because the ornament glyph font-substitutes on Win11. The pane-observation classifier couldn't match the Linux-calibrated sentinel, so an idle Win11 pane was read as `unknown` and the pre-paste safety re-probe tripped `pre_paste_safety_abort` on every delivery — the bus was effectively one-way. The Claude pane profile now recognizes the ASCII `> ` as a render-variant of the prompt, trusted only in the cursor-aware path (where the tmux cursor pins it to the live input row), so an idle Win11 pane classifies `idle` and delivers. The cursor-less fallback scans stay on the strict `❯ ` sentinel — `> ` is a common glyph, and honoring it without cursor corroboration would false-idle a non-input row. Scoped to the pre-paste classifier; the post-paste verify-token handshake on Win11 panes is separate follow-up (#787).
+
+- **A stale-session delivery loop now parks and surfaces instead of hiding forever** (#783) — when an agent relaunched or resumed under a new session without re-registering, its registered session-id stopped matching any live pane (`session_stale`), name resolution fell back to a pane that classified `unknown`, and the #105 pre-paste-safety net correctly refused the paste — but with no exit condition, so messages retry-looped invisibly until they aged out (the sender saw "queued", the recipient saw nothing). The mailman now accrues a session-stale streak and, after `session-stale-threshold` consecutive occurrences (default 3), parks itself with `stuck_reason=session-stale` via the same #291 machine that stops probing, shows in `tmux-tell.agents`, and clears on `register --force` (exactly the re-register that refreshes the stale session-id). A quick pane probe replaces the ~5min observe-gate on these iterations, so the park lands in a few minutes rather than tens. Senders now see the park in the recipient block of a send / `message_status` as `mailman PARKED (session-stale)`, so a stuck bus reads as stuck, not slow. The refusal itself (#105) is unchanged — this is strictly the missing exit condition below it, and only `session_stale + unknown` accrues (a transient popup that #105 legitimately waits out never parks).
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.31.1] — 2026-07-20
 
 ### Added
