@@ -159,14 +159,30 @@ func OpenReadOnly(path string) (*Store, error) {
 	// directly (pre-WAL state), which is exactly the sandbox-friendly
 	// shape #722 needs.
 	//
-	// The trade this makes explicit: a read here misses any transactions
-	// still in the WAL that haven't been checkpointed into the main file.
-	// For one-shot CLI verbs (`agents` / `whoami` / `status`) this is a
-	// snapshot-in-time read, semantically equivalent to any other short
-	// read racing with a concurrent writer — the alternative is refusing
-	// to run at all under sandbox. Consumers who need through-the-WAL
-	// freshness (mailmen, MCP servers, mutating verbs) use Open, which
-	// they can because their execution scope does have write access.
+	// Two DISTINCT read hazards this handle exposes (a normal WAL read has
+	// neither — it gives a consistent snapshot including committed WAL):
+	//
+	//  1. STALENESS. We bypass the WAL entirely, so any commits still in
+	//     the WAL that haven't been checkpointed into the main DB file are
+	//     invisible. For one-shot CLI verbs (`agents` / `whoami` /
+	//     `status`) this is snapshot-in-time semantics — the read may miss
+	//     the last few seconds of writes.
+	//
+	//  2. INCONSISTENCY-IF-MODIFIED-MID-READ. immutable=1 is SQLite's
+	//     assertion "the file cannot change under us"; if a host writer
+	//     (mailman, MCP server) commits + checkpoints the WAL into the
+	//     main file DURING our read, the pages we're mid-way through are
+	//     no longer coherent — SQLite's contract is that behavior is
+	//     undefined in that case. In practice for millisecond
+	//     informational reads the collision window is small, but the
+	//     hazard is real and shouldn't be paraphrased as "just a stale
+	//     snapshot."
+	//
+	// Consumers who need either WAL-freshness OR read-consistency (mailmen,
+	// MCP servers, mutating verbs) use Open, which they can because their
+	// execution scope does have write access. This DSN is only correct for
+	// a sandboxed read that could not otherwise open the DB at all — the
+	// alternative is refusing to run under sandbox, which is worse.
 	dsn := "file:" + path + "?mode=ro&immutable=1&_pragma=busy_timeout(5000)&_pragma=query_only(true)&_pragma=foreign_keys(on)"
 
 	db, err := sql.Open("sqlite", dsn)

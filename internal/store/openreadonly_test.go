@@ -105,7 +105,20 @@ func TestOpenReadOnly_RefusesWrites(t *testing.T) {
 // TestOpenReadOnly_SucceedsOnReadOnlyFile is the actual #722 sandbox
 // reproduction: the DB file mode is 0444, and Open would fail on the healing
 // DML that runs unconditionally. OpenReadOnly must succeed and read cleanly.
+//
+// Root-skip: this test exercises a filesystem permission barrier (0444 DB +
+// 0555 dir), which CAP_DAC_OVERRIDE bypasses. Under a root/container-uid=0
+// runner the "Open should fail" assertion below is FALSE — root's Open
+// completes the healing DML normally, no error, and the assertion fires as
+// a false-red. The #722 sandbox target is a non-root Codex guest, so the
+// coverage this test represents is inherently non-root — skipping under
+// root drops nothing real. Same class as /srv/CLAUDE.md's #242/#251
+// "permission-barrier arm can't block root" pin: the barrier isn't wrong,
+// it's the wrong test SUBJECT for a caller with CAP_DAC_OVERRIDE.
 func TestOpenReadOnly_SucceedsOnReadOnlyFile(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("0444/0555 barrier doesn't constrain root (CAP_DAC_OVERRIDE); #722 sandbox repro is inherently non-root")
+	}
 	path := filepath.Join(t.TempDir(), "messages.db")
 	seed, err := Open(path)
 	if err != nil {
