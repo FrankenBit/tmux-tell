@@ -215,6 +215,106 @@ func TestServe_SessionStale_BenignIdleDoesNotPark(t *testing.T) {
 	}
 }
 
+// TestServe_LiveSessionUnknown_DoesNotPark pins the guard that actually
+// protects #105 (Surveyor #792 review): the `if sessionStale` gate. A live,
+// RESOLVING session-id is NOT session_stale, so even a PERSISTENTLY-unknown pane
+// must never enter the accrual path — it stays on the bare #105 revert-and-retry
+// (the transient-popup case #105 is designed to wait out). The two sibling tests
+// both set a stale session-id, so they pin the StateUnknown refinement WITHIN
+// session_stale; only this one varies session_stale to FALSE, so it is the test
+// that reds if the `sessionStale` condition is dropped (bare unknown → parks →
+// #105's case stolen). Without it, that mutation passes green — the exact
+// two-guards-one-pinned gap.
+func TestServe_LiveSessionUnknown_DoesNotPark(t *testing.T) {
+	prevIvl := setSessionStaleRetryIntervalForTest(2 * time.Millisecond)
+	t.Cleanup(func() { setSessionStaleRetryIntervalForTest(prevIvl) })
+	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta) })
+
+	// The session-id RESOLVES to the agent's pane (pid 300 carries it) → the
+	// resolution block takes the sidPane!="" branch → sessionResolved=true,
+	// sessionStale STAYS false.
+	prevList := tmuxio.SetListPanesWithPIDRunner(func(_ context.Context) ([]byte, error) {
+		return []byte("%3\t300\tclaude\tclaude\n"), nil
+	})
+	t.Cleanup(func() { tmuxio.SetListPanesWithPIDRunner(prevList) })
+	walker := &discover.Walker{
+		CmdlineReader:  func(int) (string, error) { return "claude\x00", nil },
+		ChildrenReader: func(int) []int { return nil },
+		EnvironReader: func(pid int, key string) (string, bool) {
+			if key == discover.NeutralSessionIDEnv && pid == 300 {
+				return "LIVE-uuid", true
+			}
+			return "", false
+		},
+		MaxDepth: 1,
+	}
+
+	// The pane classifies StateUnknown on every probe (no prompt sentinel), so the
+	// #105 pre-paste-safety net refuses every delivery — but this must NOT park.
+	var mu sync.Mutex
+	probeCalls := 0
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			mu.Lock()
+			probeCalls++
+			mu.Unlock()
+			return []byte("recent tool output\n$ \n"), nil // no ❯ sentinel → unknown
+		case "display-message":
+			last := args[len(args)-1]
+			switch {
+			case strings.Contains(last, "pane_in_mode"):
+				return []byte("0\n"), nil
+			case strings.Contains(last, "cursor"):
+				return []byte("0/0\n"), nil
+			default:
+				return []byte("bash\n"), nil
+			}
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+	if err := s.SetSessionID(ctx, "bob", "LIVE-uuid"); err != nil {
+		t.Fatalf("set session-id: %v", err)
+	}
+	_, err := s.InsertMessage(ctx, store.InsertParams{FromAgent: "alice", ToAgent: "bob", Body: "live but unknown"})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	opts := fastOpts("bob") // GateDisabled=true → the #105 re-probe loop runs fast
+	opts.PrePasteSafetyDisabled = false
+	opts.DriftCheckDisabled = false // session resolution runs; sessionResolved=true skips the name drift-check
+	opts.Walker = walker
+	opts.SessionStaleThreshold = 2 // a mutated build (dropping the sessionStale gate) would park after 2
+	opts.StuckPollInterval = 5 * time.Millisecond
+
+	stop, wait, _ := runServeInBackgroundOpts(t, s, opts)
+	t.Cleanup(func() { stop(); wait() })
+
+	// Let the #105 loop run far past the threshold. A build that dropped the
+	// `sessionStale` gate would park within ~2 iterations (a few ms); the correct
+	// build never parks because session_stale is false and the fast-path is skipped.
+	time.Sleep(150 * time.Millisecond)
+
+	mu.Lock()
+	pc := probeCalls
+	mu.Unlock()
+	if pc < 3 {
+		t.Fatalf("only %d capture probes — the loop did not exercise the unknown-abort path enough for the assertion to be meaningful", pc)
+	}
+	a, _ := s.GetAgent(ctx, "bob")
+	if a.StuckReason != "" {
+		t.Fatalf("agent parked (%q) on a LIVE (non-session_stale) unknown pane — the `sessionStale` gate must fence off accrual so #105's transient-unknown case is never stolen", a.StuckReason)
+	}
+}
+
 // TestRecipientStatus_DisclosesStuckReason is the #783 AC-2 test: a parked
 // recipient (mailman up but stuck_reason set) is disclosed in RecipientStatus so
 // a sender whose message sits queued can tell stuck-invisibly from merely-slow.
