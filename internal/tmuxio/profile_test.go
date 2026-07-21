@@ -82,18 +82,20 @@ func TestCodexPromptSentinel_Bytes(t *testing.T) {
 	}
 }
 
-// TestASCIIPromptSentinel_Bytes pins the byte-level encoding of the Win11 ASCII
-// prompt render-variant (#729): `>` (U+003E, 0x3e) followed by a REGULAR space
-// (0x20). Substrate-verified 2026-07-08 from the Caymans Admin pane %11. Sibling
-// to TestPromptSentinel_BytesMatchNBSP — the place a future drift in the Win11
-// render surfaces loudly. The plain-ASCII bytes (not the Linux `❯ ` e2 9d af
-// c2 a0) are the load-bearing distinction: this is the SAME Claude prompt under
-// a Windows terminal's font-substitution.
+// TestASCIIPromptSentinel_Bytes pins the byte-level encoding of the Win11
+// prompt render-variant (#729): `>` (U+003E, 0x3e) followed by a NO-BREAK SPACE
+// (U+00A0, c2 a0) — hex `3e c2 a0`. Re-measured 2026-07-21 from three live
+// Caymans Admin %11 captures; #786 pinned `3e 20` (regular space) from a
+// mis-stated byte and never matched the live pane. Sibling to
+// TestPromptSentinel_BytesMatchNBSP. The load-bearing distinction from the Linux
+// `❯ ` (e2 9d af c2 a0): ONLY the ornament glyph differs (e2 9d af -> 3e); the
+// NBSP trailer (c2 a0) is identical on both platforms, which is why matching on
+// `>` + NBSP — not `>` + 0x20 — is what actually classifies a Win11 pane.
 func TestASCIIPromptSentinel_Bytes(t *testing.T) {
-	want := []byte{0x3e, 0x20}
+	want := []byte{0x3e, 0xc2, 0xa0}
 	got := []byte(ASCIIPromptSentinel)
 	if !bytesEqual(got, want) {
-		t.Errorf("ASCIIPromptSentinel bytes = % x, want % x (> U+003E + regular space 0x20)", got, want)
+		t.Errorf("ASCIIPromptSentinel bytes = % x, want % x (> U+003E + NBSP U+00A0)", got, want)
 	}
 }
 

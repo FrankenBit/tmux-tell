@@ -646,7 +646,7 @@ func TestAgentState_IdleWhenCursorAtASCIIPromptSentinel(t *testing.T) {
 	fastTemporalDelta(t)
 	// Row 3 (0-indexed) is the Win11 ASCII prompt with an empty composer,
 	// captured as bare `>` after the trailing-space strip.
-	pane := "history\n──── Admin ──\n  recap line\n>\n────────\n  status\n"
+	pane := "history\n──── Admin ──\n  recap line\n>\u00a0\n────────\n  status\n"
 	// cursorX=2 (right after the `> ` two-cell prompt); cursorY=3.
 	fr := newAgentStateRunner([]string{pane, pane}, 2, 3)
 	prev := SetTmuxRunner(fr.run)
@@ -670,7 +670,7 @@ func TestAgentState_IdleWhenCursorAtASCIIPromptSentinel(t *testing.T) {
 // PromptEmpty=false, mirroring the Linux ghost-text case.
 func TestAgentState_IdleWhenCursorAtASCIIPromptSentinelWithGhostText(t *testing.T) {
 	fastTemporalDelta(t)
-	pane := "history\n──── Admin ──\n  recap line\n> /compact\n────────\n  status\n"
+	pane := "history\n──── Admin ──\n  recap line\n>\u00a0/compact\n────────\n  status\n"
 	// cursorX=2 (right after `> `, before `/compact` ghost-text); cursorY=3.
 	fr := newAgentStateRunner([]string{pane, pane}, 2, 3)
 	prev := SetTmuxRunner(fr.run)
@@ -698,7 +698,7 @@ func TestAgentState_IdleWhenCursorAtASCIIPromptSentinelWithGhostText(t *testing.
 // the Linux path does.
 func TestAgentState_AwaitingOperatorWhenCursorPastASCIISentinel(t *testing.T) {
 	fastTemporalDelta(t)
-	pane := "history\n──── Admin ──\n  recap line\n> Thanks for handling \n────────\n  status\n"
+	pane := "history\n──── Admin ──\n  recap line\n>\u00a0Thanks for handling \n────────\n  status\n"
 	// cursorX=22 (past the operator-typed content); cursorY=3.
 	fr := newAgentStateRunner([]string{pane, pane}, 22, 3)
 	prev := SetTmuxRunner(fr.run)
@@ -732,7 +732,7 @@ func TestAgentState_ASCIIVariantNotHonoredCursorless(t *testing.T) {
 	// it honored the variant. The cursor is on the history row (0, col 0), which
 	// has no sentinel, so the cursor-aware path can't classify it either. Correct
 	// result: StateUnknown, NOT idle.
-	pane := "history\n  some tool output\n>\n────────\n  status\n"
+	pane := "history\n  some tool output\n>\u00a0\n────────\n  status\n"
 	fr := newAgentStateRunner([]string{pane, pane}, 0, 0)
 	prev := SetTmuxRunner(fr.run)
 	t.Cleanup(func() { SetTmuxRunner(prev) })

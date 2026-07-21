@@ -30,27 +30,31 @@ import (
 // drift loudly.
 const PromptSentinel = "❯\u00a0"
 
-// ASCIIPromptSentinel is the plain-ASCII render-variant of the Claude Code
-// prompt — `>` (U+003E) followed by a REGULAR space (U+0020), hex `3e 20`. A
-// Claude CLI session running under a Windows 11 terminal paints its prompt this
-// way rather than the Linux `❯ `: the ornament glyph U+276F font-substitutes
-// (and the NBSP downgrades to a regular space) on Win11 terminal emulators
-// (Windows Terminal / PowerShell console / WSL bridge). ssh is a byte-transparent
-// tunnel, so the variance is introduced on the render side, not in transport —
-// meaning ANY Win11-hosted Claude pane hits this, not only ssh-relayed ones
-// (#729, substrate-verified 2026-07-08 from the Caymans Admin pane %11: the input
-// line captured as `> …`, bytes `3e 20`, never `❯ `).
+// ASCIIPromptSentinel is the Windows-11 render-variant of the Claude Code
+// prompt — `>` (U+003E) followed by a NO-BREAK SPACE (U+00A0), hex `3e c2 a0`.
+// A Claude CLI session running under a Windows 11 terminal paints its prompt
+// this way rather than the Linux `❯ `: **only the ornament glyph
+// substitutes** (U+276F `❯` -> U+003E `>`); the NBSP trailer is IDENTICAL on
+// both platforms. That was measured wrong the first time — #786 shipped this as
+// `>` + a REGULAR space (`3e 20`), inheriting a mis-stated byte from the #729
+// investigation, and it NEVER matched a live pane: capture-pane preserves the
+// NBSP, so a `3e 20` literal cannot match a `3e c2 a0` row. Corrected against
+// three live captures on 2026-07-21 (Caymans Admin pane %11 composer row, cursor
+// at col 2: `3e c2 a0` + ghost-text; Bosun's + Admin's independent hexdumps
+// agreed). ssh is a byte-transparent tunnel, so the variance is render-side, not
+// transport — ANY Win11-hosted Claude pane hits this, not only ssh-relayed ones.
 //
-// It is carried in the Claude PaneProfile's PromptSentinelVariants and matched
-// ONLY in the cursor-aware AgentState path — see that field's doc for why a `> `
-// match is trusted only with cursor corroboration. Being a regular-space-
-// terminated sentinel, it inherits cutPromptSentinel's #690 trailing-space-strip
-// tolerance (a bare `>` when capture-pane strips the empty composer's space).
+// Carried in the Claude PaneProfile's PromptSentinelVariants and matched ONLY in
+// the cursor-aware AgentState path — see that field's doc for why a `>` match is
+// trusted only with cursor corroboration. Like the Linux primary, its NBSP
+// trailer survives `capture-pane -p` (which strips regular trailing whitespace
+// but not NBSP), so it matches via a plain prefix cut — the #690 space-strip
+// tolerance is inert for it, exactly as for the primary sentinel.
 //
 // FORWARD-WATCH: like PromptSentinel this is Claude-Code-render-dependent; the
-// byte canary TestASCIIPromptSentinel_Bytes pins `3e 20` so a future drift
+// byte canary TestASCIIPromptSentinel_Bytes pins `3e c2 a0` so a future drift
 // surfaces loudly.
-const ASCIIPromptSentinel = "> "
+const ASCIIPromptSentinel = ">\u00a0"
 
 // State classifies a agent's current activity from the tmux-msg
 // vantage point. Five values, per the #69 verdict

@@ -107,15 +107,18 @@ exported as `tmux_tell_copymode_defer_total{agent}` and
 
 > **The prompt sentinel tolerates a Windows-11 render-variant (#729).** The *same*
 > Claude Code TUI paints its prompt differently depending on the host terminal: on
-> Linux it is `❯ ` (U+276F + NBSP), but under a Windows 11 terminal (Windows
-> Terminal / PowerShell console / WSL bridge) the ornament glyph font-substitutes
-> and the prompt renders as plain ASCII `> ` (U+003E + regular space). ssh is a
+> Linux it is `❯` + NBSP (U+276F + U+00A0, hex `e2 9d af c2 a0`), but under a
+> Windows 11 terminal (Windows Terminal / PowerShell console / WSL bridge) **only
+> the ornament glyph substitutes** — `❯` → `>` — while the NBSP trailer is
+> identical, so the prompt renders as `>` + NBSP (`3e c2 a0`). ssh is a
 > byte-transparent tunnel, so *any* Win11-hosted Claude pane — ssh-relayed or
-> local — shows `> `, and the Linux-calibrated sentinel couldn't match it: the
-> pane classified `unknown` and the pre-paste safety re-probe tripped
-> `pre_paste_safety_abort` on every delivery (the 2026-07-07 Caymans Admin pane).
-> The Claude `PaneProfile` now carries the ASCII `> ` as a **render-variant**
+> local — shows `>` + NBSP, and the Linux-calibrated sentinel couldn't match it:
+> the pane classified `unknown` and the pre-paste safety re-probe tripped
+> `pre_paste_safety_abort` on every delivery (the Caymans Admin pane).
+> The Claude `PaneProfile` now carries `>` + NBSP as a **render-variant**
 > (`PromptSentinelVariants`) so an idle Win11 pane classifies `idle` and delivers.
+> (The first cut of this fix matched `>` + a *regular* space and never matched a
+> live pane — capture-pane preserves the NBSP; corrected + live-verified.)
 >
 > **The variant is trusted ONLY in the cursor-aware classification** — where the
 > tmux cursor pins the match to the live input row (`idle` when the cursor sits

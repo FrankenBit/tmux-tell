@@ -27,16 +27,16 @@ import "regexp"
 //     the SAME TUI can paint under a different terminal/OS, tolerated ONLY in the
 //     cursor-aware classification path (where the cursor pins the match to the
 //     live input row). Claude under a Windows 11 terminal renders its prompt as
-//     plain ASCII "> " (U+003E + regular space) — the ornament glyph U+276F
-//     font-substitutes on Win11 — so an ssh-relayed or on-Win11 Claude pane that
-//     the Linux-calibrated PromptSentinel can't match classified StateUnknown and
-//     tripped pre_paste_safety_abort on every delivery (#729). A variant is
-//     DELIBERATELY not consulted by the cursor-LESS scans (isInputRowQuiet,
-//     extractInputContent): "> " is a common glyph (a markdown blockquote, a
-//     "> " shell continuation prompt) that would false-idle a non-input row
-//     without the cursor's corroboration — so it is trusted only where the
-//     cursor anchors it. Empty (Codex, the synthetic profile) leaves the
-//     single-sentinel behavior unchanged.
+//     ">" (U+003E) + NBSP (U+00A0), hex `3e c2 a0` — ONLY the ornament glyph
+//     U+276F substitutes to ">", the NBSP trailer is identical to Linux — so an
+//     ssh-relayed or on-Win11 Claude pane that the Linux-calibrated PromptSentinel
+//     can't match classified StateUnknown and tripped pre_paste_safety_abort on
+//     every delivery (#729). A variant is DELIBERATELY not consulted by the
+//     cursor-LESS scans (isInputRowQuiet, extractInputContent): ">" is a common
+//     glyph (a markdown blockquote, a "> " shell continuation prompt) that would
+//     false-idle a non-input row without the cursor's corroboration — so it is
+//     trusted only where the cursor anchors it. Empty (Codex, the synthetic
+//     profile) leaves the single-sentinel behavior unchanged.
 //   - CompactionMarker: substring identifying an at-rest-in-compaction pane
 //     (precedence-1 check in AgentState). Empty disables the check — correct for
 //     an adapter with no compaction UI.
