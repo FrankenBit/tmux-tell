@@ -116,14 +116,25 @@ jobs:
             --no-bootstrap
 
       - name: post-deploy smoke
-        # Doctor is HARD-FAIL — the substrate-state-truth check that deployed
-        # binaries + running mailmen + chamber-side MCP servers agree on the
-        # version. Divergence surfaces immediately as a failed
-        # workflow_dispatch; the workflow-log payload names which specific
-        # chamber-adapter combinations lag so the operator's follow-up action
-        # is targeted.
+        # Doctor runs with #791's --allow-active-chambers flag: mid-turn
+        # chamber-side MCP staleness softens as pending-drain; every other
+        # divergence class (SYNC db-state trouble, mailman-stale, orphan
+        # MCP, idle-at-prompt+stale) stays a hard error.
         #
-        # HISTORY — soften-then-restore-with-flag arc:
+        # A non-zero exit surfaces as ::warning:: RATHER than failing the
+        # job — the hybrid form. Rationale is #797: post-deploy nothing
+        # autonomously queues `refresh-all-mcps` to chambers (install.sh's
+        # --no-bootstrap tail only ECHOES it as a Next-steps hint, and
+        # the runner has no tmux visibility to fire it itself). So idle
+        # chambers accumulate stale-binary chamber-MCPs post-deploy until
+        # the operator manually runs bootstrap. Under hard-fail-doctor
+        # that would fail every deploy with idle-at-prompt chambers
+        # present (common case). Warn-wrap preserves the diagnostic
+        # value (softened `~` rows + named chamber-idle-stale rows are
+        # visible in the log) without shipping a false-positive-driven
+        # deploy failure.
+        #
+        # HISTORY — soften/un-conflate/hybrid arc:
         #
         #   #415 (v0.17.0-lane) softened doctor to `::warning::` because
         #   first-deploy empirically hit a false-positive surface: every
@@ -138,11 +149,11 @@ jobs:
         #   failed on doctor even when the deploy was structurally
         #   successful.
         #
-        #   #416 attempted a bare un-soften on the premise that #411 +
+        #   #416 targeted a bare un-soften on the premise that #411 +
         #   #414 closed the false-positive class. That premise was
         #   partial — it closed the CODEX-chamber subclass; the
         #   CLAUDE-chamber-mid-turn subclass remained. A first attempt
-        #   to re-land hit the residual false-positive live (a
+        #   to re-land (#790) hit the residual false-positive live (a
         #   mid-turn chamber's own stale MCP flagged divergence).
         #
         #   #791 un-conflates SYNC (mailman/binary version — stays
@@ -156,10 +167,21 @@ jobs:
         #   action). Interactive doctor invocations without the flag
         #   remain strict.
         #
+        #   Surveyor's #796 re-review surfaced World-2: nothing post-
+        #   deploy autonomously queues `refresh-all-mcps` to chambers,
+        #   so idle-at-prompt chambers stay stale until the operator
+        #   manually bootstraps. The mid-turn softening is a real
+        #   improvement (mid-turn cases no longer false-positive) but
+        #   the idle-stale case still fires under a bare hard-fail.
+        #   Solution is #797: autonomous refresh path OR doctor
+        #   exit-code split (69 real / 70 idle-stale-only) so deploy
+        #   can distinguish. Until #797 lands, the WARN-WRAP holds so
+        #   idle-stale is a diagnostic surface, not a deploy blocker.
+        #
         # Install success (the wrapper step exiting 0) remains the load-
         # bearing deploy signal. Doctor is the mechanical composition on
-        # top: a substrate-state check that would otherwise be
-        # operator-hand-verified after every deploy, elevated to gate.
+        # top: a substrate-state check that lands in the workflow log
+        # for postmortem visibility.
         run: |
           set -euo pipefail
           echo "==> installed binary versions (#436: assert BOTH adapters — a"
@@ -167,4 +189,6 @@ jobs:
           tmux-tell-claude --version
           tmux-tell-codex --version
           echo "==> doctor (MCP / mailman DB-binding divergence check, #348 / #791)"
-          tmux-tell-claude doctor --allow-active-chambers
+          if ! tmux-tell-claude doctor --allow-active-chambers; then
+              echo "::warning::doctor reported divergence — softened '~' rows are mid-turn chamber-MCPs (pending-drain); '✗' rows are real divergences OR idle-at-prompt+stale chambers that need manual 'tmux-tell-claude refresh-all-mcps' from a tmux session. See #797 for the autonomous-refresh design follow-up."
+          fi
