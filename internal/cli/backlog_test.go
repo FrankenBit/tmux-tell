@@ -211,7 +211,7 @@ func TestApplyBacklogPolicy_ReRegisterAdvancesFloor(t *testing.T) {
 // policy: a re-register with a queued backlog stamps the floor and surfaces
 // the announce fields alongside the #151 queued count.
 func TestMCP_Register_AnnouncesBacklog(t *testing.T) {
-	t.Setenv("TMUX_PANE", "%9")
+	t.Setenv("TMUX_PANE", "%99")                                 // match stored pane from newCmdTestStore (Fix B)
 	t.Setenv("CLAUDE_MSG_CONFIG", "/nonexistent/tmux-tell.toml") // force default policy
 	s := newCmdTestStore(t, "sender", "backlogged")
 	(&fakeSystemctl{}).install(t)
@@ -248,7 +248,7 @@ func TestMCP_Register_AnnouncesBacklog(t *testing.T) {
 // TestMCP_Register_MailboxOnlyNoBacklogFields proves the policy is a no-op for
 // mailbox-only agents even with a backlog present.
 func TestMCP_Register_MailboxOnlyNoBacklogFields(t *testing.T) {
-	t.Setenv("TMUX_PANE", "%9")
+	t.Setenv("TMUX_PANE", "%99") // match stored pane from newCmdTestStore (Fix B)
 	t.Setenv("CLAUDE_MSG_CONFIG", "/nonexistent/tmux-tell.toml")
 	s := newCmdTestStore(t, "sender", "mbox")
 	(&fakeSystemctl{}).install(t)

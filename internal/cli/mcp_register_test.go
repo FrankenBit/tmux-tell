@@ -180,8 +180,10 @@ func TestMCP_Register_CollisionWithForceOverwrites(t *testing.T) {
 	s := newCmdTestStore(t, "existing")
 	(&fakeSystemctl{}).install(t)
 
+	// Fix B: explicit pane required when stored pane (%99) differs from $TMUX_PANE.
 	got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
 		"name":  "existing",
+		"pane":  "%42",
 		"force": true,
 	})
 	if got["ok"] != true {
@@ -199,7 +201,7 @@ func TestMCP_Register_CollisionWithForceOverwrites(t *testing.T) {
 // persist and the mailman would never resume — the load-bearing recovery path
 // for the MCP (chamber-driven) register surface.
 func TestMCP_Register_ClearsStuckState(t *testing.T) {
-	t.Setenv("TMUX_PANE", "%42")
+	t.Setenv("TMUX_PANE", "%99") // match stored pane from newCmdTestStore (Fix B)
 	s := newCmdTestStore(t, "existing")
 	(&fakeSystemctl{}).install(t)
 	if err := s.SetStuck(context.Background(), "existing", store.StuckReasonPaneNotFound); err != nil {
@@ -226,7 +228,7 @@ func TestMCP_Register_ClearsStuckState(t *testing.T) {
 // carry stale "awaiting_operator" signals across chamber restarts — same
 // substrate-honest semantics as the CLI register surface.
 func TestMCP_Register_ClearsAttentionState(t *testing.T) {
-	t.Setenv("TMUX_PANE", "%42")
+	t.Setenv("TMUX_PANE", "%99") // match stored pane from newCmdTestStore (Fix B)
 	s := newCmdTestStore(t, "existing")
 	(&fakeSystemctl{}).install(t)
 	if err := s.SetAttentionState(context.Background(), "existing",
@@ -253,7 +255,7 @@ func TestMCP_Register_ClearsAttentionState(t *testing.T) {
 // via the MCP tool (the spawn-die path chambers actually use), and the response
 // surfaces deferred_promoted. Resume-deferred rows stay staged (isolation).
 func TestMCP_Register_PromotesRegisterDeferred(t *testing.T) {
-	t.Setenv("TMUX_PANE", "%42")
+	t.Setenv("TMUX_PANE", "%99") // match stored pane from newCmdTestStore (Fix B)
 	ctx := context.Background()
 	s := newCmdTestStore(t, "dispatcher", "pilot")
 	(&fakeSystemctl{}).install(t)
@@ -327,10 +329,11 @@ func TestMCP_Register_SystemctlFailureStillReportsRegistration(t *testing.T) {
 }
 
 func TestMCP_Register_SurfacesQueuedBacklog(t *testing.T) {
-	t.Setenv("TMUX_PANE", "%9")
-	// "backlogged" was registered, received mail, then its pane died; it
-	// now re-registers (force=true) and should learn it has backlog
-	// without a separate inbox poll (#151).
+	t.Setenv("TMUX_PANE", "%99") // match stored pane from newCmdTestStore (Fix B)
+	// "backlogged" was registered, received mail; it now re-registers
+	// (force=true) and should learn it has backlog without a separate inbox
+	// poll (#151).
+	t.Setenv("TMUX_PANE", "%99") // match stored pane from newCmdTestStore
 	s := newCmdTestStore(t, "sender", "backlogged")
 	(&fakeSystemctl{}).install(t)
 	ctx := context.Background()
@@ -446,4 +449,167 @@ func TestMCP_Unregister_IdempotentOnMissingMailman(t *testing.T) {
 	if got["ok"] != true {
 		t.Errorf("should succeed idempotently; got %v", got)
 	}
+}
+
+// seedWithPane seeds a store with agent "lookout" at a specific pane id (not the
+// default %99 from newCmdTestStore) and returns the store.
+func seedWithPane(t *testing.T, name, paneID string) *store.Store {
+	t.Helper()
+	s, err := store.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	if err := s.UpsertAgent(context.Background(), name, paneID); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	return s
+}
+
+// TestMCP_Register_PaneRewriteGuard pins #403 Fix A (keep_pane) and Fix B
+// (divergence-detection refusal) on the MCP surface:
+//
+//  1. Same-pane re-register via $TMUX_PANE — no divergence, succeeds.
+//  2. New pane without explicit pane field (post-crash drift) — divergence
+//     detected, refused.
+//  3. Acting-on-behalf without keep_pane — divergence detected, refused.
+//  4. keep_pane updates delivery_mode without touching the stored pane_id.
+//  5. Explicit pane always wins: stored pane_id is rewritten.
+//  6. keep_pane and pane are mutually exclusive.
+func TestMCP_Register_PaneRewriteGuard(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("same-pane re-register (no divergence) succeeds", func(t *testing.T) {
+		t.Setenv("TMUX_PANE", "%8") // lookout's own pane
+		s := seedWithPane(t, "lookout", "%8")
+		(&fakeSystemctl{}).install(t)
+
+		got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
+			"name":          "lookout",
+			"force":         true,
+			"start_mailman": false,
+		})
+		if got["ok"] != true {
+			t.Fatalf("expected ok; got=%v", got)
+		}
+		a, _ := s.GetAgent(ctx, "lookout")
+		if a.PaneID != "%8" {
+			t.Errorf("pane_id = %q, want %%8 preserved", a.PaneID)
+		}
+	})
+
+	t.Run("new pane without explicit pane field (post-crash drift) is refused", func(t *testing.T) {
+		t.Setenv("TMUX_PANE", "%10") // new pane after crash, not the stored %8
+		s := seedWithPane(t, "lookout", "%8")
+		(&fakeSystemctl{}).install(t)
+
+		got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
+			"name":          "lookout",
+			"force":         true,
+			"start_mailman": false,
+		})
+		if got["_isError"] != true {
+			t.Fatalf("expected error (divergence refusal); got=%v", got)
+		}
+		errMsg, _ := got["_text"].(string)
+		if !strings.Contains(errMsg, "refusing to silently rewrite pane_id") {
+			t.Errorf("expected divergence refusal; got %q", errMsg)
+		}
+		if !strings.Contains(errMsg, "%8") || !strings.Contains(errMsg, "%10") {
+			t.Errorf("error should name stored %%8 and resolved %%10; got %q", errMsg)
+		}
+		if !strings.Contains(errMsg, "keep_pane=true") {
+			t.Errorf("error should mention keep_pane=true escape; got %q", errMsg)
+		}
+		// Pane must NOT have been rewritten.
+		a, _ := s.GetAgent(ctx, "lookout")
+		if a.PaneID != "%8" {
+			t.Errorf("pane_id = %q, want %%8 unchanged after refusal", a.PaneID)
+		}
+	})
+
+	t.Run("acting-on-behalf without keep_pane is refused", func(t *testing.T) {
+		t.Setenv("TMUX_PANE", "%7") // QM's pane, not Lookout's %8
+		s := seedWithPane(t, "lookout", "%8")
+		(&fakeSystemctl{}).install(t)
+
+		got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
+			"name":          "lookout",
+			"delivery_mode": "mailbox-only",
+			"force":         true,
+			"start_mailman": false,
+		})
+		if got["_isError"] != true {
+			t.Fatalf("expected error (divergence refusal); got=%v", got)
+		}
+		errMsg, _ := got["_text"].(string)
+		if !strings.Contains(errMsg, "refusing to silently rewrite pane_id") {
+			t.Errorf("expected divergence refusal; got %q", errMsg)
+		}
+	})
+
+	t.Run("keep_pane updates delivery_mode without touching pane_id", func(t *testing.T) {
+		t.Setenv("TMUX_PANE", "%7") // QM's pane — would clobber without keep_pane
+		s := seedWithPane(t, "lookout", "%8")
+		(&fakeSystemctl{}).install(t)
+
+		got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
+			"name":          "lookout",
+			"delivery_mode": "mailbox-only",
+			"keep_pane":     true,
+			"force":         true,
+			"start_mailman": false,
+		})
+		if got["ok"] != true {
+			t.Fatalf("expected ok; got=%v", got)
+		}
+		a, _ := s.GetAgent(ctx, "lookout")
+		if a.PaneID != "%8" {
+			t.Errorf("pane_id = %q, want %%8 preserved by keep_pane", a.PaneID)
+		}
+		if a.DeliveryMode != store.DeliveryModeMailboxOnly {
+			t.Errorf("delivery_mode = %q, want mailbox-only", a.DeliveryMode)
+		}
+	})
+
+	t.Run("explicit pane always wins over stored value", func(t *testing.T) {
+		t.Setenv("TMUX_PANE", "%7")
+		s := seedWithPane(t, "lookout", "%8")
+		(&fakeSystemctl{}).install(t)
+
+		got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
+			"name":          "lookout",
+			"pane":          "%10",
+			"force":         true,
+			"start_mailman": false,
+		})
+		if got["ok"] != true {
+			t.Fatalf("expected ok; got=%v", got)
+		}
+		a, _ := s.GetAgent(ctx, "lookout")
+		if a.PaneID != "%10" {
+			t.Errorf("pane_id = %q, want %%10 (explicit pane wins)", a.PaneID)
+		}
+	})
+
+	t.Run("keep_pane and pane are mutually exclusive", func(t *testing.T) {
+		t.Setenv("TMUX_PANE", "%7")
+		s := seedWithPane(t, "lookout", "%8")
+		(&fakeSystemctl{}).install(t)
+
+		got := callMCPTool(t, s, "tmux-tell.register", map[string]any{
+			"name":          "lookout",
+			"pane":          "%8",
+			"keep_pane":     true,
+			"force":         true,
+			"start_mailman": false,
+		})
+		if got["_isError"] != true {
+			t.Fatalf("expected error (mutual exclusion); got=%v", got)
+		}
+		errMsg, _ := got["_text"].(string)
+		if !strings.Contains(errMsg, "mutually exclusive") {
+			t.Errorf("expected mutual-exclusion error; got %q", errMsg)
+		}
+	})
 }

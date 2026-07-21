@@ -100,7 +100,8 @@ func registerToolSchema() json.RawMessage {
 		"type": "object",
 		"properties": {
 			"name":          {"type": "string", "description": "Agent name (the new identity)"},
-			"pane":          {"type": "string", "description": "Pane id like %5 (default: $TMUX_PANE)"},
+			"pane":          {"type": "string", "description": "Pane id like %5 (default: $TMUX_PANE). Mutually exclusive with keep_pane."},
+			"keep_pane":     {"type": "boolean", "description": "Update non-pane fields (delivery_mode, alias, etc.) without touching the stored pane_id. Intended for acting-on-behalf scenarios where the caller is NOT the registered pane (e.g. Bosun flipping another chamber's delivery_mode). Mutually exclusive with pane. (#403)"},
 			"start_mailman": {"type": "boolean", "description": "Run systemctl --user enable --now ` + bin + `-mailman@NAME (default true; default false when delivery_mode=mailbox-only). Note: start_mailman=true with delivery_mode=mailbox-only is allowed but vestigial — the daemon starts, observes mailbox-only at startup, logs the no-work condition, and exits cleanly. The 'mailman: active' field in the response is momentary in this case."},
 			"force":         {"type": "boolean", "description": "Overwrite an existing row with the same name (default false)"},
 			"alias":         {"type": "string", "description": "Optional alternative name discover should accept for this canonical agent (e.g. 'Master Bosun of Nimbus' for canonical 'bosun'). Append-only; existing aliases preserved."},
@@ -1522,6 +1523,7 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 	type input struct {
 		Name         string `json:"name"`
 		Pane         string `json:"pane"`
+		KeepPane     bool   `json:"keep_pane"` // Fix A: acting-on-behalf (#403)
 		StartMailman *bool  `json:"start_mailman"`
 		Force        bool   `json:"force"`
 		Alias        string `json:"alias"`
@@ -1535,13 +1537,23 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		if in.Name == "" {
 			return nil, fmt.Errorf("name required")
 		}
+
+		// Fix A: keep_pane and pane are mutually exclusive (#403).
+		paneExplicit := in.Pane != ""
+		if in.KeepPane && paneExplicit {
+			return nil, fmt.Errorf("keep_pane and pane are mutually exclusive: keep_pane means 'don't touch the pane'; pass only one")
+		}
+
 		pane := in.Pane
-		if pane == "" {
-			pane = os.Getenv("TMUX_PANE")
+		if !in.KeepPane {
+			if pane == "" {
+				pane = os.Getenv("TMUX_PANE")
+			}
+			if pane == "" {
+				return nil, fmt.Errorf("pane required (no pane given and $TMUX_PANE empty)")
+			}
 		}
-		if pane == "" {
-			return nil, fmt.Errorf("pane required (no --pane given and $TMUX_PANE empty)")
-		}
+		// When KeepPane=true, pane remains ""; UpsertAgent("") preserves the existing pane_id.
 
 		// delivery_mode default + validation.
 		deliveryMode := in.DeliveryMode
@@ -1561,6 +1573,25 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		if existing != nil && !in.Force {
 			return nil, fmt.Errorf("agent %q already registered with pane %s; pass force=true to overwrite",
 				in.Name, existing.PaneID)
+		}
+
+		// Fix B: refuse to silently rewrite pane_id when $TMUX_PANE differs
+		// from the stored pane and the caller did not explicitly pass pane or
+		// keep_pane. Catches the acting-on-behalf case (a peer's $TMUX_PANE
+		// clobbering the target's stored pane) and the post-crash self-reregister
+		// case (new pane must be named explicitly). Mirrors CLI register Fix B
+		// (#403). COUPLING(alcatraz-infra:scripts/chamber-claude.sh,
+		// chamber-codex.sh): auto-register wrappers pass pane explicitly, so this
+		// guard never fires on the self-heal path.
+		if existing != nil && existing.PaneID != "" && !paneExplicit && !in.KeepPane {
+			if pane != existing.PaneID {
+				return nil, fmt.Errorf(
+					"register: refusing to silently rewrite pane_id %s → %s for agent %q.\n"+
+						"Pass pane=%q to keep the existing pane, pane=%q to actually change it,\n"+
+						"or keep_pane=true to update other fields without touching pane_id.",
+					existing.PaneID, pane, in.Name,
+					existing.PaneID, pane)
+			}
 		}
 
 		if err := s.UpsertAgent(ctx, in.Name, pane); err != nil {
