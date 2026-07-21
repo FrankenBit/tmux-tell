@@ -10,7 +10,7 @@ import (
 // doctorProcInfo augments a dbBinding with doctor-only /proc-derived context —
 // which role the process plays (mailman vs chamber-side MCP) and, for the MCP
 // case, which chamber owns it. Populated by gatherDoctorProcs; consumed by
-// classifyDoctorProcs when the --allow-active-chambers flag is set (#791).
+// classifyDoctorProcs when the --allow-active-agents flag is set (#791).
 //
 // Kept SEPARATE from dbBinding so whoami_db's wire schema is unchanged — this
 // is a doctor-internal augmentation, not part of the tmux-tell.whoami_db tool's
@@ -28,7 +28,7 @@ type doctorProcInfo struct {
 	//   - "unknown":  neither pattern matched. Not softened.
 	Role string
 
-	// ChamberName is the chamber that owns this process, when resolvable.
+	// AgentName is the agent that owns this process, when resolvable.
 	//   - For "mailman": parsed from the `--agent <name>` argv value.
 	//   - For "mcp":     extracted from the cgroup path
 	//     (`chamber-<name>.slice` — chamber-launch discipline in
@@ -38,7 +38,7 @@ type doctorProcInfo struct {
 	// Empty for the "mcp" role when cgroup does not carry a chamber-slice tag
 	// (e.g. a stray MCP process launched outside the chamber wrapper). In that
 	// case the softening cannot proceed — treated as orphan, still divergent.
-	ChamberName string
+	AgentName string
 }
 
 // chamberSliceRegex extracts the chamber name from a cgroup path segment
@@ -126,11 +126,11 @@ func resolveDoctorProcInfo(pid int) doctorProcInfo {
 		// `serve --agent <name>` — find the --agent argv pair.
 		for i := 2; i < len(cmdline); i++ {
 			if cmdline[i] == "--agent" && i+1 < len(cmdline) {
-				return doctorProcInfo{Role: "mailman", ChamberName: cmdline[i+1]}
+				return doctorProcInfo{Role: "mailman", AgentName: cmdline[i+1]}
 			}
 			// Support `--agent=<name>` shape too, defensively.
 			if strings.HasPrefix(cmdline[i], "--agent=") {
-				return doctorProcInfo{Role: "mailman", ChamberName: strings.TrimPrefix(cmdline[i], "--agent=")}
+				return doctorProcInfo{Role: "mailman", AgentName: strings.TrimPrefix(cmdline[i], "--agent=")}
 			}
 		}
 		// `serve` without --agent shouldn't happen in the systemd-unit path but
@@ -140,7 +140,7 @@ func resolveDoctorProcInfo(pid int) doctorProcInfo {
 	case "mcp":
 		cgroup := procCgroupForPID(pid)
 		if m := chamberSliceRegex.FindStringSubmatch(cgroup); len(m) == 2 {
-			return doctorProcInfo{Role: "mcp", ChamberName: m[1]}
+			return doctorProcInfo{Role: "mcp", AgentName: m[1]}
 		}
 		// MCP subprocess outside any chamber slice — orphan. Softening cannot
 		// proceed (no chamber-attention to consult); the caller still classifies

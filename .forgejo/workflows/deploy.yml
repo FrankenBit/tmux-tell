@@ -116,7 +116,7 @@ jobs:
             --no-bootstrap
 
       - name: post-deploy smoke
-        # Doctor runs with #791's --allow-active-chambers flag: mid-turn
+        # Doctor runs with #791's --allow-active-agents flag: mid-turn
         # chamber-side MCP staleness softens as pending-drain; every other
         # divergence class (SYNC db-state trouble, mailman-stale, orphan
         # MCP, idle-at-prompt+stale) stays a hard error.
@@ -159,7 +159,7 @@ jobs:
         #   #791 un-conflates SYNC (mailman/binary version — stays
         #   hard-fail) from ASYNC (chamber-side MCP freshness — softens
         #   for chambers with a fresh mid-turn observed_state). The
-        #   flag `--allow-active-chambers` opts in the softening
+        #   flag `--allow-active-agents` opts in the softening
         #   scoped by Surveyor 3ea9: mid-turn observed_state (working /
         #   at-rest-in-compaction / awaiting-operator) → pending-drain;
         #   idle-at-prompt + stale-binary → STILL fail (Surveyor's
@@ -189,6 +189,6 @@ jobs:
           tmux-tell-claude --version
           tmux-tell-codex --version
           echo "==> doctor (MCP / mailman DB-binding divergence check, #348 / #791)"
-          if ! tmux-tell-claude doctor --allow-active-chambers; then
-              echo "::warning::doctor reported divergence — softened '~' rows are mid-turn chamber-MCPs (pending-drain); '✗' rows are real divergences OR idle-at-prompt+stale chambers that need manual 'tmux-tell-claude refresh-all-mcps' from a tmux session. See #797 for the autonomous-refresh design follow-up."
+          if ! tmux-tell-claude doctor --allow-active-agents; then
+              echo "::warning::doctor reported divergence — softened '~' rows are mid-turn agent-side MCPs (pending-drain); '✗' rows are real divergences OR idle-at-prompt+stale agents that need manual 'tmux-tell-claude refresh-all-mcps' from a tmux session. See #797 for the autonomous-refresh design follow-up."
           fi

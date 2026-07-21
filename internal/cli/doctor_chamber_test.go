@@ -16,7 +16,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 		cmdline     []string
 		cgroup      string
 		wantRole    string
-		wantChamber string
+		wantAgent string
 	}{
 		{
 			name:        "mailman with --agent X (space-separated)",
@@ -24,7 +24,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			cmdline:     []string{"/usr/local/bin/tmux-tell-claude", "serve", "--agent", "bosun"},
 			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-tmux\\x2dtell\\x2dclaude\\x2dmailman.slice/tmux-tell-claude-mailman@bosun.service\n",
 			wantRole:    "mailman",
-			wantChamber: "bosun",
+			wantAgent: "bosun",
 		},
 		{
 			name:        "mailman with --agent=X (equals form)",
@@ -32,7 +32,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			cmdline:     []string{"/usr/local/bin/tmux-tell-claude", "serve", "--agent=quartermaster"},
 			cgroup:      "irrelevant — cmdline wins for mailmen",
 			wantRole:    "mailman",
-			wantChamber: "quartermaster",
+			wantAgent: "quartermaster",
 		},
 		{
 			name:        "mailman serve missing --agent (defensive)",
@@ -40,7 +40,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			cmdline:     []string{"/usr/local/bin/tmux-tell-claude", "serve"},
 			cgroup:      "",
 			wantRole:    "mailman",
-			wantChamber: "",
+			wantAgent: "",
 		},
 		{
 			name:        "chamber-MCP resolves from cgroup",
@@ -48,7 +48,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			cmdline:     []string{"tmux-tell-codex", "mcp"},
 			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/chamber-carpenter.slice/run-p66821-i33600199.scope\n",
 			wantRole:    "mcp",
-			wantChamber: "carpenter",
+			wantAgent: "carpenter",
 		},
 		{
 			name:        "chamber-MCP with cgroup name containing hyphen",
@@ -56,7 +56,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			cmdline:     []string{"tmux-tell-claude", "mcp"},
 			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/chamber-multi-word-name.slice/run-p1-i2.scope\n",
 			wantRole:    "mcp",
-			wantChamber: "multi-word-name",
+			wantAgent: "multi-word-name",
 		},
 		{
 			name:        "chamber-MCP without a chamber slice (orphan)",
@@ -64,7 +64,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			cmdline:     []string{"tmux-tell-claude", "mcp"},
 			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/other.slice/run-p1-i2.scope\n",
 			wantRole:    "mcp",
-			wantChamber: "",
+			wantAgent: "",
 		},
 		{
 			name:        "unknown verb",
@@ -72,7 +72,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			cmdline:     []string{"/usr/local/bin/tmux-tell-claude", "status"},
 			cgroup:      "",
 			wantRole:    "unknown",
-			wantChamber: "",
+			wantAgent: "",
 		},
 		{
 			name:        "empty cmdline (unreadable /proc/<pid>/cmdline)",
@@ -80,7 +80,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			cmdline:     nil,
 			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/chamber-bosun.slice/run.scope\n",
 			wantRole:    "unknown",
-			wantChamber: "",
+			wantAgent: "",
 		},
 		{
 			name:        "cmdline with only argv[0]",
@@ -88,7 +88,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			cmdline:     []string{"tmux-tell-claude"},
 			cgroup:      "",
 			wantRole:    "unknown",
-			wantChamber: "",
+			wantAgent: "",
 		},
 		// Guard against a naive-regex mismatch: chamber.slice (no hyphen, the
 		// parent umbrella slice) must NOT match — the resolver's regex requires
@@ -100,7 +100,7 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			cmdline:     []string{"tmux-tell-claude", "mcp"},
 			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/other-non-chamber.slice/run.scope\n",
 			wantRole:    "mcp",
-			wantChamber: "",
+			wantAgent: "",
 		},
 	}
 
@@ -130,8 +130,8 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 			if got.Role != tc.wantRole {
 				t.Errorf("Role = %q, want %q", got.Role, tc.wantRole)
 			}
-			if got.ChamberName != tc.wantChamber {
-				t.Errorf("ChamberName = %q, want %q", got.ChamberName, tc.wantChamber)
+			if got.AgentName != tc.wantAgent {
+				t.Errorf("AgentName = %q, want %q", got.AgentName, tc.wantAgent)
 			}
 		})
 	}

@@ -70,7 +70,7 @@ func (s *Store) SetObservedState(ctx context.Context, agent, state string, obser
 // stale; a caller that wants "no answer" cannot distinguish it from "answer
 // missing" so both are simply absent from the map.
 //
-// The single consumer today is doctor's #791 --allow-active-chambers flag,
+// The single consumer today is doctor's #791 --allow-active-agents flag,
 // which uses the fresh observation to decide whether a chamber-side MCP with a
 // stale binary is mid-turn (softenable, pending-drain) or idle-at-prompt
 // (still divergent). Read-only; no rows are modified.

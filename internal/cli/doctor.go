@@ -17,7 +17,7 @@ import (
 )
 
 // observedStateFreshness is the TTL applied to the agents.observed_state
-// snapshot the doctor consumes under --allow-active-chambers (#791). The
+// snapshot the doctor consumes under --allow-active-agents (#791). The
 // mailman writes observed_state on its throttled probe cadence (a few
 // captures per minute at most), so 2 minutes is generous headroom on the
 // write cadence and short enough that a crashed mailman's stale value ages
@@ -29,7 +29,7 @@ const observedStateFreshness = 2 * time.Minute
 // /proc-read DB binding plus the verdict of comparing that binding against the
 // canonical DB the binary-on-disk resolves to. Since #791 also carries the
 // doctor-only role/chamber tag + resolved mailman-observed AgentState that
-// softens the stale-binary class under --allow-active-chambers.
+// softens the stale-binary class under --allow-active-agents.
 type doctorProc struct {
 	dbBinding
 	// Canonical is true when the process's open DB inode matches the canonical
@@ -38,17 +38,19 @@ type doctorProc struct {
 	// Divergent is true when the process is writing somewhere a fresh mailman
 	// can't see — an orphaned (unlinked) inode, a different inode than
 	// canonical, or running a since-replaced ("(deleted)") binary that has NOT
-	// been softened by --allow-active-chambers on a mid-turn chamber (#791).
+	// been softened by --allow-active-agents on a mid-turn chamber (#791).
 	Divergent bool `json:"divergent"`
 	// Verdict is a one-line human explanation of the classification.
 	Verdict string `json:"verdict"`
 	// Role classifies the process shape — "mailman" | "mcp" | "unknown" (#791).
 	// Empty for pre-#791 tests / callers that don't wire the augmentation.
 	Role string `json:"role,omitempty"`
-	// ChamberName names the chamber that owns this process, when resolvable
-	// (#791). For mailmen: the `--agent X` argv value. For chamber-side MCPs:
-	// the `chamber-<name>.slice` cgroup segment. Empty when unresolvable.
-	ChamberName string `json:"chamber_name,omitempty"`
+	// AgentName names the agent that owns this process, when resolvable
+	// (#791). For mailmen: the `--agent X` argv value. For agent-side MCPs:
+	// the `chamber-<name>.slice` cgroup segment (the `<name>` slot — the
+	// substring after the systemd chamber-launcher-wrapper's slice prefix).
+	// Empty when unresolvable.
+	AgentName string `json:"agent_name,omitempty"`
 	// ObservedState carries the chamber's #448 mailman-observed AgentState when
 	// both the process was resolved to a chamber AND that chamber has a fresh
 	// observed_state in the agents store (#791). Empty when either resolution
@@ -58,7 +60,7 @@ type doctorProc struct {
 	// "unknown" / "copy-mode" / "rate-limited" / "usage-limited").
 	ObservedState string `json:"observed_state,omitempty"`
 	// Softened is true when a stale-binary process was reclassified as
-	// non-divergent because --allow-active-chambers was set AND the owning
+	// non-divergent because --allow-active-agents was set AND the owning
 	// chamber is mid-turn (#791). Visible on the JSON wire so a reader can
 	// distinguish "canonical" from "would-be-divergent, softened by policy" —
 	// per /srv/CLAUDE.md § Mechanism-design ("each PASS names its silence").
@@ -76,13 +78,13 @@ type doctorReport struct {
 }
 
 // classifyOpts carries the #791 augmentation for the pure classifier.
-// AllowActiveChambers softens the stale-binary class when the owning chamber
+// AllowActiveAgents softens the stale-binary class when the owning chamber
 // is mid-turn (observed_state in the mid-turn set); ObservedByChamber is the
 // fresh snapshot of the agents store's observed_state column (#448) the CLI
 // hands in — stale entries filtered out by TTL upstream. Both empty → pre-#791
 // behavior (stale-binary always divergent).
 type classifyOpts struct {
-	AllowActiveChambers bool
+	AllowActiveAgents bool
 	ObservedByChamber   map[string]string
 }
 
@@ -119,7 +121,7 @@ func isMidTurnObservedState(s string) bool {
 // classifyDoctorProcs is the pure core (#348, extended #791): given the live
 // processes' DB bindings, the per-process /proc-derived role/chamber
 // augmentation, and the canonical DB identity, decide per-process whether each
-// is canonical, divergent, or (under --allow-active-chambers) softened as
+// is canonical, divergent, or (under --allow-active-agents) softened as
 // pending-drain. Pure + table-tested — the /proc enumeration + store fetch that
 // feed it are the impure shell (gatherDoctorProcs + runDoctorCLI).
 //
@@ -133,11 +135,11 @@ func isMidTurnObservedState(s string) bool {
 //
 // The DB-inode / db-deleted branches are the SYNC divergence class — real
 // substrate-state trouble that the operator must resolve. They stay
-// hard-divergent regardless of --allow-active-chambers.
+// hard-divergent regardless of --allow-active-agents.
 //
 // The stale-binary branch is the ASYNC class — a chamber's MCP subprocess that
 // still holds an fd on the pre-deploy inode because the chamber has not yet
-// hit an MCP-restart boundary. When AllowActiveChambers is set AND the process
+// hit an MCP-restart boundary. When AllowActiveAgents is set AND the process
 // is a chamber-side MCP (Role=="mcp") AND its owning chamber has a fresh
 // observed_state in the mid-turn set (see isMidTurnObservedState), the process
 // is reclassified as pending-drain (Softened=true, Divergent=false). Every
@@ -157,9 +159,9 @@ func classifyDoctorProcs(bindings []dbBinding, infos []doctorProcInfo, canonical
 			info = infos[i]
 		}
 		p.Role = info.Role
-		p.ChamberName = info.ChamberName
-		if info.ChamberName != "" {
-			p.ObservedState = opts.ObservedByChamber[info.ChamberName]
+		p.AgentName = info.AgentName
+		if info.AgentName != "" {
+			p.ObservedState = opts.ObservedByChamber[info.AgentName]
 		}
 		staleBinary := strings.HasSuffix(b.BinaryPath, " (deleted)")
 		switch {
@@ -177,7 +179,7 @@ func classifyDoctorProcs(bindings []dbBinding, infos []doctorProcInfo, canonical
 			// — mailmen, orphan MCPs, idle chambers, unknown role, stale
 			// observation — stays divergent. Softening emits Softened=true so
 			// the wire distinguishes canonical from softened.
-			if opts.AllowActiveChambers && info.Role == "mcp" && info.ChamberName != "" {
+			if opts.AllowActiveAgents && info.Role == "mcp" && info.AgentName != "" {
 				obs := p.ObservedState
 				switch {
 				case obs == "":
@@ -186,19 +188,19 @@ func classifyDoctorProcs(bindings []dbBinding, infos []doctorProcInfo, canonical
 					// (orphan) or its mailman hasn't observed within the TTL.
 					// Cannot substantiate mid-turn, so stay divergent.
 					p.Divergent = true
-					p.Verdict = fmt.Sprintf("stale binary — chamber %q has no fresh observed_state (orphan or crashed mailman); MCP cannot be substantiated as mid-turn", info.ChamberName)
+					p.Verdict = fmt.Sprintf("stale binary — agent %q has no fresh observed_state (orphan or crashed mailman); MCP cannot be substantiated as mid-turn", info.AgentName)
 				case !isMidTurnObservedState(obs):
 					// Chamber is at-prompt-idle (or in a state where softening
 					// cannot be substantiated — copy-mode, rate-limited, etc.).
 					// The MCP will not self-heal on any activity boundary;
 					// this is a real divergence surface even under the flag.
 					p.Divergent = true
-					p.Verdict = fmt.Sprintf("stale binary — chamber %q observed_state=%s (not mid-turn); MCP will not drain without external action", info.ChamberName, obs)
+					p.Verdict = fmt.Sprintf("stale binary — agent %q observed_state=%s (not mid-turn); MCP will not drain without external action", info.AgentName, obs)
 				default:
 					// Mid-turn: working / at-rest-in-compaction /
 					// awaiting-operator. Pending-drain, softened.
 					p.Softened = true
-					p.Verdict = fmt.Sprintf("stale binary softened — chamber %q is mid-turn (observed_state=%s); MCP will refresh on next natural boundary [--allow-active-chambers]", info.ChamberName, obs)
+					p.Verdict = fmt.Sprintf("stale binary softened — agent %q is mid-turn (observed_state=%s); MCP will refresh on next natural boundary [--allow-active-agents]", info.AgentName, obs)
 				}
 			} else {
 				p.Divergent = true
@@ -225,7 +227,7 @@ func classifyDoctorProcs(bindings []dbBinding, infos []doctorProcInfo, canonical
 // binary still matches) and reads each one's DB binding (#348). Since #791 it
 // also returns a parallel slice of doctorProcInfo — the doctor-only role +
 // chamber-name augmentation derived from /proc/<pid>/cmdline + cgroup — that
-// classifyDoctorProcs consumes when --allow-active-chambers is set. This is the
+// classifyDoctorProcs consumes when --allow-active-agents is set. This is the
 // impure shell around classifyDoctorProcs.
 func gatherDoctorProcs() ([]dbBinding, []doctorProcInfo) {
 	entries, err := os.ReadDir("/proc")
@@ -316,7 +318,7 @@ func renderDoctorReport(stdout io.Writer, rep doctorReport) {
 		// PASS-with-disclosure per /srv/CLAUDE.md § Mechanism-design: name the
 		// scope this pass covered — chamber-mid-turn stale-binary MCPs were
 		// admitted as pending-drain rather than divergent (#791).
-		fmt.Fprintf(stdout, "OK: no unrecoverable divergence — %d chamber-side MCP(s) softened as pending-drain (mid-turn chambers under --allow-active-chambers).\n", softenedCount)
+		fmt.Fprintf(stdout, "OK: no unrecoverable divergence — %d agent-side MCP(s) softened as pending-drain (mid-turn agents under --allow-active-agents).\n", softenedCount)
 	} else {
 		fmt.Fprintln(stdout, "OK: all live processes bound to the canonical DB.")
 	}
@@ -325,13 +327,13 @@ func renderDoctorReport(stdout io.Writer, rep doctorReport) {
 // runDoctorCLI implements `tmux-tell-claude doctor` (#348): walk live tmux-msg
 // processes, compare each one's open DB binding against the canonical DB, emit
 // a substrate-honest report, and exit non-zero on any divergence so the command
-// is usable as a runbook gate. Touches the DB only when --allow-active-chambers
+// is usable as a runbook gate. Touches the DB only when --allow-active-agents
 // is set (to resolve chamber observed_state); otherwise pure /proc
 // introspection.
 //
-// Usage: tmux-tell-claude doctor [--format text|json] [--allow-active-chambers]
+// Usage: tmux-tell-claude doctor [--format text|json] [--allow-active-agents]
 //
-// --allow-active-chambers (#791): softens the stale-binary class for
+// --allow-active-agents (#791): softens the stale-binary class for
 // chamber-side MCP subprocesses whose owning chamber has a fresh mid-turn
 // observed_state (working / at-rest-in-compaction / awaiting-operator per
 // #448). The SYNC divergence classes — db-deleted, db-inode-mismatch —
@@ -344,16 +346,16 @@ func runDoctorCLI(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	formatFlag := fs.String("format", "text", "output format: text|json")
-	allowActive := fs.Bool("allow-active-chambers", false,
-		"soften stale-binary chamber-MCP processes when the owning chamber's "+
-			"fresh observed_state is mid-turn (working / at-rest-in-compaction / "+
-			"awaiting-operator); real divergence classes stay hard-fail (#791)")
-	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB) — only opened when --allow-active-chambers is set")
+	allowActive := fs.Bool("allow-active-agents", false,
+		"soften stale-binary agent-side MCP processes when the owning agent's "+
+			"fresh observed AgentState is mid-turn; real divergence classes "+
+			"stay hard-fail (#791)")
+	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB) — only opened when --allow-active-agents is set")
 	if err := fs.Parse(reorderFlagsFirst(fs, args)); err != nil {
 		return exitUsage
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "usage: %s doctor [--format text|json] [--allow-active-chambers] [--db PATH]\n", active.BinaryName)
+		fmt.Fprintf(stderr, "usage: %s doctor [--format text|json] [--allow-active-agents] [--db PATH]\n", active.BinaryName)
 		return exitUsage
 	}
 	format := *formatFlag
@@ -366,7 +368,7 @@ func runDoctorCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr, fmt.Sprintf("unknown --format: %s", format), exitUsage)
 	}
 
-	opts := classifyOpts{AllowActiveChambers: *allowActive}
+	opts := classifyOpts{AllowActiveAgents: *allowActive}
 	if *allowActive {
 		// Fail-loud on store-open error: the operator asked us to soften based
 		// on chamber observed_state (#448) — and we can't read it. Refusing to
@@ -374,7 +376,7 @@ func runDoctorCLI(args []string, stdout, stderr io.Writer) int {
 		s, err := store.Open(resolveDBPath(*dbPath))
 		if err != nil {
 			return writeJSONError(stdout, stderr,
-				fmt.Sprintf("open store (--allow-active-chambers requires reading chamber observed_state): %v", err),
+				fmt.Sprintf("open store (--allow-active-agents requires reading agent observed_state): %v", err),
 				exitInternal)
 		}
 		snapshot, err := s.ObservedStateSnapshot(context.Background(), observedStateFreshness, time.Now())
