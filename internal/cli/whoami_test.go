@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -104,11 +105,19 @@ func TestWhoami_ReportsDeliveryMode(t *testing.T) {
 
 func TestWhoami_NoIdentity(t *testing.T) {
 	// This exercises the CLI wrapper, since identity resolution lives there.
+	// #722: whoami opens the store read-only, which doesn't accept
+	// ":memory:" (see store.OpenReadOnly), so seed a real empty DB first.
 	t.Setenv("TMUX_AGENT_NAME", "")
+	path := filepath.Join(t.TempDir(), "messages.db")
+	seed, err := store.Open(path)
+	if err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
+	_ = seed.Close()
 	var stdout, stderr bytes.Buffer
-	exit := runWhoamiCLI([]string{"--db", ":memory:"}, &stdout, &stderr)
+	exit := runWhoamiCLI([]string{"--db", path}, &stdout, &stderr)
 	if exit != exitUsage {
-		t.Errorf("exit = %d, want %d", exit, exitUsage)
+		t.Errorf("exit = %d, want %d\nstderr: %s", exit, exitUsage, stderr.String())
 	}
 }
 

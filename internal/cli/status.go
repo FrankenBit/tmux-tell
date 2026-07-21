@@ -25,7 +25,10 @@ func runStatusCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	s, err := store.Open(resolveDBPath(*dbPath))
+	// #722: status is pure read (agent list + queue depths + optional
+	// today-block from journal+column). OpenReadOnly keeps sandboxed
+	// callers unblocked.
+	s, err := store.OpenReadOnly(resolveDBPath(*dbPath))
 	if err != nil {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("open store: %v", err), exitInternal)

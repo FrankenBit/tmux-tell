@@ -35,6 +35,12 @@ type Store struct {
 // the package assumes (WAL, NORMAL sync, foreign keys on).
 //
 // path may be ":memory:" for tests.
+//
+// See OpenReadOnly for the sandbox-friendly read-only path (#722): mutating
+// PRAGMAs + the migration list both require write access to the DB file,
+// which a sandboxed CLI invocation from a workspace outside $HOME cannot
+// grant. Read-only verbs use that path so `whoami`/`agents`/`status` don't
+// fail-loud on the healing DML.
 func Open(path string) (*Store, error) {
 	if path != ":memory:" {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -99,6 +105,88 @@ func Open(path string) (*Store, error) {
 	}
 
 	return s, nil
+}
+
+// OpenReadOnly opens the SQLite database at path in read-only mode without
+// applying schema or firing the migration list — the sandbox-friendly path
+// for one-shot read-only CLI verbs (#722).
+//
+// SQLite's `mode=ro` DSN forbids every write (including the WAL sidecar
+// creation Open needs), so a sandboxed workspace whose FS scope excludes
+// `$HOME/.local/share/tmux-tell/` can still run `whoami`/`agents`/`status`
+// against the shared bus DB. The tradeoffs:
+//   - The store MUST exist at path; unlike Open there is no create-on-first-use.
+//   - No schema apply and no migration list. A read-only caller on a DB whose
+//     schema pre-dates a column the query references gets a plain SQLite error
+//     ("no such column: X") — surface it as-is; the operator's remedy is to
+//     invoke the writer path once (any mutating verb, or a mailman start-up)
+//     to apply the pending migrations from a write-capable context.
+//   - PRAGMA journal_mode is intentionally NOT set; SQLite reads a WAL DB in
+//     RO mode without touching the sidecars (they may not even exist for a
+//     freshly-checkpointed file).
+//   - `foreign_keys` + `query_only=true` are the only PRAGMAs asserted, both
+//     safe under RO mode.
+//
+// The returned *Store carries the read-only handle. Any write attempt through
+// the typed methods surfaces SQLite's readonly error at exec time — callers
+// must know not to call mutating methods on a RO store; this is a discipline
+// enforced at the CLI-verb boundary, not by the Store type itself.
+func OpenReadOnly(path string) (*Store, error) {
+	if path == ":memory:" {
+		// A ":memory:" DB is inherently per-process and empty; opening it
+		// read-only would produce a schema-less store. Callers that want an
+		// in-memory read-only fixture should Open(":memory:") first, seed
+		// state, and then use the writer handle throughout — RO mode is only
+		// meaningful for on-disk shared DBs.
+		return nil, fmt.Errorf("store: OpenReadOnly does not support :memory: (use Open)")
+	}
+	// Explicit exists-check so we return a clean error instead of SQLite's
+	// "unable to open database file" — the operator's remedy is different
+	// (they need to run a writer to create it, not a mode change).
+	if _, err := os.Stat(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("store: OpenReadOnly: %s does not exist (run any writer verb once to create it)", path)
+		}
+		return nil, fmt.Errorf("store: OpenReadOnly: stat %s: %w", path, err)
+	}
+
+	// mode=ro + immutable=1 is the sandbox-survivable pair. mode=ro alone
+	// still needs to write the -shm sidecar for WAL locking, and a Codex
+	// sandbox that gives us read on the DB file but no write on its parent
+	// dir returns SQLITE_READONLY_CANTINIT — the same failure Open would
+	// hit. immutable=1 tells SQLite the file cannot change under us: it
+	// skips shm allocation, takes no locks, and reads the main DB image
+	// directly (pre-WAL state), which is exactly the sandbox-friendly
+	// shape #722 needs.
+	//
+	// The trade this makes explicit: a read here misses any transactions
+	// still in the WAL that haven't been checkpointed into the main file.
+	// For one-shot CLI verbs (`agents` / `whoami` / `status`) this is a
+	// snapshot-in-time read, semantically equivalent to any other short
+	// read racing with a concurrent writer — the alternative is refusing
+	// to run at all under sandbox. Consumers who need through-the-WAL
+	// freshness (mailmen, MCP servers, mutating verbs) use Open, which
+	// they can because their execution scope does have write access.
+	dsn := "file:" + path + "?mode=ro&immutable=1&_pragma=busy_timeout(5000)&_pragma=query_only(true)&_pragma=foreign_keys(on)"
+
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("store: OpenReadOnly: open: %w", err)
+	}
+	// One connection so the query_only pragma sticks and the (concurrent
+	// reader → single writer elsewhere) contract matches Open's shape.
+	db.SetMaxOpenConns(1)
+
+	// Ping to surface a broken open (permission denied, corrupt header) at
+	// caller time rather than at first query. sql.Open is lazy.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("store: OpenReadOnly: ping: %w", err)
+	}
+
+	return &Store{db: db}, nil
 }
 
 // migrations are idempotent schema patches. Each must be safe to re-run

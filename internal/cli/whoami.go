@@ -26,7 +26,12 @@ func runWhoamiCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	s, err := store.Open(resolveDBPath(*dbPath))
+	// #722: whoami is pure read (identity lookup + queue-depth query);
+	// OpenReadOnly keeps sandboxed callers unblocked. If the DB doesn't
+	// exist yet (fresh install pre-first-writer), the RO path errors
+	// cleanly instead of silently create-and-migrate — the remedy is to
+	// run any writer verb once, which the RO error names.
+	s, err := store.OpenReadOnly(resolveDBPath(*dbPath))
 	if err != nil {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("open store: %v", err), exitInternal)

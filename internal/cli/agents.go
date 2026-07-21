@@ -27,7 +27,11 @@ func runAgentsCLI(args []string, stdout, stderr io.Writer) int {
 		return exitUsage
 	}
 
-	s, err := store.Open(resolveDBPath(*dbPath))
+	// #722: agents is pure read (list-agents + live-pane probe);
+	// OpenReadOnly keeps sandboxed callers unblocked. Fresh-install
+	// callers get a clean "does not exist" error naming the writer-verb
+	// remedy — the same shape a sandbox with no bus DB would hit anyway.
+	s, err := store.OpenReadOnly(resolveDBPath(*dbPath))
 	if err != nil {
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("open store: %v", err), exitInternal)
