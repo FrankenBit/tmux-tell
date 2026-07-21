@@ -102,6 +102,8 @@ const publicIDRetryAttempts = 20
 // Cross-process write contention is bounded by the busy_timeout PRAGMA
 // configured in Open().
 func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult, error) {
+	p.ToAgent = CanonicalName(p.ToAgent)
+	p.FromAgent = CanonicalName(p.FromAgent)
 	if err := validateInsertParams(p); err != nil {
 		return InsertResult{}, err
 	}
@@ -158,6 +160,8 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 // validate the kind — the kind discipline lives at the call site,
 // not at the store boundary.
 func (s *Store) InsertNotice(ctx context.Context, p InsertParams) (InsertResult, error) {
+	p.ToAgent = CanonicalName(p.ToAgent)
+	p.FromAgent = CanonicalName(p.FromAgent)
 	if err := validateInsertParams(p); err != nil {
 		return InsertResult{}, err
 	}
@@ -209,6 +213,8 @@ func (s *Store) InsertNotice(ctx context.Context, p InsertParams) (InsertResult,
 // call returns an error otherwise — passing both is a caller bug we
 // surface rather than silently overwrite (Surveyor #29 review).
 func (s *Store) InsertMessagePair(ctx context.Context, p1, p2 InsertParams, linkP2ToP1 bool) (InsertResult, InsertResult, error) {
+	p1.ToAgent, p1.FromAgent = CanonicalName(p1.ToAgent), CanonicalName(p1.FromAgent)
+	p2.ToAgent, p2.FromAgent = CanonicalName(p2.ToAgent), CanonicalName(p2.FromAgent)
 	if p1.FromAgent != p2.FromAgent || p1.ToAgent != p2.ToAgent {
 		return InsertResult{}, InsertResult{}, errors.New("store: pair must share from/to")
 	}
@@ -483,6 +489,7 @@ func (s *Store) ClaimNext(ctx context.Context, toAgent string) (*Message, error)
 // per-channel-head reduction into SQL (a window function over from_agent)
 // rather than scanning in Go — not a reason to revert to id-only FIFO.
 func (s *Store) ClaimNextWithStrategy(ctx context.Context, toAgent string, strategy SchedulerStrategy) (*Message, error) {
+	toAgent = CanonicalName(toAgent)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -630,6 +637,7 @@ func (s *Store) MarkFailed(ctx context.Context, publicID, reason string) error {
 // 'queued'. Called at mailman startup so messages that were in flight when
 // the daemon crashed are retried. Returns the number of rows recovered.
 func (s *Store) RecoverDelivering(ctx context.Context, toAgent string) (int64, error) {
+	toAgent = CanonicalName(toAgent)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE messages SET state = ?
 		 WHERE to_agent = ? AND state = ?`,
@@ -649,6 +657,7 @@ func (s *Store) RecoverDelivering(ctx context.Context, toAgent string) (int64, e
 // already-promoted row is never re-touched). Scoped to toAgent; the handler
 // enforces that the caller may only flush messages addressed to itself.
 func (s *Store) PromoteDeferred(ctx context.Context, toAgent, trigger string) (int64, error) {
+	toAgent = CanonicalName(toAgent)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE messages SET state = ?
 		 WHERE to_agent = ? AND state = ? AND deliver_after = ?`,
@@ -673,6 +682,7 @@ func (s *Store) PromoteDeferred(ctx context.Context, toAgent, trigger string) (i
 // RecipientQueueDepth returns the number of queued messages addressed to
 // toAgent. Used by send-side cap enforcement (#3).
 func (s *Store) RecipientQueueDepth(ctx context.Context, toAgent string) (int, error) {
+	toAgent = CanonicalName(toAgent)
 	var n int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM messages WHERE to_agent = ? AND state = ?`,
@@ -696,6 +706,7 @@ func (s *Store) RecipientQueueDepth(ctx context.Context, toAgent string) (int, e
 // divergence smell the operator wants (substrate-honest about what the
 // retained substrate still knows).
 func (s *Store) RecipientLastDelivered(ctx context.Context, toAgent string) (string, bool, error) {
+	toAgent = CanonicalName(toAgent)
 	var ts sql.NullString
 	err := s.db.QueryRowContext(ctx,
 		`SELECT MAX(delivered_at) FROM messages WHERE to_agent = ? AND state = ?`,
@@ -737,6 +748,7 @@ func (s *Store) RecipientLastDelivered(ctx context.Context, toAgent string) (str
 // `keepNewest`; that is consistent with the id-ordinal model and bounded by
 // the cap. Draining residue wholesale is the deferred follow-up #221.
 func (s *Store) QueuedBacklogFloor(ctx context.Context, toAgent string, keepNewest int) (floor int64, skipped int, err error) {
+	toAgent = CanonicalName(toAgent)
 	if keepNewest < 0 {
 		keepNewest = 0
 	}
@@ -770,6 +782,7 @@ func (s *Store) QueuedBacklogFloor(ctx context.Context, toAgent string, keepNewe
 // inline COUNT scoped to to_agent. Kept global because "how much does
 // this sender have in flight overall" is still a meaningful question.
 func (s *Store) SenderBacklog(ctx context.Context, fromAgent string) (int, error) {
+	fromAgent = CanonicalName(fromAgent)
 	var n int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM messages WHERE from_agent = ? AND state = ?`,
@@ -783,6 +796,7 @@ func (s *Store) SenderBacklog(ctx context.Context, fromAgent string) (int, error
 // Returns ErrNotFound if no queued or acknowledged message with publicID exists
 // addressed to toAgent.
 func (s *Store) MarkAcknowledged(ctx context.Context, toAgent, publicID string) error {
+	toAgent = CanonicalName(toAgent)
 	// Update only if the row is still queued (idempotent for already-acknowledged).
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE messages SET state = ?
@@ -816,6 +830,7 @@ func (s *Store) MarkAcknowledged(ctx context.Context, toAgent, publicID string) 
 // touching newly-arrived messages (id > epoch). Returns the number of rows updated.
 // When epochID is 0 (no epoch in effect) the call is a no-op that returns 0.
 func (s *Store) MarkAcknowledgedBatch(ctx context.Context, toAgent string, epochID int64) (int64, error) {
+	toAgent = CanonicalName(toAgent)
 	if epochID <= 0 {
 		return 0, nil
 	}
@@ -841,6 +856,7 @@ const staleQueuedPredicate = `to_agent = ? AND state = ? AND deliver_after IS NU
 // to toAgent — the rows a delivery_mode flip would orphan (#390). The register
 // flip-gate uses this count to decide whether to require an explicit disposition.
 func (s *Store) CountStaleQueued(ctx context.Context, toAgent string) (int, error) {
+	toAgent = CanonicalName(toAgent)
 	var n int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM messages WHERE `+staleQueuedPredicate,
@@ -859,6 +875,7 @@ func (s *Store) CountStaleQueued(ctx context.Context, toAgent string) (int, erro
 // floor isn't set yet, and every currently-queued non-deferred row predates the
 // flip by definition.
 func (s *Store) AckStaleQueued(ctx context.Context, toAgent string) (int64, error) {
+	toAgent = CanonicalName(toAgent)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE messages SET state = ? WHERE `+staleQueuedPredicate,
 		StateAcknowledged, toAgent, StateQueued)
@@ -878,6 +895,7 @@ func (s *Store) AckStaleQueued(ctx context.Context, toAgent string) (int64, erro
 // the mailman re-verifies the original in pane scrollback and either confirms
 // it (absorbing the duplicate) or delivers the replay.
 func (s *Store) FindDedupeMatch(ctx context.Context, fromAgent, toAgent, body, cutoff string) (*Message, error) {
+	fromAgent, toAgent = CanonicalName(fromAgent), CanonicalName(toAgent)
 	var m Message
 	var nre, q int
 	var er int
@@ -1039,6 +1057,7 @@ type ListFilter struct {
 // ListMessages returns messages matching the filter, ordered by id ASC by
 // default (or id DESC when f.OrderDesc is true).
 func (s *Store) ListMessages(ctx context.Context, f ListFilter) ([]Message, error) {
+	f.ToAgent, f.FromAgent = CanonicalName(f.ToAgent), CanonicalName(f.FromAgent)
 	if f.Unverified && f.State != "" && f.State != StateDelivered {
 		return nil, fmt.Errorf("store: ListFilter: Unverified=true requires State to be empty or %q", StateDelivered)
 	}
@@ -1146,6 +1165,7 @@ type TailFilter struct {
 // mailman writes. State changes on already-seen rows do NOT move the id, so the
 // CLI re-reads in-flight ids via MessagesByIDs for transition rendering.
 func (s *Store) TailRows(ctx context.Context, afterID int64, f TailFilter, limit int) ([]Message, error) {
+	f.From, f.To = CanonicalName(f.From), CanonicalName(f.To)
 	wheres := []string{"id > ?"}
 	args := []any{afterID}
 	if f.From != "" {

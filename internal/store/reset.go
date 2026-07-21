@@ -12,6 +12,7 @@ import (
 // The function is used by the `reset` subcommand. `agents` table rows are
 // never touched.
 func (s *Store) DeleteMessages(ctx context.Context, toAgent string, states []State) (int64, error) {
+	toAgent = CanonicalName(toAgent)
 	if len(states) == 0 {
 		return 0, fmt.Errorf("store: at least one state required")
 	}
@@ -44,6 +45,7 @@ func (s *Store) DeleteMessages(ctx context.Context, toAgent string, states []Sta
 // lexicographically — so a cutoff string in the same format compares
 // correctly with a plain `<`.
 func (s *Store) DeleteMessagesBefore(ctx context.Context, toAgent, cutoff string, states []State) (int64, error) {
+	toAgent = CanonicalName(toAgent)
 	if cutoff == "" {
 		return 0, fmt.Errorf("store: cutoff required")
 	}
@@ -74,6 +76,7 @@ func (s *Store) DeleteMessagesBefore(ctx context.Context, toAgent, cutoff string
 // and was deleted, false if it was already absent. Idempotent — cleanup
 // scripts can call it without checking first (#289).
 func (s *Store) DeleteAgent(ctx context.Context, name string) (bool, error) {
+	name = CanonicalName(name)
 	res, err := s.db.ExecContext(ctx, `DELETE FROM agents WHERE name = ?`, name)
 	if err != nil {
 		return false, fmt.Errorf("store: delete agent: %w", err)
@@ -94,6 +97,7 @@ func (s *Store) DeleteAgent(ctx context.Context, name string) (bool, error) {
 // lexicographically — so a cutoff string in the same format compares
 // correctly with a plain `<`.
 func (s *Store) DeleteStrandedDraftsBefore(ctx context.Context, toAgent, cutoff string) (int64, error) {
+	toAgent = CanonicalName(toAgent)
 	if cutoff == "" {
 		return 0, fmt.Errorf("store: cutoff required")
 	}

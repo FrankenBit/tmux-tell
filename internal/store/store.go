@@ -301,6 +301,43 @@ var migrations = []string{
 	// behavior until the operator opts in (mirrors respawn_after_shrinks).
 	`ALTER TABLE agents ADD COLUMN relaunch_cmd TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE agents ADD COLUMN auto_restart INTEGER NOT NULL DEFAULT 0`,
+	// #721: canonical (case-insensitive) agent identity. Agent names are the
+	// routing key (agents.name PK + messages.to_agent / from_agent); keying them
+	// case-sensitively let a chamber that re-registered under a different casing
+	// ("Quartermaster" after "quartermaster") spawn a phantom SECOND identity
+	// that shadowed the live one and silently misrouted deferred/addressed
+	// messages. The write + lookup paths now canonicalize through
+	// store.CanonicalName (lower + trim); this one-time normalization brings
+	// pre-existing rows into that form so the canonicalized write path doesn't
+	// strand an old-casing row as a fresh shadow on the next re-register.
+	//
+	// Three idempotent steps, in order (mirrors the #595 pane_id heal). The
+	// collapse runs FIRST so the rename below can never hit a PRIMARY KEY
+	// collision on a legacy DB that already holds case-variant rows: for any set
+	// of rows whose canonical key is equal it keeps the row with no "better"
+	// sibling (newer updated_at, or same-ts higher rowid) and deletes the rest —
+	// the live registration is the newest, and the next register reasserts it
+	// regardless (the same "duplicates shouldn't exist; the reassert heals it"
+	// reasoning #595 uses). On the expected clean DB (no case-variant duplicates)
+	// every row is its own group, so it matches nothing and is a no-op; re-running
+	// after the rename is likewise a no-op. trim(lower(...)) mirrors CanonicalName
+	// for the ASCII+space names the routing layer allows.
+	`DELETE FROM agents
+	 WHERE rowid NOT IN (
+	   SELECT a.rowid FROM agents a
+	   WHERE NOT EXISTS (
+	     SELECT 1 FROM agents b
+	     WHERE trim(lower(b.name)) = trim(lower(a.name))
+	       AND (b.updated_at > a.updated_at
+	            OR (b.updated_at = a.updated_at AND b.rowid > a.rowid))))`,
+	`UPDATE agents SET name = trim(lower(name)) WHERE name <> trim(lower(name))`,
+	// Canonicalize the routing key on messages that are still PENDING (queued or
+	// deferred) so an in-flight message addressed under an old casing matches the
+	// now-canonical registry and the mailman's ClaimNext. Delivered/failed/
+	// acknowledged rows are left as-is — their to_agent is a historical record,
+	// not a live routing key, and rewriting all of history is needless churn.
+	`UPDATE messages SET to_agent = trim(lower(to_agent))
+	  WHERE state IN ('queued', 'deferred') AND to_agent <> trim(lower(to_agent))`,
 }
 
 // Close releases the underlying database handle.

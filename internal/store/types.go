@@ -1,6 +1,9 @@
 package store
 
-import "database/sql"
+import (
+	"database/sql"
+	"strings"
+)
 
 // State represents a message's lifecycle position in the queue.
 type State string
@@ -365,9 +368,33 @@ const (
 	StuckReasonPaneNotFound = "pane-not-found"
 )
 
+// CanonicalName returns the canonical routing key for an agent name:
+// lowercased and outer-whitespace-trimmed. Agent identity is keyed on this
+// form (#721) so a chamber that (re)registers under a different casing than a
+// prior run — "Quartermaster" after "quartermaster", say — resolves to ONE
+// identity instead of spawning a phantom second registry row that shadows the
+// live one and silently misroutes deferred/addressed messages. Every store
+// method that reads or writes an agent `name` or a message's `to_agent`
+// routing key funnels its input through this helper, so the invariant "the
+// routing key is case-insensitive" holds at the store boundary regardless of
+// what casing a caller (a serve --agent flag, a user-typed recipient, a stored
+// row) supplies.
+//
+// Display casing is NOT lost: single-word names round-trip through
+// render.TitleCase ("quartermaster" → "Quartermaster") and a chamber may
+// assert an exact display string via display_name (#556). The canonical key is
+// the routing identity; the display name is presentation.
+func CanonicalName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
 // ReservedRoutingName reports whether name is reserved as a routing
 // primitive (a virtual recipient resolved at delivery-prep time) and
 // therefore cannot be registered as a real agent name or alias.
+//
+// The check is on the CANONICAL form (#721), so "Operator" / " operator "
+// cannot slip past the guard and shadow the resolver via a casing/whitespace
+// variant.
 //
 // Routing primitives:
 //   - "operator" (#228) — resolves to the chamber the operator is
@@ -386,5 +413,5 @@ const (
 // is attempted; callers should surface it to the operator as a clear
 // "pick a different name" signal.
 func ReservedRoutingName(name string) bool {
-	return name == "operator"
+	return CanonicalName(name) == "operator"
 }

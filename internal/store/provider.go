@@ -17,6 +17,7 @@ const observedStateWorking = "working"
 // working-count to this value. Additive: an agent whose adapter declares no
 // provider keeps the empty default and is never gated or counted.
 func (s *Store) SetProvider(ctx context.Context, agent, provider string) error {
+	agent = CanonicalName(agent)
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET provider = ? WHERE name = ?`, provider, agent)
 	return err
@@ -28,6 +29,7 @@ func (s *Store) SetProvider(ctx context.Context, agent, provider string) error {
 // persists it so a separate `inbox` process can live-derive the provider-cap
 // deferral state of a recipient's queued message. cap <= 0 means "no cap".
 func (s *Store) SetProviderCap(ctx context.Context, agent string, cap int) error {
+	agent = CanonicalName(agent)
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET provider_cap = ? WHERE name = ?`, cap, agent)
 	return err
@@ -39,6 +41,7 @@ func (s *Store) SetProviderCap(ctx context.Context, agent string, cap int) error
 // provider, yields ("", 0, nil) — the caller treats that as "no cap, nothing to
 // surface" (the empty-provider opt-out path, same as the gate).
 func (s *Store) ProviderCapConfig(ctx context.Context, agent string) (provider string, cap int, err error) {
+	agent = CanonicalName(agent)
 	err = s.db.QueryRowContext(ctx,
 		`SELECT provider, provider_cap FROM agents WHERE name = ?`, agent).Scan(&provider, &cap)
 	if err == sql.ErrNoRows {
@@ -53,6 +56,7 @@ func (s *Store) ProviderCapConfig(ctx context.Context, agent string) (provider s
 // cadence from the serve loop (not every iteration — bounds the extra
 // capture-pane probes the cross-mailman count needs).
 func (s *Store) SetObservedState(ctx context.Context, agent, state string, observedAt time.Time) error {
+	agent = CanonicalName(agent)
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET observed_state = ?, observed_state_at = ? WHERE name = ?`,
 		state, observedAt.UTC().Format(sqliteTimeFormat), agent)

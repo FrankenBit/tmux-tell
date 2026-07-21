@@ -32,7 +32,12 @@ func TestDispatchRemoteRecv_InjectsIdentity(t *testing.T) {
 		t.Fatalf("send result ok = %v, want true (%s)", got["ok"], raw)
 	}
 
-	// The message actually landed in the store FROM Admin → bosun.
+	// The message actually landed in the store FROM the injected identity →
+	// bosun. The injected "Admin" is stored under its CANONICAL routing key
+	// "admin" (#721): from_agent is a routing key, so the remote path
+	// canonicalizes it like every other name rather than preserving mixed case —
+	// otherwise a cross-host relay would reintroduce the case-variant identity
+	// this fix removes. Display is unaffected (render.TitleCase → "Admin").
 	ctx := context.Background()
 	msgs, err := s.ListMessages(ctx, store.ListFilter{ToAgent: "bosun"})
 	if err != nil {
@@ -41,8 +46,8 @@ func TestDispatchRemoteRecv_InjectsIdentity(t *testing.T) {
 	if len(msgs) != 1 {
 		t.Fatalf("bosun inbox = %d messages, want 1", len(msgs))
 	}
-	if msgs[0].FromAgent != "Admin" {
-		t.Errorf("sender = %q, want Admin (injected identity)", msgs[0].FromAgent)
+	if msgs[0].FromAgent != "admin" {
+		t.Errorf("sender = %q, want admin (injected identity, canonicalized #721)", msgs[0].FromAgent)
 	}
 	if msgs[0].Body != "reverse-channel hi" {
 		t.Errorf("body = %q, want the forwarded body", msgs[0].Body)

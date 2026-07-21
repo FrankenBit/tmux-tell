@@ -22,6 +22,7 @@ import (
 // stale name keeps winning — the chamber resolves to, and sends under, its old
 // identity until the stale row is removed (the duplicate-pane-row drift).
 func (s *Store) UpsertAgent(ctx context.Context, name, paneID string) error {
+	name = CanonicalName(name)
 	if name == "" {
 		return errors.New("store: agent name required")
 	}
@@ -72,6 +73,7 @@ func (s *Store) UpsertAgent(ctx context.Context, name, paneID string) error {
 // SetPaused updates the paused flag for an existing agent. Returns
 // ErrNotFound if no agent with that name is registered.
 func (s *Store) SetPaused(ctx context.Context, name string, paused bool) error {
+	name = CanonicalName(name)
 	p := 0
 	if paused {
 		p = 1
@@ -111,6 +113,7 @@ func (s *Store) SetPausedAll(ctx context.Context, paused bool) (int64, error) {
 
 // GetAgent returns the agent by name, or ErrNotFound.
 func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
+	name = CanonicalName(name)
 	var (
 		a               Agent
 		pane            sql.NullString
@@ -157,6 +160,7 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 // Does not bump updated_at: like the attention-state / stuck setters, this is
 // a presentational signal from the chamber, not a discovery-relevant change.
 func (s *Store) SetDisplayName(ctx context.Context, name, displayName string) error {
+	name = CanonicalName(name)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET display_name = ? WHERE name = ?`,
 		displayName, name)
@@ -180,6 +184,7 @@ func (s *Store) SetDisplayName(ctx context.Context, name, displayName string) er
 // that already touched the row; it is identity-metadata, not a separate
 // discovery-relevant mutation.
 func (s *Store) SetSessionID(ctx context.Context, name, sessionID string) error {
+	name = CanonicalName(name)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET session_id = ? WHERE name = ?`,
 		sessionID, name)
@@ -196,6 +201,7 @@ func (s *Store) SetSessionID(ctx context.Context, name, sessionID string) error 
 // Returns ErrNotFound if no agent with that name is registered.
 // Validates against ValidDeliveryMode — invalid modes are rejected.
 func (s *Store) SetDeliveryMode(ctx context.Context, name, mode string) error {
+	name = CanonicalName(name)
 	if !ValidDeliveryMode(mode) {
 		return fmt.Errorf("store: invalid delivery_mode %q (want %q or %q)",
 			mode, DeliveryModePasteAndEnter, DeliveryModeMailboxOnly)
@@ -228,6 +234,7 @@ func (s *Store) SetDeliveryMode(ctx context.Context, name, mode string) error {
 // discovery-relevant change, and the register flow's UpsertAgent already
 // touched the row microseconds earlier.
 func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) error {
+	name = CanonicalName(name)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET backlog_epoch_id = ? WHERE name = ?`,
 		floor, name)
@@ -296,6 +303,7 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 // chamber-attention-signal mechanism is for operator visibility; the
 // agents-table updated_at carries a different semantic.)
 func (s *Store) SetAttentionState(ctx context.Context, name, state string) error {
+	name = CanonicalName(name)
 	if !ValidAttentionState(state) {
 		return fmt.Errorf("store: invalid attention_state %q (want %q, %q, or %q)",
 			state, AttentionStateIdle, AttentionStateBusy, AttentionStateAwaitingOperator)
@@ -328,6 +336,7 @@ func (s *Store) SetAttentionState(ctx context.Context, name, state string) error
 // target parameter; see internal/cli/set_metabolism.go). A third-party write
 // would clobber the target's real signal, the failure #621 AC#2 guards against.
 func (s *Store) SetMetabolism(ctx context.Context, name, value string) error {
+	name = CanonicalName(name)
 	if !ValidMetabolism(value) {
 		return fmt.Errorf("store: invalid metabolism %q (want %q, %q, %q, or empty)",
 			value, MetabolismWarming, MetabolismSaturating, MetabolismCompactPending)
@@ -361,6 +370,7 @@ func (s *Store) SetMetabolism(ctx context.Context, name, value string) error {
 // other value (a warming/saturating self-report is NOT clobbered) and against a
 // missing agent — so, unlike SetMetabolism, zero rows affected is not an error.
 func (s *Store) ClearMetabolismIfPending(ctx context.Context, name string) error {
+	name = CanonicalName(name)
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET metabolism = '', metabolism_set_at = NULL
 		 WHERE name = ? AND metabolism = ?`,
@@ -376,6 +386,7 @@ func (s *Store) ClearMetabolismIfPending(ctx context.Context, name string) error
 // Does not bump updated_at: an operational tunable, not a discovery-relevant
 // change (mirrors SetMetabolism / SetAttentionState).
 func (s *Store) SetRespawnAfterShrinks(ctx context.Context, name string, n int) error {
+	name = CanonicalName(name)
 	if n < 0 {
 		return fmt.Errorf("store: respawn-after-shrinks must be >= 0, got %d", n)
 	}
@@ -400,6 +411,7 @@ func (s *Store) SetRespawnAfterShrinks(ctx context.Context, name string, n int) 
 // Does not bump updated_at: an operational tunable, not a discovery-relevant
 // change (mirrors SetRespawnAfterShrinks).
 func (s *Store) SetRelaunchCmd(ctx context.Context, name, cmd string) error {
+	name = CanonicalName(name)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET relaunch_cmd = ? WHERE name = ?`,
 		cmd, name)
@@ -420,6 +432,7 @@ func (s *Store) SetRelaunchCmd(ctx context.Context, name, cmd string) error {
 // Does not bump updated_at: an operational tunable, not a discovery-relevant
 // change (mirrors SetRespawnAfterShrinks).
 func (s *Store) SetAutoRestart(ctx context.Context, name string, on bool) error {
+	name = CanonicalName(name)
 	v := 0
 	if on {
 		v = 1
@@ -448,6 +461,7 @@ func (s *Store) SetAutoRestart(ctx context.Context, name string, on bool) error 
 // on that one goroutine, so no concurrent mutation can interleave. Does not bump
 // updated_at: internal delivery bookkeeping.
 func (s *Store) IncrementRespawnShrinkCount(ctx context.Context, name string) (int, error) {
+	name = CanonicalName(name)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET respawn_shrink_count = respawn_shrink_count + 1 WHERE name = ?`,
 		name)
@@ -470,6 +484,7 @@ func (s *Store) IncrementRespawnShrinkCount(ctx context.Context, name string) (i
 // count is already 0. A missing agent is a no-op, not an error: this is
 // best-effort bookkeeping bracketing the respawn pathway.
 func (s *Store) ResetRespawnShrinkCount(ctx context.Context, name string) error {
+	name = CanonicalName(name)
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET respawn_shrink_count = 0 WHERE name = ?`,
 		name)
@@ -502,6 +517,7 @@ func (s *Store) SetSelfCompactSignal(ctx context.Context, name string) error {
 // ordering (CountSelfCompactIfNew's `>` watermark guard) is deterministic without
 // sleeping to cross the millisecond-precision sqliteTimeFormat boundary.
 func (s *Store) setSelfCompactSignalAt(ctx context.Context, name string, at time.Time) error {
+	name = CanonicalName(name)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET last_self_compact_at = ? WHERE name = ?`,
 		at.UTC().Format(sqliteTimeFormat), name)
@@ -538,6 +554,7 @@ func (s *Store) setSelfCompactSignalAt(ctx context.Context, name string, at time
 // re-triggers. Exact per-compaction counting would require a hook-side
 // read-modify-write, reintroducing the very cross-process race this design avoids.
 func (s *Store) CountSelfCompactIfNew(ctx context.Context, name string) (counted bool, newCount int, err error) {
+	name = CanonicalName(name)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents
 		    SET respawn_shrink_count = respawn_shrink_count + 1,
@@ -591,6 +608,7 @@ func (s *Store) ClearStuck(ctx context.Context, name string) error {
 }
 
 func (s *Store) setStuckReason(ctx context.Context, name, reason string) error {
+	name = CanonicalName(name)
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE agents SET stuck_reason = ? WHERE name = ?`,
 		reason, name)
@@ -622,6 +640,7 @@ var ErrReservedRoutingName = errors.New("store: name is reserved as a routing pr
 // or ErrAliasCollision if any requested alias is already claimed by
 // another agent.
 func (s *Store) SetAliases(ctx context.Context, name string, aliases []string) error {
+	name = CanonicalName(name)
 	if err := s.checkAliasCollisions(ctx, name, aliases); err != nil {
 		return err
 	}
@@ -669,6 +688,7 @@ func (s *Store) checkAliasCollisions(ctx context.Context, name string, aliases [
 	if len(aliases) == 0 {
 		return nil
 	}
+	name = CanonicalName(name)
 	for _, candidate := range aliases {
 		if ReservedRoutingName(candidate) {
 			return fmt.Errorf("%w: alias %q", ErrReservedRoutingName, candidate)
@@ -679,16 +699,21 @@ func (s *Store) checkAliasCollisions(ctx context.Context, name string, aliases [
 		return err
 	}
 	for _, candidate := range aliases {
+		// Compare on the canonical routing key (#721): agent names are stored
+		// canonical, so an alias "Quartermaster" must still be caught as
+		// colliding with the canonical name "quartermaster" — otherwise
+		// canonicalizing names would open the very shadow this guard prevents.
+		canonCand := CanonicalName(candidate)
 		for _, other := range all {
 			if other.Name == name {
 				continue // self
 			}
-			if other.Name == candidate {
+			if other.Name == canonCand {
 				return fmt.Errorf("%w: alias %q is the canonical name of agent %q",
 					ErrAliasCollision, candidate, other.Name)
 			}
 			for _, otherAlias := range other.Aliases {
-				if otherAlias == candidate {
+				if CanonicalName(otherAlias) == canonCand {
 					return fmt.Errorf("%w: alias %q is already an alias of agent %q",
 						ErrAliasCollision, candidate, other.Name)
 				}
