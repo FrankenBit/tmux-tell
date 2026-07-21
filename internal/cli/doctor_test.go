@@ -107,12 +107,8 @@ func TestClassifyDoctorProcs_CanonicalAbsentCannotCompare(t *testing.T) {
 }
 
 // TestClassifyDoctorProcs_AllowActiveAgents exercises the #791 softening
-//
-// (Test name flipped to match the flag rename per Surveyor 4f6f — the flag is
-// now `--allow-active-agents` because it's a substrate-facing CLI surface + the
-// substrate lexicon is `agent` per ADR-0005.)
-// matrix: stale-binary chamber-MCPs are reclassified as pending-drain only
-// when (a) the flag is set, (b) role=="mcp", (c) the chamber resolves in the
+// matrix: stale-binary agent-side MCPs are reclassified as pending-drain only
+// when (a) the flag is set, (b) role=="mcp", (c) the agent resolves in the
 // observed_state snapshot, and (d) the observed_state is mid-turn (working /
 // at-rest-in-compaction / awaiting-operator per isMidTurnObservedState).
 // Every other case stays divergent. SYNC divergence classes
@@ -131,7 +127,7 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 		t.Run("mid-turn/"+midTurn, func(t *testing.T) {
 			rep := classifyDoctorProcs(softenCase, softenInfos, testCanonPath, testCanonInode, classifyOpts{
 				AllowActiveAgents: true,
-				ObservedByChamber:   map[string]string{"bosun": midTurn},
+				ObservedByChamber: map[string]string{"bosun": midTurn},
 			})
 			if rep.Divergent {
 				t.Errorf("mid-turn (%s) chamber stale-MCP should be softened, not divergent (got %+v)", midTurn, rep.Procs[0])
@@ -158,7 +154,7 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 		t.Run("not-mid-turn/"+notMidTurn, func(t *testing.T) {
 			rep := classifyDoctorProcs(softenCase, softenInfos, testCanonPath, testCanonInode, classifyOpts{
 				AllowActiveAgents: true,
-				ObservedByChamber:   map[string]string{"bosun": notMidTurn},
+				ObservedByChamber: map[string]string{"bosun": notMidTurn},
 			})
 			if !rep.Divergent {
 				t.Errorf("non-mid-turn (%s) chamber stale-MCP must stay divergent even under --allow-active-agents", notMidTurn)
@@ -176,7 +172,7 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 	// OR stale-past-TTL) → orphan case, still divergent.
 	orphanRep := classifyDoctorProcs(softenCase, softenInfos, testCanonPath, testCanonInode, classifyOpts{
 		AllowActiveAgents: true,
-		ObservedByChamber:   map[string]string{},
+		ObservedByChamber: map[string]string{},
 	})
 	if !orphanRep.Divergent {
 		t.Error("orphan chamber (resolved from cgroup, missing from snapshot) must stay divergent")
@@ -192,7 +188,7 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 	mailmanInfos := []doctorProcInfo{{Role: "mailman", AgentName: "bosun"}}
 	mailmanRep := classifyDoctorProcs(mailmanBinding, mailmanInfos, testCanonPath, testCanonInode, classifyOpts{
 		AllowActiveAgents: true,
-		ObservedByChamber:   map[string]string{"bosun": "working"},
+		ObservedByChamber: map[string]string{"bosun": "working"},
 	})
 	if !mailmanRep.Divergent {
 		t.Error("mailman stale-binary must stay divergent regardless of chamber activity")
@@ -204,7 +200,7 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 	// flag ABSENT → pre-#791 behavior preserved
 	noFlagRep := classifyDoctorProcs(softenCase, softenInfos, testCanonPath, testCanonInode, classifyOpts{
 		AllowActiveAgents: false,
-		ObservedByChamber:   map[string]string{"bosun": "working"},
+		ObservedByChamber: map[string]string{"bosun": "working"},
 	})
 	if !noFlagRep.Divergent {
 		t.Error("without --allow-active-agents, stale-binary must be divergent unchanged")
@@ -220,7 +216,7 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 	syncInfos := []doctorProcInfo{{Role: "mcp", AgentName: "bosun"}}
 	syncRep := classifyDoctorProcs(syncBinding, syncInfos, testCanonPath, testCanonInode, classifyOpts{
 		AllowActiveAgents: true,
-		ObservedByChamber:   map[string]string{"bosun": "working"},
+		ObservedByChamber: map[string]string{"bosun": "working"},
 	})
 	if !syncRep.Divergent {
 		t.Error("SYNC divergence (db-inode mismatch) must stay divergent even for mid-turn chamber")
@@ -235,7 +231,7 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 	}
 	dbDelRep := classifyDoctorProcs(dbDelBinding, syncInfos, testCanonPath, testCanonInode, classifyOpts{
 		AllowActiveAgents: true,
-		ObservedByChamber:   map[string]string{"bosun": "working"},
+		ObservedByChamber: map[string]string{"bosun": "working"},
 	})
 	if !dbDelRep.Divergent {
 		t.Error("SYNC divergence (db-deleted) must stay divergent even for mid-turn chamber")

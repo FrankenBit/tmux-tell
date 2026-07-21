@@ -11,83 +11,83 @@ import (
 // tests that touch these globals don't interleave.
 func TestResolveDoctorProcInfo(t *testing.T) {
 	tests := []struct {
-		name        string
-		pid         int
-		cmdline     []string
-		cgroup      string
-		wantRole    string
+		name      string
+		pid       int
+		cmdline   []string
+		cgroup    string
+		wantRole  string
 		wantAgent string
 	}{
 		{
-			name:        "mailman with --agent X (space-separated)",
-			pid:         100,
-			cmdline:     []string{"/usr/local/bin/tmux-tell-claude", "serve", "--agent", "bosun"},
-			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-tmux\\x2dtell\\x2dclaude\\x2dmailman.slice/tmux-tell-claude-mailman@bosun.service\n",
-			wantRole:    "mailman",
+			name:      "mailman with --agent X (space-separated)",
+			pid:       100,
+			cmdline:   []string{"/usr/local/bin/tmux-tell-claude", "serve", "--agent", "bosun"},
+			cgroup:    "0::/user.slice/user-1000.slice/user@1000.service/app.slice/app-tmux\\x2dtell\\x2dclaude\\x2dmailman.slice/tmux-tell-claude-mailman@bosun.service\n",
+			wantRole:  "mailman",
 			wantAgent: "bosun",
 		},
 		{
-			name:        "mailman with --agent=X (equals form)",
-			pid:         101,
-			cmdline:     []string{"/usr/local/bin/tmux-tell-claude", "serve", "--agent=quartermaster"},
-			cgroup:      "irrelevant — cmdline wins for mailmen",
-			wantRole:    "mailman",
+			name:      "mailman with --agent=X (equals form)",
+			pid:       101,
+			cmdline:   []string{"/usr/local/bin/tmux-tell-claude", "serve", "--agent=quartermaster"},
+			cgroup:    "irrelevant — cmdline wins for mailmen",
+			wantRole:  "mailman",
 			wantAgent: "quartermaster",
 		},
 		{
-			name:        "mailman serve missing --agent (defensive)",
-			pid:         102,
-			cmdline:     []string{"/usr/local/bin/tmux-tell-claude", "serve"},
-			cgroup:      "",
-			wantRole:    "mailman",
+			name:      "mailman serve missing --agent (defensive)",
+			pid:       102,
+			cmdline:   []string{"/usr/local/bin/tmux-tell-claude", "serve"},
+			cgroup:    "",
+			wantRole:  "mailman",
 			wantAgent: "",
 		},
 		{
-			name:        "chamber-MCP resolves from cgroup",
-			pid:         200,
-			cmdline:     []string{"tmux-tell-codex", "mcp"},
-			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/chamber-carpenter.slice/run-p66821-i33600199.scope\n",
-			wantRole:    "mcp",
+			name:      "chamber-MCP resolves from cgroup",
+			pid:       200,
+			cmdline:   []string{"tmux-tell-codex", "mcp"},
+			cgroup:    "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/chamber-carpenter.slice/run-p66821-i33600199.scope\n",
+			wantRole:  "mcp",
 			wantAgent: "carpenter",
 		},
 		{
-			name:        "chamber-MCP with cgroup name containing hyphen",
-			pid:         201,
-			cmdline:     []string{"tmux-tell-claude", "mcp"},
-			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/chamber-multi-word-name.slice/run-p1-i2.scope\n",
-			wantRole:    "mcp",
+			name:      "chamber-MCP with cgroup name containing hyphen",
+			pid:       201,
+			cmdline:   []string{"tmux-tell-claude", "mcp"},
+			cgroup:    "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/chamber-multi-word-name.slice/run-p1-i2.scope\n",
+			wantRole:  "mcp",
 			wantAgent: "multi-word-name",
 		},
 		{
-			name:        "chamber-MCP without a chamber slice (orphan)",
-			pid:         202,
-			cmdline:     []string{"tmux-tell-claude", "mcp"},
-			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/other.slice/run-p1-i2.scope\n",
-			wantRole:    "mcp",
+			name:      "chamber-MCP without a chamber slice (orphan)",
+			pid:       202,
+			cmdline:   []string{"tmux-tell-claude", "mcp"},
+			cgroup:    "0::/user.slice/user-1000.slice/user@1000.service/other.slice/run-p1-i2.scope\n",
+			wantRole:  "mcp",
 			wantAgent: "",
 		},
 		{
-			name:        "unknown verb",
-			pid:         300,
-			cmdline:     []string{"/usr/local/bin/tmux-tell-claude", "status"},
-			cgroup:      "",
-			wantRole:    "unknown",
+			name:      "unknown verb",
+			pid:       300,
+			cmdline:   []string{"/usr/local/bin/tmux-tell-claude", "status"},
+			cgroup:    "",
+			wantRole:  "unknown",
 			wantAgent: "",
 		},
 		{
-			name:        "empty cmdline (unreadable /proc/<pid>/cmdline)",
-			pid:         400,
-			cmdline:     nil,
-			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/chamber-bosun.slice/run.scope\n",
-			wantRole:    "unknown",
+			name:      "empty cmdline (unreadable /proc/<pid>/cmdline)",
+			pid:       400,
+			cmdline:   nil,
+			cgroup:    "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/chamber-bosun.slice/run.scope\n",
+			wantRole:  "unknown",
 			wantAgent: "",
 		},
 		{
-			name:        "cmdline with only argv[0]",
-			pid:         401,
-			cmdline:     []string{"tmux-tell-claude"},
-			cgroup:      "",
-			wantRole:    "unknown",
+			name:      "cmdline with only argv[0]",
+			pid:       401,
+			cmdline:   []string{"tmux-tell-claude"},
+			cgroup:    "",
+			wantRole:  "unknown",
 			wantAgent: "",
 		},
 		// Guard against a naive-regex mismatch: chamber.slice (no hyphen, the
@@ -95,11 +95,11 @@ func TestResolveDoctorProcInfo(t *testing.T) {
 		// the hyphen. Confirms the pattern binds to the per-chamber leaf, not
 		// the umbrella.
 		{
-			name:        "umbrella chamber.slice alone does not extract a name",
-			pid:         500,
-			cmdline:     []string{"tmux-tell-claude", "mcp"},
-			cgroup:      "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/other-non-chamber.slice/run.scope\n",
-			wantRole:    "mcp",
+			name:      "umbrella chamber.slice alone does not extract a name",
+			pid:       500,
+			cmdline:   []string{"tmux-tell-claude", "mcp"},
+			cgroup:    "0::/user.slice/user-1000.slice/user@1000.service/chamber.slice/other-non-chamber.slice/run.scope\n",
+			wantRole:  "mcp",
 			wantAgent: "",
 		},
 	}

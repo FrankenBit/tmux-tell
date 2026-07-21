@@ -85,7 +85,7 @@ type doctorReport struct {
 // behavior (stale-binary always divergent).
 type classifyOpts struct {
 	AllowActiveAgents bool
-	ObservedByChamber   map[string]string
+	ObservedByChamber map[string]string
 }
 
 // isMidTurnObservedState reports whether the chamber's mailman-observed
