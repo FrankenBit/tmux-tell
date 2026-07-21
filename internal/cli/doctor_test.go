@@ -27,7 +27,7 @@ func TestClassifyDoctorProcs(t *testing.T) {
 		// no open DB handle: reported, not counted divergent
 		{PID: 5, BinaryPath: "/usr/local/bin/tmux-tell-claude", Note: "no open *.db handle (in-memory store, or DB not yet opened)"},
 	}
-	rep := classifyDoctorProcs(bindings, testCanonPath, testCanonInode)
+	rep := classifyDoctorProcs(bindings, nil, testCanonPath, testCanonInode, classifyOpts{})
 
 	if !rep.Divergent {
 		t.Fatal("fleet should be flagged divergent (PIDs 2/3/4 diverge)")
@@ -73,7 +73,7 @@ func TestClassifyDoctorProcs_AllCanonicalNoDivergence(t *testing.T) {
 		{PID: 1, BinaryPath: "/usr/local/bin/tmux-tell-claude", DBPath: testCanonPath, DBInode: testCanonInode},
 		{PID: 2, BinaryPath: "/usr/local/bin/tmux-tell-claude", DBPath: testCanonPath, DBInode: testCanonInode},
 	}
-	rep := classifyDoctorProcs(bindings, testCanonPath, testCanonInode)
+	rep := classifyDoctorProcs(bindings, nil, testCanonPath, testCanonInode, classifyOpts{})
 	if rep.Divergent {
 		t.Errorf("healthy fleet flagged divergent: %+v", rep.Procs)
 	}
@@ -86,7 +86,7 @@ func TestClassifyDoctorProcs_CanonicalAbsentCannotCompare(t *testing.T) {
 	bindings := []dbBinding{
 		{PID: 1, BinaryPath: "/usr/local/bin/tmux-tell-claude", DBPath: "/somewhere/messages.db", DBInode: 42},
 	}
-	rep := classifyDoctorProcs(bindings, testCanonPath, 0)
+	rep := classifyDoctorProcs(bindings, nil, testCanonPath, 0, classifyOpts{})
 	if rep.Divergent {
 		t.Error("should not flag divergence when canonical inode is unknown")
 	}
@@ -100,8 +100,140 @@ func TestClassifyDoctorProcs_CanonicalAbsentCannotCompare(t *testing.T) {
 	// but an orphan is still divergent even without a canonical reference
 	orphan := classifyDoctorProcs([]dbBinding{
 		{PID: 2, BinaryPath: "/usr/local/bin/tmux-tell-claude", DBPath: "/gone/messages.db", DBInode: 9, DBDeleted: true},
-	}, testCanonPath, 0)
+	}, nil, testCanonPath, 0, classifyOpts{})
 	if !orphan.Divergent {
 		t.Error("orphan inode must flag divergent even with no canonical reference")
+	}
+}
+
+// TestClassifyDoctorProcs_AllowActiveChambers exercises the #791 softening
+// matrix: stale-binary chamber-MCPs are reclassified as pending-drain only
+// when (a) the flag is set, (b) role=="mcp", (c) the chamber resolves in the
+// observed_state snapshot, and (d) the observed_state is mid-turn (working /
+// at-rest-in-compaction / awaiting-operator per isMidTurnObservedState).
+// Every other case stays divergent. SYNC divergence classes
+// (db-inode-mismatch, db-deleted) are unaffected by the flag.
+func TestClassifyDoctorProcs_AllowActiveChambers(t *testing.T) {
+	stalePath := "/usr/local/bin/tmux-tell-claude (deleted)"
+	softenCase := []dbBinding{
+		{PID: 10, BinaryPath: stalePath, DBPath: testCanonPath, DBInode: testCanonInode},
+	}
+	softenInfos := []doctorProcInfo{{Role: "mcp", ChamberName: "bosun"}}
+
+	// mid-turn subtests: each of the three softenable observed_state values
+	// must produce Softened=true, Divergent=false.
+	for _, midTurn := range []string{"working", "at-rest-in-compaction", "awaiting-operator"} {
+		midTurn := midTurn
+		t.Run("mid-turn/"+midTurn, func(t *testing.T) {
+			rep := classifyDoctorProcs(softenCase, softenInfos, testCanonPath, testCanonInode, classifyOpts{
+				AllowActiveChambers: true,
+				ObservedByChamber:   map[string]string{"bosun": midTurn},
+			})
+			if rep.Divergent {
+				t.Errorf("mid-turn (%s) chamber stale-MCP should be softened, not divergent (got %+v)", midTurn, rep.Procs[0])
+			}
+			if !rep.Procs[0].Softened {
+				t.Errorf("mid-turn (%s) softened proc should carry Softened=true", midTurn)
+			}
+			if rep.Procs[0].ObservedState != midTurn {
+				t.Errorf("proc should carry the resolved observed_state, got %q want %q", rep.Procs[0].ObservedState, midTurn)
+			}
+			if !strings.Contains(rep.Procs[0].Verdict, "mid-turn") ||
+				!strings.Contains(rep.Procs[0].Verdict, "--allow-active-chambers") ||
+				!strings.Contains(rep.Procs[0].Verdict, midTurn) {
+				t.Errorf("softened verdict should name mid-turn + the flag + the observed_state, got %q", rep.Procs[0].Verdict)
+			}
+		})
+	}
+
+	// non-mid-turn subtests: every non-softenable observed_state must stay
+	// divergent (idle-at-prompt is the Surveyor 3ea9 case; uncertain states
+	// are safer-to-fail).
+	for _, notMidTurn := range []string{"idle", "copy-mode", "rate-limited", "usage-limited", "unknown"} {
+		notMidTurn := notMidTurn
+		t.Run("not-mid-turn/"+notMidTurn, func(t *testing.T) {
+			rep := classifyDoctorProcs(softenCase, softenInfos, testCanonPath, testCanonInode, classifyOpts{
+				AllowActiveChambers: true,
+				ObservedByChamber:   map[string]string{"bosun": notMidTurn},
+			})
+			if !rep.Divergent {
+				t.Errorf("non-mid-turn (%s) chamber stale-MCP must stay divergent even under --allow-active-chambers", notMidTurn)
+			}
+			if rep.Procs[0].Softened {
+				t.Errorf("non-mid-turn (%s) case must NOT be softened", notMidTurn)
+			}
+			if !strings.Contains(rep.Procs[0].Verdict, "not mid-turn") {
+				t.Errorf("non-mid-turn verdict should name the case, got %q", rep.Procs[0].Verdict)
+			}
+		})
+	}
+
+	// chamber resolvable from cgroup but ABSENT from snapshot (unregistered
+	// OR stale-past-TTL) → orphan case, still divergent.
+	orphanRep := classifyDoctorProcs(softenCase, softenInfos, testCanonPath, testCanonInode, classifyOpts{
+		AllowActiveChambers: true,
+		ObservedByChamber:   map[string]string{},
+	})
+	if !orphanRep.Divergent {
+		t.Error("orphan chamber (resolved from cgroup, missing from snapshot) must stay divergent")
+	}
+	if !strings.Contains(orphanRep.Procs[0].Verdict, "no fresh observed_state") {
+		t.Errorf("orphan verdict should name the no-fresh-observation case, got %q", orphanRep.Procs[0].Verdict)
+	}
+
+	// mailmen never soften — even for a mid-turn chamber
+	mailmanBinding := []dbBinding{
+		{PID: 11, BinaryPath: stalePath, DBPath: testCanonPath, DBInode: testCanonInode},
+	}
+	mailmanInfos := []doctorProcInfo{{Role: "mailman", ChamberName: "bosun"}}
+	mailmanRep := classifyDoctorProcs(mailmanBinding, mailmanInfos, testCanonPath, testCanonInode, classifyOpts{
+		AllowActiveChambers: true,
+		ObservedByChamber:   map[string]string{"bosun": "working"},
+	})
+	if !mailmanRep.Divergent {
+		t.Error("mailman stale-binary must stay divergent regardless of chamber activity")
+	}
+	if mailmanRep.Procs[0].Softened {
+		t.Error("mailman case must NOT be softened")
+	}
+
+	// flag ABSENT → pre-#791 behavior preserved
+	noFlagRep := classifyDoctorProcs(softenCase, softenInfos, testCanonPath, testCanonInode, classifyOpts{
+		AllowActiveChambers: false,
+		ObservedByChamber:   map[string]string{"bosun": "working"},
+	})
+	if !noFlagRep.Divergent {
+		t.Error("without --allow-active-chambers, stale-binary must be divergent unchanged")
+	}
+	if noFlagRep.Procs[0].Softened {
+		t.Error("without flag, softening must not apply")
+	}
+
+	// SYNC divergence (db-inode-mismatch) unaffected by the flag
+	syncBinding := []dbBinding{
+		{PID: 12, BinaryPath: "/usr/local/bin/tmux-tell-claude", DBPath: "/tmp/other/messages.db", DBInode: 77},
+	}
+	syncInfos := []doctorProcInfo{{Role: "mcp", ChamberName: "bosun"}}
+	syncRep := classifyDoctorProcs(syncBinding, syncInfos, testCanonPath, testCanonInode, classifyOpts{
+		AllowActiveChambers: true,
+		ObservedByChamber:   map[string]string{"bosun": "working"},
+	})
+	if !syncRep.Divergent {
+		t.Error("SYNC divergence (db-inode mismatch) must stay divergent even for mid-turn chamber")
+	}
+	if syncRep.Procs[0].Softened {
+		t.Error("SYNC divergence must NOT be softened")
+	}
+
+	// SYNC divergence (db-deleted / orphan-inode) unaffected by the flag too
+	dbDelBinding := []dbBinding{
+		{PID: 13, BinaryPath: "/usr/local/bin/tmux-tell-claude", DBPath: "/var/lib/tmux-msg/messages.db", DBInode: 50, DBDeleted: true},
+	}
+	dbDelRep := classifyDoctorProcs(dbDelBinding, syncInfos, testCanonPath, testCanonInode, classifyOpts{
+		AllowActiveChambers: true,
+		ObservedByChamber:   map[string]string{"bosun": "working"},
+	})
+	if !dbDelRep.Divergent {
+		t.Error("SYNC divergence (db-deleted) must stay divergent even for mid-turn chamber")
 	}
 }

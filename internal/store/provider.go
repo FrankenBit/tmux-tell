@@ -63,6 +63,41 @@ func (s *Store) SetObservedState(ctx context.Context, agent, state string, obser
 	return err
 }
 
+// ObservedStateSnapshot returns per-agent (observed_state, observed_state_at)
+// pairs for every registered agent that has a fresh observed_state — one whose
+// observed_state_at is within ttl of now. Stale entries (mailman crashed,
+// throttled write behind schedule, etc.) are OMITTED rather than surfaced
+// stale; a caller that wants "no answer" cannot distinguish it from "answer
+// missing" so both are simply absent from the map.
+//
+// The single consumer today is doctor's #791 --allow-active-chambers flag,
+// which uses the fresh observation to decide whether a chamber-side MCP with a
+// stale binary is mid-turn (softenable, pending-drain) or idle-at-prompt
+// (still divergent). Read-only; no rows are modified.
+//
+// now is passed in (not read from the clock) so the freshness boundary is
+// unit-testable deterministically, matching CountWorkingOnProvider's pattern.
+func (s *Store) ObservedStateSnapshot(ctx context.Context, ttl time.Duration, now time.Time) (map[string]string, error) {
+	cutoff := now.UTC().Add(-ttl).Format(sqliteTimeFormat)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT name, observed_state FROM agents
+		 WHERE observed_state != '' AND observed_state_at > ?`,
+		cutoff)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	out := map[string]string{}
+	for rows.Next() {
+		var name, state string
+		if err := rows.Scan(&name, &state); err != nil {
+			return nil, err
+		}
+		out[name] = state
+	}
+	return out, rows.Err()
+}
+
 // CountWorkingOnProvider returns how many agents on the given provider have a
 // fresh observed_state of "working" (#448) — the concurrency the cap gates
 // against. "Fresh" means observed_state_at is within ttl of now: a mailman that

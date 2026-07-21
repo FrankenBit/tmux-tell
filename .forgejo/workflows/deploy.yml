@@ -116,40 +116,55 @@ jobs:
             --no-bootstrap
 
       - name: post-deploy smoke
-        # Doctor was hard-fail (Lookout 732d advisory + Bosun b2e9 architect-
-        # call). First-deploy-lane empirically surfaced the false-positive
-        # surface the inline comment named: every deploy replaces the
-        # `tmux-tell-claude` inode, so chamber-side MCP servers that were
-        # canonical before the deploy become stale immediately after.
-        # `refresh-all-mcps` queues an MCP restart but only fires when the
-        # chamber processes it (claude `/mcp` slash command on next prompt;
-        # codex chambers can't act on it at all — see #411). With chambers
-        # idle at deploy time the stale-MCP state persists, and `doctor`'s
-        # `Divergent` flag (doctor.go:71) fires on any stale-binary process,
-        # not just stale mailmen. Result: every workflow_dispatch fails on
-        # doctor even when the deploy was structurally successful.
+        # Doctor is HARD-FAIL — the substrate-state-truth check that deployed
+        # binaries + running mailmen + chamber-side MCP servers agree on the
+        # version. Divergence surfaces immediately as a failed
+        # workflow_dispatch; the workflow-log payload names which specific
+        # chamber-adapter combinations lag so the operator's follow-up action
+        # is targeted.
         #
-        # Soften per the inline-documented conservative-then-soften
-        # discipline pin: doctor still runs (its output is the substrate-
-        # state truth + lands in the workflow log for postmortem), but
-        # non-zero exits emit a `::warning::` rather than failing the job.
-        # The substrate-honest closure of the underlying gap lives in
-        # #411 (codex MCP-restart path) + #414 (codex paste-and-enter
-        # prompt-readiness gate). With those closed, doctor can return
-        # to hard-fail; the soften is a v0.17.0-lane discipline that
-        # composes with the trackers.
+        # HISTORY — soften-then-restore-with-flag arc:
         #
-        # Install success (the wrapper step exiting 0) IS the load-bearing
-        # deploy signal; doctor remains the substrate-state-truth surface
-        # operators read from job logs to know which chambers need a
-        # manual MCP refresh.
+        #   #415 (v0.17.0-lane) softened doctor to `::warning::` because
+        #   first-deploy empirically hit a false-positive surface: every
+        #   deploy replaces the `tmux-tell-claude` inode, so chamber-side
+        #   MCP servers canonical BEFORE the deploy became stale AFTER.
+        #   `refresh-all-mcps` queued an MCP restart but only fired when
+        #   the chamber processed it — claude `/mcp` on next prompt, and
+        #   codex chambers couldn't act on it at all. With chambers idle
+        #   at deploy time the stale-MCP state persisted, and doctor's
+        #   `Divergent` flag (doctor.go:71) fired on any stale-binary
+        #   process, not just stale mailmen. Every workflow_dispatch
+        #   failed on doctor even when the deploy was structurally
+        #   successful.
+        #
+        #   #416 attempted a bare un-soften on the premise that #411 +
+        #   #414 closed the false-positive class. That premise was
+        #   partial — it closed the CODEX-chamber subclass; the
+        #   CLAUDE-chamber-mid-turn subclass remained. A first attempt
+        #   to re-land hit the residual false-positive live (a
+        #   mid-turn chamber's own stale MCP flagged divergence).
+        #
+        #   #791 un-conflates SYNC (mailman/binary version — stays
+        #   hard-fail) from ASYNC (chamber-side MCP freshness — softens
+        #   for chambers with a fresh mid-turn observed_state). The
+        #   flag `--allow-active-chambers` opts in the softening
+        #   scoped by Surveyor 3ea9: mid-turn observed_state (working /
+        #   at-rest-in-compaction / awaiting-operator) → pending-drain;
+        #   idle-at-prompt + stale-binary → STILL fail (Surveyor's
+        #   named exception: MCP will not self-heal without external
+        #   action). Interactive doctor invocations without the flag
+        #   remain strict.
+        #
+        # Install success (the wrapper step exiting 0) remains the load-
+        # bearing deploy signal. Doctor is the mechanical composition on
+        # top: a substrate-state check that would otherwise be
+        # operator-hand-verified after every deploy, elevated to gate.
         run: |
           set -euo pipefail
           echo "==> installed binary versions (#436: assert BOTH adapters — a"
           echo "    silent per-adapter version lag is the gap this surfaces)"
           tmux-tell-claude --version
           tmux-tell-codex --version
-          echo "==> doctor (MCP / mailman DB-binding divergence check, #348)"
-          if ! tmux-tell-claude doctor; then
-              echo "::warning::doctor reported divergence — review log for stale chamber MCPs (#411) or non-ready codex chambers (#414); deploy itself was structurally successful"
-          fi
+          echo "==> doctor (MCP / mailman DB-binding divergence check, #348 / #791)"
+          tmux-tell-claude doctor --allow-active-chambers
