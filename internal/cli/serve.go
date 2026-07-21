@@ -1337,11 +1337,14 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		// #300: update mailman_stuck gauge on stuck_reason transitions.
 		// Detected here (not at SetStuck/ClearStuck call sites) so a mailman
 		// that starts up against an already-parked agent still sets the gauge.
+		// Clear-then-set covers all four transitions (""→A, A→"", A→B, ""→""
+		// no-op); without the clear step an A→B flip leaks A's label (#319).
 		if a.StuckReason != lastStuckReason {
+			if lastStuckReason != "" {
+				m.SetMailmanStuck(opts.Agent, lastStuckReason, false)
+			}
 			if a.StuckReason != "" {
 				m.SetMailmanStuck(opts.Agent, a.StuckReason, true)
-			} else {
-				m.SetMailmanStuck(opts.Agent, lastStuckReason, false)
 			}
 			lastStuckReason = a.StuckReason
 		}

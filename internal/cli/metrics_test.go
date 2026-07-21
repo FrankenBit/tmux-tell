@@ -446,6 +446,76 @@ func TestServe_Metrics_MailmanStuck_StartupWithParkedAgent(t *testing.T) {
 	}
 }
 
+// TestServe_Metrics_MailmanStuck_ReasonTransition pins the A→B stuck-reason
+// transition: when the stored stuck_reason flips from A to B without passing
+// through "" (direct overwrite via SetStuck), the old label must be cleared
+// and the new label must be set — not both labels staying true (#319).
+//
+// Phased: Phase 1 seeds the agent as parked with pane-not-found so the gauge
+// starts at 1. Phase 2 overwrites stuck_reason to session-stale via SetStuck
+// (the pathological A→B case) and asserts pane-not-found drops to 0 while
+// session-stale rises to 1.
+func TestServe_Metrics_MailmanStuck_ReasonTransition(t *testing.T) {
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, _ io.Reader, args ...string) ([]byte, error) {
+		return nil, &errString{"exit status 1: can't find pane: %3"}
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+	// Seed as already parked with pane-not-found so the gauge starts at 1.
+	if err := s.SetStuck(ctx, "bob", store.StuckReasonPaneNotFound); err != nil {
+		t.Fatalf("seed stuck: %v", err)
+	}
+
+	m := metrics.New()
+	opts := fastOpts("bob")
+	opts.StuckThreshold = 1
+	opts.StuckPollInterval = 5 * time.Millisecond
+	opts.Metrics = m
+
+	stop, wait, _ := runServeInBackground(t, s, opts)
+	t.Cleanup(func() { stop(); wait() })
+
+	// Phase 1: wait for gauge(pane-not-found)=1 (mailman starts parked).
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		if gatherGauge(t, m, "tmux_tell_mailman_stuck",
+			map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}) == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := gatherGauge(t, m, "tmux_tell_mailman_stuck",
+		map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}); got != 1 {
+		t.Fatalf("gauge(pane-not-found) after initial park = %v, want 1", got)
+	}
+
+	// Phase 2: overwrite stuck_reason to session-stale (the A→B case).
+	// The next serve-loop iteration must clear pane-not-found and set session-stale.
+	if err := s.SetStuck(ctx, "bob", store.StuckReasonSessionStale); err != nil {
+		t.Fatalf("overwrite stuck reason: %v", err)
+	}
+	transDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(transDeadline) {
+		if gatherGauge(t, m, "tmux_tell_mailman_stuck",
+			map[string]string{"agent": "bob", "reason": store.StuckReasonSessionStale}) == 1 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := gatherGauge(t, m, "tmux_tell_mailman_stuck",
+		map[string]string{"agent": "bob", "reason": store.StuckReasonSessionStale}); got != 1 {
+		t.Errorf("gauge(session-stale) after A→B transition = %v, want 1", got)
+	}
+	if got := gatherGauge(t, m, "tmux_tell_mailman_stuck",
+		map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}); got != 0 {
+		t.Errorf("gauge(pane-not-found) after A→B transition = %v, want 0 (stale label leak)", got)
+	}
+}
+
 // TestPasteUnsafeReason pins the reason-label mapping that feeds the
 // paste_unsafe_aborts metric — the closed label set the Grafana panel
 // enumerates.
