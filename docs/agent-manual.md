@@ -178,6 +178,22 @@ context gets compacted, your session gets respawned.
   auto-promotes when its target agent next registers — "remember this for its next
   dispatch." For a session that dies and respawns, that's how a fact survives the
   gap without a live recipient to catch it.
+- **If you re-launch without re-registering, your mailman parks itself — and
+  `register --force` un-parks it (#783).** When you relaunch or resume under a new
+  session, your registered *session-id* can stop matching any live pane
+  (`session_stale` in the mailman journal). Name resolution then falls back to a
+  stale/wrong pane that reads as `unknown`, and the #105 pre-paste-safety net
+  correctly refuses to paste into it. Rather than retry-looping invisibly forever,
+  after a few tries (`session-stale-threshold`, default 3) your mailman **parks**:
+  it stops probing and sets `stuck_reason=session-stale`, which shows up in
+  `tmux-tell.agents` and — for anyone sending to you — in their send/`message_status`
+  recipient block as `mailman PARKED (session-stale)`. So a stuck bus reads as
+  *stuck*, not *slow*. **The fix is to re-register:** `register --force` (which the
+  chamber-launch wrappers run automatically at every launch, per alcatraz-infra §
+  Chamber launches) refreshes the session-id and clears the park, and delivery
+  resumes on the next loop. If you're ever silent on the bus after a manual
+  relaunch, check `agents` for a `session-stale` park on your own name and
+  re-register.
 
 These are the deferred-delivery triggers (#227 / #258a); the exact staging
 semantics are in [`reference.md`](reference.md).

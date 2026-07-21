@@ -366,6 +366,18 @@ const (
 	// (stale registration, wrong tmux server) that, left un-parked,
 	// drives the pre-paste-safety-abort retry storm (#291).
 	StuckReasonPaneNotFound = "pane-not-found"
+	// StuckReasonSessionStale is set after N consecutive session-stale aborts
+	// (#783): the registered session-id resolves to no live pane, name
+	// resolution falls back to a pane that classifies StateUnknown, and the
+	// #105 pre-paste-safety net correctly refuses the paste — but the refusal
+	// has no exit condition, so the message retry-loops invisibly until TTL
+	// drainage. This parks the mailman the same way StuckReasonPaneNotFound
+	// does (stops probing, surfaced in `agents`, cleared via `register
+	// --force` — which is exactly the re-register that refreshes the stale
+	// session-id). Distinct reason from pane-not-found because the pane IS
+	// found here (name resolution succeeds); the staleness is in the session
+	// identity, and the operator-facing remedy narrative differs.
+	StuckReasonSessionStale = "session-stale"
 )
 
 // CanonicalName returns the canonical routing key for an agent name:

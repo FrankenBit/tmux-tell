@@ -29,6 +29,18 @@ type RecipientStatus struct {
 	DeliveryMode   string `json:"delivery_mode,omitempty"`
 	MailmanRunning bool   `json:"mailman_running"`
 	PaneStatus     string `json:"pane_status"`
+	// StuckReason discloses the recipient's mailman park state (agents.stuck_reason)
+	// at send/status time — empty when serving normally, else the park reason
+	// (store.StuckReason*). Load-bearing for #783: a recipient whose mailman is
+	// parked with "session-stale" looks otherwise-healthy here (Registered=true,
+	// MailmanRunning=true — the daemon IS up, it is just parked), so a sender
+	// whose message sits queued cannot tell stuck-invisibly from merely-slow.
+	// Surfacing the reason makes the invisible-stuck class visible without a new
+	// per-message state: the message legitimately stays queued (it recovers when
+	// `register --force` clears the park), but the WHY is now unambiguous. Mirrors
+	// the chamber-level signal already in `agents`; this is disclosure at the
+	// send/status surface, not a second mechanism.
+	StuckReason string `json:"stuck_reason,omitempty"`
 }
 
 // DeliveryStatus is the terminal delivery outcome, populated only when
@@ -247,7 +259,14 @@ func recipientOneLine(r *RecipientStatus) string {
 		reach = "pane NOT-LIVE"
 	}
 	mailman := "mailman up"
-	if !r.MailmanRunning {
+	switch {
+	case r.StuckReason != "":
+		// PARKED takes precedence over the up/down probe — the #783 invisible-stuck
+		// disclosure. A set stuck_reason means the mailman parked ITSELF (it was
+		// running to do so), so a queued-but-not-draining message reads as stuck,
+		// not slow. Most-actionable state; cleared by `register --force`.
+		mailman = "mailman PARKED (" + r.StuckReason + "; clear via `register --force`)"
+	case !r.MailmanRunning:
 		mailman = "mailman down"
 		if r.DeliveryMode == store.DeliveryModeMailboxOnly {
 			mailman = "mailbox-only (no daemon)"
@@ -277,6 +296,7 @@ func resolveRecipientStatus(ctx context.Context, s *store.Store, agent string) (
 	rs := &RecipientStatus{
 		Registered:   true,
 		DeliveryMode: a.DeliveryMode,
+		StuckReason:  a.StuckReason,
 	}
 	if rs.DeliveryMode == "" {
 		rs.DeliveryMode = store.DeliveryModePasteAndEnter

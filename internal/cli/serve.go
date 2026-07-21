@@ -46,6 +46,19 @@ const (
 	// outage (operator restarting tmux, a pane respawn) self-heals first,
 	// short enough that a stale registration stops hammering tmux promptly.
 	defaultStuckThreshold = 10
+	// defaultSessionStaleThreshold is the consecutive session-stale-abort count
+	// at which the mailman parks itself (#783). Deliberately far LOWER than
+	// defaultStuckThreshold: a pane-not-found probe fails fast, but a
+	// session-stale iteration burns the full observe-gate MaxWait (~5min) before
+	// the pre-paste-safety abort fires, so 10 would take ~50 minutes to park —
+	// well past the ~22min TTL-drainage window observed in the field (#783). The
+	// fast-path (see the session-stale exit condition in Run) replaces the ~5min
+	// gate with a ~2s probe, so 3 parks in ~SessionStaleThreshold ×
+	// sessionStaleRetryInterval ≈ 4-5min — well inside the drainage window — while
+	// still tolerating a genuinely transient re-register race (a chamber
+	// mid-/compact that re-registers within a couple of cycles never reaches 3).
+	// A value <= 0 disables the transition (bare pre-#783 retry).
+	defaultSessionStaleThreshold = 3
 	// defaultStuckPollInterval is how often a parked mailman re-reads its
 	// agent row to notice a `register --force` clear. No tmux probe — a
 	// plain DB read — so a tight-ish cadence costs nothing.
@@ -113,6 +126,25 @@ var stuckBackoffBase = time.Second
 func setStuckBackoffBaseForTest(d time.Duration) time.Duration {
 	prev := stuckBackoffBase
 	stuckBackoffBase = d
+	return prev
+}
+
+// sessionStaleRetryInterval is the fixed pause between consecutive session-stale
+// fast-path retries (#783). Because the fast-path replaces the ~5min observe-gate
+// with a ~2s probe, the loop would otherwise spin; this paces it so the mailman
+// parks in ~SessionStaleThreshold × this interval (~4-5min at the default 3) —
+// inside the tolerable invisible-stuck window, yet slow enough that a chamber
+// re-registering mid-/compact heals before the streak reaches the threshold.
+// Fixed (not exponential): the wait-for-re-register condition is human-scale +
+// roughly constant, unlike the pane-not-found storm the #291 exponential backoff
+// bounds. A var (not const) so tests can shrink it off the second scale.
+var sessionStaleRetryInterval = 90 * time.Second
+
+// setSessionStaleRetryIntervalForTest replaces sessionStaleRetryInterval for
+// test isolation and returns the previous value so the caller can restore it.
+func setSessionStaleRetryIntervalForTest(d time.Duration) time.Duration {
+	prev := sessionStaleRetryInterval
+	sessionStaleRetryInterval = d
 	return prev
 }
 
@@ -513,6 +545,15 @@ type serveOpts struct {
 	// (backoff still applies), kept as an escape hatch for tests / operators
 	// who want unbounded backoff-only behavior.
 	StuckThreshold int
+	// SessionStaleThreshold is the number of consecutive session-stale aborts
+	// (registered session-id resolves to no live pane → name-resolved pane
+	// classifies StateUnknown → #105 pre-paste-safety refuses) after which the
+	// mailman parks itself with store.StuckReasonSessionStale (#783). Default
+	// defaultSessionStaleThreshold (3) — lower than StuckThreshold because each
+	// session-stale iteration is ~5min (full gate MaxWait), not fast. A value
+	// <= 0 disables the transition (the loop keeps the bare #105 retry, i.e. the
+	// pre-#783 behavior), kept as an escape hatch.
+	SessionStaleThreshold int
 	// StuckPollInterval is how often a parked (stuck) mailman re-reads its
 	// own agent row to notice a `register --force` clear. While stuck the
 	// mailman issues NO tmux probes — this is a pure DB read on a slow
@@ -629,6 +670,8 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		"expose a Prometheus /metrics endpoint on this address (e.g. ':9099' or '127.0.0.1:9099'). Empty (the default) disables the endpoint entirely — no behavior change for deploys that don't scrape. Per-agent TOML knob: `metrics-addr = \":PORT\"` (each per-agent mailman is its own process, so assign a distinct port per agent). (#146)")
 	stuckThreshold := fs.Int("stuck-threshold", defaultStuckThreshold,
 		"number of consecutive `can't find pane` probe failures before the mailman parks itself in the #291 stuck state (stops probing tmux entirely; visible in `agents`, cleared via `register --force`). Exponential backoff applies on every failure regardless; this is the cutover to zero-probe parking. 0 disables parking (backoff-only). Per-agent TOML knob: `stuck-threshold = N`.")
+	sessionStaleThreshold := fs.Int("session-stale-threshold", defaultSessionStaleThreshold,
+		"number of consecutive session-stale aborts (registered session-id resolves to no live pane → name-resolved pane classifies unknown → #105 pre-paste-safety refuses) before the mailman parks itself with reason `session-stale` (#783). Lower than --stuck-threshold because each iteration burns the full ~5min gate MaxWait. Parked mailman is visible in `agents` and cleared via `register --force` (the same re-register that refreshes the stale session-id). 0 disables the transition (bare #105 retry). Per-agent TOML knob: `session-stale-threshold = N`.")
 	stuckPollInterval := fs.Duration("stuck-poll-interval", defaultStuckPollInterval,
 		"how often a parked (stuck) mailman re-reads its agent row to notice a `register --force` clear. While stuck the mailman issues NO tmux probes — this is a pure DB read. Per-agent TOML knob: `stuck-poll-interval = \"5s\"`.")
 	spinGuardThreshold := fs.Int("spin-guard-threshold", defaultSpinGuardThreshold,
@@ -712,6 +755,9 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 	}
 	if !flagWasSet(fs, "stuck-threshold") {
 		*stuckThreshold = config.ResolveInt(cfg, *agent, "stuck-threshold", *stuckThreshold)
+	}
+	if !flagWasSet(fs, "session-stale-threshold") {
+		*sessionStaleThreshold = config.ResolveInt(cfg, *agent, "session-stale-threshold", *sessionStaleThreshold)
 	}
 	if !flagWasSet(fs, "stuck-poll-interval") {
 		*stuckPollInterval = config.ResolveDuration(cfg, *agent, "stuck-poll-interval", *stuckPollInterval)
@@ -883,6 +929,7 @@ func runServeCLI(args []string, stdout, stderr io.Writer) int {
 		RetentionSweepInterval:      retentionSweepInterval,
 		DedupeWindow:                dedupeWindow,
 		StuckThreshold:              *stuckThreshold,
+		SessionStaleThreshold:       *sessionStaleThreshold,
 		StuckPollInterval:           *stuckPollInterval,
 		SpinGuardThreshold:          *spinGuardThreshold,
 		SpinGuardWindow:             *spinGuardWindow,
@@ -1109,6 +1156,17 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	// and re-probes from a clean slate, which is the right reset semantics.
 	consecutivePaneFails := 0
 	paneFailMsgID := ""
+
+	// #783 session-stale streak. Counts consecutive iterations where the
+	// registered session-id resolves to no live pane (session_stale) AND a quick
+	// pane probe classifies StateUnknown — the stuck class where #105's
+	// pre-paste-safety net refuses forever with no exit. Chamber-level (not keyed
+	// on message id like the #291 pane-fail counter): session_stale is a property
+	// of the chamber's registration, so every message to it hits the same wall;
+	// the streak resets on ANY non-stuck outcome (a benign session_stale that
+	// probes deliverable, or a plain non-session_stale iteration). In-memory: a
+	// mailman restart re-registers from a clean slate.
+	consecutiveSessionStale := 0
 
 	// #300: mirrors the last-known stuck_reason for the mailman_stuck gauge.
 	// Tracks what reason the gauge was last Set=1 for, so the Set=0 call on
@@ -1475,6 +1533,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 		// session or blocks a bare shell (Phase-1a) - with a deprecation log so
 		// the legacy/stale registration surfaces (#626 AC6).
 		sessionResolved := false
+		// #783: set when the registered session-id resolves to no live pane (the
+		// `default` case below). Read by the session-stale fast-path exit
+		// condition after this block to decide whether to accrue the park streak.
+		sessionStale := false
 		if !opts.DriftCheckDisabled {
 			if walker == nil {
 				walker = discover.New()
@@ -1502,11 +1564,77 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					// re-resumed same-name session, or blocks a bare shell (Phase-1a).
 					logger.Printf("session_stale id=%s agent=%s session=%s - not hosted in any pane; falling back to name resolution (re-register to refresh session-id)",
 						msg.PublicID, opts.Agent, a.SessionID)
+					sessionStale = true
 				}
 			} else {
 				logger.Printf("session_id_absent id=%s agent=%s - legacy registration; name-based resolution (re-register from inside the session to enable exact session-id routing, #626)",
 					msg.PublicID, opts.Agent)
 			}
+		}
+
+		// #783 session-stale fast-path exit condition. When the registered
+		// session-id resolves nowhere (sessionStale), name resolution falls back
+		// to a pane that is frequently a stale/wrong one classifying
+		// StateUnknown — and #105's pre-paste-safety net then refuses the paste
+		// EVERY iteration with no exit condition, so the message retry-loops
+		// invisibly until TTL drainage (the sender believes it is queued; the
+		// recipient never sees it). This is the exit condition, added strictly
+		// DOWNSTREAM of #105 (the refusal itself is correct and untouched).
+		//
+		// A quick AgentState probe here — NOT the full observe-gate, which would
+		// burn its ~5min MaxWait first — detects the stuck class cheaply. On a
+		// StateUnknown probe we accrue a consecutive streak and, at
+		// SessionStaleThreshold, park the mailman with StuckReasonSessionStale:
+		// the SAME #291 park that stops probing tmux, surfaces in `agents`, drives
+		// the #300 gauge, and clears on `register --force` — which is exactly the
+		// re-register that refreshes the stale session-id. Skipping the 5min gate
+		// per iteration is what makes the park land in ~threshold×retry-interval
+		// (a few minutes) instead of ~threshold×MaxWait (~15min+), so the
+		// invisible-stuck window is short.
+		//
+		// Requiring N CONSECUTIVE session_stale+unknown iterations is the safety
+		// margin that keeps this from stealing #105's transient-popup case: a
+		// live chamber's session-id RESOLVES (so it is not session_stale in the
+		// first place), and a genuine transient unknown clears within a cycle or
+		// two (resetting the streak). A benign session_stale — the name-resolved
+		// pane is a live, classifiable session — probes idle/working here and
+		// falls through to normal delivery, resetting the streak. Disabled
+		// (SessionStaleThreshold<=0 or pre-paste-safety-disabled) preserves the
+		// exact pre-#783 behavior.
+		if sessionStale && opts.SessionStaleThreshold > 0 && !opts.PrePasteSafetyDisabled {
+			probeCtx, pcancel := context.WithTimeout(opCtx, 2*time.Second)
+			ssState, _, sserr := tmuxio.AgentState(probeCtx, paneForDelivery)
+			pcancel()
+			if sserr == nil && ssState == tmuxio.StateUnknown {
+				consecutiveSessionStale++
+				if _, rerr := s.RecoverDelivering(opCtx, opts.Agent); rerr != nil {
+					logger.Printf("WARN session_stale_recover_failed id=%s err=%v", msg.PublicID, rerr)
+				}
+				if consecutiveSessionStale >= opts.SessionStaleThreshold {
+					if serr := s.SetStuck(opCtx, opts.Agent, store.StuckReasonSessionStale); serr != nil {
+						logger.Printf("WARN stuck_set_failed agent=%s err=%v", opts.Agent, serr)
+					} else {
+						logger.Printf("WARN stuck agent=%s reason=%s consecutive=%d — mailman parked; stops probing tmux until `register --force` refreshes the stale session-id (#783)",
+							opts.Agent, store.StuckReasonSessionStale, consecutiveSessionStale)
+					}
+					// The DB stuck_reason now gates the loop; reset the in-memory
+					// streak so a `register --force` clear resumes from a clean slate.
+					consecutiveSessionStale = 0
+					continue
+				}
+				logger.Printf("WARN session_stale_stuck_backoff id=%s agent=%s pane=%s consecutive=%d/%d delay=%s — session-id resolves nowhere + pane unknown; bounding retry, parks at threshold (#783)",
+					msg.PublicID, opts.Agent, paneForDelivery, consecutiveSessionStale, opts.SessionStaleThreshold, sessionStaleRetryInterval)
+				if stopOrSleep(stopCtx, sessionStaleRetryInterval) {
+					return exitOK
+				}
+				continue
+			}
+			// Benign session_stale (pane classifies deliverable) or a probe error:
+			// break the streak and fall through to the normal gate + delivery.
+			consecutiveSessionStale = 0
+		} else if !sessionStale {
+			// A plain, healthy iteration breaks any prior session-stale streak.
+			consecutiveSessionStale = 0
 		}
 
 		// Silent-drift guard (#37). Before the gate or the actual
