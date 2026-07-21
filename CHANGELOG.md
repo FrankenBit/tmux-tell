@@ -33,6 +33,36 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.32.0] — 2026-07-21
+
+### Added
+
+- **`doctor --allow-active-agents` softens stale-binary agent-side MCP false-positives at the deploy-workflow gate** (#791; un-conflates SYNC / ASYNC divergence). The flag admits a stale-binary agent-side MCP subprocess as `pending-drain` (Softened=true) only when the owning agent has a fresh mailman-observed AgentState (#448) in the mid-turn set — a state where a queued `refresh-all-mcps` will actually fire on the next natural boundary. Idle-at-prompt+stale (the MCP will not self-heal without external action), orphan (no fresh observed AgentState), mailmen (host-side infra; must be canonical), and every SYNC class (db-inode mismatch, orphan DB inode) all remain hard-fail. Agent resolution reads `--agent X` from the mailman's argv and the systemd cgroup slice name for agent-side MCPs; observation freshness is TTL-bounded so a crashed mailman's stale value cannot un-fail an otherwise-real divergence. Deploy's post-deploy smoke opts in via `tmux-tell-claude doctor --allow-active-agents`, wrapped in a `::warning::` shim for the transitional #797 window — mid-turn is no longer false-positive, but idle-stale relocates the gap (nothing autonomously queues `refresh-all-mcps` post-deploy) and is warn-only until #797 closes the design gap with an autonomous refresh path or exit-code split. Interactive `doctor` calls without the flag are unchanged. Pass-with-disclosure: the text output uses `~` for softened rows and names the softened count in the trailing OK line.
+
+### Changed
+
+None.
+
+### Fixed
+
+- **The Windows-11 idle-pane fix now matches the actual render** (#729) — v0.31.2's #729 fix taught the classifier a Win11 prompt render-variant of `>` + a **regular space** (`3e 20`), but a live Win11 session paints `>` + a **NO-BREAK SPACE** (`3e c2 a0`): only the ornament glyph substitutes (`❯` → `>`), while the NBSP trailer is identical to Linux. Because `capture-pane -p` preserves NBSP, the `3e 20` variant never matched a real pane, so idle Win11 sessions still classified `unknown` and delivery still failed. The variant is corrected to `>` + NBSP, verified end-to-end against a live Win11 session (the classifier flips `unknown` → `idle` on the real pane, and reverts under the old bytes). The Linux `❯` + NBSP path is unchanged, and the variant remains trusted only in the cursor-aware path.
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
+### Internal
+
+- **doctor**: rename --allow-active-chambers → --allow-active-agents + drop compaction reference (Path A fold-in)
+
 ## [0.31.2] — 2026-07-21
 
 ### Added
