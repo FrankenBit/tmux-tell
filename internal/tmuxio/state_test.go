@@ -628,6 +628,124 @@ func TestAgentState_AwaitingOperatorWhenCursorPastSentinel(t *testing.T) {
 // title-separator row, not the ❯\u00a0input row (the agent was working).
 // The fallback lets the algorithm still classify cleanly when cursor
 // position doesn't help.
+// --- #729: Win11 ASCII prompt-sentinel render-variant ---
+
+// TestAgentState_IdleWhenCursorAtASCIIPromptSentinel is the #729 incident
+// repro. A Claude CLI pane rendered under a Windows 11 terminal paints its
+// prompt as plain ASCII `> ` (U+003E + regular space) instead of Linux's
+// `❯ ` (U+276F + NBSP). Before the fix the Linux-calibrated PromptSentinel
+// couldn't match, AgentState returned StateUnknown, and the pre-paste safety
+// re-probe (serve.go) tripped pre_paste_safety_abort on every delivery.
+//
+// The empty composer's trailing space is stripped by `capture-pane -p`, so the
+// captured input row is a bare `>` — this also exercises cutPromptSentinel's
+// #690 space-strip tolerance on the variant. The cursor still sits at col 2
+// (the terminal keeps the `> ` two-cell prompt; capture-pane stripping the text
+// does not move the cursor).
+func TestAgentState_IdleWhenCursorAtASCIIPromptSentinel(t *testing.T) {
+	fastTemporalDelta(t)
+	// Row 3 (0-indexed) is the Win11 ASCII prompt with an empty composer,
+	// captured as bare `>` after the trailing-space strip.
+	pane := "history\n──── Admin ──\n  recap line\n>\n────────\n  status\n"
+	// cursorX=2 (right after the `> ` two-cell prompt); cursorY=3.
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 3)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%11")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (Win11 ASCII `> ` prompt, cursor at sentinel)", state)
+	}
+	if !ev.PromptEmpty {
+		t.Errorf("Evidence.PromptEmpty should be true for the empty ASCII prompt")
+	}
+}
+
+// TestAgentState_IdleWhenCursorAtASCIIPromptSentinelWithGhostText pins the
+// Win11 auto-suggestion case: `> /compact` ghost-text with the cursor still at
+// the sentinel column (col 2) — the operator has NOT engaged. StateIdle with
+// PromptEmpty=false, mirroring the Linux ghost-text case.
+func TestAgentState_IdleWhenCursorAtASCIIPromptSentinelWithGhostText(t *testing.T) {
+	fastTemporalDelta(t)
+	pane := "history\n──── Admin ──\n  recap line\n> /compact\n────────\n  status\n"
+	// cursorX=2 (right after `> `, before `/compact` ghost-text); cursorY=3.
+	fr := newAgentStateRunner([]string{pane, pane}, 2, 3)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%11")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (Win11 ASCII prompt + auto-suggestion ghost-text)", state)
+	}
+	if ev.PromptEmpty {
+		t.Errorf("Evidence.PromptEmpty should be false (ghost-text present, not operator-typed)")
+	}
+	if !strings.Contains(ev.Reason, "auto-suggestion") {
+		t.Errorf("Evidence.Reason should mention auto-suggestion; got %q", ev.Reason)
+	}
+}
+
+// TestAgentState_AwaitingOperatorWhenCursorPastASCIISentinel pins that the
+// variant's cursor-column comparison is width-correct: on a `> ` prompt the
+// sentinel is 2 runes wide, so a cursor PAST col 2 is operator-mid-typing →
+// StateAwaitingOperator (don't dispatch into a half-typed draft), exactly as
+// the Linux path does.
+func TestAgentState_AwaitingOperatorWhenCursorPastASCIISentinel(t *testing.T) {
+	fastTemporalDelta(t)
+	pane := "history\n──── Admin ──\n  recap line\n> Thanks for handling \n────────\n  status\n"
+	// cursorX=22 (past the operator-typed content); cursorY=3.
+	fr := newAgentStateRunner([]string{pane, pane}, 22, 3)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%11")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateAwaitingOperator {
+		t.Errorf("state = %v, want StateAwaitingOperator (cursor past ASCII sentinel = operator mid-typing)", state)
+	}
+	if !strings.Contains(ev.Reason, "operator mid-typing") {
+		t.Errorf("Evidence.Reason should mention operator mid-typing; got %q", ev.Reason)
+	}
+}
+
+// TestAgentState_ASCIIVariantNotHonoredCursorless is the SAFETY pin for the
+// scoped design: the ASCII `> ` variant is trusted ONLY where the cursor
+// anchors it to the live input row. Here a bare, empty-past `> ` row is present
+// but the cursor sits OFF it (on a history row, col 0) — the cursor-aware path
+// doesn't fire on the `> ` row, and the cursor-LESS fallback (isInputRowQuiet)
+// keys on the PRIMARY sentinel only, so the pane must NOT classify Idle. If a
+// future edit added the variant to the cursor-less scan, a stray `> ` blockquote
+// or `> ` shell-continuation row would false-idle a non-input pane — this test
+// reds the moment that happens.
+func TestAgentState_ASCIIVariantNotHonoredCursorless(t *testing.T) {
+	fastTemporalDelta(t)
+	// The ONLY `> `-shaped row is an EMPTY one (row 2, captured as bare `>` after
+	// the space-strip) — exactly the shape isInputRowQuiet would call "quiet" if
+	// it honored the variant. The cursor is on the history row (0, col 0), which
+	// has no sentinel, so the cursor-aware path can't classify it either. Correct
+	// result: StateUnknown, NOT idle.
+	pane := "history\n  some tool output\n>\n────────\n  status\n"
+	fr := newAgentStateRunner([]string{pane, pane}, 0, 0)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%11")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state == StateIdle {
+		t.Errorf("state = StateIdle — the ASCII `> ` variant must NOT be honored in the cursor-less path (false-idle risk on a non-input `> ` row)")
+	}
+}
+
 func TestAgentState_FallbackWhenCursorRowNotSentinel(t *testing.T) {
 	fastTemporalDelta(t)
 	// Cursor at row 1 (not the ❯\u00a0row at row 3). Pane is otherwise stable

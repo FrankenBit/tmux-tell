@@ -57,6 +57,9 @@ func TestClaudePaneProfile_MatchesConsts(t *testing.T) {
 	if p.StatusLineMarker != StatusLineMarker {
 		t.Errorf("StatusLineMarker = %q, want const %q", p.StatusLineMarker, StatusLineMarker)
 	}
+	if !reflect.DeepEqual(p.PromptSentinelVariants, []string{ASCIIPromptSentinel}) {
+		t.Errorf("PromptSentinelVariants = %q, want [%q] (Win11 ASCII render-variant, #729)", p.PromptSentinelVariants, ASCIIPromptSentinel)
+	}
 	if p.RateLimitPattern != "" {
 		t.Errorf("RateLimitPattern = %q, want empty by default", p.RateLimitPattern)
 	}
@@ -76,6 +79,21 @@ func TestCodexPromptSentinel_Bytes(t *testing.T) {
 	got := []byte(CodexPromptSentinel)
 	if !bytesEqual(got, want) {
 		t.Errorf("CodexPromptSentinel bytes = % x, want % x (› U+203A + regular space 0x20, NOT NBSP)", got, want)
+	}
+}
+
+// TestASCIIPromptSentinel_Bytes pins the byte-level encoding of the Win11 ASCII
+// prompt render-variant (#729): `>` (U+003E, 0x3e) followed by a REGULAR space
+// (0x20). Substrate-verified 2026-07-08 from the Caymans Admin pane %11. Sibling
+// to TestPromptSentinel_BytesMatchNBSP — the place a future drift in the Win11
+// render surfaces loudly. The plain-ASCII bytes (not the Linux `❯ ` e2 9d af
+// c2 a0) are the load-bearing distinction: this is the SAME Claude prompt under
+// a Windows terminal's font-substitution.
+func TestASCIIPromptSentinel_Bytes(t *testing.T) {
+	want := []byte{0x3e, 0x20}
+	got := []byte(ASCIIPromptSentinel)
+	if !bytesEqual(got, want) {
+		t.Errorf("ASCIIPromptSentinel bytes = % x, want % x (> U+003E + regular space 0x20)", got, want)
 	}
 }
 

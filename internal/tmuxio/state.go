@@ -30,6 +30,28 @@ import (
 // drift loudly.
 const PromptSentinel = "❯\u00a0"
 
+// ASCIIPromptSentinel is the plain-ASCII render-variant of the Claude Code
+// prompt — `>` (U+003E) followed by a REGULAR space (U+0020), hex `3e 20`. A
+// Claude CLI session running under a Windows 11 terminal paints its prompt this
+// way rather than the Linux `❯ `: the ornament glyph U+276F font-substitutes
+// (and the NBSP downgrades to a regular space) on Win11 terminal emulators
+// (Windows Terminal / PowerShell console / WSL bridge). ssh is a byte-transparent
+// tunnel, so the variance is introduced on the render side, not in transport —
+// meaning ANY Win11-hosted Claude pane hits this, not only ssh-relayed ones
+// (#729, substrate-verified 2026-07-08 from the Caymans Admin pane %11: the input
+// line captured as `> …`, bytes `3e 20`, never `❯ `).
+//
+// It is carried in the Claude PaneProfile's PromptSentinelVariants and matched
+// ONLY in the cursor-aware AgentState path — see that field's doc for why a `> `
+// match is trusted only with cursor corroboration. Being a regular-space-
+// terminated sentinel, it inherits cutPromptSentinel's #690 trailing-space-strip
+// tolerance (a bare `>` when capture-pane strips the empty composer's space).
+//
+// FORWARD-WATCH: like PromptSentinel this is Claude-Code-render-dependent; the
+// byte canary TestASCIIPromptSentinel_Bytes pins `3e 20` so a future drift
+// surfaces loudly.
+const ASCIIPromptSentinel = "> "
+
 // State classifies a agent's current activity from the tmux-msg
 // vantage point. Five values, per the #69 verdict
 // (bus id `d47f`, 2026-06-04). The zero value is StateUnknown so a
@@ -534,9 +556,13 @@ func AgentState(ctx context.Context, pane string) (state State, ev Evidence, err
 		lines := strings.Split(capBStr, "\n")
 		if cursorY >= 0 && cursorY < len(lines) {
 			row := lines[cursorY]
-			rest, hasSentinel := cutPromptSentinel(row, sentinel)
+			// Match the primary sentinel or any render-variant (Claude's Win11
+			// ASCII `> `, #729); use the MATCHED sentinel's rune-width for the
+			// cursor-column comparison so a differently-sized variant still
+			// anchors idle-vs-drafting correctly.
+			rest, matched, hasSentinel := matchCursorRowSentinel(row, sentinel, activeProfile.PromptSentinelVariants)
 			if hasSentinel {
-				sentinelCol := utf8.RuneCountInString(sentinel)
+				sentinelCol := utf8.RuneCountInString(matched)
 				switch {
 				case cursorX == sentinelCol:
 					// Cursor right after `❯ ` — either a clean idle
@@ -793,6 +819,35 @@ func cutPromptSentinel(row, sentinel string) (rest string, found bool) {
 		return "", true
 	}
 	return "", false
+}
+
+// matchCursorRowSentinel matches the cursor's row against the primary prompt
+// sentinel first, then any tolerated render-variants, returning the sentinel
+// that actually matched so the caller can compute ITS rune-width for the
+// cursor-column comparison (variants can differ in width from the primary).
+//
+// It is the ONLY consumer of PromptSentinelVariants. Variants (Claude's Win11
+// ASCII `> `, #729) are honored here — and deliberately NOWHERE cursor-less —
+// because a permissive glyph like `> ` is safe to treat as an input prompt only
+// when the cursor pins it to the live input row; the cursor-less scans
+// (isInputRowQuiet, extractInputContent) stay on the primary sentinel so a
+// stray `> ` transcript/blockquote row can't be read as an idle prompt. See
+// PaneProfile.PromptSentinelVariants.
+func matchCursorRowSentinel(row, primary string, variants []string) (rest, matched string, found bool) {
+	if primary != "" {
+		if rest, ok := cutPromptSentinel(row, primary); ok {
+			return rest, primary, true
+		}
+	}
+	for _, v := range variants {
+		if v == "" {
+			continue
+		}
+		if rest, ok := cutPromptSentinel(row, v); ok {
+			return rest, v, true
+		}
+	}
+	return "", "", false
 }
 
 // inputRowCleared reports whether the captured pane shows the live input

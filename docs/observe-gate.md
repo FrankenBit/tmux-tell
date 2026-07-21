@@ -105,6 +105,30 @@ exported as `tmux_tell_copymode_defer_total{agent}` and
 > still fall to `unknown` → hard-defer with no self-heal — tracked as forward work
 > pending real pane captures.
 
+> **The prompt sentinel tolerates a Windows-11 render-variant (#729).** The *same*
+> Claude Code TUI paints its prompt differently depending on the host terminal: on
+> Linux it is `❯ ` (U+276F + NBSP), but under a Windows 11 terminal (Windows
+> Terminal / PowerShell console / WSL bridge) the ornament glyph font-substitutes
+> and the prompt renders as plain ASCII `> ` (U+003E + regular space). ssh is a
+> byte-transparent tunnel, so *any* Win11-hosted Claude pane — ssh-relayed or
+> local — shows `> `, and the Linux-calibrated sentinel couldn't match it: the
+> pane classified `unknown` and the pre-paste safety re-probe tripped
+> `pre_paste_safety_abort` on every delivery (the 2026-07-07 Caymans Admin pane).
+> The Claude `PaneProfile` now carries the ASCII `> ` as a **render-variant**
+> (`PromptSentinelVariants`) so an idle Win11 pane classifies `idle` and delivers.
+>
+> **The variant is trusted ONLY in the cursor-aware classification** — where the
+> tmux cursor pins the match to the live input row (`idle` when the cursor sits
+> *at* the `> `, `awaiting-operator` when it sits *past*). It is deliberately NOT
+> consulted by the cursor-less scans (the `unknown`-fallback quiet-row scan and the
+> stale-draft walk): unlike the rare `❯` ornament, `> ` is a common glyph (a
+> markdown blockquote, a `> ` shell continuation prompt), so honoring it without
+> the cursor's corroboration would false-idle a non-input row. The load-bearing
+> layout signal is therefore **the cursor position on the prompt row**, not the
+> glyph alone. This PR hardens the *pre-paste classifier* only; the *post-paste*
+> verify-token handshake on Win11-rendered panes (the `delivered_in_input_box`
+> resend behavior) is a separate concern tracked on #729's comment thread.
+
 ## Latency: fast when idle, patient when busy
 
 - **Idle pane** → delivered on the first poll, ~instant.
