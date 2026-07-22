@@ -1585,12 +1585,13 @@ func mcpRegisterHandler(s *store.Store) mcp.ToolHandler {
 		// guard never fires on the self-heal path.
 		if existing != nil && existing.PaneID != "" && !paneExplicit && !in.KeepPane {
 			if pane != existing.PaneID {
-				return nil, fmt.Errorf(
+				msg := fmt.Sprintf(
 					"register: refusing to silently rewrite pane_id %s → %s for agent %q.\n"+
 						"Pass pane=%q to keep the existing pane, pane=%q to actually change it,\n"+
 						"or keep_pane=true to update other fields without touching pane_id.",
 					existing.PaneID, pane, in.Name,
 					existing.PaneID, pane)
+				return nil, errors.New(msg)
 			}
 		}
 
