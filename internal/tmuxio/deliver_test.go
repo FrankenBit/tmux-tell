@@ -633,6 +633,10 @@ func TestDeliverySubmitted(t *testing.T) {
 		// even though the input row IS cleared → degrades to token-match,
 		// which misses the absent token → unverified.
 		{"cursor unavailable degrades to token-match", claude, "transcript\n" + PromptSentinel, 0, 0, false, "id 7f3a", false},
+		// #787 live Admin fixture: Win11 renders Claude's prompt as `>` + NBSP.
+		// Cursor column 2 is the authoritative empty-input signal; the verify
+		// token is absent because Claude has already consumed the turn.
+		{"win11 ascii-nbsp prompt verifies cleared input", claude, "submitted turn\n" + ASCIIPromptSentinel, 2, 1, true, "absent-token", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -643,6 +647,31 @@ func TestDeliverySubmitted(t *testing.T) {
 				t.Errorf("deliverySubmitted(%q, x=%d y=%d ok=%v) = %v, want %v", tc.capture, tc.cursorX, tc.cursorY, tc.cursorOK, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestDeliver_InputEmptied_VerifiesWin11Prompt pins #787's post-paste half
+// end-to-end. #799 made this render variant classify idle before paste; the
+// same profile variant must anchor the input-emptied verification after Enter.
+func TestDeliver_InputEmptied_VerifiesWin11Prompt(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	defer SetActivePaneProfile(prev)
+
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		if args[0] == "capture-pane" {
+			return []byte("submitted turn\n" + ASCIIPromptSentinel), nil
+		}
+		if args[0] == "display-message" {
+			return []byte("2/1"), nil
+		}
+		return nil, nil
+	})
+	if err := Deliver(context.Background(), DeliverParams{
+		Pane: "%11", Body: "x", VerifyToken: "id d5a7",
+	}); err != nil {
+		t.Fatalf("Win11 cleared input should verify with token absent: %v", err)
 	}
 }
 

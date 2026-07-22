@@ -859,8 +859,9 @@ func cutPromptSentinel(row, sentinel string) (rest string, found bool) {
 // that actually matched so the caller can compute ITS rune-width for the
 // cursor-column comparison (variants can differ in width from the primary).
 //
-// It is the ONLY consumer of PromptSentinelVariants. Variants (Claude's Win11
-// ASCII `> `, #729) are honored here — and deliberately NOWHERE cursor-less —
+// It is the shared consumer of PromptSentinelVariants for cursor-anchored
+// classification and post-paste verification. Variants (Claude's Win11 ASCII
+// `> `, #729/#787) are honored here — and deliberately NOWHERE cursor-less —
 // because a permissive glyph like `> ` is safe to treat as an input prompt only
 // when the cursor pins it to the live input row; the cursor-less scans
 // (isInputRowQuiet, extractInputContent) stay on the primary sentinel so a
@@ -913,15 +914,17 @@ func matchCursorRowSentinel(row, primary string, variants []string) (rest, match
 // outside the capture's range, or that row doesn't start with the sentinel.
 // The caller then falls back to the legacy token-match verify signal.
 func inputRowCleared(capture string, cursorX, cursorY int, cursorOK bool) (cleared, anchored bool) {
-	sentinel := activeProfile.PromptSentinel
-	if !cursorOK || sentinel == "" {
+	if !cursorOK || activeProfile.PromptSentinel == "" {
 		return false, false
 	}
 	lines := strings.Split(capture, "\n")
 	if cursorY < 0 || cursorY >= len(lines) {
 		return false, false
 	}
-	if _, ok := strings.CutPrefix(lines[cursorY], sentinel); !ok {
+	_, sentinel, ok := matchCursorRowSentinel(
+		lines[cursorY], activeProfile.PromptSentinel, activeProfile.PromptSentinelVariants,
+	)
+	if !ok {
 		return false, false
 	}
 	// Cursor at the sentinel column ⇒ empty input (ghost-text doesn't move
