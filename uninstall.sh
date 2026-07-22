@@ -228,14 +228,31 @@ for glob in "${UNIT_GLOBS[@]}"; do
 done
 
 # The central observer is shared by adapters, but its ExecStart points at the
-# adapter binary that installed it most recently. Remove it only when it points
-# at the binary being uninstalled; otherwise the sibling adapter still owns it.
+# adapter binary that installed it most recently. If that binary is being
+# removed while the sibling remains, repoint + restart instead of silently
+# dropping fleet observation for the surviving adapter.
 OBSERVER_UNIT="tmux-tell-mailman-observer.service"
 OBSERVER_PATH="$USER_SYSTEMD/$OBSERVER_UNIT"
 if [[ -f "$OBSERVER_PATH" ]] && grep -Fq "${PREFIX}/bin/${BIN_NAME} observe-mailmen" "$OBSERVER_PATH"; then
-    echo "==> stopping shared mailman observer (owned by $BIN_NAME)"
-    sysctl_user disable --now "$OBSERVER_UNIT" || true
-    rm -f "$OBSERVER_PATH"
+    if [[ "$ADAPTER" == "claude" ]]; then
+        SIBLING_BIN="tmux-tell-codex"
+    else
+        SIBLING_BIN="tmux-tell-claude"
+    fi
+    if [[ -x "${PREFIX}/bin/${SIBLING_BIN}" ]]; then
+        echo "==> repointing shared mailman observer to surviving $SIBLING_BIN"
+        OBSERVER_TMP=$(mktemp)
+        sed "s|${PREFIX}/bin/${BIN_NAME} observe-mailmen|${PREFIX}/bin/${SIBLING_BIN} observe-mailmen|" \
+            "$OBSERVER_PATH" > "$OBSERVER_TMP"
+        install -m 0644 "$OBSERVER_TMP" "$OBSERVER_PATH"
+        rm -f "$OBSERVER_TMP"
+        sysctl_user daemon-reload
+        sysctl_user restart "$OBSERVER_UNIT"
+    else
+        echo "==> stopping shared mailman observer (no sibling adapter remains)"
+        sysctl_user disable --now "$OBSERVER_UNIT" || true
+        rm -f "$OBSERVER_PATH"
+    fi
 fi
 
 # 2. Remove the systemd user template(s) + reload the manager so it forgets them.

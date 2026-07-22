@@ -88,4 +88,13 @@ func TestObserveMailmen_RestartLoopDeltaAlerts(t *testing.T) {
 	if got := len(deadMailmanNotices(t, s)); got != 1 {
 		t.Fatalf("notices=%d, want 1", got)
 	}
+	// The service can be active between crashes. A second +3 burst without
+	// two stable samples is the same restart-loop episode, not a new alert.
+	restarts = 7
+	if err := observeMailmenSweep(context.Background(), s, "bosun", episodes, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(deadMailmanNotices(t, s)); got != 1 {
+		t.Fatalf("same-episode notices=%d, want 1", got)
+	}
 }

@@ -23,6 +23,7 @@ type mailmanObservation struct {
 
 type mailmanEpisode struct {
 	inactiveSamples int
+	restartStable   int
 	lastRestarts    int
 	alerted         bool
 }
@@ -110,20 +111,34 @@ func observeMailmenSweep(ctx context.Context, s *store.Store, conductor string, 
 		}
 		reason := ""
 		if !obs.active {
+			ep.restartStable = 0
 			ep.inactiveSamples++
 			if ep.inactiveSamples >= 2 {
 				reason = fmt.Sprintf("unit inactive for %d consecutive sweeps (result=%s)", ep.inactiveSamples, obs.result)
 			}
 		} else {
+			wasInactive := ep.inactiveSamples > 0
 			ep.inactiveSamples = 0
-			if obs.restarts-ep.lastRestarts >= 3 {
+			restartDelta := obs.restarts - ep.lastRestarts
+			if wasInactive {
+				// An inactive episode has visibly recovered.
+				ep.alerted = false
+			}
+			if restartDelta == 0 {
+				ep.restartStable++
+				// A restart-loop episode recovers only after two stable samples;
+				// transient active windows between crashes must not re-arm alerts.
+				if ep.restartStable >= 2 {
+					ep.alerted = false
+				}
+			} else {
+				ep.restartStable = 0
+			}
+			if restartDelta >= 3 {
 				reason = fmt.Sprintf("restart loop: NRestarts increased from %d to %d", ep.lastRestarts, obs.restarts)
 			}
 		}
 		if reason == "" {
-			if obs.active {
-				ep.alerted = false
-			}
 			ep.lastRestarts = obs.restarts
 			continue
 		}
