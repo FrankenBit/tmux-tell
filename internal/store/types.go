@@ -268,6 +268,18 @@ type Agent struct {
 	// SetAutoRestart / register --auto-restart. Default false so merging never
 	// changes a live chamber's behavior until opt-in (mirrors RespawnAfterShrinks).
 	AutoRestart bool
+	// Provider is the adapter-declared upstream LLM provider (#448 concurrency
+	// cap); serve stamps it at mailman startup via SetProvider from the adapter
+	// Profile ("anthropic" for Claude, "openai" for Codex, "" for adapters that
+	// don't declare one). Additive: readers that don't care about provider
+	// ignore it. #827 uses it as the adapter-identity proxy for cross-adapter
+	// MCP profile routing — resolveAgentState maps Provider → PaneProfile so a
+	// tmux-tell.agent_state probe on a target agent whose adapter differs from
+	// the caller's binary classifies against the TARGET's sentinels/markers,
+	// not the caller's. An agent whose mailman never ran (or ran pre-#448)
+	// keeps the empty-string default; the classifier routing falls back to the
+	// caller's ActivePaneProfile (pre-#827 behavior).
+	Provider string
 }
 
 // Delivery-mode constants. Constrained string set; see Agent.DeliveryMode

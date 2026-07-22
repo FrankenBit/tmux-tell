@@ -471,6 +471,21 @@ compaction / awaiting-operator / status-line snippets. Claude's is `ClaudePanePr
 correctly and the observe-gate defers paste-and-enter while a Codex operator is typing —
 the read side of the substrate-vs-adapter pane-observation contract is adapter-uniform.
 
+**Per-target profile routing on cross-adapter probes (#827).** The `tmux-tell.agent_state`
+MCP tool (and the CLI `state --agent NAME` sibling) is the ONE reachable path where the
+target agent's adapter can differ from the caller's binary — every other pane-observation
+call site (mailman-owned) is same-adapter by construction. Without per-target routing, a
+Claude-adapter MCP subprocess probing a codex chamber searches a `› ` pane for the caller's
+`❯ ` NBSP sentinel, doesn't find it, and returns `state=unknown` ("prompt sentinel not
+found in any row") — a systematic false-negative for legitimate idle codex targets. The
+classifier now takes the target's PaneProfile explicitly via `tmuxio.AgentStateWithProfile`;
+`resolveAgentState` looks up the target's stored `provider` ("anthropic"/"openai") on the
+`agents` row and maps it to the matching `PaneProfile`. The process-global `activeProfile`
+still serves the mailman fast path (same-adapter, always) via the compat wrapper
+`tmuxio.AgentState`. Backward-compat: agents whose mailman has never stamped a provider
+(empty default) keep the pre-#827 fallback to the caller's `activeProfile`. See
+`internal/tmuxio/classifier.go` for the invariant and its two entry points.
+
 `PaneProfile.RateLimitPattern` is the #504 hook for future reactive rate-limit
 detection, and `PaneProfile.UsageLimitPattern` is the #540 hook for hard-stop
 usage-limit parking: both are matched in captured pane content after compaction

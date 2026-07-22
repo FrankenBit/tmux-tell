@@ -187,6 +187,156 @@ func TestMCP_AgentState_RequiresAgent(t *testing.T) {
 	}
 }
 
+// TestResolveAgentState_CrossAdapter_ClaudeCallerCodexTarget pins the #827
+// fix at the CLI-consumer surface: with the caller's process-global
+// activeProfile=Claude (the MCP subprocess's actual state when a Claude
+// chamber probes a codex chamber), resolveAgentState — via SetProvider("openai")
+// on the target agent — routes the classifier through CodexPaneProfile and
+// classifies the codex-shape pane as idle. Pre-#827 this returned unknown.
+//
+// This test exercises the full path: store.SetProvider stamps the adapter
+// identity, resolveAgentState reads Provider off the Agent row, and
+// paneProfileForProvider picks the matching PaneProfile. If any of those
+// three seams breaks, the assertion flips to state=unknown.
+func TestResolveAgentState_CrossAdapter_ClaudeCallerCodexTarget(t *testing.T) {
+	// Caller's binary is the Claude adapter.
+	prevProfile := tmuxio.ActivePaneProfile()
+	tmuxio.SetActivePaneProfile(tmuxio.ClaudePaneProfile())
+	t.Cleanup(func() { tmuxio.SetActivePaneProfile(prevProfile) })
+
+	// Codex-shape pane content — bottom-most `› ` with empty rest, plus
+	// scrollback that contains submitted-turn chrome (the codex `[Sender]`
+	// wrapping we walked over in #756 Bug 2).
+	installFakeAgentState(t,
+		"› [Alice] earlier turn text\n"+
+			"  more transcript\n"+
+			"› \n"+
+			"  gpt-5.5 default · /srv/codex/carpenter\n")
+
+	s := newCmdTestStore(t, "carpenter")
+	ctx := context.Background()
+	if err := s.SetProvider(ctx, "carpenter", "openai"); err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+
+	res, err := resolveAgentState(ctx, s, "carpenter")
+	if err != nil {
+		t.Fatalf("resolveAgentState: %v; state=%q evidence=%q",
+			err, res.State, res.Evidence.Reason)
+	}
+	if res.State != "idle" {
+		t.Errorf("state = %q, want idle (#827: Claude-adapter caller MUST route to CodexPaneProfile via Provider=openai); evidence=%q",
+			res.State, res.Evidence.Reason)
+	}
+}
+
+// TestResolveAgentState_CrossAdapter_CodexCallerClaudeTarget is the symmetric
+// case: codex-adapter caller probing a Claude chamber whose Provider=anthropic.
+func TestResolveAgentState_CrossAdapter_CodexCallerClaudeTarget(t *testing.T) {
+	prevProfile := tmuxio.ActivePaneProfile()
+	tmuxio.SetActivePaneProfile(tmuxio.CodexPaneProfile())
+	t.Cleanup(func() { tmuxio.SetActivePaneProfile(prevProfile) })
+
+	// Claude-shape pane content: bottom-most `❯ ` sentinel.
+	installFakeAgentState(t, "history\n❯ \n  status\n")
+
+	s := newCmdTestStore(t, "bosun")
+	ctx := context.Background()
+	if err := s.SetProvider(ctx, "bosun", "anthropic"); err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+
+	res, err := resolveAgentState(ctx, s, "bosun")
+	if err != nil {
+		t.Fatalf("resolveAgentState: %v; state=%q evidence=%q",
+			err, res.State, res.Evidence.Reason)
+	}
+	if res.State != "idle" {
+		t.Errorf("state = %q, want idle (#827: Codex-adapter caller MUST route to ClaudePaneProfile via Provider=anthropic); evidence=%q",
+			res.State, res.Evidence.Reason)
+	}
+}
+
+// TestResolveAgentState_CrossAdapter_EmptyProviderFallsBackToActive pins the
+// backward-compat path: an agent whose mailman has never stamped a provider
+// (Provider="", the default) is classified with the CALLER's activeProfile —
+// pre-#827 behavior. Additive fix: agents that pre-date provider tracking
+// still work; only cross-adapter probes with known target-provider benefit.
+func TestResolveAgentState_CrossAdapter_EmptyProviderFallsBackToActive(t *testing.T) {
+	prevProfile := tmuxio.ActivePaneProfile()
+	tmuxio.SetActivePaneProfile(tmuxio.ClaudePaneProfile())
+	t.Cleanup(func() { tmuxio.SetActivePaneProfile(prevProfile) })
+
+	// Claude-shape pane (matches the caller's activeProfile).
+	installFakeAgentState(t, "history\n❯ \n  status\n")
+
+	// bosun is registered with NO provider (never called SetProvider).
+	s := newCmdTestStore(t, "bosun")
+
+	res, err := resolveAgentState(context.Background(), s, "bosun")
+	if err != nil {
+		t.Fatalf("resolveAgentState: %v", err)
+	}
+	if res.State != "idle" {
+		t.Errorf("state = %q, want idle (empty Provider must fall back to activeProfile, pre-#827 behavior preserved); evidence=%q",
+			res.State, res.Evidence.Reason)
+	}
+}
+
+// TestResolveAgentState_CrossAdapter_MutationAnchor is the mutation anchor for
+// the routing wire-up. If a future edit accidentally reverts resolveAgentState
+// to call bare tmuxio.AgentState (ignoring Provider), a Claude-adapter caller
+// probing a codex-shape pane on a target with Provider="openai" flips back to
+// state=unknown here.
+//
+// The anchor is separate from the "correct routing produces idle" tests above
+// because a single positive test would silently pass under an inverted routing
+// (activeProfile happening to match the pane by coincidence). This test forces
+// the divergence: activeProfile=Claude, pane=codex, target-provider=openai —
+// three legs, only per-target routing satisfies all three.
+func TestResolveAgentState_CrossAdapter_MutationAnchor(t *testing.T) {
+	// Force divergence between caller and target.
+	prevProfile := tmuxio.ActivePaneProfile()
+	tmuxio.SetActivePaneProfile(tmuxio.ClaudePaneProfile())
+	t.Cleanup(func() { tmuxio.SetActivePaneProfile(prevProfile) })
+
+	// Codex-shape pane (bottom-most `› `, no `❯ ` anywhere).
+	installFakeAgentState(t, "history\n› \n  gpt-5.5 default\n")
+
+	s := newCmdTestStore(t, "carpenter")
+	ctx := context.Background()
+
+	// Bugged path: WITHOUT SetProvider, the fallback lands on Claude —
+	// which then false-negatives on a `› ` pane. This mirrors the pre-#827
+	// bug shape and guards against regressing the routing. StateUnknown is a
+	// nil-error classifier return, so the check is on State (not err).
+	res, err := resolveAgentState(ctx, s, "carpenter")
+	if err != nil {
+		t.Fatalf("resolveAgentState (fallback path): unexpected error %v", err)
+	}
+	if res.State != "unknown" {
+		t.Errorf("state = %q, want unknown (mutation anchor: without Provider, Claude activeProfile on codex pane MUST false-negative)", res.State)
+	}
+	if !strings.Contains(res.Evidence.Reason, "prompt sentinel not found in any row") {
+		t.Errorf("evidence.reason = %q, want the false-negative substring (mutation anchor: guards the classifier reason string)", res.Evidence.Reason)
+	}
+
+	// Fixed path: SetProvider("openai") + same fixture → idle. Proves the
+	// routing is what closes the gap (not e.g. a broader classifier tolerance
+	// silently accepting `› `).
+	if err := s.SetProvider(ctx, "carpenter", "openai"); err != nil {
+		t.Fatalf("SetProvider: %v", err)
+	}
+	res, err = resolveAgentState(ctx, s, "carpenter")
+	if err != nil {
+		t.Fatalf("resolveAgentState after SetProvider(openai): %v; state=%q evidence=%q",
+			err, res.State, res.Evidence.Reason)
+	}
+	if res.State != "idle" {
+		t.Errorf("state = %q, want idle (Provider=openai routing MUST classify codex pane correctly)", res.State)
+	}
+}
+
 // TestStateCLI_MailboxOnlyAgent_ShortCircuitsToIdle pins the #116
 // chrome short-circuit: a mailbox-only agent has no Claude TUI to
 // probe, so AgentState classification would always fall to Unknown.

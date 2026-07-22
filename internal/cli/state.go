@@ -94,7 +94,20 @@ func resolveAgentState(ctx context.Context, s *store.Store, agent string) (agent
 		res.CapturedAt = nowRFC3339()
 		return res, nil
 	}
-	state, ev, err := tmuxio.AgentState(ctx, a.PaneID)
+	// #827: route the classifier profile per TARGET agent, not from the
+	// caller's binary. The MCP tool tmux-tell.agent_state (and the CLI
+	// `state --agent NAME` sibling) is the only reachable path where the
+	// target's adapter can differ from the caller's — every other
+	// AgentState call site is a mailman-owned same-adapter probe. Without
+	// per-target routing, a Claude-adapter caller probing a codex chamber
+	// searches for `❯ ` (NBSP) in a `› ` pane and false-negatives
+	// StateUnknown; symmetric for the reverse direction. Provider from the
+	// agents table is the adapter-identity proxy (SetProvider at mailman
+	// start stamps "anthropic"/"openai"/""). Empty falls back to the
+	// caller's ActivePaneProfile — pre-#827 behavior — so agents whose
+	// mailman never ran are still probed with the historical semantics.
+	profile := paneProfileForProvider(a.Provider)
+	state, ev, err := tmuxio.AgentStateWithProfile(ctx, a.PaneID, profile)
 	res.State = state.String()
 	res.Evidence = ev
 	res.CapturedAt = nowRFC3339()
@@ -102,6 +115,27 @@ func resolveAgentState(ctx context.Context, s *store.Store, agent string) (agent
 		return res, fmt.Errorf("agent_state: %w", err)
 	}
 	return res, nil
+}
+
+// paneProfileForProvider maps an agent's stored provider string to the
+// PaneProfile whose sentinels/markers describe that adapter's TUI (#827).
+// Empty provider → the caller's ActivePaneProfile (pre-#827 behavior), so
+// this is additive: agents whose mailman has never stamped a provider are
+// classified exactly as before.
+//
+// Kept close to resolveAgentState (the only caller today) so the mapping
+// stays visible next to the routing decision. When a third adapter lands,
+// extend here; if the number of adapters grows beyond a handful, consider
+// promoting to a provider→profile registry the adapter Profile owns.
+func paneProfileForProvider(p string) tmuxio.PaneProfile {
+	switch p {
+	case "openai":
+		return tmuxio.CodexPaneProfile()
+	case "anthropic":
+		return tmuxio.ClaudePaneProfile()
+	default:
+		return tmuxio.ActivePaneProfile()
+	}
 }
 
 // nowRFC3339 returns the current UTC time in RFC3339 format. Wrapped
