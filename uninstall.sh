@@ -244,7 +244,11 @@ if [[ -f "$OBSERVER_PATH" ]] && grep -Fq "${PREFIX}/bin/${BIN_NAME} observe-mail
         OBSERVER_TMP=$(mktemp)
         sed "s|${PREFIX}/bin/${BIN_NAME} observe-mailmen|${PREFIX}/bin/${SIBLING_BIN} observe-mailmen|" \
             "$OBSERVER_PATH" > "$OBSERVER_TMP"
-        install -m 0644 "$OBSERVER_TMP" "$OBSERVER_PATH"
+        if [[ "$SYSTEM" -eq 1 ]]; then
+            install -o "$OPERATOR_USER" -g "$OPERATOR_USER" -m 0644 "$OBSERVER_TMP" "$OBSERVER_PATH"
+        else
+            install -m 0644 "$OBSERVER_TMP" "$OBSERVER_PATH"
+        fi
         rm -f "$OBSERVER_TMP"
         sysctl_user daemon-reload
         sysctl_user restart "$OBSERVER_UNIT"

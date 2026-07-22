@@ -97,4 +97,52 @@ func TestObserveMailmen_RestartLoopDeltaAlerts(t *testing.T) {
 	if got := len(deadMailmanNotices(t, s)); got != 1 {
 		t.Fatalf("same-episode notices=%d, want 1", got)
 	}
+	// Two stable observations end the episode; a later +3 burst re-arms.
+	for range 2 {
+		if err := observeMailmenSweep(context.Background(), s, "bosun", episodes, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	restarts = 10
+	if err := observeMailmenSweep(context.Background(), s, "bosun", episodes, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(deadMailmanNotices(t, s)); got != 2 {
+		t.Fatalf("re-armed notices=%d, want 2", got)
+	}
+}
+
+func TestObserveMailmen_DeadRecoveryRearms(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bosun")
+	if err := s.SetDeliveryMode(context.Background(), "bosun", store.DeliveryModeMailboxOnly); err != nil {
+		t.Fatal(err)
+	}
+	active := false
+	restore := setSystemctlRunner(func(context.Context, ...string) ([]byte, error) {
+		state := "failed"
+		if active {
+			state = "active"
+		}
+		return []byte(fmt.Sprintf("ActiveState=%s\nUnitFileState=enabled\nNRestarts=1\nResult=oom-kill\n", state)), nil
+	})
+	t.Cleanup(func() { setSystemctlRunner(restore) })
+	episodes := map[string]*mailmanEpisode{}
+	for range 2 {
+		if err := observeMailmenSweep(context.Background(), s, "bosun", episodes, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	active = true
+	if err := observeMailmenSweep(context.Background(), s, "bosun", episodes, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	active = false
+	for range 2 {
+		if err := observeMailmenSweep(context.Background(), s, "bosun", episodes, &bytes.Buffer{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := len(deadMailmanNotices(t, s)); got != 2 {
+		t.Fatalf("re-armed dead notices=%d, want 2", got)
+	}
 }
