@@ -83,6 +83,7 @@ type Metrics struct {
 	rateLimitResumeTotal       *prometheus.CounterVec
 	copymodeDefer              *prometheus.CounterVec
 	copymodeDeferWait          *prometheus.HistogramVec
+	reapedTotal                *prometheus.CounterVec
 }
 
 // New builds the collector set, registers it against a fresh private
@@ -132,6 +133,10 @@ func New() *Metrics {
 			Name: "tmux_tell_mailman_stuck",
 			Help: "1 when the mailman is parked in the #291 stuck state (stopped probing tmux), 0 when clear. Labels: agent name and stuck reason (pane-not-found).",
 		}, []string{"agent", "reason"}),
+		reapedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "tmux_tell_reaped_total",
+			Help: "Total undeliverable queued fossils dead-lettered by the observer's auto-reap sweep (#726/#836), by reason. A fossil is a queued row addressed to an unreachable recipient (unregistered or pane-less) that no mailman will ever claim; the reap transitions it to failed to unwedge the recipient/sender cap (which counts only queued). Reason is low-cardinality (currently recipient-unreachable).",
+		}, []string{"reason"}),
 		providerDefer: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tmux_tell_provider_defer_total",
 			Help: "Total deliveries deferred by the #448 per-provider concurrency cap (too many same-provider chambers working), by provider.",
@@ -195,6 +200,7 @@ func New() *Metrics {
 		m.rateLimitResumeTotal,
 		m.copymodeDefer,
 		m.copymodeDeferWait,
+		m.reapedTotal,
 	)
 	return m
 }
@@ -407,6 +413,17 @@ func (m *Metrics) IncPasteUnsafeAbort(agent, reason string) {
 		return
 	}
 	m.pasteUnsafeAborts.WithLabelValues(agent, reason).Inc()
+}
+
+// AddReaped records n undeliverable queued fossils dead-lettered by the observer
+// auto-reap sweep (#836), labelled by reason. Nil-safe (no-op when metrics are
+// disabled) and a no-op for n <= 0, so a zero-reap sweep never touches the
+// series — the counter only moves when a fossil is actually reaped.
+func (m *Metrics) AddReaped(reason string, n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	m.reapedTotal.WithLabelValues(reason).Add(float64(n))
 }
 
 // IncDeliveryRefusedLiveness bumps the #761 delivery-path liveness-refusal

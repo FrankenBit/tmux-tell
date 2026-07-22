@@ -269,6 +269,28 @@ type Block struct {
 	// the check entirely — zero behavior change for existing deploys. Resolves
 	// through ResolveDuration (per-agent > defaults > compiled default).
 	DedupeWindow *time.Duration `toml:"dedupe-window"`
+	// AutoReapEnabled opts the fleet observer into the #836 auto-reap sweep:
+	// it periodically dead-letters undeliverable queued fossils (queued rows
+	// addressed to an unreachable recipient — unregistered or pane-less) across
+	// all chambers. Default false — the reap is destructive-adjacent, so it
+	// fires automatically only on explicit opt-in. A [defaults] key (the
+	// observer is a single fleet process, not a per-agent mailman). Resolves
+	// through ResolveBool.
+	AutoReapEnabled *bool `toml:"auto-reap-enabled"`
+	// AutoReapInterval is the observer auto-reap cadence (#836). Default 6h.
+	// Resolves through ResolveDuration.
+	AutoReapInterval *time.Duration `toml:"auto-reap-interval"`
+	// AutoReapOlderThan is the fossil-age threshold for the auto-reap (#836): a
+	// queued row must be older than this window (parseWindow syntax, e.g. "7d")
+	// to be reaped. Default "7d" — matches the phase-1 `reap` verb. Resolves
+	// through ResolveString.
+	AutoReapOlderThan *string `toml:"auto-reap-older-than"`
+	// ObserverMetricsAddr is the bind address for the fleet observer's
+	// Prometheus /metrics endpoint (#836) — where tmux_tell_reaped_total is
+	// exposed. Empty (default) disables the endpoint. Distinct from the
+	// per-agent metrics-addr so the single observer process never collides with
+	// a per-mailman endpoint. Resolves through ResolveString.
+	ObserverMetricsAddr *string `toml:"observer-metrics-addr"`
 }
 
 // Load reads the config from the path resolved by:
@@ -442,6 +464,8 @@ func blockBoolField(b *Block, field string) *bool {
 		return b.WorkingDeliverImmediately
 	case "pre-paste-safety-disabled":
 		return b.PrePasteSafetyDisabled
+	case "auto-reap-enabled":
+		return b.AutoReapEnabled
 	}
 	return nil
 }
@@ -473,6 +497,8 @@ func blockDurField(b *Block, field string) *time.Duration {
 		return b.RetentionSweepInterval
 	case "dedupe-window":
 		return b.DedupeWindow
+	case "auto-reap-interval":
+		return b.AutoReapInterval
 	}
 	return nil
 }
@@ -514,6 +540,10 @@ func blockStringField(b *Block, field string) *string {
 		return b.CodexSessionRestartCommand
 	case "retention":
 		return b.Retention
+	case "auto-reap-older-than":
+		return b.AutoReapOlderThan
+	case "observer-metrics-addr":
+		return b.ObserverMetricsAddr
 	}
 	return nil
 }
@@ -686,6 +716,15 @@ const DefaultRetentionSweepInterval = time.Hour
 // recipient-side delivery dedupe (#157 PR2). 60 seconds covers any reasonable
 // resend-after-unverified cycle. Set dedupe-window = "0s" in TOML to disable.
 const DefaultDedupeWindow = 60 * time.Second
+
+// DefaultAutoReapInterval is the fallback cadence for the observer auto-reap
+// sweep (#836). 6h is well below any reasonable fossil-age threshold, so a
+// fossil is reaped within one interval of crossing the age bound.
+const DefaultAutoReapInterval = 6 * time.Hour
+
+// DefaultAutoReapOlderThan is the fallback fossil-age threshold for the
+// observer auto-reap (#836) — matches the phase-1 `reap` verb default.
+const DefaultAutoReapOlderThan = "7d"
 
 // resolvePrivilegedAgents returns a copy of the file's privileged-agents
 // list (or nil if the file is nil/empty). The defensive copy prevents
