@@ -33,9 +33,42 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.34.0] — 2026-07-22
+
+### Added
+
+Added a `reap` verb that dead-letters undeliverable queued fossils — queued messages addressed to an unreachable recipient (one that is unregistered, or registered without a live pane) that no mailman will ever claim, so they sit `queued` forever and, because the per-recipient/per-sender caps count only `queued` rows, silently wedge a channel once enough accumulate. `reap` transitions these fossils to `failed` with a dead-letter reason (audit-preserving, not a delete), which immediately frees the wedged cap slot. It requires exactly one of `--dry-run` (preview the exact matched set) or `--confirm`, takes `--older-than` (default 7d) and an optional `--agent` scope, and — critically — is scoped by recipient *liveness*, never by age or backlog-fence alone: a recipient that holds a live-pane registration (e.g. an intentional not-yet-live placeholder awaiting first delivery) is never reaped, so its queued mail is safe.
+
+Added an opt-in observer-hosted auto-reap sweep — phase 2 of the undeliverable-fossil work (#836, sibling to the #726 phase-1 `reap` verb). When `auto-reap-enabled = true` in `[defaults]`, the fleet mailman observer periodically dead-letters undeliverable queued fossils across *all* chambers, using the same recipient-liveness predicate as the manual `reap` verb — so a recipient holding a live pane (an intentional not-yet-live placeholder) is never touched. It is **off by default** (the reap is destructive-adjacent, so it fires automatically only on explicit opt-in) and tunable via `auto-reap-interval` (default 6h) and `auto-reap-older-than` (default 7d). The observer now also exposes a Prometheus `/metrics` endpoint when `observer-metrics-addr` is set, publishing a `tmux_tell_reaped_total{reason=...}` counter so the reap is observable. The observer runs whenever *either* alerting or auto-reap is enabled — the two jobs are independent, so auto-reap works even without a configured `mailman-alert-to`.
+
+### Changed
+
+None.
+
+### Deprecated
+
+None.
+
+### Removed
+
+None.
+
 ### Fixed
 
 Fixed the cursor-less pane-state classifier fallback returning `unknown` on healthy codex chambers with rendered turns in scrollback. Codex paints every submitted turn with its `› ` sentinel prefix (`› [Sender · ts] message`), so a chamber with any conversation history routinely carries multiple sentinel rows. The fallback disqualified the whole pane the moment any sentinel row had content past it, and the mailman's pre-paste safety gate then refused delivery in a loop. The fallback now anchors on the bottom-most sentinel row — the composer — so transcript rows above no longer poison the classification. Claude's chrome doesn't repeat the sentinel, so Claude panes are unaffected. Bug 2 of #756; Bug 1 (agent_state MCP cross-adapter false-negative) is tracked separately as #827.
+
+Fix Codex deliveries whose literal paste reached the composer but whose initial Enter was consumed: verification now retries Enter when the delivery's own token remains in the live input.
+
+Fix `tmux-tell.agent_state` MCP tool (and the CLI `state --agent NAME` sibling) false-negativing on cross-adapter probes: a Claude-adapter binary probing a codex chamber previously classified as `unknown` because it searched for the caller's `❯ ` sentinel in a `› ` pane. The classifier now routes the pane-observation profile per TARGET agent via the stored `provider` column, so probes across adapter boundaries classify against the target's sentinels/markers. Additive: agents without a stamped provider fall back to the caller's active profile — pre-fix behavior preserved.
+
+Fixed `install.sh` leaving the fleet-wide mailman observer (`tmux-tell-mailman-observer.service`, #808) running the pre-install binary after a redeploy. The install step only ran `systemctl --user enable --now` on the observer, which is a no-op on an already-running unit, so the observer kept executing the deleted pre-install inode while every mailman was restarted onto the fresh binary. The stale observer then tripped the doctor's real-divergence check (exit 69, mailman-stale class) and hard-failed the release deploy chain until it was manually restarted — as happened on the v0.33.1 deploy. `install.sh` now `enable`s **and** `restart`s the observer on every install, mirroring the explicit-restart contract the mailmen already get from `restart-mailmen` (#436); the restart is fatal by default (and demoted to a warning under `--allow-stale-mailmen`, symmetric with the mailman path), so a failed observer restart fails the deploy loudly rather than greening a stale-binary state.
+
+Frame paste-and-Enter deliveries as bracketed paste with linefeeds preserved, preventing an embedded message newline from submitting the head while leaving the tail buffered.
+
+- **state**: #756 Bug 2 — codex chrome poisons cursor-less fallback
+- **delivery**: frame multiline paste atomically
+- **install**: restart the mailman observer on redeploy so it picks up the fresh binary
+- **codex**: resubmit stranded literal paste
 
 ## [0.33.1] — 2026-07-22
 
