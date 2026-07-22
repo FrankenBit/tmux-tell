@@ -463,15 +463,7 @@ func runPingCLI(args []string, stdout, stderr io.Writer) int {
 
 	s, err := store.Open(resolveDBPath(*dbPath))
 	if err != nil {
-		msg := fmt.Sprintf("open store: %v", err)
-		if strings.Contains(err.Error(), "readonly database") {
-			msg = "ping requires write access to the bus database, but the store is read-only " +
-				"(likely cause: sandbox FS scope excludes writes to the shared bus DB). " +
-				"Remedies: (1) use the tmux-tell.ping MCP tool — the persistent MCP process " +
-				"runs outside the sandbox and has write access; " +
-				"(2) run ping outside the sandbox with a direct path to the writable bus DB (--db <path>)."
-		}
-		return writeJSONError(stdout, stderr, msg, exitInternal)
+		return writeJSONError(stdout, stderr, pingSandboxMsg(err), exitInternal)
 	}
 	defer func() { _ = s.Close() }()
 
@@ -552,6 +544,23 @@ func renderPingResult(stdout io.Writer, res pingResult, format string) {
 // parked mailman won't self-heal on a retry. backlog_draining and
 // blocked_delivery stay exitTempFail (now via class=pending); pane_dead stays
 // exitUnavailable (now via class=unreachable).
+// pingSandboxMsg returns a sandbox-aware open-store error message. When the
+// error contains "readonly database" (SQLite READONLY family — the shape a
+// sandbox FS scope produces when it grants read on the DB file but denies the
+// WAL write), the message names the sandbox as the likely cause and surfaces
+// both remediation options. All other open errors are wrapped with the plain
+// "open store: <err>" prefix so callers can still read the underlying cause.
+func pingSandboxMsg(err error) string {
+	if strings.Contains(err.Error(), "readonly database") {
+		return "ping requires write access to the bus database, but the store is read-only " +
+			"(likely cause: sandbox FS scope excludes writes to the shared bus DB). " +
+			"Remedies: (1) use the tmux-tell.ping MCP tool — the persistent MCP process " +
+			"runs outside the sandbox and has write access; " +
+			"(2) run ping outside the sandbox with a direct path to the writable bus DB (--db <path>)."
+	}
+	return fmt.Sprintf("open store: %v", err)
+}
+
 func pingExitCode(res pingResult) int {
 	switch res.Class {
 	case classReachable:

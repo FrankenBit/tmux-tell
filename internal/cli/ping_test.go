@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -295,63 +296,84 @@ func TestPingExitCode_ReasonChain(t *testing.T) {
 	}
 }
 
-// TestPingCLI_SandboxDiagnostic covers #809: when store.Open fails with a
-// readonly-database error (the sandbox FS scope shape), the output must name
-// sandbox as the likely cause and surface both remediation options. Non-sandbox
-// failures (missing parent directory) must preserve their original error text.
-func TestPingCLI_SandboxDiagnostic(t *testing.T) {
-	t.Run("readonly db produces sandbox diagnostic", func(t *testing.T) {
-		// Seed a real on-disk DB, then make it unwritable so store.Open hits
-		// "readonly database" when it tries to set WAL mode.
-		dir := t.TempDir()
-		dbPath := filepath.Join(dir, "messages.db")
-		seed, err := store.Open(dbPath)
-		if err != nil {
-			t.Fatalf("seed: %v", err)
-		}
-		_ = seed.Close()
-		if err := os.Chmod(dbPath, 0o444); err != nil {
-			t.Fatalf("chmod: %v", err)
-		}
-		t.Cleanup(func() { _ = os.Chmod(dbPath, 0o644) })
-
-		var stdout, stderr bytes.Buffer
-		exit := runPingCLI([]string{"--db", dbPath, "anyagent"}, &stdout, &stderr)
-		if exit == 0 {
-			t.Fatal("exit=0, want non-zero for readonly store")
-		}
-		out := stdout.String() + stderr.String()
+// TestPingSandboxMsg covers #809 via the pure helper — root-independent because
+// it injects fabricated errors rather than relying on filesystem chmod tricks
+// that CAP_DAC_OVERRIDE bypasses under CI's uid=0 runner.
+func TestPingSandboxMsg(t *testing.T) {
+	t.Run("readonly database error produces sandbox diagnostic", func(t *testing.T) {
+		// Fabricate the exact error shape SQLite emits under sandbox FS scope
+		// (SQLITE_READONLY family; PRAGMA journal_mode = WAL denied).
+		err := errors.New("store: PRAGMA journal_mode = WAL: attempt to write a readonly database (1544)")
+		msg := pingSandboxMsg(err)
 		for _, want := range []string{"sandbox", "tmux-tell.ping", "write access"} {
-			if !strings.Contains(out, want) {
-				t.Errorf("output missing %q:\n%s", want, out)
+			if !strings.Contains(msg, want) {
+				t.Errorf("message missing %q:\n%s", want, msg)
 			}
 		}
-	})
-
-	t.Run("non-sandbox failure preserves original error", func(t *testing.T) {
-		// chmod-000 directory → store.Open fails with EACCES (permission
-		// denied), not "readonly database"; the sandbox diagnostic must NOT
-		// be emitted and the original error prefix must be preserved.
-		dir := t.TempDir()
-		dbPath := filepath.Join(dir, "messages.db")
-		if err := os.Chmod(dir, 0o000); err != nil {
-			t.Fatalf("chmod dir: %v", err)
-		}
-		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
-
-		var stdout, stderr bytes.Buffer
-		exit := runPingCLI([]string{"--db", dbPath, "anyagent"}, &stdout, &stderr)
-		if exit == 0 {
-			t.Fatal("exit=0, want non-zero for inaccessible db")
-		}
-		out := stdout.String() + stderr.String()
-		if strings.Contains(out, "sandbox") {
-			t.Errorf("sandbox diagnostic emitted for non-sandbox error:\n%s", out)
-		}
-		if !strings.Contains(out, "open store") {
-			t.Errorf("original error prefix missing:\n%s", out)
+		// Must NOT include the plain prefix (that is the non-sandbox path).
+		if strings.Contains(msg, "open store:") {
+			t.Errorf("sandbox message double-wrapped with 'open store:' prefix:\n%s", msg)
 		}
 	})
+
+	t.Run("non-readonly error preserves original text", func(t *testing.T) {
+		// EACCES or any other non-readonly open failure must pass through unchanged.
+		err := errors.New("open /path/to/db: permission denied")
+		msg := pingSandboxMsg(err)
+		if strings.Contains(msg, "sandbox") {
+			t.Errorf("sandbox diagnostic emitted for non-readonly error:\n%s", msg)
+		}
+		if !strings.Contains(msg, "open store:") {
+			t.Errorf("original prefix missing:\n%s", msg)
+		}
+		if !strings.Contains(msg, "permission denied") {
+			t.Errorf("original error text missing:\n%s", msg)
+		}
+	})
+
+	t.Run("migration readonly error also triggers diagnostic", func(t *testing.T) {
+		// A DB that opens but fails a migration write produces error code 8
+		// (vs 1544 for the WAL pragma); the helper must catch both.
+		err := errors.New(`store: migrate "ALTER TABLE ...": attempt to write a readonly database (8)`)
+		msg := pingSandboxMsg(err)
+		if !strings.Contains(msg, "sandbox") {
+			t.Errorf("sandbox diagnostic missing for migration readonly error:\n%s", msg)
+		}
+	})
+}
+
+// TestPingCLI_SandboxIntegration is a filesystem-level integration check for
+// #809. Skipped under uid=0 because CAP_DAC_OVERRIDE writes through 0444 —
+// the filesystem signal is absent for root, so the test cannot exercise the
+// path it exists to verify. The pure-helper tests above cover the detection
+// logic unconditionally.
+func TestPingCLI_SandboxIntegration(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("uid=0: CAP_DAC_OVERRIDE bypasses 0444 — filesystem signal absent")
+	}
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "messages.db")
+	seed, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	_ = seed.Close()
+	if err := os.Chmod(dbPath, 0o444); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dbPath, 0o644) })
+
+	var stdout, stderr bytes.Buffer
+	exit := runPingCLI([]string{"--db", dbPath, "anyagent"}, &stdout, &stderr)
+	if exit == 0 {
+		t.Fatal("exit=0, want non-zero for readonly store")
+	}
+	out := stdout.String() + stderr.String()
+	for _, want := range []string{"sandbox", "tmux-tell.ping", "write access"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
 }
 
 func TestRenderPingResult(t *testing.T) {
