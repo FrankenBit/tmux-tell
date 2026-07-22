@@ -45,9 +45,9 @@ None.
 
 ### Fixed
 
-Fixed the pane-state classifier misreading an open arrow-navigation selection modal — such as Claude Code's `/mcp` server picker — as an `unknown` state instead of a recognized operator-hold. The awaiting-operator detection keyed on the AskUserQuestion popup's exact footer (`↑/↓ to navigate · Esc to cancel`), but pickers that insert a confirm hint (`↑/↓ to navigate · Enter to confirm · Esc to cancel`) didn't match, so the modal fell through every branch to `unknown` (live-verified against a real `/mcp` picker). The marker now keys on the navigation-hint core (`↑/↓ to navigate ·`) shared by every arrow-navigation picker, so these modals classify as `awaiting-operator` — a precise, self-resolving hold — rather than polluting the catch-all `unknown` bucket. Delivery was already deferred in both cases (both states are paste-unsafe), so this sharpens the classification signal without changing paste-safety. Restart-mode modals, which carry no arrow-navigation chrome, are a separate sub-shape still tracked in #719.
+Fixed the pane-state classifier reading an open arrow-navigation picker — such as Claude Code's `/mcp` list — as `unknown` rather than a recognized operator-hold. The awaiting-operator marker matched the AskUserQuestion popup's full footer, but pickers that add an `Enter to confirm` hint fell through to `unknown`. The marker now keys on the navigation-hint core (`↑/↓ to navigate ·`) shared by every arrow-navigation picker. Both states were already paste-unsafe, so this is a precision gain, not a paste-safety change. Restart-mode modals carry no arrow chrome and remain a separate sub-shape tracked in #719.
 
-Fixed post-paste verification on Win11-rendered Claude panes. The cursor-anchored input-cleared check now recognizes the same `>` plus non-breaking-space prompt variant as the pre-paste classifier, preventing false `delivered_in_input_box` outcomes when Claude consumes a message without visibly echoing its verify token.
+Fixed post-paste verification on Win11-rendered Claude panes. The cursor-anchored input-cleared check now recognizes the same `>` plus non-breaking-space prompt variant as the pre-paste classifier. That prevents false `delivered_in_input_box` outcomes when Claude consumes a message without visibly echoing its verify token.
 
 ### Removed
 
