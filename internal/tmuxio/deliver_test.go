@@ -84,7 +84,7 @@ func TestDeliver_HappyPath_PastesAndVerifies(t *testing.T) {
 	}
 	// Expect: load-buffer, paste-buffer (-d cleans up the buffer on success,
 	// so no separate delete-buffer call), send-keys, capture-pane. A single
-	// unframed Body pastes as one chunk via pasteChunk (#336).
+	// atomically framed Body pastes as one chunk via pasteChunk (#336/#831).
 	wantCmds := []string{"load-buffer", "paste-buffer", "send-keys", "capture-pane"}
 	if len(*calls) < len(wantCmds) {
 		t.Fatalf("got %d calls, want at least %d: %v", len(*calls), len(wantCmds), *calls)
@@ -98,13 +98,55 @@ func TestDeliver_HappyPath_PastesAndVerifies(t *testing.T) {
 	if (*calls)[0].stdin != "rendered body with id 7f3a marker" {
 		t.Errorf("load-buffer stdin = %q", (*calls)[0].stdin)
 	}
-	// paste-buffer should target the right pane and use -d for buffer cleanup.
+	// paste-buffer should target the right pane, preserve body bytes inside one
+	// bracketed-paste frame, and use -d for buffer cleanup (#831).
 	pasteArgs := (*calls)[1].args
 	if !contains(pasteArgs, "-t") || !contains(pasteArgs, "%3") {
 		t.Errorf("paste-buffer not targeting %%3: %v", pasteArgs)
 	}
 	if !contains(pasteArgs, "-d") {
 		t.Errorf("paste-buffer missing -d: %v", pasteArgs)
+	}
+	for _, flag := range []string{"-p", "-r"} {
+		if !contains(pasteArgs, flag) {
+			t.Errorf("paste-buffer missing atomic-paste flag %s: %v", flag, pasteArgs)
+		}
+	}
+}
+
+// TestDeliver_MultilineBodyUsesAtomicPasteFrame is #831's byte invariant at
+// the substrate/TUI boundary. The exact body bytes enter tmux once, -r forbids
+// LF→CR conversion, and -p asks tmux to enclose them in the application's
+// bracketed-paste frame. The explicit Enter therefore follows the end marker;
+// no newline inside the body can be interpreted as an early submit.
+func TestDeliver_MultilineBodyUsesAtomicPasteFrame(t *testing.T) {
+	shortRetries(t)
+	body := "head id d5a7\n\nbody line\ntail sentence"
+	calls := withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		if args[0] == "capture-pane" {
+			return []byte("submitted id d5a7\n" + PromptSentinel), nil
+		}
+		if args[0] == "display-message" {
+			return []byte("2/1"), nil
+		}
+		return nil, nil
+	})
+	if err := Deliver(context.Background(), DeliverParams{
+		Pane: "%11", Body: body, VerifyToken: "id d5a7", PrePasteRaceCheckDisabled: true,
+	}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if len(*calls) < 3 {
+		t.Fatalf("calls = %v, want load-buffer, paste-buffer, Enter", *calls)
+	}
+	if got := (*calls)[0].stdin; got != body || len(got) != len(body) {
+		t.Fatalf("load-buffer bytes = %d %q, want %d exact body bytes", len(got), got, len(body))
+	}
+	if got := (*calls)[1].args; !contains(got, "-p") || !contains(got, "-r") {
+		t.Fatalf("paste-buffer args = %v, want -p -r atomic frame", got)
+	}
+	if got := (*calls)[2].args; got[0] != "send-keys" || !contains(got, "Enter") {
+		t.Fatalf("call after atomic paste = %v, want explicit Enter", got)
 	}
 }
 

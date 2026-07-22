@@ -68,8 +68,14 @@ If you're a standard paste-and-enter session, the thing to understand is the
 [**observe-gate**](observe-gate.md) — because it's watching *you*. The mailman
 doesn't fire the instant a message arrives; it reads your pane state first and
 **holds while you're mid-thought**, dropping a single 📫 in your input row as a
-"something's queued" signal, then delivers the moment you go quiescent. Two
-consequences you'll actually meet:
+"something's queued" signal, then delivers the moment you go quiescent.
+
+The delivery itself has a partial-delivery safety property: tmux sends the
+whole message as one bracketed-paste frame with linefeeds preserved, then sends
+the single submit Enter only after that frame. Embedded message newlines are
+paste content, never early submit keys (#831).
+
+Two consequences you'll actually meet:
 
 - A 📫 with no message yet means *held, not lost* — finish your thought; it lands
   when you pause.

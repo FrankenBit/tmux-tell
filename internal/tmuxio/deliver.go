@@ -558,7 +558,13 @@ func SendKeys(ctx context.Context, pane, text string) error {
 }
 
 // pasteChunk loads content into a unique named buffer and pastes it into the
-// pane, deleting the buffer on success via paste-buffer -d (and explicitly
+// pane as one bracketed-paste frame. -p emits the begin/end control codes when
+// the target application requested bracketed-paste mode; -r preserves LF bytes
+// instead of tmux's default LF→CR conversion. Together they make embedded
+// message newlines paste data rather than Enter-like submit keys, so only the
+// explicit send-keys Enter after this command can commit the turn (#831).
+//
+// The buffer is deleted on success via paste-buffer -d (and explicitly
 // on paste failure, where -d never ran). A unique buffer per chunk lets
 // concurrent mailmen never race the default buffer, and lets the #336 framed
 // delivery paste Header / Body / Footer as separate accumulating pastes into
@@ -571,7 +577,7 @@ func pasteChunk(ctx context.Context, pane, content string) error {
 		return fmt.Errorf("tmuxio: load-buffer: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	if out, err := tmuxRun(ctx, nil,
-		"paste-buffer", "-b", bufName, "-t", pane, "-d"); err != nil {
+		"paste-buffer", "-p", "-r", "-b", bufName, "-t", pane, "-d"); err != nil {
 		_, _ = tmuxRun(ctx, nil, "delete-buffer", "-b", bufName)
 		return fmt.Errorf("tmuxio: paste-buffer: %w: %s", err, strings.TrimSpace(string(out)))
 	}
