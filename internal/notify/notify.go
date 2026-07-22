@@ -201,9 +201,23 @@ func (w *Watcher) loop() {
 }
 
 // fan delivers a coalesced wake to every subscriber on key.
+//
+// Snapshot semantics (#817): the subscriber slice is DEEP-COPIED under the
+// mutex, not merely aliased. `subs := w.subs[key]` copies the slice HEADER
+// but shares the BACKING ARRAY with any concurrent writer — and Watch's
+// cleanup goroutine at :245 mutates the backing array in place via
+// `append(subs[:i], subs[i+1:]...)` (which shifts elements left within the
+// same cap, no reallocation). Fan iterating the shared backing array while
+// cleanup shifts through it was the race the -race gate reproduces
+// (~1-in-3 on the flagged TestMultipleSubscribersSameKey).
+//
+// The deep-copy allocates once per fire (typically 1-3 subscribers per key)
+// and gives fan an IMMUTABLE snapshot that can't be mutated by concurrent
+// register/unregister. Keeps the send loop lock-free — a slow consumer
+// can't block a Watch or a Close.
 func (w *Watcher) fan(key string) {
 	w.mu.Lock()
-	subs := w.subs[key]
+	subs := append([]chan struct{}(nil), w.subs[key]...)
 	w.mu.Unlock()
 	for _, ch := range subs {
 		select {
