@@ -374,21 +374,30 @@ func SetAgentStateTemporalDeltaForTest(d time.Duration) time.Duration {
 //     real pane sample (#504). This runs before Working because a rate-limit
 //     pane may animate a countdown; it runs after compaction and usage-limit
 //     because those are more specific local TUI modes.
+//     The cursor is queried once (via display-message) at this point, and
+//     its row/column feed both 5a and 6 below.
+//     5a. **Operator-drafting wins over frame-change** (#332): if the cursor
+//     sits STRICTLY past the sentinel on the input row, the operator is
+//     mid-typing → StateAwaitingOperator, BEFORE the frame-change check.
+//     A drafting operator repaints the input row each keystroke (capA !=
+//     capB), but Claude's busy states (streaming/spinner) keep the cursor
+//     AT the sentinel (measured 156/156), so past-sentinel is unambiguous
+//     drafting and must not be swallowed by 5's StateWorking (else the
+//     mailman pastes into the half-typed draft — the witnessed clobber).
 //  5. If capture A != capture B → StateWorking. Any substantive change
-//     across the temporal-delta window means the agent is painting.
-//  6. **Cursor-position-aware input-row classification** (the v2 gap-fix):
-//     query the cursor position via display-message; identify the row
-//     the cursor sits on; if that row starts with PromptSentinel:
-//     - Cursor at sentinel position (col == sentinel-width): the
-//     input area's input position. If row is empty past the
-//     sentinel → StateIdle (clean prompt). If row has content past
-//     the sentinel → StateIdle as well (Claude Code auto-suggestion
-//     ghost text; operator hasn't engaged — cursor would have moved
-//     past the content if they had).
-//     - Cursor past sentinel position: operator is mid-typing →
-//     StateAwaitingOperator (agent blocked on operator finishing
-//     their draft).
-//     - Cursor before sentinel position: unusual; treat as Unknown.
+//     across the temporal-delta window means the agent is painting. Runs
+//     after 5a so a drafting operator isn't mis-read as painting; a cursor
+//     AT the sentinel on a changing frame is streaming and correctly lands
+//     here.
+//  6. **Cursor-at-sentinel on a STABLE frame → Idle** (the v2 gap-fix):
+//     using the cursor queried at step 5, if the cursor row starts with
+//     PromptSentinel and the cursor is AT the sentinel position (col ==
+//     sentinel-width): StateIdle whether the row is empty past the sentinel
+//     (clean prompt) or has content past it (Claude Code auto-suggestion
+//     ghost text; operator hasn't engaged — cursor would have moved past the
+//     content if they had). Below 5 so a cursor parked at the sentinel while
+//     the frame streams is caught as Working, not mis-idled. Cursor before
+//     the sentinel position is unusual; falls through to marker / unknown.
 //  7. If AwaitingOperatorMarker is non-empty AND found in capture B →
 //     StateAwaitingOperator. (Backup detection for non-`❯`-painting
 //     UIs — AskUserQuestion popups, search dialogs, etc.)
@@ -539,23 +548,27 @@ func AgentState(ctx context.Context, pane string) (state State, ev Evidence, err
 			}, nil
 	}
 
-	// Precedence 5: working (any substantive change across the window).
-	if capAStr != capBStr {
-		return StateWorking,
-			Evidence{
-				Reason:           "pane content changed across temporal-delta window",
-				ChangedLineCount: countChangedLines(capAStr, capBStr),
-			}, nil
-	}
-
-	// Cursor-position-aware classification (the v2 substrate per
-	// #69 operator's design call 2026-06-04). Query the
-	// cursor; if it sits on a row that starts with PromptSentinel,
-	// distinguish auto-suggestion (cursor at sentinel) from operator-
-	// drafting (cursor past sentinel) — the two cases the v1 heuristic
-	// conflated as "non-empty input row".
+	// Cursor-position-aware classification (the v2 substrate per #69
+	// operator's design call 2026-06-04). Query the cursor ONCE here — BEFORE
+	// the P5 frame-change check — because the operator-drafting sub-case
+	// (#332) must win over "pane content changed". An operator actively typing
+	// repaints the input row every keystroke, so capA != capB, but the cursor
+	// sits PAST the sentinel. Claude's streaming/spinner busy states never do
+	// that: measured on the live Claude adapter, 156/156 busy frame-changes
+	// kept the cursor AT the sentinel column (col 2), zero past it. So
+	// cursor-strictly-past-sentinel is an unambiguous "operator is drafting"
+	// signal. Were P5 to run first it would classify the drafting pane as
+	// paste-safe StateWorking and the mailman would paste into the half-typed
+	// draft — the 2026-06-12 operator-witnessed clobber this issue tracks.
 	sentinel := activeProfile.PromptSentinel
 	cursorX, cursorY, cursorErr := agentCursor(ctx, pane)
+	var (
+		cursorRowRest        string
+		sentinelCol          int
+		cursorAtSentinel     bool
+		cursorPastSentinel   bool
+		cursorRowHasSentinel bool
+	)
 	if cursorErr == nil && sentinel != "" {
 		lines := strings.Split(capBStr, "\n")
 		if cursorY >= 0 && cursorY < len(lines) {
@@ -566,38 +579,54 @@ func AgentState(ctx context.Context, pane string) (state State, ev Evidence, err
 			// anchors idle-vs-drafting correctly.
 			rest, matched, hasSentinel := matchCursorRowSentinel(row, sentinel, activeProfile.PromptSentinelVariants)
 			if hasSentinel {
-				sentinelCol := utf8.RuneCountInString(matched)
-				switch {
-				case cursorX == sentinelCol:
-					// Cursor right after `❯ ` — either a clean idle
-					// prompt or an auto-suggestion ghost-text. Both
-					// classify as Idle because the operator hasn't
-					// engaged (cursor would have moved past content
-					// if they had been typing).
-					idleEv := Evidence{
-						Reason:      "cursor at prompt sentinel position; pane stable",
-						PromptEmpty: strings.TrimSpace(rest) == "",
-					}
-					if !idleEv.PromptEmpty {
-						idleEv.Reason = fmt.Sprintf("cursor at prompt sentinel position with auto-suggestion ghost-text (%q); pane stable", strings.TrimSpace(rest))
-					}
-					return StateIdle, idleEv, nil
-				case cursorX > sentinelCol:
-					// Cursor past the sentinel — operator is mid-
-					// typing. Agent is blocked on operator finishing
-					// the draft (or clearing it). Same consumer-side
-					// semantics as AskUserQuestion popup: don't
-					// dispatch into this state.
-					return StateAwaitingOperator,
-						Evidence{
-							Reason: fmt.Sprintf("cursor past prompt sentinel (col %d > %d); operator mid-typing", cursorX, sentinelCol),
-						}, nil
-				}
-				// Cursor before sentinel position on the sentinel row
-				// is unusual; fall through to marker / unknown checks.
+				cursorRowHasSentinel = true
+				cursorRowRest = rest
+				sentinelCol = utf8.RuneCountInString(matched)
+				cursorAtSentinel = cursorX == sentinelCol
+				cursorPastSentinel = cursorX > sentinelCol
 			}
 		}
 	}
+
+	// Precedence 5a (#332): operator mid-typing wins over the frame-change
+	// working-classification. Cursor STRICTLY past the sentinel is the
+	// drafting signal and fires whether or not the frame changed. A cursor AT
+	// the sentinel on a changing frame is streaming — left to P5 below.
+	if cursorPastSentinel {
+		return StateAwaitingOperator,
+			Evidence{
+				Reason: fmt.Sprintf("cursor past prompt sentinel (col %d > %d); operator mid-typing", cursorX, sentinelCol),
+			}, nil
+	}
+
+	// Precedence 5: working (any substantive change across the window).
+	if capAStr != capBStr {
+		return StateWorking,
+			Evidence{
+				Reason:           "pane content changed across temporal-delta window",
+				ChangedLineCount: countChangedLines(capAStr, capBStr),
+			}, nil
+	}
+
+	// Precedence 6: cursor AT the sentinel on a STABLE frame → Idle. This
+	// stays BELOW P5 so a cursor parked at the sentinel while the frame
+	// streams is caught as Working above, not mis-idled.
+	if cursorRowHasSentinel && cursorAtSentinel {
+		// Cursor right after `❯ ` — either a clean idle prompt or an
+		// auto-suggestion ghost-text. Both classify as Idle because the
+		// operator hasn't engaged (cursor would have moved past content
+		// if they had been typing).
+		idleEv := Evidence{
+			Reason:      "cursor at prompt sentinel position; pane stable",
+			PromptEmpty: strings.TrimSpace(cursorRowRest) == "",
+		}
+		if !idleEv.PromptEmpty {
+			idleEv.Reason = fmt.Sprintf("cursor at prompt sentinel position with auto-suggestion ghost-text (%q); pane stable", strings.TrimSpace(cursorRowRest))
+		}
+		return StateIdle, idleEv, nil
+	}
+	// Cursor before sentinel position on the sentinel row is unusual; fall
+	// through to marker / unknown checks.
 
 	// Precedence 7: awaiting-operator marker (backup for non-sentinel-
 	// painting UIs — AskUserQuestion popups, search dialogs, etc.). From the

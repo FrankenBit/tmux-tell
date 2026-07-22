@@ -619,6 +619,72 @@ func TestAgentState_AwaitingOperatorWhenCursorPastSentinel(t *testing.T) {
 	}
 }
 
+// TestAgentState_AwaitingOperatorWhenTypingChangesFrame is the #332
+// regression pin: an operator ACTIVELY typing repaints the input row every
+// keystroke, so the two temporal-delta captures DIFFER (capA != capB). The
+// pre-#332 precedence returned StateWorking at P5 ("pane content changed")
+// BEFORE the cursor-past-sentinel branch could fire — and StateWorking is
+// paste-safe, so the mailman pasted into the half-typed draft (the
+// 2026-06-12 operator-witnessed clobber on the Engineer Claude pane).
+//
+// With the fix, cursor-strictly-past-sentinel (operator drafting) wins over
+// the frame-change classification → StateAwaitingOperator (paste-unsafe), so
+// delivery is deferred. This is the case the existing
+// TestAgentState_AwaitingOperatorWhenCursorPastSentinel does NOT cover: that
+// one uses a STABLE frame (capA == capB), so P5 never fired and the bug was
+// invisible. Here the frame CHANGES, which is what makes P5 the shadow.
+func TestAgentState_AwaitingOperatorWhenTypingChangesFrame(t *testing.T) {
+	fastTemporalDelta(t)
+	// Operator is typing: input row (index 3) grows by one char between the
+	// two captures — capA != capB, exactly as a live keystroke repaint does.
+	capA := "history\n──── Agent ──\n  recap line\n❯\u00a0Thanks for handling thi\n────────\n  status\n"
+	capB := "history\n──── Agent ──\n  recap line\n❯\u00a0Thanks for handling this\n────────\n  status\n"
+	// cursorX=25 (past the typed content, well past sentinelCol=2); cursorY=3.
+	fr := newAgentStateRunner([]string{capA, capB}, 25, 3)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateAwaitingOperator {
+		t.Errorf("state = %v, want StateAwaitingOperator (operator typing must win over frame-change; #332)", state)
+	}
+	if !strings.Contains(ev.Reason, "operator mid-typing") {
+		t.Errorf("Evidence.Reason should mention operator mid-typing; got %q", ev.Reason)
+	}
+}
+
+// TestAgentState_WorkingWhenStreamingCursorAtSentinel is the #332 SAFETY pin
+// — the measured no-regression case. Claude's streaming/spinner busy states
+// change the frame (capA != capB) while keeping the cursor AT the sentinel
+// column (col 2), never past it (measured live: 156/156 busy frame-changes).
+// The fix hoists ONLY cursor-STRICTLY-past-sentinel above P5; a cursor at the
+// sentinel on a changing frame must still classify StateWorking (paste-safe),
+// NOT get mis-read as drafting or idle. If a future edit broadened the hoist
+// to include the at-sentinel case, this pin turns red.
+func TestAgentState_WorkingWhenStreamingCursorAtSentinel(t *testing.T) {
+	fastTemporalDelta(t)
+	// Streaming: the transcript region (above the input box) grows between
+	// captures, but the input row stays a bare `❯ ` and the cursor is
+	// parked at col 2.
+	capA := "history\n──── Agent ──\n  streaming line one\n❯\u00a0\n────────\n  status\n"
+	capB := "history\n──── Agent ──\n  streaming line one two\n❯\u00a0\n────────\n  status\n"
+	// cursorX=2 (AT sentinelCol); cursorY=3 (the ❯ input row).
+	fr := newAgentStateRunner([]string{capA, capB}, 2, 3)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%5")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateWorking {
+		t.Errorf("state = %v, want StateWorking (streaming with cursor AT sentinel must not be mis-read as drafting/idle; #332 safety)", state)
+	}
+}
+
 // TestAgentState_FallbackWhenCursorRowNotSentinel pins the cursor-
 // less fallback path: when the cursor sits on a row that doesn't start
 // with `❯\u00a0` (e.g., agent is mid-spinner and cursor is on the spinner
