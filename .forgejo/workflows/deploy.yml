@@ -119,20 +119,25 @@ jobs:
         # Doctor runs with #791's --allow-active-agents flag: mid-turn
         # chamber-side MCP staleness softens as pending-drain; every other
         # divergence class (SYNC db-state trouble, mailman-stale, orphan
-        # MCP, idle-at-prompt+stale) stays a hard error.
+        # MCP, idle-at-prompt+stale) is classified per its recovery path
+        # and case-switched below (#797).
         #
-        # A non-zero exit surfaces as ::warning:: RATHER than failing the
-        # job — the hybrid form. Rationale is #797: post-deploy nothing
-        # autonomously queues `refresh-all-mcps` to chambers (install.sh's
-        # --no-bootstrap tail only ECHOES it as a Next-steps hint, and
-        # the runner has no tmux visibility to fire it itself). So idle
-        # chambers accumulate stale-binary chamber-MCPs post-deploy until
-        # the operator manually runs bootstrap. Under hard-fail-doctor
-        # that would fail every deploy with idle-at-prompt chambers
-        # present (common case). Warn-wrap preserves the diagnostic
-        # value (softened `~` rows + named chamber-idle-stale rows are
-        # visible in the log) without shipping a false-positive-driven
-        # deploy failure.
+        # Since #797 landed the doctor case-switches on three exit codes
+        # rather than warn-wrapping any non-zero:
+        #
+        #   0  = no divergence at all → step green
+        #   71 = ALL divergences are idle-stale chamber-side MCPs (the
+        #        class refresh-all-mcps closes) → ::warning::, step green
+        #   *  = ≥1 real-divergence class (SYNC db-state, mailman-stale,
+        #        orphan MCP with no chamber resolvable) → hard-fail
+        #
+        # Restores #416's original goal (hard-fail on real divergence)
+        # while keeping idle-stale — the class the mid-run install.sh
+        # can't reach in --no-bootstrap runner context — as diagnostic-
+        # visible-but-non-blocking. Install-sh's --no-bootstrap tail
+        # also fires `refresh-all-mcps` when tmux is reachable (#797's
+        # Option A subset), so runner-context deploys with a live
+        # operator tmux session now converge chambers autonomously.
         #
         # HISTORY — soften/un-conflate/hybrid arc:
         #
@@ -173,10 +178,22 @@ jobs:
         #   manually bootstraps. The mid-turn softening is a real
         #   improvement (mid-turn cases no longer false-positive) but
         #   the idle-stale case still fires under a bare hard-fail.
-        #   Solution is #797: autonomous refresh path OR doctor
-        #   exit-code split (69 real / 70 idle-stale-only) so deploy
-        #   can distinguish. Until #797 lands, the WARN-WRAP holds so
-        #   idle-stale is a diagnostic surface, not a deploy blocker.
+        #   Solution deferred to #797: autonomous refresh path AND
+        #   doctor exit-code split so deploy can distinguish. Until
+        #   #797 lands, the WARN-WRAP held so idle-stale was a
+        #   diagnostic surface, not a deploy blocker.
+        #
+        #   #797 landed both halves (this PR): install.sh --no-bootstrap
+        #   fires `refresh-all-mcps` non-fatal when tmux is reachable
+        #   (Option A subset — reduces the surface reaching this step);
+        #   doctor emits exit 71 for idle-stale-only (Option B), which
+        #   this step case-switches. Exit 71 was picked over 70 to
+        #   avoid a collision with common.go's exitInternal=70 (which
+        #   MUST stay hard-fail — an internal doctor error is NOT the
+        #   same class as idle-stale-only). Sysexits 71 = EX_OSERR is
+        #   a loose semantic fit but is the next-unused slot avoiding
+        #   the collision; the constant name exitDoctorIdleStaleOnly
+        #   in common.go carries the authoritative semantics.
         #
         # Install success (the wrapper step exiting 0) remains the load-
         # bearing deploy signal. Doctor is the mechanical composition on
@@ -189,6 +206,25 @@ jobs:
           tmux-tell-claude --version
           tmux-tell-codex --version
           echo "==> doctor (MCP / mailman DB-binding divergence check, #348 / #791)"
-          if ! tmux-tell-claude doctor --allow-active-agents; then
-              echo "::warning::doctor reported divergence — softened '~' rows are mid-turn agent-side MCPs (pending-drain); '✗' rows are real divergences OR idle-at-prompt+stale agents that need manual 'tmux-tell-claude refresh-all-mcps' from a tmux session. See #797 for the autonomous-refresh design follow-up."
-          fi
+          # #797 case-switch: 0 clean · 71 idle-stale-only (warn) · * real fail.
+          # `set +e` here scopes the failure branch to us rather than tripping
+          # `set -e` at line-192 on doctor's non-zero exit; without it, exit 69
+          # (real divergence) would fail the step immediately without hitting
+          # the case block, defeating the exit-code split entirely. Restored
+          # to -e in the case body's default arm which explicitly exits 1.
+          set +e
+          tmux-tell-claude doctor --allow-active-agents
+          doctor_rc=$?
+          set -e
+          case $doctor_rc in
+              0)
+                  echo "doctor: clean"
+                  ;;
+              71)
+                  echo "::warning::doctor: idle-stale-only — chamber-side MCPs need 'tmux-tell-claude refresh-all-mcps' from a tmux session to converge (softened '~' rows are mid-turn pending-drain; '✗' rows are the idle-stale class). #797 landed."
+                  ;;
+              *)
+                  echo "::error::doctor: real divergence (exit $doctor_rc) — SYNC db-state / mailman-stale / orphan MCP class. refresh-all-mcps CANNOT close these; operator intervention required."
+                  exit 1
+                  ;;
+          esac

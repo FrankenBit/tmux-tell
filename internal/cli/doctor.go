@@ -65,6 +65,18 @@ type doctorProc struct {
 	// distinguish "canonical" from "would-be-divergent, softened by policy" —
 	// per /srv/CLAUDE.md § Mechanism-design ("each PASS names its silence").
 	Softened bool `json:"softened,omitempty"`
+	// IdleStale is true when this process is a stale-binary agent-side MCP
+	// under --allow-active-agents whose owning agent's observed_state prevents
+	// softening (idle-at-prompt, absent-from-snapshot, or a non-mid-turn state
+	// like copy-mode / rate-limited). The process stays Divergent=true — this
+	// is real divergence surface — but the class is distinct from SYNC
+	// divergence (db-deleted / db-inode-mismatch) and from stale-binary
+	// mailmen / orphan MCPs (no chamber resolvable): those classes cannot be
+	// closed by refresh-all-mcps, whereas idle-stale can. runDoctorCLI keys
+	// the exit-71 vs exit-69 split on whether ALL divergences are IdleStale
+	// (#797). Visible on the JSON wire so downstream (deploy.yml) can also
+	// inspect the classification without depending on the exit code alone.
+	IdleStale bool `json:"idle_stale,omitempty"`
 }
 
 // doctorReport is the full diagnostic: every live tmux-msg process + the
@@ -186,15 +198,24 @@ func classifyDoctorProcs(bindings []dbBinding, infos []doctorProcInfo, canonical
 					// Chamber resolved from cgroup but the store has no fresh
 					// observation for it — either the chamber is unregistered
 					// (orphan) or its mailman hasn't observed within the TTL.
-					// Cannot substantiate mid-turn, so stay divergent.
+					// Cannot substantiate mid-turn, so stay divergent. IdleStale
+					// distinguishes this from the true-orphan case (no chamber
+					// resolvable) — here the chamber IS resolvable and its MCP
+					// can still be drained by refresh-all-mcps once the
+					// operator fires it (#797).
 					p.Divergent = true
+					p.IdleStale = true
 					p.Verdict = fmt.Sprintf("stale binary — agent %q has no fresh observed_state (orphan or crashed mailman); MCP cannot be substantiated as mid-turn", info.AgentName)
 				case !isMidTurnObservedState(obs):
 					// Chamber is at-prompt-idle (or in a state where softening
 					// cannot be substantiated — copy-mode, rate-limited, etc.).
 					// The MCP will not self-heal on any activity boundary;
-					// this is a real divergence surface even under the flag.
+					// this is a real divergence surface even under the flag,
+					// but it IS closable by refresh-all-mcps (unlike SYNC
+					// divergence classes) — see IdleStale field + #797's
+					// exit-71 split.
 					p.Divergent = true
+					p.IdleStale = true
 					p.Verdict = fmt.Sprintf("stale binary — agent %q observed_state=%s (not mid-turn); MCP will not drain without external action", info.AgentName, obs)
 				default:
 					// Mid-turn: working / at-rest-in-compaction /
@@ -398,8 +419,33 @@ func runDoctorCLI(args []string, stdout, stderr io.Writer) int {
 	} else {
 		renderDoctorReport(stdout, rep)
 	}
-	if rep.Divergent {
-		return exitUnavailable
+	return doctorExitCode(rep)
+}
+
+// doctorExitCode maps a classified report to the exit code deploy.yml
+// (and any other caller) case-switches on. Three-state distinction (#797):
+//
+//   - exitOK (0)              — no divergence at all
+//   - exitDoctorIdleStaleOnly — ALL divergences are idle-stale-only
+//     (chamber-side MCPs with idle-at-prompt / no-fresh-observation /
+//     non-mid-turn observed_state). refresh-all-mcps closes these; deploy.yml
+//     downgrades to `::warning::`.
+//   - exitUnavailable (69)    — at least one non-idle-stale divergence
+//     (SYNC classes: db-deleted, db-inode-mismatch; ASYNC-non-idle:
+//     stale-binary mailmen, orphan MCPs with no chamber resolvable).
+//     refresh-all-mcps does NOT close these; deploy.yml hard-fails.
+//
+// The split is emitted TOGETHER with its deploy.yml consumer in this PR
+// per Engineer's `feedback_check_what_consumes_the_emitted_BEFORE_shipping_the_emitter`
+// discipline — no half-shipped emitter.
+func doctorExitCode(rep doctorReport) int {
+	if !rep.Divergent {
+		return exitOK
 	}
-	return exitOK
+	for _, p := range rep.Procs {
+		if p.Divergent && !p.IdleStale {
+			return exitUnavailable
+		}
+	}
+	return exitDoctorIdleStaleOnly
 }

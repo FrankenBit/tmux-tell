@@ -112,7 +112,24 @@ const (
 	exitDataErr     = 65
 	exitUnavailable = 69
 	exitInternal    = 70
-	exitTempFail    = 75
+	// exitDoctorIdleStaleOnly is the doctor-specific #797 signal that ALL
+	// divergences are idle-stale-only (chamber-side MCPs closable by
+	// refresh-all-mcps). Distinct from exitUnavailable (real divergence,
+	// requires manual intervention) so deploy.yml can `::warning::` this
+	// class instead of hard-failing.
+	//
+	// Sysexits.h assigns 71 = EX_OSERR — semantic fit is loose (this isn't an
+	// OS error) but 70 (EX_SOFTWARE / exitInternal) is already taken and a
+	// distinct code is required so deploy.yml doesn't conflate idle-stale
+	// with an internal doctor error (which must STAY hard-fail). The constant
+	// name is the authoritative semantics; the number is the next-unused
+	// sysexits slot that avoids the internal-error collision.
+	//
+	// #797: land this alongside its deploy.yml case-switch consumer per
+	// Engineer's `feedback_check_what_consumes_the_emitted_BEFORE_shipping_the_emitter`
+	// discipline — no half-shipped emitter.
+	exitDoctorIdleStaleOnly = 71
+	exitTempFail            = 75
 )
 
 // resolveDBPath returns the path to use for store.Open, honouring:

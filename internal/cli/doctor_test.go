@@ -135,6 +135,9 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 			if !rep.Procs[0].Softened {
 				t.Errorf("mid-turn (%s) softened proc should carry Softened=true", midTurn)
 			}
+			if rep.Procs[0].IdleStale {
+				t.Errorf("mid-turn (%s) SOFTENED proc must NOT carry IdleStale — softened != idle-stale (#797)", midTurn)
+			}
 			if rep.Procs[0].ObservedState != midTurn {
 				t.Errorf("proc should carry the resolved observed_state, got %q want %q", rep.Procs[0].ObservedState, midTurn)
 			}
@@ -148,7 +151,8 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 
 	// non-mid-turn subtests: every non-softenable observed_state must stay
 	// divergent (idle-at-prompt is the Surveyor 3ea9 case; uncertain states
-	// are safer-to-fail).
+	// are safer-to-fail). Under #797 these carry IdleStale=true so the exit
+	// code splits from real-divergence classes.
 	for _, notMidTurn := range []string{"idle", "copy-mode", "rate-limited", "usage-limited", "unknown"} {
 		notMidTurn := notMidTurn
 		t.Run("not-mid-turn/"+notMidTurn, func(t *testing.T) {
@@ -162,6 +166,9 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 			if rep.Procs[0].Softened {
 				t.Errorf("non-mid-turn (%s) case must NOT be softened", notMidTurn)
 			}
+			if !rep.Procs[0].IdleStale {
+				t.Errorf("non-mid-turn (%s) case must carry IdleStale=true (#797)", notMidTurn)
+			}
 			if !strings.Contains(rep.Procs[0].Verdict, "not mid-turn") {
 				t.Errorf("non-mid-turn verdict should name the case, got %q", rep.Procs[0].Verdict)
 			}
@@ -169,13 +176,17 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 	}
 
 	// chamber resolvable from cgroup but ABSENT from snapshot (unregistered
-	// OR stale-past-TTL) → orphan case, still divergent.
+	// OR stale-past-TTL) → still divergent, and carries IdleStale=true so
+	// exit-71 applies when this is the only divergence class (#797).
 	orphanRep := classifyDoctorProcs(softenCase, softenInfos, testCanonPath, testCanonInode, classifyOpts{
 		AllowActiveAgents: true,
 		ObservedByChamber: map[string]string{},
 	})
 	if !orphanRep.Divergent {
 		t.Error("orphan chamber (resolved from cgroup, missing from snapshot) must stay divergent")
+	}
+	if !orphanRep.Procs[0].IdleStale {
+		t.Error("orphan-chamber case (resolved from cgroup, absent from snapshot) must carry IdleStale=true (#797)")
 	}
 	if !strings.Contains(orphanRep.Procs[0].Verdict, "no fresh observed_state") {
 		t.Errorf("orphan verdict should name the no-fresh-observation case, got %q", orphanRep.Procs[0].Verdict)
@@ -195,6 +206,9 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 	}
 	if mailmanRep.Procs[0].Softened {
 		t.Error("mailman case must NOT be softened")
+	}
+	if mailmanRep.Procs[0].IdleStale {
+		t.Error("mailman stale-binary must NOT be IdleStale — refresh-all-mcps cannot close mailman drift (#797)")
 	}
 
 	// flag ABSENT → pre-#791 behavior preserved
@@ -224,6 +238,9 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 	if syncRep.Procs[0].Softened {
 		t.Error("SYNC divergence must NOT be softened")
 	}
+	if syncRep.Procs[0].IdleStale {
+		t.Error("SYNC divergence (db-inode mismatch) must NOT be IdleStale — refresh-all-mcps cannot close SYNC drift (#797)")
+	}
 
 	// SYNC divergence (db-deleted / orphan-inode) unaffected by the flag too
 	dbDelBinding := []dbBinding{
@@ -235,5 +252,112 @@ func TestClassifyDoctorProcs_AllowActiveAgents(t *testing.T) {
 	})
 	if !dbDelRep.Divergent {
 		t.Error("SYNC divergence (db-deleted) must stay divergent even for mid-turn chamber")
+	}
+	if dbDelRep.Procs[0].IdleStale {
+		t.Error("SYNC divergence (db-deleted) must NOT be IdleStale — refresh-all-mcps cannot close db-deleted (#797)")
+	}
+}
+
+// TestDoctorExitCode pins the three-state exit-code split (#797): the doctor
+// case-switches deploy.yml (and any other caller) reads. The mapping preserves
+// hard-fail on real-divergence classes while distinguishing idle-stale-only —
+// the class refresh-all-mcps actually closes — so downstream can downgrade to
+// a warning without collapsing the signal.
+//
+// Emitter ships with its consumer per Engineer's
+// `feedback_check_what_consumes_the_emitted_BEFORE_shipping_the_emitter`
+// discipline: exercised here + in `.forgejo/workflows/deploy.yml` case-switch
+// simultaneously.
+func TestDoctorExitCode(t *testing.T) {
+	// Cases construct doctorProc values directly (post-classification), so
+	// the impure /proc walk + info-resolution steps are out of scope. The
+	// classifier's own IdleStale-setting is covered by TestClassifyDoctorProcs_AllowActiveAgents.
+	cases := []struct {
+		name     string
+		procs    []doctorProc
+		wantExit int
+		reason   string
+	}{
+		{
+			name:     "clean",
+			procs:    []doctorProc{{dbBinding: dbBinding{PID: 1}, Canonical: true}},
+			wantExit: exitOK,
+			reason:   "no divergence at all",
+		},
+		{
+			name: "sync-divergence-alone",
+			procs: []doctorProc{
+				{dbBinding: dbBinding{PID: 1}, Divergent: true, IdleStale: false, Verdict: "db-inode mismatch"},
+			},
+			wantExit: exitUnavailable,
+			reason:   "SYNC divergence must stay hard-fail (69)",
+		},
+		{
+			name: "idle-stale-alone",
+			procs: []doctorProc{
+				{dbBinding: dbBinding{PID: 1}, Divergent: true, IdleStale: true, Verdict: "idle-stale"},
+			},
+			wantExit: exitDoctorIdleStaleOnly,
+			reason:   "sole idle-stale divergence downgrades to 71",
+		},
+		{
+			name: "mixed-idle-and-sync-still-fails-hard",
+			procs: []doctorProc{
+				{dbBinding: dbBinding{PID: 1}, Divergent: true, IdleStale: true, Verdict: "idle-stale"},
+				{dbBinding: dbBinding{PID: 2}, Divergent: true, IdleStale: false, Verdict: "db-deleted"},
+			},
+			wantExit: exitUnavailable,
+			reason:   "ANY non-idle-stale divergence forces 69 (safety-net direction)",
+		},
+		{
+			name: "softened-with-no-hard-divergence",
+			procs: []doctorProc{
+				{dbBinding: dbBinding{PID: 1}, Canonical: false, Divergent: false, Softened: true, Verdict: "softened"},
+			},
+			wantExit: exitOK,
+			reason:   "softened-only (pending-drain) is not a divergence",
+		},
+		{
+			name: "multiple-idle-stale-only",
+			procs: []doctorProc{
+				{dbBinding: dbBinding{PID: 1}, Divergent: true, IdleStale: true, Verdict: "idle-stale bosun"},
+				{dbBinding: dbBinding{PID: 2}, Divergent: true, IdleStale: true, Verdict: "idle-stale herald"},
+			},
+			wantExit: exitDoctorIdleStaleOnly,
+			reason:   "N idle-stale, no real-divergence → 71",
+		},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			// Derive the fleet-level Divergent flag the way the classifier does
+			// (any per-proc Divergent → true), so the test exercises the same
+			// invariant runDoctorCLI relies on.
+			divergent := false
+			for _, p := range c.procs {
+				if p.Divergent {
+					divergent = true
+					break
+				}
+			}
+			rep := doctorReport{Procs: c.procs, Divergent: divergent}
+			if got := doctorExitCode(rep); got != c.wantExit {
+				t.Errorf("doctorExitCode = %d, want %d (%s)", got, c.wantExit, c.reason)
+			}
+		})
+	}
+
+	// Belt-and-braces: the sysexits collision — the point of picking 71
+	// instead of 70 — must hold. Anyone bumping exitInternal, exitOK,
+	// exitUnavailable, or exitDoctorIdleStaleOnly to a value that overlaps
+	// another exit constant here fails-loud immediately.
+	if exitDoctorIdleStaleOnly == exitInternal {
+		t.Fatal("exitDoctorIdleStaleOnly collides with exitInternal — pick a distinct code (#797)")
+	}
+	if exitDoctorIdleStaleOnly == exitUnavailable {
+		t.Fatal("exitDoctorIdleStaleOnly collides with exitUnavailable — pick a distinct code (#797)")
+	}
+	if exitDoctorIdleStaleOnly == exitOK {
+		t.Fatal("exitDoctorIdleStaleOnly collides with exitOK — pick a distinct code (#797)")
 	}
 }

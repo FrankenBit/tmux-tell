@@ -446,6 +446,51 @@ if [[ "$BOOTSTRAP" -eq 0 ]]; then
         fi
     fi
     echo
+
+    # #797 Option A subset: after restart-mailmen succeeds, autonomously
+    # fire `refresh-all-mcps` to converge chamber-side MCP subprocesses
+    # against the new binary — BUT only when the operator's tmux server
+    # is reachable, and NON-FATAL on failure (the safety net is doctor's
+    # exit-71 idle-stale-only class in .forgejo/workflows/deploy.yml).
+    #
+    # Two-path substrate detail (surfaced during #797 design): refresh-all-mcps
+    # is per-provider. Claude chambers enqueue via pure-DB control-macro
+    # rows — needs NO tmux visibility. Codex chambers respawn via
+    # `tmux respawn-pane` — REQUIRES tmux visibility. The probe below
+    # (`sudo -u OP tmux list-sessions`) covers both: claude fan-out works
+    # when the probe passes (probe passing == tmux server exists), codex
+    # fan-out works too (same visibility surface). When the probe fails
+    # (no tmux server on the operator's default socket — headless deploy
+    # or first-time install), skip refresh-all-mcps and fall through to
+    # the echoed manual next-steps: the idle-stale-only class then persists
+    # until the operator's next login, which doctor's exit-71 surfaces as
+    # a warn in the deploy workflow (not a hard fail).
+    #
+    # Non-fatal by design: refresh-all-mcps exits non-zero if ANY per-agent
+    # fan-out failed. In runner context an operator may have codex chambers
+    # whose panes have already exited (transient chamber crash), yielding
+    # partial-failure. Failing the install on that would defeat the point
+    # of --no-bootstrap (deploy chain proceeds; substrate follow-up is
+    # doctor's job on the next post-deploy-smoke step). Warn + continue.
+    if "${DROP_TMUX[@]}" \
+        env HOME="$OPERATOR_HOME" \
+            XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+            tmux list-sessions >/dev/null 2>&1; then
+        echo "==> refresh-all-mcps (autonomous chamber-MCP refresh, #797)"
+        if ! "${DROP_TMUX[@]}" \
+            env HOME="$OPERATOR_HOME" \
+                XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+                DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+                "$PREFIX/bin/$BIN_NAME" refresh-all-mcps; then
+            echo "install.sh: refresh-all-mcps had partial failure (details above) — chamber-side MCPs may still be stale. Non-fatal: doctor's #797 exit-71 idle-stale-only class in the deploy workflow will surface residual stale MCPs as a ::warning::. Run '$BIN_NAME refresh-all-mcps' as $OPERATOR_USER from a tmux session to converge." >&2
+        fi
+        echo
+    else
+        echo "==> refresh-all-mcps SKIPPED — no reachable tmux server on $OPERATOR_USER's default socket (#797 Option A: probe failed)"
+        echo "    Rely on the operator's next-login manual run OR doctor's exit-71 idle-stale-only class to surface any residual stale MCPs."
+        echo
+    fi
+
     if [[ "$ADAPTER" == "codex" ]]; then
         echo "Next steps for codex (--no-bootstrap chosen; run as $OPERATOR_USER, NOT as root):"
         echo "  # PASTE-SERVED chamber (the #360 default — codex runs a mailman like claude):"
