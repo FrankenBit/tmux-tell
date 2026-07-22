@@ -78,6 +78,17 @@ else
     fail "install.sh does not invoke bootstrap subcommand"
 fi
 
+# 7. The observer must be RESTARTED, not just `enable --now`d (#828). A
+# redeploy replaces the binary inode on disk, but `enable --now` is a no-op
+# on an already-running unit, so the observer would keep the deleted inode and
+# trip doctor exit 69 (mailman-stale) on the next deploy. Guards against a
+# regression back to `enable --now "$OBSERVER_UNIT"` as the sole treatment.
+if grep -q 'systemctl --user restart "\$OBSERVER_UNIT"' "$INSTALL_SH"; then
+    pass "install.sh restarts the observer onto the fresh binary (#828)"
+else
+    fail "install.sh does not restart \$OBSERVER_UNIT — a redeploy would leave the observer on the stale inode (#828)"
+fi
+
 if [[ $FAILED -gt 0 ]]; then
     echo
     echo "$FAILED smoke test(s) failed."

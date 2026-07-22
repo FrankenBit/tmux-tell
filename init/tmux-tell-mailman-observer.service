@@ -1,3 +1,28 @@
+# systemd user unit for the fleet-wide mailman liveness observer (#808). One
+# shared instance, independent of any single mailman: it alerts when an expected
+# mailman unit dies or restart-loops. Enabled + started by install.sh on every
+# install.
+#
+# Binary freshness on redeploy is NOT a unit directive — there is no .path watch
+# or ExecStartPre mtime check here, exactly as the tmux-tell-{claude,codex}-
+# mailman@ templates carry none. `systemctl --user enable --now` is a NO-OP on an
+# already-running unit, so a redeploy would leave this observer executing the
+# deleted pre-install inode until an EXPLICIT restart (the #393 lesson). That
+# stale binding trips the doctor's real-divergence exit 69 (SYNC / mailman-stale
+# class) and hard-fails the deploy chain. install.sh therefore `enable`s AND
+# `restart`s this unit on every install — the same explicit-restart contract the
+# mailmen get from `restart-mailmen` (#436). If you add a redeploy path that does
+# not run install.sh, it must restart this unit too, or the observer goes stale
+# (#828).
+#
+# Install (handled by install.sh):
+#   cp init/tmux-tell-mailman-observer.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now tmux-tell-mailman-observer.service
+#
+# Logs go to the user journal:
+#   journalctl --user -u tmux-tell-mailman-observer.service -f
+
 [Unit]
 Description=tmux-tell independent mailman liveness observer
 Documentation=https://git.frankenbit.de/frankenbit/tmux-tell/issues/808

@@ -386,10 +386,17 @@ if [[ -n "$LEGACY_RENAME_ACTIVE" || -f "$LEGACY_RENAME_TEMPLATE_PATH" ]]; then
 fi
 
 # The observer is fleet-wide and independent of any one mailman. Enable it on
-# every install; repeated adapter installs simply restart the same unit onto
-# the newest binary. With no [defaults] mailman-alert-to it remains live but
-# dormant, polling only the small config file until activated.
-echo "==> enabling independent mailman observer (#808)"
+# every install AND restart it so a re-install lands the new binary on the
+# running unit. `enable --now` alone is a NO-OP on an already-active unit (the
+# #393 lesson — the same reason `restart-mailmen` exists for the mailmen, #436):
+# the observer would keep executing the deleted pre-install inode and trip the
+# doctor's real-divergence (exit 69) SYNC / mailman-stale class on every
+# subsequent deploy (#828). So mirror the mailmen's explicit-restart contract:
+# `enable` ensures the boot-time WantedBy symlink, and `restart` starts the unit
+# if stopped or re-execs it onto the fresh binary if running. With no [defaults]
+# mailman-alert-to it remains live but dormant, polling only the small config
+# file until activated.
+echo "==> enabling + restarting independent mailman observer (#808, #828)"
 "${DROP[@]}" env \
     HOME="$OPERATOR_HOME" \
     XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
@@ -399,7 +406,26 @@ echo "==> enabling independent mailman observer (#808)"
     HOME="$OPERATOR_HOME" \
     XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
-    systemctl --user enable --now "$OBSERVER_UNIT"
+    systemctl --user enable "$OBSERVER_UNIT"
+# FATAL-BY-DEFAULT restart onto the fresh binary, mirroring the mailmen's
+# restart-mailmen contract (#436, Lookout #439): a stale observer holding the
+# old inode is precisely the exit-69 condition the deploy chain must fail loud
+# on rather than green. The deploy chain never passes --allow-stale-mailmen; the
+# flag's scope covers the fleet observer too (it is mailman-class infrastructure,
+# not a per-agent mailman), demoting the failure to a warning for manual
+# debug / transient-failure installs — symmetric with the mailman path.
+if ! "${DROP[@]}" env \
+        HOME="$OPERATOR_HOME" \
+        XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+        DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+        systemctl --user restart "$OBSERVER_UNIT"; then
+    if [[ "$ALLOW_STALE_MAILMEN" -eq 1 ]]; then
+        echo "install.sh: observer restart failed; --allow-stale-mailmen set → continuing. The observer may still run the old inode (rerun 'systemctl --user restart $OBSERVER_UNIT' as $OPERATOR_USER to converge)." >&2
+    else
+        echo "install.sh: observer restart FAILED — the new binary is on disk but the running observer still holds the OLD inode, so it will trip doctor exit 69 (mailman-stale) on the next deploy (#828). Fix the systemctl error above and rerun, or pass --allow-stale-mailmen to proceed anyway." >&2
+        exit 1
+    fi
+fi
 
 echo
 echo "Install complete."

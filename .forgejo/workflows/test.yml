@@ -51,6 +51,15 @@ jobs:
         # included in the go test step above via ./...; this step names them.
         run: go test -count=1 ./features/steps/
 
+      - name: install.sh smoke tests (#349, #828)
+        # Static/parse-level guards on install.sh: syntax, flag-parsing,
+        # adapter-validation, and structural invariants (bootstrap dispatch,
+        # observer restart-on-redeploy #828). The suite exits BEFORE the EUID /
+        # systemd checks, so it needs no root, no sudo, and no systemd-user
+        # session — safe on the containerless `go` runner. Previously only run
+        # by hand; wired in with #828 so its regression guards actually gate.
+        run: bash tests/install_smoke_test.sh
+
       - name: check-pin-slugs (#51 — enforce ADR-0001 slug register)
         run: go run ./tools/check-pin-slugs/
 
