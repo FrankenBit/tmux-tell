@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -291,6 +293,65 @@ func TestPingExitCode_ReasonChain(t *testing.T) {
 			t.Errorf("reason %s → class %s → exit %d, want %d (%s)", c.reason, res.Class, got, c.want, c.note)
 		}
 	}
+}
+
+// TestPingCLI_SandboxDiagnostic covers #809: when store.Open fails with a
+// readonly-database error (the sandbox FS scope shape), the output must name
+// sandbox as the likely cause and surface both remediation options. Non-sandbox
+// failures (missing parent directory) must preserve their original error text.
+func TestPingCLI_SandboxDiagnostic(t *testing.T) {
+	t.Run("readonly db produces sandbox diagnostic", func(t *testing.T) {
+		// Seed a real on-disk DB, then make it unwritable so store.Open hits
+		// "readonly database" when it tries to set WAL mode.
+		dir := t.TempDir()
+		dbPath := filepath.Join(dir, "messages.db")
+		seed, err := store.Open(dbPath)
+		if err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+		_ = seed.Close()
+		if err := os.Chmod(dbPath, 0o444); err != nil {
+			t.Fatalf("chmod: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dbPath, 0o644) })
+
+		var stdout, stderr bytes.Buffer
+		exit := runPingCLI([]string{"--db", dbPath, "anyagent"}, &stdout, &stderr)
+		if exit == 0 {
+			t.Fatal("exit=0, want non-zero for readonly store")
+		}
+		out := stdout.String() + stderr.String()
+		for _, want := range []string{"sandbox", "tmux-tell.ping", "write access"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output missing %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("non-sandbox failure preserves original error", func(t *testing.T) {
+		// chmod-000 directory → store.Open fails with EACCES (permission
+		// denied), not "readonly database"; the sandbox diagnostic must NOT
+		// be emitted and the original error prefix must be preserved.
+		dir := t.TempDir()
+		dbPath := filepath.Join(dir, "messages.db")
+		if err := os.Chmod(dir, 0o000); err != nil {
+			t.Fatalf("chmod dir: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+		var stdout, stderr bytes.Buffer
+		exit := runPingCLI([]string{"--db", dbPath, "anyagent"}, &stdout, &stderr)
+		if exit == 0 {
+			t.Fatal("exit=0, want non-zero for inaccessible db")
+		}
+		out := stdout.String() + stderr.String()
+		if strings.Contains(out, "sandbox") {
+			t.Errorf("sandbox diagnostic emitted for non-sandbox error:\n%s", out)
+		}
+		if !strings.Contains(out, "open store") {
+			t.Errorf("original error prefix missing:\n%s", out)
+		}
+	})
 }
 
 func TestRenderPingResult(t *testing.T) {

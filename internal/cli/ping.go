@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/debug"
@@ -462,8 +463,15 @@ func runPingCLI(args []string, stdout, stderr io.Writer) int {
 
 	s, err := store.Open(resolveDBPath(*dbPath))
 	if err != nil {
-		return writeJSONError(stdout, stderr,
-			fmt.Sprintf("open store: %v", err), exitInternal)
+		msg := fmt.Sprintf("open store: %v", err)
+		if strings.Contains(err.Error(), "readonly database") {
+			msg = "ping requires write access to the bus database, but the store is read-only " +
+				"(likely cause: sandbox FS scope excludes writes to the shared bus DB). " +
+				"Remedies: (1) use the tmux-tell.ping MCP tool — the persistent MCP process " +
+				"runs outside the sandbox and has write access; " +
+				"(2) run ping outside the sandbox with a direct path to the writable bus DB (--db <path>)."
+		}
+		return writeJSONError(stdout, stderr, msg, exitInternal)
 	}
 	defer func() { _ = s.Close() }()
 
