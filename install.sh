@@ -311,6 +311,18 @@ sed "s|^\(ExecStart=\)/usr/local/bin/|\1$PREFIX/bin/|" "init/$UNIT_NAME" > "$UNI
 install -m 0644 "${OP_OWNER[@]}" "$UNIT_TMP" "$USER_SYSTEMD/$UNIT_NAME"
 rm -f "$UNIT_TMP"
 
+# Independent liveness observer (#808). This is one shared fleet service, not
+# one instance per adapter: whichever adapter installs last rewrites ExecStart
+# to its binary, and the shared CLI resolves each registered agent's actual
+# adapter before probing its unit. It stays dormant until [defaults]
+# mailman-alert-to is configured.
+OBSERVER_UNIT="tmux-tell-mailman-observer.service"
+OBSERVER_TMP=$(mktemp)
+sed -e "s|/usr/local/bin/tmux-tell-claude|$PREFIX/bin/$BIN_NAME|" \
+    "init/$OBSERVER_UNIT" > "$OBSERVER_TMP"
+install -m 0644 "${OP_OWNER[@]}" "$OBSERVER_TMP" "$USER_SYSTEMD/$OBSERVER_UNIT"
+rm -f "$OBSERVER_TMP"
+
 # 4b. Deprecation-cycle systemd template alias: claude-mailman@ → the new
 # template. systemd resolves a template-unit symlink, so a pre-rename
 # `systemctl --user … claude-mailman@AGENT` still instantiates the renamed
@@ -372,6 +384,22 @@ if [[ -n "$LEGACY_RENAME_ACTIVE" || -f "$LEGACY_RENAME_TEMPLATE_PATH" ]]; then
             systemctl --user daemon-reload
     fi
 fi
+
+# The observer is fleet-wide and independent of any one mailman. Enable it on
+# every install; repeated adapter installs simply restart the same unit onto
+# the newest binary. With no [defaults] mailman-alert-to it remains live but
+# dormant, polling only the small config file until activated.
+echo "==> enabling independent mailman observer (#808)"
+"${DROP[@]}" env \
+    HOME="$OPERATOR_HOME" \
+    XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+    systemctl --user daemon-reload
+"${DROP[@]}" env \
+    HOME="$OPERATOR_HOME" \
+    XDG_RUNTIME_DIR="/run/user/$OPERATOR_UID" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$OPERATOR_UID/bus" \
+    systemctl --user enable --now "$OBSERVER_UNIT"
 
 echo
 echo "Install complete."

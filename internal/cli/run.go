@@ -38,6 +38,7 @@ Subcommands:
   digest  Campaign-arc narrative summary: by-counterparty threads + in-flight follow-ups (#161)
   tail    Live cross-chamber firehose with compositional filters (#148)
   health  One-command per-agent health audit from journalctl + systemd (#42)
+  observe-mailmen  Independently alert when expected mailman units die or restart-loop (#808)
   doctor  Walk live tmux-msg processes + flag MCP/mailman DB-binding divergence (#348); exits non-zero on divergence
   config  Read/show the host-level config (#54). Subcommands: show
   agents  List registered agents with pane liveness
@@ -180,6 +181,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runTailCLI(args[1:], stdout, stderr)
 	case "health":
 		return runHealthCLI(args[1:], stdout, stderr)
+	case "observe-mailmen":
+		return runObserveMailmenCLI(args[1:], stdout, stderr)
 	case "doctor":
 		return runDoctorCLI(args[1:], stdout, stderr)
 	case "config":

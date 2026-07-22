@@ -213,6 +213,10 @@ type Block struct {
 	// template assigns a distinct port per agent via an [agent.<name>] block.
 	// Resolves through ResolveString (empty = not set → next layer).
 	MetricsAddr *string `toml:"metrics-addr"`
+	// MailmanAlertTo is the conductor that receives independent mailman
+	// liveness alerts and the self-observed delivery-freshness alerts.
+	// Empty keeps both observers dormant.
+	MailmanAlertTo *string `toml:"mailman-alert-to"`
 	// VerifyRetryBudget is the total verify-token retry window for the
 	// post-paste verification backoff (#153). Stored as a human duration
 	// string (e.g. "5s", "10s", "15s"); parsed via time.ParseDuration at
@@ -498,6 +502,8 @@ func blockStringField(b *Block, field string) *string {
 		return b.OnRegisterBacklog
 	case "metrics-addr":
 		return b.MetricsAddr
+	case "mailman-alert-to":
+		return b.MailmanAlertTo
 	case "verify-retry-budget":
 		return b.VerifyRetryBudget
 	case "rate-limit-pattern":

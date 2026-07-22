@@ -227,6 +227,17 @@ for glob in "${UNIT_GLOBS[@]}"; do
     fi
 done
 
+# The central observer is shared by adapters, but its ExecStart points at the
+# adapter binary that installed it most recently. Remove it only when it points
+# at the binary being uninstalled; otherwise the sibling adapter still owns it.
+OBSERVER_UNIT="tmux-tell-mailman-observer.service"
+OBSERVER_PATH="$USER_SYSTEMD/$OBSERVER_UNIT"
+if [[ -f "$OBSERVER_PATH" ]] && grep -Fq "${PREFIX}/bin/${BIN_NAME} observe-mailmen" "$OBSERVER_PATH"; then
+    echo "==> stopping shared mailman observer (owned by $BIN_NAME)"
+    sysctl_user disable --now "$OBSERVER_UNIT" || true
+    rm -f "$OBSERVER_PATH"
+fi
+
 # 2. Remove the systemd user template(s) + reload the manager so it forgets them.
 # The canonical template is tmux-tell-<adapter>-mailman@.service; claude also has
 # the legacy claude-mailman@.service symlink alias. A `-L` check catches the
@@ -245,7 +256,7 @@ for tpl in "${TEMPLATES[@]}"; do
         echo "==> $tpl not present (skip)"
     fi
 done
-if [[ "$removed_template" -eq 1 ]]; then
+if [[ "$removed_template" -eq 1 || ! -e "$OBSERVER_PATH" ]]; then
     sysctl_user daemon-reload || true
 fi
 

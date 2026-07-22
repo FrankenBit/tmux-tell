@@ -91,6 +91,10 @@ const (
 	// notices cannot itself read as a stale queue (same notice-loop-prevention
 	// discipline as KindDeliveryFailureNotice).
 	KindStuckChamberNotice Kind = "stuck_chamber_notice"
+	// KindDeadMailmanNotice marks an alert emitted by the independent
+	// mailman observer when systemd reports a registered agent's expected
+	// mailman inactive or repeatedly restarting (#808).
+	KindDeadMailmanNotice Kind = "dead_mailman_notice"
 )
 
 // Message mirrors a row in the messages table. Timestamps are kept as

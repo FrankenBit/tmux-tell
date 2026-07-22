@@ -1,0 +1,17 @@
+[Unit]
+Description=tmux-tell independent mailman liveness observer
+Documentation=https://git.frankenbit.de/frankenbit/tmux-tell/issues/808
+After=default.target
+PartOf=default.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/tmux-tell-claude observe-mailmen
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=tmux-tell-mailman-observer
+
+[Install]
+WantedBy=default.target

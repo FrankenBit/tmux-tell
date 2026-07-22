@@ -138,6 +138,27 @@ The discipline that *isn't* in the flags: tmux-tell is the right surface for
 and the *wrong* one for **discoverable persistent state** — see "Claiming work"
 below.
 
+### Mailman failure alerts
+
+Two observers cover different failure loci. A live mailman watches its own
+delivery freshness and reports a stale deliverable to the configured conductor.
+The separate `tmux-tell-mailman-observer.service` sweeps systemd every 30 seconds,
+so it can report what the mailman itself cannot: an OOM/crash that leaves the
+unit inactive, or a restart loop. It requires two consecutive inactive samples,
+ignores explicitly disabled units and agents whose delivery mode needs no
+persistent mailman, and sends only one notice per failure episode.
+
+Activate both observers by setting `mailman-alert-to` in `[defaults]`:
+
+```toml
+[defaults]
+mailman-alert-to = "bosun"
+```
+
+The installer enables the central observer. For diagnosis, run
+`tmux-tell-claude observe-mailmen --once`; this reports probe errors but never
+alerts from a single inactive sample.
+
 ---
 
 ## Surviving your own lifecycle
