@@ -916,6 +916,99 @@ func (s *Store) AckStaleQueued(ctx context.Context, toAgent string) (int64, erro
 	return res.RowsAffected()
 }
 
+// reapableUndeliverablePredicate is the #726 undeliverable-fossil set: queued,
+// non-deferred rows older than a cutoff whose recipient is UNREACHABLE — either
+// not registered at all, or registered without a live pane (empty pane_id).
+//
+// The liveness clause is load-bearing, not decoration. A fossil is a row no
+// mailman will ever claim because the recipient has no live pane to paste into;
+// it never reaches the queued→delivering→failed path, so it sits forever and
+// (because caps count only state='queued') wedges the recipient/sender cap.
+// Neither of the two obvious discriminants works: age alone reaps an intentional
+// not-yet-live placeholder (which can be arbitrarily old), and the #204
+// backlog-floor fence is INVERTED — an intentional placeholder can sit fenced
+// while a genuinely dead recipient has no floor at all. Only "is the recipient
+// reachable right now" separates the two, so a recipient holding a live-pane
+// registration is EXCLUDED and its queue is never reaped. deliver_after IS NULL
+// excludes promoted-deferred rows, matching staleQueuedPredicate. Single-sourced
+// so the dry-run list (ListReapableUndeliverable) and the reap mutate
+// (ReapUndeliverable) can never diverge.
+const reapableUndeliverablePredicate = `state = ? AND deliver_after IS NULL AND created_at < ?
+	AND NOT EXISTS (
+		SELECT 1 FROM agents a
+		WHERE a.name = messages.to_agent
+		  AND a.pane_id IS NOT NULL AND TRIM(a.pane_id) <> ''
+	)`
+
+// reapPredicate returns the reapable-undeliverable WHERE clause and its bound
+// args, optionally scoped to a single recipient. cutoff is an ISO-8601 UTC
+// string (strandedTimeFormat). A mutate caller prepends its SET args before the
+// returned slice.
+func reapPredicate(agent, cutoff string) (string, []any) {
+	where := reapableUndeliverablePredicate
+	args := []any{StateQueued, cutoff}
+	if agent != "" {
+		where += ` AND to_agent = ?`
+		args = append(args, CanonicalName(agent))
+	}
+	return where, args
+}
+
+// ReapCandidate is one undeliverable fossil a reap would (or did) dead-letter.
+type ReapCandidate struct {
+	PublicID  string `json:"public_id"`
+	FromAgent string `json:"from_agent"`
+	ToAgent   string `json:"to_agent"`
+	CreatedAt string `json:"created_at"`
+	Kind      string `json:"kind"`
+}
+
+// ListReapableUndeliverable returns the undeliverable fossils matching the reap
+// predicate — the `reap --dry-run` surface. cutoff is ISO-8601 UTC
+// (strandedTimeFormat); agent scopes to one recipient when non-empty. Ordered
+// oldest-first so the operator reads the longest-stuck rows at the top.
+func (s *Store) ListReapableUndeliverable(ctx context.Context, agent, cutoff string) ([]ReapCandidate, error) {
+	where, args := reapPredicate(agent, cutoff)
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT public_id, from_agent, to_agent, created_at, kind
+		 FROM messages WHERE `+where+`
+		 ORDER BY created_at, id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("store: list reapable undeliverable: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // read-only iteration
+	var out []ReapCandidate
+	for rows.Next() {
+		var c ReapCandidate
+		if err := rows.Scan(&c.PublicID, &c.FromAgent, &c.ToAgent, &c.CreatedAt, &c.Kind); err != nil {
+			return nil, fmt.Errorf("store: scan reapable undeliverable: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ReapUndeliverable dead-letters every undeliverable fossil matching the reap
+// predicate: it transitions the row to failed and records reason in the error
+// column (stamping delivered_at like MarkFailed). Dead-letter, not delete — the
+// audit row survives for the resurface/inspection trail #726 anchors on, and the
+// existing retention sweep (delivered+failed) prunes it later — while the cap,
+// which counts only state='queued', is immediately unwedged. Returns the number
+// of rows reaped. agent/cutoff as ListReapableUndeliverable.
+func (s *Store) ReapUndeliverable(ctx context.Context, agent, cutoff, reason string) (int64, error) {
+	where, args := reapPredicate(agent, cutoff)
+	execArgs := append([]any{StateFailed, reason}, args...)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE messages
+		 SET state = ?, error = ?,
+		     delivered_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+		 WHERE `+where, execArgs...)
+	if err != nil {
+		return 0, fmt.Errorf("store: reap undeliverable: %w", err)
+	}
+	return res.RowsAffected()
+}
+
 // FindDedupeMatch returns the most recent delivered+unverified message from
 // fromAgent to toAgent whose body matches exactly and whose created_at is
 // newer than cutoff. Returns nil (no error) when no match exists.

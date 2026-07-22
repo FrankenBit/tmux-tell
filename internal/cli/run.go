@@ -52,6 +52,7 @@ Subcommands:
   pause   Halt one or all mailman daemons
   resume  Resume paused mailmen
   reset   Purge messages (requires --confirm)
+  reap    Dead-letter undeliverable queued fossils for unreachable recipients (#726); needs --dry-run or --confirm
   log     Inspect a reply thread flat-chronological (--thread <id>)
   thread  Render a reply thread as a parent→child tree (#141)
   stranded Recover operator paste-buffer snapshots: list|show|prune (#142)
@@ -215,6 +216,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return runPauseCLI(args[1:], false, stdout, stderr)
 	case "reset":
 		return runResetCLI(args[1:], stdout, stderr)
+	case "reap":
+		return runReapCLI(args[1:], stdout, stderr)
 	case "log":
 		return runLogCLI(args[1:], stdout, stderr)
 	case "thread":
