@@ -1,0 +1,71 @@
+
+● Bash(FORGEJO_TOKEN=$(jq -r '.mcpServers.forgejo.env.FORGEJO_TOKEN' /srv/claude/pilot/.mcp.json)…)
+  ⎿  #736 state=closed ACs ticked
+
+● Bash(FORGEJO_TOKEN=$(jq -r '.mcpServers.forgejo.env.FORGEJO_TOKEN' /srv/claude/pilot/.mcp.json)…)
+  ⎿  #737 state=closed ACs ticked
+
+● Bash(FORGEJO_TOKEN=$(jq -r '.mcpServers.forgejo.env.FORGEJO_TOKEN' /srv/claude/pilot/.mcp.json)…)
+  ⎿  #809 state=closed ACs ticked
+
+● Now post disposition comments on each:
+
+● Bash(FORGEJO_TOKEN=$(jq -r '.mcpServers.forgejo.env.FORGEJO_TOKEN' /srv/claude/pilot/.mcp.json)…)
+  ⎿  #722 comment: 87319
+
+● Bash(FORGEJO_TOKEN=$(jq -r '.mcpServers.forgejo.env.FORGEJO_TOKEN' /srv/claude/pilot/.mcp.json)…)
+  ⎿  #736 comment: 87324
+
+● Bash(FORGEJO_TOKEN=$(jq -r '.mcpServers.forgejo.env.FORGEJO_TOKEN' /srv/claude/pilot/.mcp.json)…)
+  ⎿  #737 comment: 87325
+
+● Bash(FORGEJO_TOKEN=$(jq -r '.mcpServers.forgejo.env.FORGEJO_TOKEN' /srv/claude/pilot/.mcp.json)…)
+  ⎿  #809 comment: 87326
+
+● All 15 ACs dispositioned. Bus Bosun with the summary:
+
+  Called tmux-tell (ctrl+o to expand)
+
+● Case-B sweep done. 15 ACs across 4 issues: 12 satisfied (ticked), 2 deferred to #812 (Option B filed), 1 invalid-premise class (#736 × 4 all ticked with flock-semantics note). Bosun notified at 62ac.
+
+✻ Sautéed for 5m 38s
+
+❯ /mcp
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Manage MCP servers
+  11 servers
+
+    User MCPs (/home/alex/.claude.json)
+  ❯ bookstack · ✔ connected · 38 tools
+    comfyui · ✔ connected · 136 tools
+    forgejo · ✔ connected · 103 tools
+    grafana · ✔ connected · 65 tools
+    semble · ✔ connected · 2 tools
+    serena · ✔ connected · 8 tools
+    tmux-tell · ✔ connected · 23 tools
+
+    claude.ai
+    claude.ai Gmail · △ needs authentication
+    claude.ai Google Calendar · △ needs authentication
+    claude.ai Google Drive · △ needs authentication
+    claude.ai Play Sheet Music · ✔ connected · 1 tool
+
+  https://code.claude.com/docs/en/mcp for help
+ ↑/↓ to navigate · Enter to confirm · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

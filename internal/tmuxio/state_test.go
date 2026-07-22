@@ -685,6 +685,53 @@ func TestAgentState_WorkingWhenStreamingCursorAtSentinel(t *testing.T) {
 	}
 }
 
+// TestAgentState_AwaitingOperatorOnMcpPickerModal is the #719-B fixture-backed
+// classification pin + mutation anchor. It feeds the REAL /mcp server-picker
+// capture (frozen from Pilot's live pane %6, 2026-07-22) through the full
+// classifier and asserts StateAwaitingOperator.
+//
+// Before the AwaitingOperatorMarker broadening, the /mcp footer
+// ("↑/↓ to navigate · Enter to confirm · Esc to cancel") did NOT contain the
+// old full-footer marker ("↑/↓ to navigate · Esc to cancel"), so the modal
+// fell through every branch to StateUnknown — live-verified against pane %6
+// (state=unknown, "prompt sentinel not found in any row + no recognized
+// marker"). Unknown is paste-unsafe, so this was never a clobber; the fix is
+// PRECISION — a healthy operator-interaction hold classifies as the specific
+// StateAwaitingOperator instead of polluting the catch-all Unknown bucket that
+// #719's freshness/alert layer reserves for genuinely-frozen panes.
+//
+// MUTATION ANCHOR: revert AwaitingOperatorMarker to the old full footer and
+// this test fails with state=unknown — the exact live-probed pre-fix reading.
+// The frame is stable (a static modal), so the marker branch is what decides
+// the classification; the menu-selection row (`  ❯ bookstack …`, a REGULAR
+// space after ❯, not the PromptSentinel's NBSP) is not a sentinel, so the
+// cursor-at-sentinel idle branch cannot fire and short-circuit the marker.
+func TestAgentState_AwaitingOperatorOnMcpPickerModal(t *testing.T) {
+	fastTemporalDelta(t)
+	golden, err := os.ReadFile("testdata/golden_pilot_mcp_modal_2026-07-22.txt")
+	if err != nil {
+		t.Fatalf("read /mcp modal golden: %v", err)
+	}
+	capture := string(golden)
+	// Static modal: both temporal-delta captures identical (live-verified
+	// stable across two capture-pane calls). Cursor at (2, 39) — the
+	// highlighted `❯ bookstack` menu row, mid-pane, not the input row.
+	fr := newAgentStateRunner([]string{capture, capture}, 2, 39)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%6")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateAwaitingOperator {
+		t.Errorf("state = %v, want StateAwaitingOperator (live /mcp picker modal must classify as a known operator-hold, not Unknown; #719-B)", state)
+	}
+	if !strings.Contains(ev.Reason, "awaiting-operator marker") {
+		t.Errorf("Evidence.Reason should name the awaiting-operator marker; got %q", ev.Reason)
+	}
+}
+
 // TestAgentState_FallbackWhenCursorRowNotSentinel pins the cursor-
 // less fallback path: when the cursor sits on a row that doesn't start
 // with `❯\u00a0` (e.g., agent is mid-spinner and cursor is on the spinner

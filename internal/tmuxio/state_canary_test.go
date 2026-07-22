@@ -126,6 +126,13 @@ func TestAwaitingOperatorMarker_MatchesGoldenCapture(t *testing.T) {
 	}{
 		{"original_79_capture", "testdata/golden_quartermaster_askuserquestion_2026-06-04.txt"},
 		{"post_v060_133_capture", "testdata/golden_quartermaster_askuserquestion_2026-06-06.txt"},
+		// #719-B: the /mcp server-picker footer inserts "· Enter to confirm ·"
+		// between "navigate" and "Esc", so the pre-broadening full-footer marker
+		// ("↑/↓ to navigate · Esc to cancel") did NOT match this capture and the
+		// live modal fell through to StateUnknown. Pins the broadened
+		// nav-hint-core marker against the picker variant the AskUserQuestion
+		// captures don't cover.
+		{"mcp_picker_719b_capture", "testdata/golden_pilot_mcp_modal_2026-07-22.txt"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

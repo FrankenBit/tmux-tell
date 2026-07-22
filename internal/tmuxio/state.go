@@ -297,28 +297,56 @@ type Evidence struct {
 // loudly.
 const CompactionMarker = "Compacting conversation…"
 
-// AwaitingOperatorMarker is the substring that identifies a agent in
-// StateAwaitingOperator (AskUserQuestion popups, selection menus, …).
+// AwaitingOperatorMarker is the substring that identifies an agent in
+// StateAwaitingOperator (AskUserQuestion popups, the /mcp server picker,
+// selection menus — any arrow-navigation modal, …).
 //
-// Empirically captured 2026-06-04 from a Quartermaster pane displaying
-// a live AskUserQuestion popup (#79). The captured pane
-// content is frozen as testdata/golden_quartermaster_askuserquestion_
-// 2026-06-04.txt so future Claude Code UI drift surfaces as a golden-
-// match failure on the canary test in state_canary_test.go.
+// Empirically captured 2026-06-04 from a Quartermaster pane displaying a
+// live AskUserQuestion popup (#79), re-confirmed 2026-07-22 against a live
+// /mcp server-picker on Pilot's pane %6 (#719-B). Both captures are frozen
+// under testdata/ so future Claude Code UI drift surfaces as a golden-match
+// failure on the canary test in state_canary_test.go.
 //
-// The substring is the popup's bottom-line keybinding hint —
-// "↑/↓ to navigate · Esc to cancel" — combined with the middle-dot
-// separator. The combination is structurally unique to Claude Code's
-// popup UI: regular chat / response text never emits keybinding hints
-// with U+00B7 middle-dot separators. Catches both single-select and
-// multi-select popup variants because both end with the same footer.
+// The substring is the picker footer's NAVIGATION-HINT CORE —
+// "↑/↓ to navigate ·" — the arrow keys + "to navigate" + the U+00B7
+// middle-dot separator. That combination is structurally unique to Claude
+// Code's picker chrome: regular chat / response text never combines ↑/↓ +
+// "to navigate" + a middle-dot. The middle-dot is retained deliberately as
+// the uniqueness anchor — dropping it would risk the #647-class prose-quote
+// false-match (a chamber discussing this very code writes "↑/↓ to navigate"
+// in ordinary prose; the trailing " ·" separator is what prose lacks).
+//
+// BROADENED 2026-07-22 (#719-B) from the full AskUserQuestion footer
+// "↑/↓ to navigate · Esc to cancel" to just this core. The /mcp server
+// picker's footer is "↑/↓ to navigate · Enter to confirm · Esc to cancel" —
+// the "· Enter to confirm ·" wedged between "navigate" and "Esc" made the old
+// full-footer substring fail to match, so a live /mcp modal fell through every
+// branch to StateUnknown (live-probed 2026-07-22: state=unknown, "prompt
+// sentinel not found in any row + no recognized marker"). Unknown is already
+// paste-unsafe (IsPasteUnsafeForced), so this was never a clobber; the value
+// is PRECISION — reclassifying a healthy operator-interaction hold out of the
+// catch-all Unknown bucket into the specific StateAwaitingOperator, so Unknown
+// stays reserved for genuinely-suspect / frozen panes (what #719's
+// freshness/alert layer needs to trust).
+//
+// The broadening is MONOTONIC: a paste-UNSAFE marker can only ADD
+// awaiting-operator classifications (deferrals), never remove one, so it
+// cannot introduce a new clobber by construction (same safety shape as the
+// #332 hoist). It still matches every AskUserQuestion footer (both select
+// variants end with "↑/↓ to navigate · …"), so the #79/#133 canaries stay
+// green.
+//
+// SCOPE: this marker covers arrow-navigation pickers only. #719's primary
+// anchor — Claude Code restart-mode ("connection lost, y to restart") — has
+// no arrow chrome and is semantically an ERROR state that should ALERT, not a
+// healthy hold; it wants its own marker/state and remains fixture-gated in
+// #719 (no restart fixture captured yet — do not fold it in blind).
 //
 // FORWARD-WATCH (same shape as PromptSentinel + CompactionMarker):
-// Claude-Code-version-dependent. If the popup UI's footer changes
-// across a Claude Code version update, this constant + the golden
-// fixture both need re-verification. The canary test surfaces the
-// drift loudly.
-const AwaitingOperatorMarker = "↑/↓ to navigate · Esc to cancel"
+// Claude-Code-version-dependent. If the picker UI's footer changes across a
+// Claude Code version update, this constant + the golden fixtures need
+// re-verification. The canary test surfaces the drift loudly.
+const AwaitingOperatorMarker = "↑/↓ to navigate ·"
 
 // agentStateTemporalDelta is the wait between the two capture-pane
 // calls in AgentState. 200ms is long enough to catch typical
