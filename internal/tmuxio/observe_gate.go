@@ -597,8 +597,21 @@ func extractInputContent(ctx context.Context, pane string) (string, error) {
 // clears — so it never over-sends a blank follow-up after submit.
 func pasteStillInInput(capture string) bool {
 	marker := activeProfile.PasteCollapseMarker
+	if marker == "" {
+		return false
+	}
+	return liveInputContains(capture, marker)
+}
+
+// liveInputContains reports whether needle occurs after the bottom-most prompt
+// sentinel. That suffix is the live composer in codex's dual-prompt layout: a
+// submitted turn remains above a newly opened prompt, while an unsubmitted
+// literal paste remains below the bottom-most prompt. Keep this cursor-less
+// helper on the primary sentinel only; permissive render variants are safe only
+// when the cursor anchors them (#729/#787).
+func liveInputContains(capture, needle string) bool {
 	sentinel := activeProfile.PromptSentinel
-	if marker == "" || sentinel == "" {
+	if sentinel == "" || needle == "" {
 		return false
 	}
 	lines := strings.Split(capture, "\n")
@@ -611,7 +624,7 @@ func pasteStillInInput(capture string) bool {
 	if lastSentinel < 0 {
 		return false
 	}
-	return strings.Contains(strings.Join(lines[lastSentinel:], "\n"), marker)
+	return strings.Contains(strings.Join(lines[lastSentinel:], "\n"), needle)
 }
 
 // StatusLineMarker is the glyph on the status row that bounds the BOTTOM of the

@@ -912,6 +912,86 @@ func TestDeliver_Codex_ResubmitsStuckCollapsedPaste(t *testing.T) {
 	}
 }
 
+// TestDeliver_Codex_ResubmitsStuckLiteralPaste pins #758: if codex consumes
+// the initial Enter, a short paste remains literal in the composer (no
+// [Pasted Content] marker). The delivery's own token in the bottom-most live
+// prompt is sufficient ownership proof to re-send Enter after the frame
+// settles. Before #758 this exhausted verification with one Enter because the
+// resubmit trigger was collapse-marker-only.
+func TestDeliver_Codex_ResubmitsStuckLiteralPaste(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var captureN, enterPresses int
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captureN++
+			if captureN <= 2 {
+				return []byte("old turn id old\n" + CodexPromptSentinel + "[Carpenter · id fresh] short body"), nil
+			}
+			return []byte("submitted turn id fresh\n" + CodexPromptSentinel), nil
+		case "display-message":
+			if captureN >= 3 {
+				return []byte("2/1"), nil
+			}
+			return []byte("36/1"), nil
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%8", Body: "short body", VerifyToken: "id fresh",
+		PrePasteRaceCheckDisabled: true,
+	})
+	if err != nil {
+		t.Fatalf("want literal paste to verify after resubmit, got %v", err)
+	}
+	if enterPresses != 2 {
+		t.Errorf("want initial Enter + one token-owned resubmit; got %d", enterPresses)
+	}
+}
+
+// A token retained in transcript history must not authorize submitting a new
+// operator draft in the live composer. This is the safety boundary for #758's
+// literal-paste resubmit arm.
+func TestDeliver_Codex_DoesNotResubmitOperatorDraftWhenTokenOnlyInTranscript(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(CodexPaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var enterPresses int
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			return []byte("submitted turn id fresh\n" + CodexPromptSentinel + "operator draft"), nil
+		case "display-message":
+			return []byte("16/1"), nil
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%8", Body: "short body", VerifyToken: "id fresh",
+		PrePasteRaceCheckDisabled: true,
+	})
+	if !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Fatalf("want unverified without touching operator draft, got %v", err)
+	}
+	if enterPresses != 1 {
+		t.Errorf("operator draft must not be resubmitted; got %d Enter presses", enterPresses)
+	}
+}
+
 // TestDeliver_Claude_NoResubmit pins that the #401 resubmit is codex-specific:
 // Claude has no collapse marker, so a still-unverified capture does NOT trigger
 // extra Enter presses — exactly one Enter (the initial submit) is sent.

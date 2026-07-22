@@ -449,7 +449,16 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 				return nil
 			}
 		}
-		markerPresent := pasteStillInInput(lastCapture)
+		// A collapsed marker OR this delivery's verify token in the live
+		// composer proves that our paste remains unsubmitted. The token arm closes
+		// #758's short/literal-paste hole: the cursor verifier correctly rejected
+		// the populated composer, but the resubmit path was marker-only and never
+		// fired another Enter. Scoping the token below the bottom-most primary
+		// prompt avoids submitting an operator draft or a token retained in the
+		// transcript after a successful submit. Keep this codex-only: the collapse
+		// capability is the existing adapter seam for Enter-resubmit behavior.
+		pastePresent := pasteStillInInput(lastCapture) ||
+			(activeProfile.PasteCollapseMarker != "" && liveInputContains(lastCapture, p.VerifyToken))
 		// frameChanging: the pane redrew since the previous poll — codex is
 		// still actively ingesting/rendering. attempt 0 has no prior frame (and
 		// we just sent the step-3 Enter), so treat it as changing: never fire a
@@ -462,7 +471,7 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		// already-submitted paste is harmless; holding it while mid-render avoids
 		// the eaten-Enter waste. No-op for Claude (pasteStillInInput false).
 		firedResubmit := false
-		if markerPresent && !frameChanging {
+		if pastePresent && !frameChanging {
 			if out, err := tmuxRun(ctx, nil, "send-keys", "-t", p.Pane, "Enter"); err != nil {
 				return fmt.Errorf("tmuxio: send-keys Enter (resubmit): %w: %s",
 					err, strings.TrimSpace(string(out)))
@@ -473,7 +482,7 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		// progressing toward submit — genuinely mid-ingest, or awaiting a just-
 		// fired resubmit's effect. Within the base schedule always continue, so
 		// the non-load path runs the exact pre-#674 attempt count.
-		progressing := (markerPresent && frameChanging) || firedResubmit
+		progressing := (pastePresent && frameChanging) || firedResubmit
 		if attempt >= len(retryDelays) && !progressing {
 			break
 		}
@@ -483,7 +492,9 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 	// every poll), send one Enter before giving up — preserves the pre-#674
 	// guarantee that a stuck paste always gets at least one resubmit. Best-
 	// effort: a send-keys error here is not worth masking the unverified outcome.
-	if pasteStillInInput(lastCapture) && !firedAnyResubmit {
+	if (pasteStillInInput(lastCapture) ||
+		(activeProfile.PasteCollapseMarker != "" && liveInputContains(lastCapture, p.VerifyToken))) &&
+		!firedAnyResubmit {
 		_, _ = tmuxRun(ctx, nil, "send-keys", "-t", p.Pane, "Enter")
 	}
 	if p.OnVerify != nil {
