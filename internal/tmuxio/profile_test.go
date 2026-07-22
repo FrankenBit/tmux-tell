@@ -57,6 +57,9 @@ func TestClaudePaneProfile_MatchesConsts(t *testing.T) {
 	if p.StatusLineMarker != StatusLineMarker {
 		t.Errorf("StatusLineMarker = %q, want const %q", p.StatusLineMarker, StatusLineMarker)
 	}
+	if p.APIErrorMarker != APIErrorMarker {
+		t.Errorf("APIErrorMarker = %q, want const %q", p.APIErrorMarker, APIErrorMarker)
+	}
 	if !reflect.DeepEqual(p.PromptSentinelVariants, []string{ASCIIPromptSentinel}) {
 		t.Errorf("PromptSentinelVariants = %q, want [%q] (Win11 ASCII render-variant, #729)", p.PromptSentinelVariants, ASCIIPromptSentinel)
 	}

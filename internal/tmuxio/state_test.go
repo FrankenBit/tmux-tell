@@ -1168,3 +1168,146 @@ func TestIsPasteUnsafe(t *testing.T) {
 		}
 	}
 }
+
+// --- #719: StateErrored terminal API-error chrome ---
+
+// erroredComposerCursorY is the 0-based row index of the composer (`❯`+NBSP)
+// in the real + constructed API-error fixtures. The terminal, real-retry, and
+// active-retry captures all put the composer at index 67; the scrollback
+// fixture (one extra scrollback line + spacer) at index 68. The cursor sits AT
+// the sentinel column (x=2, the rune-width of "❯ ") so that, absent the
+// StateErrored branch, the pane would classify Idle via P6 — which is precisely
+// the false-idle these tests pin the fix against.
+
+// TestAgentState_ErroredOnTerminalApiError is the #719 anchor: a real capture of
+// Bosun's pane at the moment a 529 gave up. The `● API Error: 529 …` line sits
+// in the current-turn region, the composer `❯` prompt is preserved (cursor at
+// the sentinel, frame stable), and the footer LACKS `esc to interrupt`. Before
+// the fix this classified Idle (P6) and the mailman pasted into the dead turn;
+// now it classifies StateErrored. Two identical captures = a stable frame, so
+// P5 frame-change does NOT fire and the classifier reaches the StateErrored
+// branch (5b) — the branch under test, not P5.
+func TestAgentState_ErroredOnTerminalApiError(t *testing.T) {
+	fastTemporalDelta(t)
+	golden, err := os.ReadFile("testdata/golden_bosun_api_error_529_2026-07-22.txt")
+	if err != nil {
+		t.Fatalf("read terminal 529 golden: %v", err)
+	}
+	capture := string(golden)
+	// Composer `❯`+NBSP at row 67; cursor AT the sentinel (col 2). Identical
+	// captures ⇒ stable frame.
+	fr := newAgentStateRunner([]string{capture, capture}, 2, 67)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%7")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateErrored {
+		t.Errorf("state = %v, want StateErrored (terminal API-error chrome must not false-idle; #719)", state)
+	}
+	if !strings.Contains(ev.Reason, "terminal API-error chrome") {
+		t.Errorf("Evidence.Reason should name the terminal API-error chrome; got %q", ev.Reason)
+	}
+	if !IsPasteUnsafeForced(state) {
+		t.Errorf("StateErrored must be content-corrupting paste-unsafe (IsPasteUnsafeForced); got false")
+	}
+}
+
+// TestAgentState_NotErroredOnActiveRetry is the real-capture regression that an
+// ACTIVE 529-retry does NOT classify Errored. bosun-restart-modal is a real
+// capture the facts doc found mislabeled: it is a retry-in-progress
+// (`✻ 529 Overloaded · Retrying…`) whose footer carries `esc to interrupt`. This
+// real frame has NO "API Error:" line at all (retry shows "Retrying"), so BOTH
+// the region-scope AND the esc-to-interrupt guard suppress; the assertion is
+// simply that an active retry is never Errored. (The guard's own kill is pinned
+// by TestAgentState_NotErroredWhileRetryingWithErrorLine below, where the error
+// line IS present.)
+func TestAgentState_NotErroredOnActiveRetry(t *testing.T) {
+	fastTemporalDelta(t)
+	golden, err := os.ReadFile("testdata/golden_bosun_api_error_retry_2026-07-22.txt")
+	if err != nil {
+		t.Fatalf("read active-retry golden: %v", err)
+	}
+	capture := string(golden)
+	fr := newAgentStateRunner([]string{capture, capture}, 2, 67)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%7")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state == StateErrored {
+		t.Errorf("state = StateErrored, want NOT-Errored (an active 529-retry must stay non-errored; #719)")
+	}
+}
+
+// TestAgentState_NotErroredWhileRetryingWithErrorLine is the load-bearing
+// esc-to-interrupt GUARD test — and the mutation-verification target. This
+// CONSTRUCTED fixture keeps the real terminal `● API Error: 529 …` line in the
+// live region but carries `esc to interrupt` in the footer, representing a 529
+// that is still actively retrying while the error line is painted. The
+// region-scope alone would fire (the coded error line IS in the current-turn
+// region); ONLY the esc-to-interrupt guard suppresses it. Strip that guard and
+// this test reds — the closed-loop mutation reproduced in the PR body.
+//
+// CONSTRUCTED, documented as such: the real retry capture (previous test) shows
+// "Retrying" not "API Error:", so it cannot exercise the guard; this fixture is
+// the real terminal capture with the interrupt-hint injected into its footer.
+func TestAgentState_NotErroredWhileRetryingWithErrorLine(t *testing.T) {
+	fastTemporalDelta(t)
+	golden, err := os.ReadFile("testdata/golden_bosun_api_error_active_retry_2026-07-22.txt")
+	if err != nil {
+		t.Fatalf("read active-retry-with-error golden: %v", err)
+	}
+	capture := string(golden)
+	fr := newAgentStateRunner([]string{capture, capture}, 2, 67)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%7")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state == StateErrored {
+		t.Errorf("state = StateErrored, want NOT-Errored (esc-to-interrupt in the footer must suppress the error classification even with the error line present; #719 guard)")
+	}
+}
+
+// TestAgentState_NotErroredOnScrollbackQuote is the mandatory Lookout live-scope
+// test: an `● API Error: 529 …` line quoted in DEEP scrollback — ABOVE an
+// earlier transcript `❯` prompt — with a clean empty composer below must NOT
+// classify Errored. The current-turn region (between the bottom-most transcript
+// prompt and the composer) does not contain the scrollback error, so the marker
+// does not fire and the pane classifies Idle. Strip the live-scope upper bound
+// and the whole-pane error line falls into the region → StateErrored → this reds
+// (the alternative mutation the plan names).
+//
+// CONSTRUCTED, documented as such: synthesized from the real terminal capture by
+// moving the error line above the transcript prompt + inserting a clean composer.
+func TestAgentState_NotErroredOnScrollbackQuote(t *testing.T) {
+	fastTemporalDelta(t)
+	golden, err := os.ReadFile("testdata/golden_bosun_api_error_scrollback_2026-07-22.txt")
+	if err != nil {
+		t.Fatalf("read scrollback golden: %v", err)
+	}
+	capture := string(golden)
+	// Composer at row 68 in this fixture (one extra scrollback line + spacer vs
+	// the terminal capture). Cursor AT the sentinel (col 2), stable frame.
+	fr := newAgentStateRunner([]string{capture, capture}, 2, 68)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%7")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state == StateErrored {
+		t.Errorf("state = StateErrored, want StateIdle (an API-error phrase in scrollback must not fire the live-scoped marker; #719 live-scope)")
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (clean composer below the scrollback error; #719)", state)
+	}
+}

@@ -422,9 +422,14 @@ func ObserveGate(ctx context.Context, pane string, opts ObserveGateOpts) (GateOu
 			if firstCopyModeAt.IsZero() {
 				firstCopyModeAt = time.Now()
 			}
-		case StateAtRestInCompaction, StateUnknown:
+		case StateAtRestInCompaction, StateUnknown, StateErrored:
 			// Safer-default wait. The agent is compacting / in an
-			// unrecognized state; defer + re-poll.
+			// unrecognized state / showing terminal API-error chrome (#719);
+			// defer + re-poll. StateErrored is content-corrupting
+			// paste-unsafe (IsPasteUnsafeForced), so it never delivers past
+			// the mailman's pre-paste belt — this branch just keeps the gate
+			// deferring rather than falling through to a deliver path, exactly
+			// as StateUnknown does.
 		}
 
 		// Check the safety cap before sleeping for the next iteration.

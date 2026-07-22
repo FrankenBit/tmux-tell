@@ -44,7 +44,7 @@ func startMetricsServer(stopCtx context.Context, m *metrics.Metrics, addr string
 // gate passed, then the pane became paste-unsafe before paste. Steady-state
 // defers/parks (rate_limited / usage_limited) are surfaced by their gauges,
 // not by this counter. The label set is closed (awaiting_operator |
-// compaction | rate_limited | usage_limited | copy_mode | unknown |
+// compaction | rate_limited | usage_limited | copy_mode | errored | unknown |
 // probe_failed) so the
 // Grafana panel can enumerate it — it mirrors #146's exposition sketch and
 // the IsPasteUnsafe state set (tmuxio.state). A probe error outranks the
@@ -66,6 +66,8 @@ func pasteUnsafeReason(state tmuxio.State, probeErr error) string {
 		return "usage_limited"
 	case tmuxio.StateInCopyMode:
 		return "copy_mode"
+	case tmuxio.StateErrored:
+		return "errored"
 	default:
 		return "unknown"
 	}

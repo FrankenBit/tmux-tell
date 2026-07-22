@@ -48,6 +48,11 @@ import "regexp"
 //     walk-until-boundary. Empty disables the status-line recognizer; the
 //     adapter-universal ─×20 separator recognizer (isInputAreaBoundary) stays
 //     active regardless, since box-drawing separators are a TUI-wide convention.
+//   - APIErrorMarker: substring anchoring the StateErrored classification —
+//     Claude Code's terminal API-error line (#719, "API Error:"). Empty disables
+//     the check (correct for an adapter with no API-error chrome, e.g. codex).
+//     The bare substring is NOT matched whole-pane; the live-scope, coded-line,
+//     and esc-to-interrupt-guard discipline all live in capturedLiveErrorChrome.
 //
 // Why PromptSentinel is a string, not the rune the #322 issue sketch proposed:
 // Claude's sentinel is TWO codepoints (❯ U+276F followed by NBSP U+00A0), so a
@@ -92,6 +97,7 @@ type PaneProfile struct {
 	CompactionMarker       string
 	AwaitingOperatorMarker string
 	StatusLineMarker       string
+	APIErrorMarker         string
 	PasteCollapseMarker    string
 	RateLimitPattern       string
 	UsageLimitPattern      string
@@ -111,6 +117,7 @@ func ClaudePaneProfile() PaneProfile {
 		CompactionMarker:       CompactionMarker,
 		AwaitingOperatorMarker: AwaitingOperatorMarker,
 		StatusLineMarker:       StatusLineMarker,
+		APIErrorMarker:         APIErrorMarker,
 	}
 }
 

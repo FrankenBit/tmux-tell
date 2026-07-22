@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -130,6 +131,25 @@ const (
 	// account quota is exhausted, so the mailman parks until quota reset rather
 	// than backing off exponentially. Paste-unsafe while parked.
 	StateUsageLimited
+	// StateErrored means the adapter pane is showing Claude Code's TERMINAL
+	// API-error chrome (#719) — an `● API Error: <code> …` line left painted in
+	// the current-turn region after a request gave up, with the composer `❯`
+	// prompt row preserved below it. That preserved prompt is exactly why this
+	// is a FALSE-IDLE: the cursor-at-sentinel branch (P6) reads the pane as Idle,
+	// the observe-gate flushes, and the mailman pastes into a DEAD turn — the
+	// paste lands as ghost text nobody submits (the #719 anchor). This is an
+	// ALERT-class state, NOT a healthy hold: unlike StateAwaitingOperator (an
+	// operator-interaction hold) the turn has FAILED and needs attention/retry.
+	//
+	// Detection is live-scoped (capturedLiveErrorChrome): the error line must
+	// sit in the CURRENT-turn region — strictly between the bottom-most
+	// transcript `❯`-prompt and the composer — so error phrasing quoted in deep
+	// scrollback does not false-fire, and an active 529-retry (which still shows
+	// `esc to interrupt` in its footer) is deliberately SUPPRESSED so it stays
+	// Working. Paste-unsafe/content-corrupting (IsPasteUnsafeForced): pasting
+	// into the dead turn corrupts operator-visible content and is never
+	// force-overridable.
+	StateErrored
 )
 
 // String returns the wire-format name of the state — the same string
@@ -152,6 +172,8 @@ func (s State) String() string {
 		return "rate-limited"
 	case StateUsageLimited:
 		return "usage-limited"
+	case StateErrored:
+		return "errored"
 	default:
 		return "unknown"
 	}
@@ -189,6 +211,10 @@ func (s State) String() string {
 //   - StateUsageLimited: the adapter is showing an account usage-limit banner
 //     matched by the operator-configured regex (#540). This is a hard-stop
 //     quota event, not a temporary throttle; the mailman parks until reset.
+//   - StateErrored: the adapter is showing terminal API-error chrome (#719) —
+//     a failed turn whose composer prompt is preserved (the false-idle). A
+//     paste lands in the DEAD turn as unsubmitted ghost text; content-
+//     corrupting and never force-overridable (IsPasteUnsafeForced).
 //
 // StateIdle and StateWorking are paste-safe (idle by definition;
 // working buffers mid-turn keystrokes per Claude Code TUI behavior).
@@ -220,7 +246,8 @@ func IsPasteUnsafe(s State) bool {
 // is ever forced through.
 func IsPasteUnsafeForced(s State) bool {
 	return s == StateAwaitingOperator || s == StateUnknown ||
-		s == StateAtRestInCompaction || s == StateInCopyMode
+		s == StateAtRestInCompaction || s == StateInCopyMode ||
+		s == StateErrored
 }
 
 // Evidence carries the observation that led to the State classification.
@@ -347,6 +374,33 @@ const CompactionMarker = "Compacting conversation…"
 // Claude Code version update, this constant + the golden fixtures need
 // re-verification. The canary test surfaces the drift loudly.
 const AwaitingOperatorMarker = "↑/↓ to navigate ·"
+
+// APIErrorMarker is the substring that anchors the StateErrored classification
+// (#719) — Claude Code's terminal API-error line, e.g.
+//
+//	● API Error: 529 Overloaded. This is a server-side issue, usually temporary…
+//
+// Empirically captured 2026-07-22 from Bosun's live pane (%…) at the moment a
+// 529 gave up — frozen as testdata/golden_bosun_api_error_529_2026-07-22.txt so
+// future Claude Code UI drift surfaces as a golden-match failure on
+// TestAPIErrorMarker_MatchesGoldenCapture.
+//
+// This bare "API Error:" substring is NOT matched whole-pane: like
+// CompactionMarker it is not structurally unique (a chamber discussing an API
+// error — or working on this code — writes "API Error:" in ordinary text). The
+// live-scope + regex discipline lives in capturedLiveErrorChrome, which (a)
+// scopes the match to the CURRENT-turn region (strictly between the bottom-most
+// transcript `❯`-prompt and the composer, so scrollback prose can't fire it),
+// (b) requires a 3-digit status code via apiErrorLineRE (`API Error: \d`, so
+// codeless prose is rejected), and (c) suppresses on `esc to interrupt` in the
+// footer (an active retry stays Working, not Errored).
+//
+// FORWARD-WATCH (same shape as PromptSentinel + CompactionMarker +
+// AwaitingOperatorMarker): Claude-Code-version-dependent. If the API-error line
+// phrasing changes across a Claude Code version update, this constant + the
+// golden fixture need re-verification. The canary test surfaces the drift
+// loudly.
+const APIErrorMarker = "API Error:"
 
 // agentStateTemporalDelta is the wait between the two capture-pane
 // calls in AgentState. 200ms is long enough to catch typical
@@ -703,4 +757,136 @@ func capturedLiveCompaction(capture, marker string) bool {
 		}
 		i += j + len(marker)
 	}
+}
+
+// apiErrorLineRE matches Claude Code's terminal API-error line — the marker
+// phrase followed by a 3-digit-family status code's leading digit. Keyed on
+// `API Error: \d` (a digit immediately after the ": ") rather than the specific
+// 529 so the classifier is family-general (500/503/529/…) while still rejecting
+// codeless prose like "hit an API Error: check the logs". Package-level
+// MustCompile (fixed literal) mirrors the other pkg regexes.
+var apiErrorLineRE = regexp.MustCompile(`API Error: \d`)
+
+// escToInterruptHint is Claude Code's active-turn interrupt affordance. Its
+// presence in the footer (at/below the composer) means the turn is still
+// running — an active 529-retry shows it while retrying — so capturedLiveErrorChrome
+// SUPPRESSES StateErrored while it is present, leaving the pane Working. The
+// terminal (given-up) capture LACKS it (grep -c = 0), which is the load-bearing
+// discriminant between a terminal error and an in-flight retry (#719 facts).
+const escToInterruptHint = "esc to interrupt"
+
+// promptGlyphs returns the ornament glyphs that begin a transcript-prompt row —
+// the FIRST rune of the profile's PromptSentinel plus the first rune of each
+// PromptSentinelVariant. Claude's composer sentinel is `❯`+NBSP and a transcript
+// prompt is `❯`+regular-space; both share the U+276F ornament, so the bare glyph
+// is the anchor for the current-turn region's upper bound. The Win11 variant
+// contributes `>`; matching it too only ever SHRINKS the region (moves the upper
+// bound down), which biases toward a false-NEGATIVE (a missed error, no
+// regression) rather than a false-idle clobber — the safe direction.
+func promptGlyphs(p PaneProfile) []string {
+	var glyphs []string
+	add := func(s string) {
+		if s == "" {
+			return
+		}
+		r, _ := utf8.DecodeRuneInString(s)
+		if r == utf8.RuneError {
+			return
+		}
+		g := string(r)
+		for _, existing := range glyphs {
+			if existing == g {
+				return
+			}
+		}
+		glyphs = append(glyphs, g)
+	}
+	add(p.PromptSentinel)
+	for _, v := range p.PromptSentinelVariants {
+		add(v)
+	}
+	return glyphs
+}
+
+// capturedLiveErrorChrome reports whether capture shows Claude Code's TERMINAL
+// API-error chrome (#719) — an `API Error: <code>` line left painted in the
+// CURRENT-turn region after a request gave up — and returns the matched line.
+//
+// It is the live-scoped sibling of capturedLiveCompaction: a bare whole-pane
+// grep for "API Error:" would false-fire on error phrasing quoted in deep
+// scrollback (the mandatory Lookout negative test), so the match is bounded to
+// the current turn and gated on two structural facts:
+//
+//  1. REGION. The composer is the bottom-most row matching the profile's
+//     PromptSentinel (`❯`+NBSP, NBSP-exact via cutPromptSentinel). The region's
+//     upper bound is the bottom-most transcript-prompt row strictly above the
+//     composer — a row whose left-trimmed content begins with a prompt ornament
+//     glyph (`❯`, or a variant's `>`). The error line must sit STRICTLY between
+//     that upper bound and the composer. Error phrasing above the last
+//     transcript prompt (scrollback) is out of region and does not fire.
+//     (No transcript prompt above the composer → upper bound is -1 → the region
+//     is rows[0:composer], the whole pane above the composer.)
+//  2. CODE. The in-region line must match apiErrorLineRE (`API Error: \d`) — a
+//     digit right after the marker — so codeless prose is rejected.
+//  3. NOT-RETRYING. `esc to interrupt` must be ABSENT from the footer (rows
+//     AT/BELOW the composer). An active 529-retry still paints that interrupt
+//     hint; its presence means the turn is live, so StateErrored is suppressed
+//     and the pane stays Working. This is the belt that discriminates a terminal
+//     error from an in-flight retry even when both show the error line.
+//
+// marker gating (the caller's `m != ""` guard on profile.APIErrorMarker)
+// disables the check for adapters with no API-error UI (codex). Returns
+// (matchedLine, true) only when an in-region coded error line is present AND the
+// interrupt hint is absent.
+func capturedLiveErrorChrome(capture string, p PaneProfile) (string, bool) {
+	sentinel := p.PromptSentinel
+	if sentinel == "" {
+		return "", false
+	}
+	rows := strings.Split(capture, "\n")
+
+	// 1. Composer: bottom-most row matching the NBSP-exact composer sentinel.
+	composer := -1
+	for i := len(rows) - 1; i >= 0; i-- {
+		if _, found := cutPromptSentinel(rows[i], sentinel); found {
+			composer = i
+			break
+		}
+	}
+	if composer < 0 {
+		return "", false
+	}
+
+	// 3. NOT-RETRYING guard: an active retry keeps `esc to interrupt` in the
+	// footer at/below the composer. Suppress while it is present.
+	for i := composer; i < len(rows); i++ {
+		if strings.Contains(rows[i], escToInterruptHint) {
+			return "", false
+		}
+	}
+
+	// 1 (cont.). Region upper bound: bottom-most transcript-prompt row strictly
+	// above the composer (left-trimmed content begins with a prompt glyph).
+	glyphs := promptGlyphs(p)
+	upper := -1
+	for i := composer - 1; i >= 0; i-- {
+		trimmed := strings.TrimLeft(rows[i], " \t\u00a0") // spaces, tabs, NBSP
+		for _, g := range glyphs {
+			if strings.HasPrefix(trimmed, g) {
+				upper = i
+				break
+			}
+		}
+		if upper >= 0 {
+			break
+		}
+	}
+
+	// 2. Coded error line strictly inside the region.
+	for i := upper + 1; i < composer; i++ {
+		if apiErrorLineRE.MatchString(rows[i]) {
+			return strings.TrimSpace(rows[i]), true
+		}
+	}
+	return "", false
 }

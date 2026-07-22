@@ -361,6 +361,34 @@ func (c *classifier) agentState(ctx context.Context, pane string) (state State, 
 			}, nil
 	}
 
+	// Precedence 5b (#719): terminal API-error chrome → StateErrored. Placed
+	// AFTER P5 frame-change and BEFORE P6 cursor-at-sentinel→Idle, and the
+	// ordering is load-bearing on both sides:
+	//
+	//   - After P5: an active 529-RETRY animates its spinner
+	//     (`✻ 529 Overloaded · Retrying…`), so capA != capB and P5 catches it as
+	//     Working before it reaches here. A TERMINAL error is a stable frame
+	//     (the request gave up; nothing animates), so it falls through P5 to
+	//     here. The esc-to-interrupt guard inside capturedLiveErrorChrome is the
+	//     BELT for the residual case — a retry whose 200ms window happened to be
+	//     stable still carries `esc to interrupt` in its footer and is suppressed.
+	//   - Before P6: the terminal error PRESERVES the composer `❯` prompt row, so
+	//     the cursor sits at the sentinel and P6 would classify it Idle — the
+	//     false-idle this whole state exists to correct (the mailman then pastes
+	//     into the dead turn). Running before P6 reclassifies it Errored first.
+	//
+	// The check is disabled (empty APIErrorMarker) for adapters with no
+	// API-error chrome — codex parks it, so the codex path is unchanged.
+	if m := c.profile.APIErrorMarker; m != "" {
+		if line, ok := capturedLiveErrorChrome(capBStr, c.profile); ok {
+			return StateErrored,
+				Evidence{
+					Reason: fmt.Sprintf("terminal API-error chrome (false-idle): %q", line),
+					Marker: m,
+				}, nil
+		}
+	}
+
 	// Precedence 6: cursor AT the sentinel on a STABLE frame → Idle. This
 	// stays BELOW P5 so a cursor parked at the sentinel while the frame
 	// streams is caught as Working above, not mis-idled.

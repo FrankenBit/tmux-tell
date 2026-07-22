@@ -200,3 +200,38 @@ func TestCompactionMarker_MatchesGoldenCapture(t *testing.T) {
 		})
 	}
 }
+
+// TestAPIErrorMarker_MatchesGoldenCapture is the sibling-shape canary for the
+// APIErrorMarker constant (#719) — same capture-derived-vs-spec-derived
+// discipline as the PromptSentinel / AwaitingOperatorMarker / CompactionMarker
+// canaries above. It pins that capturedLiveErrorChrome fires on the real
+// terminal 529 capture (frozen from Bosun's live pane 2026-07-22), so a drift in
+// Claude Code's API-error line phrasing — or a regression in the live-scope
+// helper — fails loudly + names the re-capture recipe.
+//
+// The bare "API Error:" substring is NOT structurally unique (a chamber
+// discussing an error writes it in prose), so the match is via
+// capturedLiveErrorChrome, not strings.Contains: the golden must carry the
+// LIVE terminal chrome (coded error line in the current-turn region, no
+// `esc to interrupt` footer), which prose-quotes lack.
+func TestAPIErrorMarker_MatchesGoldenCapture(t *testing.T) {
+	// Guard against the empty-marker regression: an accidentally-emptied
+	// APIErrorMarker disables the StateErrored branch entirely (the classifier's
+	// `m != ""` guard parks it), and this test must surface that loudly rather
+	// than silently passing. Same pattern as the Compaction/AwaitingOperator
+	// canaries.
+	if APIErrorMarker == "" {
+		t.Fatal("APIErrorMarker is empty — the StateErrored branch is disabled; re-populate from a re-captured golden fixture (see APIErrorMarker doc-comment)")
+	}
+	golden, err := os.ReadFile("testdata/golden_bosun_api_error_529_2026-07-22.txt")
+	if err != nil {
+		t.Fatalf("read API-error golden capture: %v", err)
+	}
+	line, ok := capturedLiveErrorChrome(string(golden), ClaudePaneProfile())
+	if !ok {
+		t.Errorf("golden terminal 529 capture did NOT classify as live API-error chrome — Claude Code's API-error line may have drifted, or the live-scope helper regressed; re-verify via `tmux capture-pane -p -t <pane>` on a live terminal API error + update APIErrorMarker + re-capture the golden fixture")
+	}
+	if !strings.Contains(line, APIErrorMarker) {
+		t.Errorf("matched error line %q does not contain APIErrorMarker %q", line, APIErrorMarker)
+	}
+}
