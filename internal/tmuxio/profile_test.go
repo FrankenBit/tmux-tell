@@ -306,6 +306,81 @@ func TestAgentState_CodexEmptyComposer_CursorLessFallback(t *testing.T) {
 	}
 }
 
+// TestAgentState_CodexChromeAboveIdleComposer_CursorLessFallback pins the #756
+// Bug 2 fix. Codex renders every submitted turn's chrome with a `› [Sender · ts]
+// message content` prefix, so a healthy codex pane routinely carries multiple
+// sentinel rows: the transcript ones with content past the sentinel, the
+// composer at the bottom stripped to bare `›` (empty). Pre-fix, isInputRowQuiet
+// disqualified the whole pane the moment ANY sentinel row had content past it,
+// so a codex chamber with any submitted turn in scrollback fell through to
+// StateUnknown when the cursor query didn't land on the composer (cursor query
+// failure, cursorY out of range, or cursor on a non-sentinel row). The mailman's
+// pre_paste_safety_abort then refused delivery in a loop — the operator-
+// witnessed wedge #756 tracks.
+//
+// The bottom-most-sentinel-row semantics classify the composer correctly
+// regardless of how many chrome sentinel rows sit above it. Mutation anchor:
+// reverting isInputRowQuiet to the walk-all-rows form flips this to
+// StateUnknown.
+func TestAgentState_CodexChromeAboveIdleComposer_CursorLessFallback(t *testing.T) {
+	setActivePaneProfileForTest(t, CodexPaneProfile())
+	fastTemporalDelta(t)
+
+	// Two chrome rows carry `› [Sender ...]` with content past the sentinel;
+	// the composer at row 5 is the stripped bare `›`. cursorY=-1 forces the
+	// cursor-less fallback path.
+	pane := "› [Bosun · 15:00] dispatch codex investigation\n" +
+		"  understood, running probes now\n" +
+		"› [Bosun · 15:12] status ping?\n" +
+		"  all green, standing warm\n" +
+		"›\n" +
+		"  gpt-5.5 default · /srv/codex/carpenter\n"
+	fr := newAgentStateRunner([]string{pane, pane}, 2, -1)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, ev, err := AgentState(context.Background(), "%8")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state != StateIdle {
+		t.Errorf("state = %v, want StateIdle (bottom-most sentinel is clean composer despite chrome sentinels above); evidence=%q", state, ev.Reason)
+	}
+	if !strings.Contains(ev.Reason, "cursor-less fallback") {
+		t.Errorf("Reason = %q, want it to name the cursor-less fallback path", ev.Reason)
+	}
+}
+
+// TestAgentState_CodexChromeAboveDirtyComposer_CursorLessFallback is the
+// safety counterpart to the #756 Bug 2 fix: the bottom-most-sentinel semantics
+// must still refuse-to-idle when the composer itself carries content past the
+// sentinel (a buffered paste, operator draft). Pre-fix this happened to work
+// too — walk-all-rows returned false because of the chrome — but the fix keys
+// specifically on the composer, so it needs its own pin: if a future refactor
+// moved the anchor away from bottom-most, this test flips and surfaces the
+// regression before it hits a chamber.
+func TestAgentState_CodexChromeAboveDirtyComposer_CursorLessFallback(t *testing.T) {
+	setActivePaneProfileForTest(t, CodexPaneProfile())
+	fastTemporalDelta(t)
+
+	// Bottom-most sentinel row carries buffered content — must NOT classify Idle.
+	pane := "› [Bosun · 15:00] dispatch\n" +
+		"  understood\n" +
+		"› buffered operator draft — do NOT paste over this\n" +
+		"  gpt-5.5 default · /srv/codex/carpenter\n"
+	fr := newAgentStateRunner([]string{pane, pane}, 2, -1)
+	prev := SetTmuxRunner(fr.run)
+	t.Cleanup(func() { SetTmuxRunner(prev) })
+
+	state, _, err := AgentState(context.Background(), "%8")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if state == StateIdle {
+		t.Errorf("state = StateIdle — the composer has content past the sentinel; must NOT be paste-safe")
+	}
+}
+
 // TestCodexWorkingPattern_MatchesMarker pins the #590 codex working-marker regex
 // against the empirical marker bytes and the negative cases it must NOT match.
 // The pattern keys on the `Working (` … `esc to interrupt)` phrase pair on a

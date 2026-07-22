@@ -831,29 +831,43 @@ func countChangedLines(a, b string) int {
 	return diff
 }
 
-// isInputRowQuiet walks the captured pane and returns true when at
-// least one row starts with PromptSentinel AND that row has only
-// whitespace past the sentinel. False otherwise (no sentinel row
-// found, or sentinel row has non-whitespace content). Used by the
-// cursor-less fallback path in AgentState when display-message
-// fails or the cursor isn't on the input row.
+// isInputRowQuiet reports whether the pane's composer — the BOTTOM-MOST row
+// starting with the active PromptSentinel — has only whitespace past the
+// sentinel. Returns false when no sentinel row is found or the composer has
+// non-whitespace content. Used by the cursor-less fallback path in AgentState
+// when the cursor query fails or the cursor isn't on the input row.
+//
+// Bottom-most anchoring (not every-row) is what makes this codex-safe (#756
+// Bug 2). Codex renders every submitted turn's chrome with a `› [Sender · ts]
+// message content` prefix, so a healthy codex pane routinely carries multiple
+// sentinel rows — the transcript ones with content past the sentinel, the
+// composer at the bottom with only ghost-text or nothing. The pre-#756 walk
+// disqualified the whole pane the moment ANY sentinel row had content past
+// it, so an idle codex composer with any submitted turn in scrollback fell
+// through to StateUnknown and the mailman's pre_paste_safety_abort refused
+// delivery in a loop. The composer is always the bottom-most sentinel row
+// (input area is anchored below all rendered content in both codex + Claude
+// TUIs), so keying on the bottom-most row is both codex-correct and Claude-
+// safe: Claude's chrome doesn't repeat the sentinel, so bottom-most == only
+// sentinel row and the observable answer is unchanged.
+//
+// The `pane_in_mode=1` copy-mode gate in AgentState (P0) means this only runs
+// on live-view panes where the composer is in frame; a scrolled-up pane never
+// reaches here.
 func isInputRowQuiet(paneContent string) bool {
 	sentinel := activeProfile.PromptSentinel
 	if sentinel == "" {
 		return false
 	}
-	sawSentinel := false
-	for _, row := range strings.Split(paneContent, "\n") {
-		rest, found := cutPromptSentinel(row, sentinel)
+	rows := strings.Split(paneContent, "\n")
+	for i := len(rows) - 1; i >= 0; i-- {
+		rest, found := cutPromptSentinel(rows[i], sentinel)
 		if !found {
 			continue
 		}
-		sawSentinel = true
-		if strings.TrimSpace(rest) != "" {
-			return false
-		}
+		return strings.TrimSpace(rest) == ""
 	}
-	return sawSentinel
+	return false
 }
 
 // cutPromptSentinel splits a captured row on the active prompt sentinel,

@@ -33,6 +33,10 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+### Fixed
+
+Fixed the cursor-less pane-state classifier fallback returning `unknown` on healthy codex chambers with rendered turns in scrollback. Codex paints every submitted turn with its `› ` sentinel prefix (`› [Sender · ts] message`), so a chamber with any conversation history routinely carries multiple sentinel rows. The fallback disqualified the whole pane the moment any sentinel row had content past it, and the mailman's pre-paste safety gate then refused delivery in a loop. The fallback now anchors on the bottom-most sentinel row — the composer — so transcript rows above no longer poison the classification. Claude's chrome doesn't repeat the sentinel, so Claude panes are unaffected. Bug 2 of #756; Bug 1 (agent_state MCP cross-adapter false-negative) is tracked separately as #827.
+
 ## [0.33.1] — 2026-07-22
 
 ### Added
