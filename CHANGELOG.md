@@ -33,6 +33,50 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.33.0] — 2026-07-22
+
+### Added
+
+Added a delivery-freshness alert. When a queued message to an agent sits undelivered past `--mailman-stale-threshold` (default 10m) and that agent's pane is not in a known hold state (rate/usage-limit, awaiting-operator, copy-mode, or compaction-rest), the mailman emits a one-shot notice to a configured conductor agent — so a stalled or frozen pane surfaces promptly instead of silently swallowing deliveries. Off by default; set `mailman-alert-to` (flag or per-agent config) to activate.
+
+Added an independent systemd mailman observer. It sweeps expected per-agent mailman units every 30 seconds and sends a one-shot conductor notice when an enabled unit stays inactive or enters a restart loop, covering OOM/crash failures that the mailman's self-observed freshness alert cannot detect.
+
+### Changed
+
+None.
+
+### Fixed
+
+Fixed `mailman_stuck` gauge leaking the old label on a direct stuck-reason A→B transition (without passing through unstuck). The gauge now clears the previous label before setting the new one, so only the current reason shows `1`; all other labels stay `0`.
+
+Fixed the pane-state classifier misreading an operator **actively typing** into a Claude pane as `working` (paste-safe), which let the mailman paste into — and clobber — the operator's half-typed input. Each keystroke repaints the input row, so the two temporal-delta captures differed and the "pane content changed → working" precedence fired before the cursor-position branch could recognise the operator was drafting. The classifier now lets "cursor **past** the prompt sentinel" (operator drafting) win over the frame-change check → `awaiting-operator` (paste-unsafe), so delivery defers until the draft is sent or cleared. Streaming and spinner busy-states keep the cursor **at** the sentinel and still classify `working`, so mid-turn delivery is unaffected (measured on the live Claude adapter: 156/156 busy frame-changes kept the cursor at the sentinel column).
+
+Fixed `tmux-tell.register` MCP tool silently rewriting `pane_id` from `$TMUX_PANE` in acting-on-behalf and post-crash scenarios (mirror of CLI fix in #570/#403). Added `keep_pane` input field (update non-pane fields without touching `pane_id`) and divergence detection (refuse when stored `pane_id` differs from `$TMUX_PANE` and neither `pane` nor `keep_pane` was passed).
+
+Sandboxed CLI startup no longer fails with SQLite `readonly` errors for read-only verbs. `whoami`, `agents`, and `status` now open the bus DB read-only (`store.OpenReadOnly`), skipping the healing DML that a writer-mode open runs unconditionally at every startup. Mutating verbs (`send`, `register`, `ping`, `serve`, …) are unchanged and continue to require write access; MCP tools continue to open in writer mode.
+
+Deploy no longer false-positives on idle-at-prompt chambers with stale-binary agent-side MCPs. `install.sh --no-bootstrap` now autonomously fires `refresh-all-mcps` when the operator's tmux server is reachable (probed via `tmux list-sessions` under `DROP_TMUX`) — non-fatal on partial failure, since the safety net below catches anything residual. `doctor --allow-active-agents` now exits **71** (`exitDoctorIdleStaleOnly`) when ALL divergences are the idle-stale chamber-MCP class (closable by `refresh-all-mcps`) versus **69** for real-divergence classes (SYNC db-state, mailman-stale, orphan MCP with no chamber resolvable — none of which `refresh-all-mcps` can close). The `.forgejo/workflows/deploy.yml` post-deploy-smoke step case-switches: `0` = clean; `71` = `::warning::` with the idle-stale class named; anything else = hard-fail. Restores #416's original hard-fail-on-real-divergence goal that #791 could only partially deliver; #416 closes formally. Exit code is **71 rather than the originally proposed 70** to avoid a collision with the pre-existing `exitInternal = 70` (which must stay hard-fail — internal doctor errors are a distinct class from idle-stale-only); the constant name `exitDoctorIdleStaleOnly` in `internal/cli/common.go` carries the authoritative semantics.
+
+Fixed `ping` failing with an opaque SQLite error under sandbox FS scope (readonly database). When `store.Open` hits a read-only error, the output now names the sandbox as the likely cause and surfaces both remediation options: use the `tmux-tell.ping` MCP tool (which has write access as a persistent process outside the sandbox), or run `ping` outside the sandbox with `--db <path>`. Non-sandbox failures (permission denied, bad path) preserve their original error text unchanged.
+
+Fixed a data race in `internal/notify` between the fan-out loop and Watch's registration / cleanup goroutine. `fan()` was copying only the slice HEADER of `w.subs[key]` under the mutex, then iterating the shared BACKING ARRAY lock-free — while a concurrent Watch cleanup could shift elements through that backing array in place via `append(subs[:i], subs[i+1:]...)`. The `-race` gate reproduced it reliably (~1-in-3 flake on `TestMultipleSubscribersSameKey`, deterministic across `-count=200` post-fix). Fix: `fan()` now deep-copies the subscriber slice under the mutex (`append([]chan struct{}(nil), w.subs[key]...)`), giving the send loop an immutable snapshot that no register/unregister can mutate. Send loop stays lock-free (a slow consumer still can't block a Watch or a Close). CI is unaffected — `-race` needs cgo and lives only in the documented local pre-commit step (see #818 for the "run `-race` in CI" tracker).
+
+- **observe**: preserve observer across partial teardown
+- **ping/809**: extract pingSandboxMsg helper; root-independent tests
+- **mcp/register**: clear ST1005 — errors.New(msg) over fmt.Errorf for divergence error
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.32.0] — 2026-07-21
 
 ### Added
