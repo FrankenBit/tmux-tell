@@ -49,19 +49,33 @@ on:
         default: 'immediate'
         type: string
 
-# MINIMUM release-toolkit VERSION (#737): v0.32.0+ required. release-toolkit
-# @v0.32.0 pulls in release-toolkit#450 which consolidated PREP_SUBJECT_RE into
-# scripts/lib/prep-subject.sh with an OPTIONAL "prepare " prefix group —
-# `(prepare[[:space:]]+)?` — so both the older `chore(release): prepare vX.Y.Z`
-# and newer `chore(release): vX.Y.Z` PR-title shapes fire the cut. Any older
-# pin re-opens the v0.30.0 skip-gate class (2026-07-09): release-bot emitted
-# the short-form title, workflow required the "prepare " keyword, cut silently
-# no-op'd. Do NOT downgrade below v0.32.0 without verifying the PREP_SUBJECT_RE
-# in the target version matches the release-prep template it will run against.
+# MINIMUM release-toolkit VERSION (#737, #844): v0.33.0+ required.
+#
+# v0.33.0 pulls release-toolkit#493's compose fixes: `release-prep` no longer
+# drops `### Upgrade`, nor emits conventional-commit summary bullets that
+# duplicate an authored fragment, when composing over pre-existing
+# `## [Unreleased]` content. BOTH fired on the v0.34.0 cut (PR#830, 2026-07-22)
+# — the composed body lost `### Upgrade` and carried four phantom bullets
+# restating its own prose; that cut passed only because they were fixed by hand
+# at review. v0.33.0 also accepts the Forgejo squash-merge subject suffix
+# ` (#NN)` in PREP_SUBJECT_RE (release-toolkit#487), which the `$` anchor
+# previously rejected — silently skip-gating a squash-merged prep PR.
+#
+# The superseded v0.32.0 floor is the same skip-gate story and still applies
+# transitively: release-toolkit#450 gave PREP_SUBJECT_RE an OPTIONAL "prepare "
+# prefix group — `(prepare[[:space:]]+)?` — so both `chore(release): prepare
+# vX.Y.Z` and `chore(release): vX.Y.Z` fire the cut. Below that, the v0.30.0
+# class re-opens (2026-07-09): release-bot emitted the short-form title, the
+# workflow required the "prepare " keyword, and the cut silently no-op'd.
+#
+# Do NOT downgrade below v0.33.0 without verifying BOTH that the target's
+# PREP_SUBJECT_RE matches the release-prep template it will run against, AND
+# that its section merge preserves `### Upgrade` over pre-existing
+# `## [Unreleased]` content.
 
 jobs:
   release:
-    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-release.yml@v0.32.0
+    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-release.yml@v0.33.0
     secrets: inherit
     with:
       runs_on:       go
