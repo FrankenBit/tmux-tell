@@ -18,9 +18,13 @@ import (
 //
 // Scope: each trigger is accepted only once its promotion path exists, because
 // staging a send for a trigger nothing fires would silently never deliver.
-//   - `resume` (#227) — post-compaction self-handoff: an explicit "I'm back,
-//     flush my queue" a chamber emits in its post-/compact resume routine, via
-//     `flush_deferred --trigger=resume`.
+//   - `resume` (#227) — post-compaction self-handoff. Auto-promoted (#843) when
+//     the mailman delivers a bus session reset (`/compact` or `/clear`) to this
+//     agent: the settled reset is the "chamber went away and came back" edge,
+//     the resume analog of the register auto-fire below. The explicit
+//     `flush_deferred --trigger=resume` remains valid and is still the path for
+//     a reset the mailman did NOT deliver — e.g. a `/compact` typed straight
+//     into the pane, which leaves no control row for the serve loop to see.
 //   - `register` (#258a) — spawn-die session bridge: "remember this for my next
 //     dispatch." The register handler auto-promotes these rows when the agent
 //     (re)registers, so no explicit flush is needed (the register IS the fire).

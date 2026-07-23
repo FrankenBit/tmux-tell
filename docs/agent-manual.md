@@ -197,10 +197,15 @@ context gets compacted, your session gets respawned.
 - **The `/compact` hand-off.** A message that arrives mid-compaction can be
   swallowed by the summarizer. So when you're about to compact (or want to leave
   yourself orientation for the other side of it), **stage** it instead of sending:
-  `send --deliver-after=resume` holds the message, and in your post-resume routine
-  you call `flush --trigger=resume` (or `tmux-tell.flush_deferred`) to release it
-  into the freshly-resumed context. You hand a note to your future self that the
-  summarizer can't eat.
+  `send --deliver-after=resume` holds the message until you're back. When your
+  `/compact` (or `/clear`) came over the bus — `tmux-tell.control command=compact`,
+  with or without `resume_with` — the mailman releases the staged message for you
+  once the reset settles (#843); you don't have to remember anything. If instead
+  you typed `/compact` straight into your own pane, there's no control row for the
+  mailman to see, so call `flush --trigger=resume` (or
+  `tmux-tell.flush_deferred`) in your resume routine to release it. That call is
+  idempotent and safe to make unconditionally. You hand a note to your future self
+  that the summarizer can't eat.
 - **The spawn-die bridge.** `--deliver-after=register` stages a message that
   auto-promotes when its target agent next registers — "remember this for its next
   dispatch." For a session that dies and respawns, that's how a fact survives the

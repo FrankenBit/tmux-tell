@@ -867,10 +867,15 @@ sits in `state='deferred'`, invisible to inbox + mailman, until its trigger
 fires. Single-recipient only. Two triggers exist:
 
 - **`resume`** (#227) — post-compaction self-handoff. Before `/compact`, send
-  *yourself* orientation with `--deliver-after=resume`; in your resume routine
-  call `flush --trigger=resume` (or `tmux-tell.flush_deferred`) so the staged
-  text lands in the freshly-resumed context instead of being absorbed by the
-  summarizer. You can only flush messages addressed to yourself.
+  *yourself* orientation with `--deliver-after=resume` so the staged text lands
+  in the freshly-resumed context instead of being absorbed by the summarizer.
+  It **auto-promotes** (#843) when the mailman delivers a bus session reset
+  (`/compact` or `/clear`) to you — the settled reset is the "you're back" edge.
+  An explicit `flush --trigger=resume` (or `tmux-tell.flush_deferred`) is still
+  the path when the reset never went through the bus (a `/compact` typed straight
+  into the pane leaves no control row for the mailman to act on); it is
+  idempotent, so calling it unconditionally on resume is safe. You can only flush
+  messages addressed to yourself.
 - **`register`** (#258a) — spawn-die session bridge. Send *another* agent a
   message with `--deliver-after=register` ("remember this for its next
   dispatch", e.g. Pilot's dispatch-across-sessions pattern). It auto-promotes

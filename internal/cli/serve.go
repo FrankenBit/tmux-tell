@@ -2456,6 +2456,32 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					}
 				}
 			}
+			// #843: resume-deferred auto-fire. A bus-delivered session reset
+			// (/compact or /clear) that has just been delivered (and, above,
+			// waited out its settle window when the pause is enabled) is the
+			// "chamber went away and is coming back" edge — the resume analog of
+			// the register auto-fire (#258a: "the register IS the fire"). Promote
+			// this agent's `resume`-staged rows so they land in the freshly-reset
+			// context instead of rotting in `deferred` forever (the failure mode
+			// #843 anchors: staged self-handoffs that never fire because nothing
+			// but an explicit flush_deferred{resume} ever promoted them).
+			//
+			// Deliberately NOT gated on opts.PostCompactPause: disabling the
+			// settle pause is a delivery-TIMING choice and must not silently
+			// disable a correctness feature. When the pause is off the promoted
+			// row is claimed on the next loop; the observe / pre-paste gate still
+			// holds its paste until the pane is paste-safe, so promoting before
+			// the pane has fully settled is safe. PromoteDeferred rings the
+			// delivery doorbell (fireNotify) on a non-zero promote, and created_at
+			// ordering lands the staged handoff ahead of any later traffic.
+			if isSessionResetControl(msg) {
+				if promoted, perr := s.PromoteDeferred(opCtx, opts.Agent, deferTriggerResume); perr != nil {
+					logger.Printf("resume_promote_err agent=%s err=%v", opts.Agent, perr)
+				} else if promoted > 0 {
+					logger.Printf("resume_deferred_promoted agent=%s n=%d after=%s (#843)",
+						opts.Agent, promoted, msg.PublicID)
+				}
+			}
 			// #285 PR1: a bus-delivered clear is a counted context-shrink event.
 			// When the agent has opted in (RespawnAfterShrinks > 0) and the count
 			// reaches the threshold, respawn the chamber's process to release the
