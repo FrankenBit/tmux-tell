@@ -72,8 +72,26 @@ import "regexp"
 //     trigger — codex's first Enter is absorbed while it is still ingesting the
 //     bracketed paste, so the mailman re-sends Enter while the marker persists
 //     (Enter-on-empty is a safe no-op, operator + Lookout confirmed). Empty
-//     disables both — correct for Claude, which submits a collapsed paste on the
-//     first Enter and needs no resubmit.
+//     disables both.
+//
+//     ⚠️ #842 CORRECTION: this field additionally gates normalizeCollapsePaste
+//     (the #533 body reshape), so it now means ONLY "this adapter collapses
+//     pastes, so normalize the body for it". The "is a paste sitting unsubmitted
+//     in the composer?" question moved to PasteEvidenceMarker below. The two were
+//     conflated here, which is why Claude — whose TUI DOES collapse pastes as of
+//     ≥2.1 — could not be given a resubmit without also mutating its paste bodies.
+//     The previous text claimed Claude "submits a collapsed paste on the first
+//     Enter and needs no resubmit"; #842 measured that a first Enter can fail to
+//     take, with no recovery path but the operator's keyboard.
+//   - PasteEvidenceMarker: substring that POSITIVELY identifies one of OUR pastes
+//     sitting in the live composer (#842). Distinct from PasteCollapseMarker
+//     because it must NOT gate body normalization: Claude uses
+//     `[Pasted text #N +M lines]`, codex reuses its collapse marker, so codex
+//     behavior is unchanged. Load-bearing property: it must be un-fakeable by
+//     ordinary typing — a half-typed operator draft must never match, or the
+//     resubmit Enter would submit the operator's draft (pinned by
+//     TestDeliver_Claude_DoesNotResubmitOperatorDraft). Empty disables it, which
+//     is the safe direction for an adapter whose composer we cannot read.
 //   - RateLimitPattern: operator-configurable regex that identifies an
 //     adapter's rate-limit pane (#504). Empty parks the detector. The regex is
 //     validated at startup and may use named capture groups `retry_seconds`
@@ -99,6 +117,7 @@ type PaneProfile struct {
 	StatusLineMarker       string
 	APIErrorMarker         string
 	PasteCollapseMarker    string
+	PasteEvidenceMarker    string
 	RateLimitPattern       string
 	UsageLimitPattern      string
 	WorkingPattern         string
@@ -118,6 +137,7 @@ func ClaudePaneProfile() PaneProfile {
 		AwaitingOperatorMarker: AwaitingOperatorMarker,
 		StatusLineMarker:       StatusLineMarker,
 		APIErrorMarker:         APIErrorMarker,
+		PasteEvidenceMarker:    ClaudePasteEvidenceMarker,
 	}
 }
 
@@ -142,6 +162,30 @@ const CodexPromptSentinel = "› "
 // Lookout `%8` (#401): a >1KB paste renders as `› [Pasted Content N chars]`.
 // Load-bearing for the codex paste-submit fix — see PaneProfile.PasteCollapseMarker.
 const CodexPasteCollapseMarker = "[Pasted Content"
+
+// ClaudePasteEvidenceMarker is the substring Claude Code renders in the composer
+// for a paste it collapsed — `[Pasted text #1 +37 lines]`. Matched as a prefix
+// substring (the index and line-count vary) and scoped to the live input by
+// liveInputContains, so a submitted paste's transcript entry does not trip it.
+//
+// Substrate-verified 2026-07-24 against claude 2.1.218 on a scratch pane, pasting
+// via the exact Deliver mechanism (load-buffer + paste-buffer -p -r -d): a
+// 3457-byte / 38-line paste renders its FIRST line literally on the ❯ row and
+// collapses the remainder onto the following line as
+// `  [Pasted text #5 +37 lines]`. Confirmed across 181 B → 7279 B; the collapse
+// appears for every multi-line paste measured (a single-line 181 B paste rendered
+// literally and did not collapse — such a paste is instead caught by the
+// verify-token arm of pasteUnsubmitted).
+//
+// Deliberately NOT wired to PasteCollapseMarker: that field gates
+// normalizeCollapsePaste, and reusing it here would start mutating Claude paste
+// bodies. See the PaneProfile field docs (#842).
+//
+// FORWARD-WATCH (same shape as PromptSentinel / StatusLineMarker): this string is
+// Claude-Code-version-dependent. If the composer's paste placeholder is reworded,
+// Claude silently loses its resubmit recovery and #842's failure returns — the
+// profile canary test is the drift sentinel.
+const ClaudePasteEvidenceMarker = "[Pasted text"
 
 // CodexWorkingPattern matches the OpenAI Codex TUI's active-turn status row,
 // rendered immediately above the composer while a turn is processing — e.g.
@@ -192,6 +236,10 @@ func CodexPaneProfile() PaneProfile {
 	return PaneProfile{
 		PromptSentinel:      CodexPromptSentinel,
 		PasteCollapseMarker: CodexPasteCollapseMarker,
+		// #842: codex's paste-evidence marker IS its collapse marker, so the
+		// resubmit predicate sees exactly what it saw pre-#842 — codex behavior
+		// is unchanged by the field split.
+		PasteEvidenceMarker: CodexPasteCollapseMarker,
 		WorkingPattern:      CodexWorkingPattern,
 	}
 }

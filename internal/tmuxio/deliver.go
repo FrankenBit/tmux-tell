@@ -457,8 +457,7 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		// prompt avoids submitting an operator draft or a token retained in the
 		// transcript after a successful submit. Keep this codex-only: the collapse
 		// capability is the existing adapter seam for Enter-resubmit behavior.
-		pastePresent := pasteStillInInput(lastCapture) ||
-			(activeProfile.PasteCollapseMarker != "" && liveInputContains(lastCapture, p.VerifyToken))
+		pastePresent := pasteUnsubmitted(lastCapture, p.VerifyToken)
 		// frameChanging: the pane redrew since the previous poll — codex is
 		// still actively ingesting/rendering. attempt 0 has no prior frame (and
 		// we just sent the step-3 Enter), so treat it as changing: never fire a
@@ -492,9 +491,7 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 	// every poll), send one Enter before giving up — preserves the pre-#674
 	// guarantee that a stuck paste always gets at least one resubmit. Best-
 	// effort: a send-keys error here is not worth masking the unverified outcome.
-	if (pasteStillInInput(lastCapture) ||
-		(activeProfile.PasteCollapseMarker != "" && liveInputContains(lastCapture, p.VerifyToken))) &&
-		!firedAnyResubmit {
+	if pasteUnsubmitted(lastCapture, p.VerifyToken) && !firedAnyResubmit {
 		_, _ = tmuxRun(ctx, nil, "send-keys", "-t", p.Pane, "Enter")
 	}
 	if p.OnVerify != nil {
@@ -530,6 +527,61 @@ func deliverySubmitted(capture string, cursorX, cursorY int, cursorOK bool, veri
 		return cleared
 	}
 	return strings.Contains(capture, verifyToken)
+}
+
+// pasteUnsubmitted reports whether OUR just-pasted content is still sitting in
+// the recipient's live input, unsubmitted — the condition the #401/#674 resubmit
+// Enter exists to drain. It is the adapter-aware generalization of the old
+// marker-only predicate (#842).
+//
+// Two adapter shapes, because the authoritative not-submitted signal differs:
+//
+//   - COLLAPSE-CAPABLE (codex, PasteCollapseMarker set): the marker — or this
+//     delivery's verify token — in the live composer. Unchanged from #401/#758.
+//     The marker POSITIVELY identifies our paste, which is what makes it safe to
+//     resubmit repeatedly.
+//
+//   - NON-COLLAPSING PROFILE (Claude, marker empty): cursor-anchored
+//     input-not-cleared. Pre-#842 this arm did not exist, so pastePresent was
+//     ALWAYS false for Claude and NO resubmit ever fired — Deliver sent exactly
+//     one Enter (step 3) and, if that Enter did not take, only re-CAPTURED until
+//     the budget expired. The operator pressing Enter was the sole recovery path.
+//
+// The signal MUST positively identify OUR paste, not merely "the input is
+// non-empty". A cursor-anchored input-not-cleared test looks tempting and is
+// WRONG: a half-typed operator draft also parks the cursor past the sentinel, so
+// resubmitting on it SUBMITS THE OPERATOR'S DRAFT. That invariant is pinned for
+// both adapters by TestDeliver_Claude_NoResubmit / the codex operator-draft test,
+// and it is the reason this predicate keys on a marker rather than on emptiness.
+//
+// Why a separate PasteEvidenceMarker rather than giving Claude a
+// PasteCollapseMarker: PasteCollapseMarker also gates normalizeCollapsePaste
+// (Deliver step 1+2), so setting it for Claude would silently start MUTATING
+// Claude paste bodies with the #533 codex accommodation. The two questions —
+// "does this adapter collapse pastes (so normalize)?" and "what string proves a
+// paste is sitting in the composer?" — were conflated in one field; #842
+// separates them. Codex's evidence marker is its collapse marker, so codex
+// behavior is unchanged.
+//
+// Degrades CLOSED: an adapter with no evidence marker returns false and never
+// resubmits — the pre-#842 Claude behavior, and the safe direction when we cannot
+// tell our own paste from someone else's typing.
+//
+// Measured 2026-07-24 (claude 2.1.218): a settled 3.5KB/38-line paste renders its
+// first line literally on the ❯ row and collapses the remainder to
+// `  [Pasted text #N +M lines]` — matched by ClaudePasteEvidenceMarker, and
+// absent from a hand-typed draft.
+//
+// ⚠️ Residual (shared with codex, unchanged by #842): an operator who pastes
+// their OWN content leaves a placeholder we cannot distinguish from ours, so a
+// resubmit could submit their pasted draft. Same exposure the codex marker arm
+// has carried since #401; not widened here.
+func pasteUnsubmitted(capture, verifyToken string) bool {
+	marker := activeProfile.PasteEvidenceMarker
+	if marker == "" {
+		return false
+	}
+	return liveInputContains(capture, marker) || liveInputContains(capture, verifyToken)
 }
 
 // SendKeys types text directly into the recipient pane and presses Enter,

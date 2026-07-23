@@ -1034,10 +1034,20 @@ func TestDeliver_Codex_DoesNotResubmitOperatorDraftWhenTokenOnlyInTranscript(t *
 	}
 }
 
-// TestDeliver_Claude_NoResubmit pins that the #401 resubmit is codex-specific:
-// Claude has no collapse marker, so a still-unverified capture does NOT trigger
-// extra Enter presses — exactly one Enter (the initial submit) is sent.
-func TestDeliver_Claude_NoResubmit(t *testing.T) {
+// TestDeliver_Claude_DoesNotResubmitOperatorDraft pins the operator-draft safety
+// invariant on the Claude profile: a composer holding HAND-TYPED text must never
+// draw a resubmit Enter, because that Enter would submit the operator's draft.
+//
+// ⚠️ This test was named TestDeliver_Claude_NoResubmit before #842 and its doc
+// claimed the #401 resubmit is "codex-specific". That is no longer true — Claude
+// DOES resubmit as of #842 (see TestDeliver_Claude_ResubmitsStuckCollapsedPaste).
+// The invariant this fixture actually exercises is narrower and survives #842
+// intact: the resubmit predicate keys on PasteEvidenceMarker / the verify token,
+// neither of which a hand-typed draft can produce. Renamed so the pin does not
+// assert something false — during #842 this test caught a first-draft fix that
+// keyed on cursor-anchored input-not-cleared, which would have submitted exactly
+// the draft this fixture plants.
+func TestDeliver_Claude_DoesNotResubmitOperatorDraft(t *testing.T) {
 	shortRetries(t)
 	prev := ActivePaneProfile()
 	SetActivePaneProfile(ClaudePaneProfile())
@@ -1047,8 +1057,10 @@ func TestDeliver_Claude_NoResubmit(t *testing.T) {
 	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
 		switch args[0] {
 		case "capture-pane":
-			// Token never surfaces, input never clears → stays unverified, but
-			// Claude must NOT resubmit (no collapse marker).
+			// Token never surfaces, input never clears → stays unverified. The
+			// composer holds a hand-typed draft: no paste-evidence marker, no
+			// verify token, so pasteUnsubmitted must stay false and no resubmit
+			// may fire (#842).
 			return []byte("transcript\n" + PromptSentinel + "half-typed operator draft"), nil
 		case "display-message":
 			return []byte("30/1"), nil // cursor past sentinel → not cleared
@@ -1067,7 +1079,108 @@ func TestDeliver_Claude_NoResubmit(t *testing.T) {
 		t.Fatalf("want ErrUnverifiedDelivery, got %v", err)
 	}
 	if enterPresses != 1 {
-		t.Errorf("Claude must send exactly 1 Enter (no resubmit); got %d", enterPresses)
+		t.Errorf("operator draft must not be resubmitted; want exactly 1 Enter (the initial submit), got %d", enterPresses)
+	}
+}
+
+// TestDeliver_Claude_ResubmitsStuckCollapsedPaste pins #842: a Claude paste that
+// landed in the composer but did NOT submit on the first Enter now draws a
+// stability-gated resubmit, instead of sitting there until the operator presses
+// Enter by hand.
+//
+// Pre-#842 this was structurally impossible: the resubmit gate keyed on
+// PasteCollapseMarker, which ClaudePaneProfile leaves empty, so pastePresent was
+// ALWAYS false for Claude — Deliver sent exactly one Enter and the verify loop
+// only re-CAPTURED. The recovery path was the operator's keyboard (tmux-tell#842,
+// bus msg 1b75 → Quartermaster).
+//
+// The capture fixture is substrate-shaped, measured 2026-07-24 on claude 2.1.218:
+// a large paste renders its FIRST line literally on the ❯ row and collapses the
+// remainder onto the following line as `  [Pasted text #N +M lines]`.
+func TestDeliver_Claude_ResubmitsStuckCollapsedPaste(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var enterPresses, captureN int
+	stuck := func() bool { return captureN >= 2 && captureN <= 3 }
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captureN++
+			if stuck() {
+				return []byte("transcript\n" + PromptSentinel +
+					"line 001  the quick brown fox\n  [Pasted text #1 +37 lines]"), nil
+			}
+			// captureN==1 is the #610 pre-paste check (clean); >=4 is submitted.
+			return []byte("transcript\n" + PromptSentinel), nil
+		case "display-message":
+			if stuck() {
+				return []byte("30/1"), nil // cursor past sentinel → not cleared
+			}
+			return []byte("2/1"), nil // cursor at sentinel → cleared
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "x", VerifyToken: "tok",
+	})
+	if err != nil {
+		t.Fatalf("expected verify after #842 resubmit, got %v", err)
+	}
+	// initial submit Enter + at least one stability-gated resubmit.
+	if enterPresses < 2 {
+		t.Errorf("expected >=2 Enter presses (initial submit + #842 resubmit), got %d", enterPresses)
+	}
+}
+
+// TestDeliver_Claude_ResubmitsStuckLiteralPasteViaToken covers the small-paste
+// half of #842: a Claude paste short enough that the composer does NOT collapse
+// it renders literally, so there is no `[Pasted text` marker — the verify token
+// visible in the LIVE composer is what proves our paste is sitting unsubmitted.
+// Same hole #758 closed on the codex side, now reachable on Claude.
+func TestDeliver_Claude_ResubmitsStuckLiteralPasteViaToken(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var enterPresses, captureN int
+	stuck := func() bool { return captureN >= 2 && captureN <= 3 }
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captureN++
+			if stuck() {
+				// Token BELOW the bottom-most sentinel = still in the composer.
+				return []byte("old turn id old\n" + PromptSentinel + "[Bosun · id fresh] short body"), nil
+			}
+			return []byte("transcript\n" + PromptSentinel), nil
+		case "display-message":
+			if stuck() {
+				return []byte("30/1"), nil
+			}
+			return []byte("2/1"), nil
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "x", VerifyToken: "id fresh",
+	})
+	if err != nil {
+		t.Fatalf("expected verify after token-arm resubmit, got %v", err)
+	}
+	if enterPresses < 2 {
+		t.Errorf("expected >=2 Enter presses (initial submit + token-arm resubmit), got %d", enterPresses)
 	}
 }
 
