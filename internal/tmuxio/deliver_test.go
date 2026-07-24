@@ -1094,9 +1094,18 @@ func TestDeliver_Claude_DoesNotResubmitOperatorDraft(t *testing.T) {
 // only re-CAPTURED. The recovery path was the operator's keyboard (tmux-tell#842,
 // bus msg 1b75 → Quartermaster).
 //
-// The capture fixture is substrate-shaped, measured 2026-07-24 on claude 2.1.218:
-// a large paste renders its FIRST line literally on the ❯ row and collapses the
-// remainder onto the following line as `  [Pasted text #N +M lines]`.
+// The capture fixture is substrate-shaped, measured 2026-07-24 on claude 2.1.218
+// against a CLEAN composer across three body shapes: a settled large paste
+// collapses ENTIRELY to `❯ [Pasted text #N +M lines]` on the sentinel row, cursor
+// at col 28.
+//
+// ⚠️ An earlier revision of this fixture put the paste's first line literally on
+// the ❯ row with the placeholder on a following row. That shape was a measurement
+// artifact (a probe clearing with C-u on too short a delay, so the "first line"
+// was the prior trial's residue) and production does not produce it. It also
+// happened to be the arrangement in which the cursor sits OFF the sentinel row —
+// so the fixture was pinning the one layout where deliverySubmitted's anchoring
+// behaves differently. Corrected to the measured shape (#842 review, Engineer).
 func TestDeliver_Claude_ResubmitsStuckCollapsedPaste(t *testing.T) {
 	shortRetries(t)
 	prev := ActivePaneProfile()
@@ -1110,14 +1119,13 @@ func TestDeliver_Claude_ResubmitsStuckCollapsedPaste(t *testing.T) {
 		case "capture-pane":
 			captureN++
 			if stuck() {
-				return []byte("transcript\n" + PromptSentinel +
-					"line 001  the quick brown fox\n  [Pasted text #1 +37 lines]"), nil
+				return []byte("transcript\n" + PromptSentinel + "[Pasted text #1 +38 lines]"), nil
 			}
 			// captureN==1 is the #610 pre-paste check (clean); >=4 is submitted.
 			return []byte("transcript\n" + PromptSentinel), nil
 		case "display-message":
 			if stuck() {
-				return []byte("30/1"), nil // cursor past sentinel → not cleared
+				return []byte("28/1"), nil // measured col; past sentinel → not cleared
 			}
 			return []byte("2/1"), nil // cursor at sentinel → cleared
 		case "send-keys":
@@ -1136,6 +1144,68 @@ func TestDeliver_Claude_ResubmitsStuckCollapsedPaste(t *testing.T) {
 	// initial submit Enter + at least one stability-gated resubmit.
 	if enterPresses < 2 {
 		t.Errorf("expected >=2 Enter presses (initial submit + #842 resubmit), got %d", enterPresses)
+	}
+}
+
+// TestDeliver_Claude_StuckPasteNotReportedSubmittedWhenCursorCannotAnchor is the
+// regression test for the gate-ordering defect Engineer found reviewing #848.
+//
+// deliverySubmitted runs BEFORE the resubmit predicate and can return early. When
+// the cursor cannot anchor the input row, it falls back to a WHOLE-PANE token
+// match — and the verify token is `id <PublicID>`, which render.Message emits in
+// the message HEADER, i.e. inside the live composer of a stuck paste. So a stuck
+// Claude paste read as SUBMITTED, Deliver returned nil, and #842's resubmit was
+// never reached: the recovery sat behind a gate that already said "delivered".
+//
+// Anchoring failure is reachable in production: matchCursorRowSentinel is
+// primary-sentinel-only by design (#729/#787), so a Claude pane rendering the
+// ASCII `> ` sentinel never anchors — caymans `admin` %11 is such a pane, live.
+//
+// Fixture: cursor points at row 0 ("transcript"), which is NOT a sentinel row, so
+// anchoring fails; the token sits in the composer alongside the placeholder. With
+// the adapter-aware override the paste reads not-submitted and the resubmit fires;
+// without it, exactly one Enter is sent and the message is silently marked
+// delivered.
+func TestDeliver_Claude_StuckPasteNotReportedSubmittedWhenCursorCannotAnchor(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var enterPresses, captureN int
+	stuck := func() bool { return captureN >= 2 && captureN <= 3 }
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captureN++
+			if stuck() {
+				// Token present in the live composer next to the placeholder —
+				// the whole-pane fallback would read this as "submitted".
+				return []byte("transcript\n" + PromptSentinel +
+					"[Pasted text #1 +38 lines] id fresh"), nil
+			}
+			return []byte("transcript\n" + PromptSentinel), nil
+		case "display-message":
+			if stuck() {
+				return []byte("5/0"), nil // row 0 is NOT a sentinel row → cannot anchor
+			}
+			return []byte("2/1"), nil
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "x", VerifyToken: "id fresh",
+	})
+	if err != nil {
+		t.Fatalf("expected verify after resubmit, got %v", err)
+	}
+	if enterPresses < 2 {
+		t.Errorf("stuck paste must not read as submitted via the unanchored token "+
+			"fallback; want >=2 Enter presses (initial + resubmit), got %d", enterPresses)
 	}
 }
 

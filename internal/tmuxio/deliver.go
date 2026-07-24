@@ -520,7 +520,21 @@ func deliverySubmitted(capture string, cursorX, cursorY int, cursorOK bool, veri
 	// parks the cursor on an empty sub-line of the multi-line input while the
 	// `[Pasted Content]` sits a line above, so inputRowCleared reads "empty".
 	// The marker is the authoritative not-submitted signal for that case.
-	if pasteStillInInput(capture) {
+	// #842: this override must use the ADAPTER-AWARE predicate, not the codex-only
+	// marker. It is the load-bearing half of the fix, not belt-and-braces: when the
+	// cursor cannot anchor the input row, the fallback below is a WHOLE-PANE token
+	// match — and the verify token is "id <PublicID>" from the message header, which
+	// render.Message emits FIRST, so it sits inside the live composer of a stuck
+	// paste. Without this override a stuck Claude paste reads as SUBMITTED, Deliver
+	// returns nil, and the resubmit added by #842 is never reached.
+	//
+	// Anchoring failure is not hypothetical: matchCursorRowSentinel is
+	// primary-sentinel-only by design (#729/#787), so a Claude pane rendering the
+	// ASCII `> ` sentinel never anchors. Measured on a clean Linux-rendered composer
+	// the cursor DOES land on the ❯ row, so that path stays anchored — but the fix
+	// makes the outcome independent of a render behavior this author mis-measured
+	// twice. Do not bet the recovery on it.
+	if pasteUnsubmitted(capture, verifyToken) {
 		return false
 	}
 	if cleared, anchored := inputRowCleared(capture, cursorX, cursorY, cursorOK); anchored {
@@ -567,10 +581,18 @@ func deliverySubmitted(capture string, cursorX, cursorY int, cursorOK bool, veri
 // resubmits — the pre-#842 Claude behavior, and the safe direction when we cannot
 // tell our own paste from someone else's typing.
 //
-// Measured 2026-07-24 (claude 2.1.218): a settled 3.5KB/38-line paste renders its
-// first line literally on the ❯ row and collapses the remainder to
-// `  [Pasted text #N +M lines]` — matched by ClaudePasteEvidenceMarker, and
-// absent from a hand-typed draft.
+// Measured 2026-07-24 (claude 2.1.218), on a CLEAN composer, across body shapes
+// (plain bulk / bus-header+blank+bulk / header+bulk) and n=6+ trials: a settled
+// large paste collapses ENTIRELY to `❯ [Pasted text #N +M lines]` on the sentinel
+// row, cursor at col 28. Matched by ClaudePasteEvidenceMarker and absent from a
+// hand-typed draft.
+//
+// ⚠️ An earlier revision of this comment claimed the first line renders literally
+// with the placeholder on a following row. That was WRONG — an artifact of a probe
+// that cleared the composer with C-u on too short a delay, so the "first line" was
+// the PREVIOUS trial's uncleared literal paste. Corrected here because the wrong
+// shape had propagated into the test fixtures, which then pinned an arrangement
+// production does not produce.
 //
 // ⚠️ Residual (shared with codex, unchanged by #842): an operator who pastes
 // their OWN content leaves a placeholder we cannot distinguish from ours, so a
