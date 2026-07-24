@@ -431,12 +431,26 @@ func (c *classifier) agentState(ctx context.Context, pane string) (state State, 
 	// through to marker / unknown checks.
 
 	// Precedence 7: awaiting-operator marker (backup for non-sentinel-
-	// painting UIs — AskUserQuestion popups, search dialogs, etc.). From the
-	// classifier's PaneProfile; empty disables the backup check.
-	if m := c.profile.AwaitingOperatorMarker; m != "" && strings.Contains(capBStr, m) {
+	// painting UIs — AskUserQuestion popups, the /mcp picker, search dialogs).
+	// From the classifier's PaneProfile; empty disables the backup check.
+	//
+	// The match is LIVE-SCOPED (capturedLiveAwaitingOperator), NOT a bare
+	// whole-pane strings.Contains(capBStr, m): the marker "↑/↓ to navigate ·" is
+	// prose-collidable — 18 live bus messages quote it (2026-07-24, growing as
+	// this fix is discussed) — and a whole-pane match classified any pane merely
+	// displaying such a message paste-unsafe, deferring ALL inbound delivery (the
+	// #647 outage class, here intermittent: reachable on a stable frame with the
+	// cursor not cleanly at the sentinel, e.g. a cursor-query hiccup skipping P6).
+	// The live-scope helper requires the marker on a footer with no live composer
+	// below it (a real picker replaces the composer; a scrollback quote sits above
+	// it), mirroring capturedLiveCompaction / capturedLiveErrorChrome /
+	// capturedResumeModal. Reached after P6, so a cleanly-idle pane with a
+	// colliding message in scrollback classifies StateIdle there and never gets
+	// here (#852).
+	if m := c.profile.AwaitingOperatorMarker; m != "" && capturedLiveAwaitingOperator(capBStr, c.profile) {
 		return StateAwaitingOperator,
 			Evidence{
-				Reason: fmt.Sprintf("awaiting-operator marker found: %q", m),
+				Reason: fmt.Sprintf("live arrow-navigation picker (awaiting-operator marker on live footer): %q", m),
 				Marker: m,
 			}, nil
 	}

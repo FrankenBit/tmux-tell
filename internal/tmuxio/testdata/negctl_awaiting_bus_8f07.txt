@@ -1,0 +1,109 @@
+⚓ Pane %5 capture per operator request. Popup render captured live with question still open:
+
+```
+      34 +  config value overrides the `agents.delivery_mode` column at
+      35 +  mailman-startup time:
+      36 +
+      37 +  ```toml
+      38 +  [agent.operator]
+      39 +  delivery-mode = "mailbox-only"
+      40 +  ```
+      41 +
+      42 +  Lets operators who manage state via config (rather than via the
+      43 +  `claude-msg register` / MCP `tmux-msg.register` paths) declare the
+      44 +  mode without writing to the DB. The register-time CLI / MCP path
+      45 +  still writes to the DB column; the TOML knob is the OVERRIDE at
+      46 +  mailman-startup time — the DB column is the long-term default;
+      47 +  config wins per-run.
+      48 +
+      49 +  Validation: invalid mode values from config log a `WARN
+      50 +  config_delivery_mode_invalid` and the DB column wins (fail-loud,
+      51 +  not fail-stop — a typo in `/etc/tmux-msg/config.toml` doesn't
+      52 +  silently break the mailman).
+      53 +
+      54 +  New `config.ResolveString` helper centralizes the per-string-field
+      55 +  precedence chain (sister to `ResolveBool` / `ResolveDuration`); the
+      56 +  delivery-mode knob is the first string-typed field, designed
+      57 +  forward-compatibly for additional string knobs.
+      58 +
+      59 +  Surfaces:
+      60 +  - **TOML**: `delivery-mode` per-agent or `[defaults]` block
+      61 +  - **`ResolvedView.DeliveryMode string`** surfaced in
+      62 +    `claude-msg config show` so operators can verify the resolved
+      63 +    value without tracing through TOML manually
+      64 +  - **No CLI flag**: the register-time CLI already covers the operator
+      65 +    workflow; adding a `--delivery-mode` override to `serve` would
+      66 +    duplicate the `register` surface without adding a use case
+      67 +
+      68  - **Pre-paste safety check against popup-as-Unknown destruction
+      69    (#105 Half 2).** New mailman safety net: immediately before each
+      70    paste-and-Enter delivery, the mailman takes one final `AgentState`
+
+● Bash(cd /srv/tmux-msg && git status --short && echo "---" && git diff --stat)
+  ⎿   M CHANGELOG.md
+      M cmd/claude-msg/serve.go
+      M internal/config/config.go
+     … +7 lines (ctrl+o to expand)
+  ⎿  Shell cwd was reset to /srv/claude/quartermaster
+
+● Bash(cd /srv/tmux-msg && git -c user.email=quartermaster@frankenbit.de -c user.name=Quartermaster add CHANGELOG.md cmd/claude-msg/serve.go cmd/claude-msg/serve_deliv…)
+  ⎿   5 files changed, 340 insertions(+)
+      create mode 100644 cmd/claude-msg/serve_deliverymode_test.go
+      create mode 100644 internal/config/config_deliverymode_test.go
+  ⎿  Shell cwd was reset to /srv/claude/quartermaster
+
+● Bash(source /srv/.secrets && cd /srv/tmux-msg && git -c "http.https://git.frankenbit.de.extraheader=Authorization: Basic $(echo -n "quartermaster:$FORGEJO_TOKEN_QUAR…)
+  ⎿  To https://git.frankenbit.de/frankenbit/tmux-msg.git
+      * [new branch]      i/132-delivery-mode-toml -> i/132-delivery-mode-toml
+     Branch 'i/132-delivery-mode-toml' folgt nun 'origin/i/132-delivery-mode-toml'.
+  ⎿  Shell cwd was reset to /srv/claude/quartermaster
+
+  Called forgejo (ctrl+o to expand)
+
+● PR #135 open. Now coordinating the #133 capture with you. I need an active AskUserQuestion popup somewhere to capture — the cleanest way is the one I'm sending you right now. Once you
+  respond, I'll have a popup-render to capture from this very session.
+
+  Called semaphore, forgejo 2 times (ctrl+o to expand)
+
+● Now for #133 — I need to capture an AskUserQuestion popup variant. Asking you a question opens the popup IN this Quartermaster pane (%5), which gives me a popup-render to capture from a
+  sibling-pane (e.g., I can ask Bosun to tmux capture-pane -p -t %5 while the popup is open below):
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Capture setup
+
+Ready for the popup-capture coordination?
+
+❯ 1. Yes — leave this question open while I capture (Recommended)
+     Don't select an option immediately. The popup stays rendered in my pane while I trigger another chamber (e.g., Bosun via bus) to run `tmux capture-pane -p -t %5` against my pane,
+     capturing the live AskUserQuestion render. Then you select 'Continue' below to dismiss.
+  2. Continue — select after capture is done
+     Use this option to dismiss the popup once you've heard 'capture complete' from me. The capture happens out-of-band via Bosun's bus tool call.
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
+  47 tasks (43 done, 1 in progress, 3 open)
+  ◼ #132 implementation — delivery_mode TOML config support
+  ◻ Shipwright dispatch (parked)
+  ◻ #133 implementation — popup recognizer Half 1 (needs operator capture)
+  ◻ Cut release about #132 + #133 land
+  ✔ #94: dead probe-and-watch code sweep
+   … +42 completed
+```
+
+Pane height = standard tmux default (80×24-ish viewport, 80×N scrollback). The capture shows the popup framing structure cleanly:
+
+- Top horizontal rule (▔▔▔...)
+- `☐ Capture setup` chip
+- Question text
+- Numbered options (1. / 2. / 3.) with `❯` cursor on selected
+- Per-option description indented
+- Closing horizontal rule
+- `4. Chat about this` outside the box
+- Hint line `Enter to select · ↑/↓ to navigate · Esc to cancel`
+- Task list block follows
+
+If you need a wider scrollback range or specific row, call `tmux capture-pane -p -t %5 -S -N` from your own session, or ping me again for another capture.
+
+— Bosun

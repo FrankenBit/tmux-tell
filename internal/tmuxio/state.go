@@ -1034,3 +1034,94 @@ func capturedResumeModal(capture string, p PaneProfile) bool {
 	}
 	return true
 }
+
+// capturedLiveAwaitingOperator reports whether capture shows a LIVE
+// arrow-navigation picker (AskUserQuestion popup, /mcp server picker, any
+// selection menu) rather than transcript prose that merely QUOTES the picker's
+// footer legend (AwaitingOperatorMarker, "↑/↓ to navigate ·"). It is the
+// live-scoped sibling of capturedLiveCompaction / capturedLiveErrorChrome /
+// capturedResumeModal, and it exists for the same reason (#852): a bare
+// whole-pane strings.Contains on the marker false-fires on any pane whose
+// scrollback carries a bus message quoting it — MEASURED 18 such messages in the
+// live corpus (2026-07-24), a count that grows monotonically as this very fix is
+// discussed (the #719/#852 self-referential-marker temporal-extension; two of
+// the 18 are the /compact resume notes of THIS chamber). A false
+// StateAwaitingOperator ∈ IsPasteUnsafeForced, so the pane is classified
+// paste-unsafe and ALL inbound delivery to that chamber DEFERS (the #647 outage
+// class, here as an intermittent false-DEFER rather than a permanent one — see
+// the exposure measurement on #852: P7 sits after the cursor-at-sentinel idle
+// check P6, so a cleanly-idle chamber is safe; the false-fire is reachable on a
+// stable frame with the cursor NOT cleanly at the sentinel — a cursor-query
+// hiccup the concrete trigger).
+//
+// The match is gated on two structural facts:
+//
+//  1. FOOTER. The bottom-most row carrying the marker — the picker's
+//     version-pinned keybind legend. Empty marker (the caller's `m != ""` guard
+//     on profile.AwaitingOperatorMarker) disables the check for adapters with no
+//     picker UI (codex).
+//  2. LIVE-SCOPE. No composer prompt sentinel (profile.PromptSentinel, the
+//     NBSP-exact ❯) strictly BELOW the footer. A LIVE picker is a takeover that
+//     REPLACES the composer (the goldens have blank rows or a todo panel below
+//     the footer, never a ❯ composer); a bus message merely QUOTING the footer
+//     sits ABOVE the chamber's live composer, so a sentinel below the footer
+//     means this is a scrollback quote. Empty PromptSentinel skips the belt.
+//
+// There is deliberately NO third structural anchor analogous to
+// capturedResumeModal's search-widget. Unlike the resume modal (which paints a
+// distinctive box-drawn search field), an arrow-nav picker's only distinctive
+// chrome IS this footer legend, and no footer-SHAPE anchor is durable: the marker
+// was itself broadened in #719-B from the full AskUserQuestion footer to the
+// version-stable "↑/↓ to navigate ·" core precisely because the /mcp footer
+// wedges "· Enter to confirm ·" between "navigate" and "Esc", and MEASURED 14 of
+// the 18 corpus quotes already reproduce a full footer row ("· Esc to cancel" /
+// "· Enter to confirm") — so any same-row keybind requirement would false-reject
+// live /mcp pickers AND still be prose-collidable. LIVE-SCOPE is therefore the
+// SOLE durable discriminator, and it must be: a faithful full-modal capture
+// pasted into a bus message (corpus item 8f07 — box-drawing, numbered options,
+// footer, all of it) is byte-indistinguishable from the real picker EXCEPT that
+// the paste sits above the chamber's live composer. That is the case the
+// live-scope belt exists to separate, and the only structural fact that separates
+// it.
+//
+// HONEST SCOPE (stated at the point of use per §Mechanism design): this guard
+// rests on the live composer being present below the marker, which holds for
+// every healthy Claude pane except during a full-screen takeover — exactly when
+// the takeover IS the real picker we want to accept. It eliminates the COMMON
+// #852 false-defer (a colliding bus message + the pane's live composer). It does
+// NOT reject a colliding message that is somehow the bottom-most row with no
+// composer below it; that is not a healthy idle-pane state (it is StateUnknown
+// territory), and accepting there defers delivery — SAFE, since #852 is a
+// false-DEFER bug, not a clobber. The narrowing is monotonic-safe on the clobber
+// axis: a paste-unsafe classification can only be REMOVED where a live composer
+// proves the marker is scrollback, never added.
+func capturedLiveAwaitingOperator(capture string, p PaneProfile) bool {
+	marker := p.AwaitingOperatorMarker
+	if marker == "" {
+		return false
+	}
+	rows := strings.Split(capture, "\n")
+
+	// 1. Footer: bottom-most row carrying the picker's keybind legend.
+	footer := -1
+	for i := len(rows) - 1; i >= 0; i-- {
+		if strings.Contains(rows[i], marker) {
+			footer = i
+			break
+		}
+	}
+	if footer < 0 {
+		return false
+	}
+
+	// 2. Live-scope: no composer sentinel below the footer (else it is a
+	// scrollback quote above a live prompt, not a live picker takeover).
+	if s := p.PromptSentinel; s != "" {
+		for i := footer + 1; i < len(rows); i++ {
+			if strings.Contains(rows[i], s) {
+				return false
+			}
+		}
+	}
+	return true
+}

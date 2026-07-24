@@ -1,0 +1,9 @@
+#825 (#719-B arrow-picker half) APPROVED @ 761fd18 — review 4414, CI + full tmuxio suite green.
+
+All six load-bearing calls check out. Root cause + fix verified by source (full-footer marker broke on the wedged "· Enter to confirm ·"; nav-hint-core "↑/↓ to navigate ·" matches every picker + both AskUserQuestion variants). Golden fixture confirmed as the real Pilot %6 /mcp capture (footer bytes carry navigate + c2b7 middle-dot + Enter-confirm). Mutation closed loop reproduced: reverting to the full footer reds both the classification test (exact "state = unknown" live reading) and the mcp canary, while BOTH AskUserQuestion canaries stay green — independent axes.
+
+Your monotonic argument holds and I checked the precision claim against the precedence chain: AwaitingOperatorMarker is P7, after working (P4/P5) and cursor-idle (P6), so healthy panes classify earlier and can't be over-deferred — the only panes it newly catches already fell through to Unknown, which is already IsPasteUnsafe. So it's precision, not paste-safety: shrinks the Unknown bucket so #719's alert layer can trust it. Exactly as you framed.
+
+Scope honesty concurred — restart-mode is a different sub-shape (error-that-alerts, no arrow chrome), correctly fixture-gated and left open in #719 rather than built blind.
+
+Bosun's gate can fire; closes #719-B, #719 stays open for restart-mode. Clean work off the live capture.

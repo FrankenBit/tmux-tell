@@ -1,0 +1,26 @@
+RESUME — tmux-tell #719 (resume-session modal detector) + #852 (sibling). Fresh-context continuation of the same chamber; bus-notify Bosun on resume per self-compaction discipline, then work.
+
+BRANCH: already on `i/719-resume-session-modal` off `f63897d` (current main, #848 merged) in /srv/claude/shipwright/tmux-msg. Own worktree. Don't self-merge; reviewer is LOOKOUT per operator directive.
+
+READ FIRST (state banked here — verify against these, don't trust this summary):
+- #719 comment 88509 (my pickup note: seam + why-deferred) + comment 88440 (the #647 constraint, MEASURED).
+- #852 body (the sibling bug I filed) + #850 (content-complete, don't touch).
+- Fixture: /srv/claude/bosun/fixtures-tmux-tell-719/pilot-719-fixture.{ansi,txt,hex} — verified, all 5 markers present once each.
+
+#719 TASK: add resume-session-modal detection to the AwaitingOperatorMarker family → classifies StateAwaitingOperator (makes pane paste-unsafe) at classifier.go precedence 7 (~line 415).
+
+🔴 LOAD-BEARING CONSTRAINT (#647 class): do NOT key on the bare `Resume session` header. MEASURED: it appears in real bus traffic (self-referential-marker trap — the dispatch specifying the marker contains it; and the corpus GROWS with discussion, was 1→6 hits in 50min). A false positive here classifies the pane paste-unsafe → defers ALL inbound delivery. Marker choice alone can't close it (dispatch quotes header AND footer). Remedy = capturedLiveCompaction's shape: structural companion prose lacks + LIVE-SCOPE, not whole-pane substring. Candidate structural signals from fixture: `⌕` glyph inside box-drawing, keybind legend `Type to Search · Enter to select · Esc to clear` as bottom chrome, positional relationship. DERIVE the predicate against the fixture — don't guess.
+
+LOAD-BEARING TEST: negative-control corpus of REAL bus messages that contain the markers (query messages.db) — detector must REJECT those while ACCEPTING the fixture capture. That's the whole point; a test that only checks the fixture passes is vacuous.
+
+#852 SIBLING (same file, same family): the SHIPPED AwaitingOperatorMarker `↑/↓ to navigate ·` (state.go:376) is itself a bare whole-pane strings.Contains and got 15 hits in bus corpus — worse than Resume session's 6. #852 FIRST AC is ESTABLISH REAL EXPOSURE: precedence 7 sits AFTER the cursor-anchored idle check, so a cleanly-idling pane may classify StateIdle first and never reach it. That's a control-flow READING, NOT measured — REPRODUCE against a capture, don't reason from source. The structural-anchoring fix for #719 likely covers #852 too; decide whether to fix both in one PR or sequence after exposure-verify.
+
+DISCIPLINES (all earned tonight, all load-bearing here):
+- MEASURE before filing/asserting; structural predicate > literal string.
+- POSITIVE CONTROL on every measurement — 4 instrument artifacts tonight were caught ONLY by a control row next to the number (incl. a grep that grabbed a test-file format string and returned false 0; SQLite LIKE is case-INsensitive, use GLOB + control both ways; LC_ALL=C, this host is de_DE.UTF-8).
+- MEASURED vs ASSERTED marks on every claim in PR/tracker.
+- Read the GATE at the server (commits/<sha>/status), never the local suite — CI here is gated (enable_status_check=true, context "test / lint + build + test"). Run the actual workflow steps incl. golangci-lint + gofmt, NOT just go build/vet/test.
+- Bus-ping Lookout after request_pr_review (review-request skips the bus).
+- Set metabolism warming on resume, clear when at full throughput.
+
+ALSO IN QUEUE (not blocking #719): respawn check armed at /srv/claude/shipwright/mailman-respawn-check.sh for the #842 deploy live-fire — run it across chambers when Bosun pings deploy-landed, before anyone reads #842 AC 5. #842 stays OPEN pending that.

@@ -1,0 +1,31 @@
+## Review request — PR #87 (cli-semaphore #79)
+
+PR open: https://git.frankenbit.de/frankenbit/cli-semaphore/pulls/87
+
+Closes #79 — empirically-captured `AwaitingOperatorMarker`, first operator-coordinated capture exercise.
+
+**Pre-PR**: Quartermaster pane during a live AskUserQuestion popup → classified `unknown` (popup overlays input area; placeholder marker empty-guarded precedence-5 check). **Post-PR**: same pane classifies `awaiting-operator` with Evidence.Marker populated.
+
+## What I'd value most
+
+1. **Marker substring choice**: `"↑/↓ to navigate · Esc to cancel"` — the popup footer's keybinding hint combined with U+00B7 middle-dot separators. My rationale: structurally unique to Claude Code's popup UI (regular chat text never combines middle-dot separators with keybinding hints), and catches both single-select and multi-select popup variants because both end with the same footer. Worth your read on whether the substring length is right — shorter (`"↑/↓ to navigate"`) would be safer if Claude Code changes the Esc-cancel half; longer would be more defensive against text-only matches in a code sample. My lean: current length is the sweet spot.
+
+2. **Two-layer testing pattern**: canary in `probe_test.go` (constant-vs-golden alignment) + end-to-end classification pin in `state_test.go` (StateAwaitingOperator + Evidence.Marker). Same shape as PR #78's PromptSentinel layering. Worth your nod that the two-layer split holds for this case or whether one of the two pins is redundant for #79's scope.
+
+3. **Operator-coordinated capture as discipline-class**: this is the first time operator+chamber coordinated for an empirical capture (vs the post-deploy 6/6 verification that surfaced PR #78's NBSP bug). Worth flagging if this becomes a recurring discipline-pattern for future marker-substring work (#70 compaction will be the next instance — same shape, different trigger).
+
+## Where I trade off
+
+- **CompactionMarker stays placeholder** — #70 needs a different empirical capture event (operator-coordinated /compact); planned for after #79 merges per the campaign chain.
+- **No new commitment slug** — reuses the chamber-state primitive's existing implicit invariants.
+- **Golden file is the full pane content** (not just the popup region) — matches PR #78's golden convention; the popup overlay + scrollback context together = realistic substrate.
+
+## Mutation experiment
+
+Reverted marker to placeholder → both pins fail with explanatory errors pointing at `AwaitingOperatorMarker` constant + re-capture recipe. Restored, all tests green.
+
+## Standing alongside the merge
+
+Per scoped delegation. Should-considers absorbed pre-merge if doc-touches.
+
+Thank you, Surveyor.
