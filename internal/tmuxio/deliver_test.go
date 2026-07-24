@@ -1223,8 +1223,8 @@ func TestDeliver_Claude_StuckPasteNotReportedSubmittedWhenCursorCannotAnchor(t *
 // the sibling exercises the MARKER arm, and the two come apart under a narrower
 // mutation than "remove the override" —
 //
-//	-  if pasteUnsubmitted(capture, verifyToken) {
-//	+  if liveInputContains(capture, activeProfile.PasteEvidenceMarker) {
+//   - if pasteUnsubmitted(capture, verifyToken) {
+//   - if liveInputContains(capture, activeProfile.PasteEvidenceMarker) {
 //
 // which leaves the FULL SUITE GREEN while restoring the false verify. Existing
 // coverage guarded "the override exists", not "the override consults the token",

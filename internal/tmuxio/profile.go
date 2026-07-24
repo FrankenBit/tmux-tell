@@ -63,6 +63,7 @@ import "regexp"
 // (slow codex verify-token) is gated on an ANSI-rendering investigation whose
 // outcome decides whether the verify path stays config-only or needs an adapter
 // seam; the field is held until that investigation lands rather than guessed.
+//
 //   - PasteCollapseMarker: substring an adapter's TUI shows in the INPUT row for
 //     a paste it collapsed (codex's `[Pasted Content N chars]`). Two uses, both
 //     in the paste-delivery verify path (#401): (1) a definitive not-submitted
@@ -83,6 +84,7 @@ import "regexp"
 //     The previous text claimed Claude "submits a collapsed paste on the first
 //     Enter and needs no resubmit"; #842 measured that a first Enter can fail to
 //     take, with no recovery path but the operator's keyboard.
+//
 //   - PasteEvidenceMarker: substring that POSITIVELY identifies one of OUR pastes
 //     sitting in the live composer (#842). Distinct from PasteCollapseMarker
 //     because it must NOT gate body normalization: Claude uses
@@ -92,14 +94,17 @@ import "regexp"
 //     resubmit Enter would submit the operator's draft (pinned by
 //     TestDeliver_Claude_DoesNotResubmitOperatorDraft). Empty disables it, which
 //     is the safe direction for an adapter whose composer we cannot read.
+//
 //   - RateLimitPattern: operator-configurable regex that identifies an
 //     adapter's rate-limit pane (#504). Empty parks the detector. The regex is
 //     validated at startup and may use named capture groups `retry_seconds`
 //     (load-bearing in #504) plus future-extensible fields such as `retry_at`.
+//
 //   - UsageLimitPattern: operator-configurable regex that identifies an
 //     adapter's usage-limit pane (#540). Empty parks the detector. This is a
 //     distinct hard-stop sibling to rate-limit: the mailman parks until quota
 //     reset rather than backing off exponentially.
+//
 //   - WorkingPattern: adapter-specific regex identifying a pane actively
 //     processing a turn via a persistent status marker, checked independently of
 //     (and before) the temporal-delta frame-change heuristic (#590). Empty parks
