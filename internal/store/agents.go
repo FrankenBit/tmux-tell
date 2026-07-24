@@ -123,11 +123,12 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 		metabolismSetAt sql.NullString
 		lastCompactAt   sql.NullString
 		compactCounted  sql.NullString
+		resumePromoted  sql.NullString
 		autoRestart     int
 	)
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count, last_self_compact_at, self_compact_counted_at, relaunch_cmd, auto_restart, provider FROM agents WHERE name = ?`,
-		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount, &lastCompactAt, &compactCounted, &a.RelaunchCmd, &autoRestart, &a.Provider)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count, last_self_compact_at, self_compact_counted_at, resume_promoted_at, relaunch_cmd, auto_restart, provider FROM agents WHERE name = ?`,
+		name).Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount, &lastCompactAt, &compactCounted, &resumePromoted, &a.RelaunchCmd, &autoRestart, &a.Provider)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
@@ -147,6 +148,9 @@ func (s *Store) GetAgent(ctx context.Context, name string) (*Agent, error) {
 	}
 	if compactCounted.Valid {
 		a.SelfCompactCountedAt = compactCounted.String
+	}
+	if resumePromoted.Valid {
+		a.ResumePromotedAt = resumePromoted.String
 	}
 	a.AutoRestart = autoRestart != 0
 	return &a, nil
@@ -250,7 +254,7 @@ func (s *Store) SetBacklogEpoch(ctx context.Context, name string, floor int64) e
 // ListAgents returns every registered agent, ordered by name ASC.
 func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count, last_self_compact_at, self_compact_counted_at, relaunch_cmd, auto_restart, provider FROM agents ORDER BY name`)
+		`SELECT name, pane_id, paused, updated_at, aliases, delivery_mode, backlog_epoch_id, attention_state, stuck_reason, display_name, session_id, metabolism, metabolism_set_at, respawn_after_shrinks, respawn_shrink_count, last_self_compact_at, self_compact_counted_at, resume_promoted_at, relaunch_cmd, auto_restart, provider FROM agents ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -267,9 +271,10 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 			metabolismSetAt sql.NullString
 			lastCompactAt   sql.NullString
 			compactCounted  sql.NullString
+			resumePromoted  sql.NullString
 			autoRestart     int
 		)
-		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount, &lastCompactAt, &compactCounted, &a.RelaunchCmd, &autoRestart, &a.Provider); err != nil {
+		if err := rows.Scan(&a.Name, &pane, &paused, &a.UpdatedAt, &aliases, &deliveryMode, &a.BacklogEpoch, &a.AttentionState, &a.StuckReason, &a.DisplayName, &a.SessionID, &a.Metabolism, &metabolismSetAt, &a.RespawnAfterShrinks, &a.RespawnShrinkCount, &lastCompactAt, &compactCounted, &resumePromoted, &a.RelaunchCmd, &autoRestart, &a.Provider); err != nil {
 			return nil, err
 		}
 		if pane.Valid {
@@ -286,6 +291,9 @@ func (s *Store) ListAgents(ctx context.Context) ([]Agent, error) {
 		}
 		if compactCounted.Valid {
 			a.SelfCompactCountedAt = compactCounted.String
+		}
+		if resumePromoted.Valid {
+			a.ResumePromotedAt = resumePromoted.String
 		}
 		a.AutoRestart = autoRestart != 0
 		out = append(out, a)
@@ -579,6 +587,63 @@ func (s *Store) CountSelfCompactIfNew(ctx context.Context, name string) (counted
 		return false, 0, err
 	}
 	return true, newCount, nil
+}
+
+// PromoteResumeOnSelfCompactIfNew promotes an agent's deliver_after=<trigger>
+// deferred rows when a NEW self-typed /compact has been observed — the #846
+// residual of #843. #843 promotes on a bus-delivered reset control row
+// (isSessionResetControl); a chamber that types /compact at its own pane leaves
+// no such row, so this uses the same last_self_compact_at compaction signal that
+// #285 PR2 counts, edge-detected against resume_promoted_at.
+//
+// Two-step, mirroring CountSelfCompactIfNew's proven claim-then-act shape:
+//
+//  1. CLAIM the edge atomically — advance resume_promoted_at to last_self_compact_at
+//     iff a newer self-compact exists. RowsAffected==0 ⇒ nothing new (the common
+//     no-op the mailman polls every eligible iteration); return promoted=false.
+//  2. If claimed, PromoteDeferred the resume rows and return the count.
+//
+// Why its OWN watermark and not self_compact_counted_at: that column is advanced
+// atomically with respawn_shrink_count in CountSelfCompactIfNew, so a shared
+// watermark would make the two consumers eat each other's edge — the promote would
+// suppress the shrink count, or vice-versa. resume_promoted_at is written here and
+// read nowhere else.
+//
+// Deliberate crash-window (claim committed, promote not yet run): the rows stay
+// deferred and wait for the NEXT self-compact edge. This is degradation, not loss
+// — self-compacts recur, and a staged handoff landing one compact late is strictly
+// better than the pre-#843 "never". A cross-table transaction spanning agents +
+// messages would close the window; it is not worth the surface for a self-healing
+// gap of two adjacent statements. PromoteDeferred is idempotent regardless, so a
+// retry never double-promotes.
+//
+// Note the promote is NOT gated on RespawnAfterShrinks (the #285 respawn opt-in):
+// note-compact stamps last_self_compact_at regardless of that gate, and a stuck
+// resume row must drain on every chamber, not only opt-in ones. Caller gates only
+// on a live pane + a populated signal.
+func (s *Store) PromoteResumeOnSelfCompactIfNew(ctx context.Context, name, trigger string) (promoted bool, count int64, err error) {
+	name = CanonicalName(name)
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE agents
+		    SET resume_promoted_at = last_self_compact_at
+		  WHERE name = ?
+		    AND last_self_compact_at IS NOT NULL
+		    AND last_self_compact_at != ''
+		    AND (resume_promoted_at IS NULL
+		         OR resume_promoted_at = ''
+		         OR last_self_compact_at > resume_promoted_at)`,
+		name)
+	if err != nil {
+		return false, 0, err
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		return false, 0, nil
+	}
+	n, err := s.PromoteDeferred(ctx, name, trigger)
+	if err != nil {
+		return false, 0, err
+	}
+	return true, n, nil
 }
 
 // SetStuck parks an agent's mailman with the given non-empty reason (#291).

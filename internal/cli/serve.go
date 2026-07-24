@@ -1549,6 +1549,30 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			}
 		}
 
+		// #846: resume-deferred auto-fire on a SELF-typed /compact — the residual
+		// of #843. #843 promotes deliver_after=resume rows on a bus-delivered reset
+		// (isSessionResetControl, below), but a chamber that types /compact at its
+		// own pane leaves no control row, so those rows rot. The same
+		// last_self_compact_at signal the #285 block above counts IS the compaction
+		// edge for that case; edge-detect it against resume_promoted_at — a SECOND
+		// mailman-owned watermark, distinct from self_compact_counted_at so the
+		// promote and the shrink-count never consume each other's edge — and promote.
+		// Deliberately NOT gated on RespawnAfterShrinks: note-compact stamps the
+		// signal regardless of that opt-in, and a stuck resume row must drain on
+		// every chamber, not only respawn-opted-in ones. The in-memory compare on
+		// the freshly-read agent row skips the store round-trip on the common
+		// no-new-compact iteration, same as the #285 block above. Fires at the
+		// compaction edge itself — i.e. the resume moment, oriented context arriving
+		// — which is exactly what deliver_after=resume stages for.
+		if a.PaneID != "" && a.LastSelfCompactAt != "" &&
+			a.LastSelfCompactAt > a.ResumePromotedAt {
+			if promoted, n, perr := s.PromoteResumeOnSelfCompactIfNew(opCtx, opts.Agent, deferTriggerResume); perr != nil {
+				logger.Printf("resume_self_compact_promote_err agent=%s err=%v", opts.Agent, perr)
+			} else if promoted && n > 0 {
+				logger.Printf("resume_deferred_promoted agent=%s n=%d trigger=self-compact (#846)", opts.Agent, n)
+			}
+		}
+
 		msg, err := s.ClaimNextWithStrategy(opCtx, opts.Agent, opts.PriorityStrategy)
 		if err != nil {
 			logger.Printf("claim_failed err=%v", err)
