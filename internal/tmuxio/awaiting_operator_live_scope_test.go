@@ -123,6 +123,29 @@ func TestCapturedLiveAwaitingOperator(t *testing.T) {
 			capture: "──────\n  1. Option A\n" + footerRow + "\n" + PromptSentinel + "\n",
 			want:    false,
 		},
+		{
+			// Pins the BOTTOM-MOST footer SELECTION (Surveyor's #859 review nit).
+			// Two marker rows with a composer BETWEEN them: the live footer is the
+			// LOWER marker (nothing below it), a stray earlier marker sits above the
+			// composer. The helper scans from the bottom, so footer = the lower
+			// marker → no composer below → true.
+			//
+			// A first-match (top-most) mutation of the footer loop would pick the
+			// UPPER marker, find the composer below it, and REJECT — so this case
+			// fires red on that mutation (mutation-verified 2026-07-24). Without a
+			// composer between the two markers the mutation is invisible: both
+			// selections then see no composer below and agree. The between-composer
+			// is what varies the bottom-most axis the selection is built on.
+			//
+			// The shape is artificial — a live composer never sits ABOVE a picker
+			// footer in production (the picker replaces the composer), which is why
+			// this is a first-match's "safe-direction false-negative in an
+			// unreachable shape" rather than a live bug. The test exists for
+			// mutation coverage of the selection, not to assert a reachable state.
+			name:    "two markers, composer between — bottom-most footer wins",
+			capture: "  " + AwaitingOperatorMarker + " (stray earlier quote)\n" + PromptSentinel + "\n" + footerRow + "\n",
+			want:    true,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
