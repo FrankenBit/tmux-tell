@@ -1221,10 +1221,15 @@ func TestDeliver_Claude_StuckPasteNotReportedSubmittedWhenCursorCannotAnchor(t *
 //
 // Why this test exists when the sibling above already covers an unanchored cursor:
 // the sibling exercises the MARKER arm, and the two come apart under a narrower
-// mutation than "remove the override" —
+// mutation than "remove the override" — narrow the override to the marker arm only:
 //
-//   - if pasteUnsubmitted(capture, verifyToken) {
-//   - if liveInputContains(capture, activeProfile.PasteEvidenceMarker) {
+//	before:  if pasteUnsubmitted(capture, verifyToken) {
+//	after:   if liveInputContains(capture, activeProfile.PasteEvidenceMarker) {
+//
+// (Tab-indented code block, not a -/+ diff: gofmt parses a leading `-`/`+` as a
+// bullet list and rewrites BOTH lines to `-`, which silently destroys the
+// before/after and leaves a reader unable to tell the original from the mutation.
+// That happened here once already — #842 review round 4, Engineer.)
 //
 // which leaves the FULL SUITE GREEN while restoring the false verify. Existing
 // coverage guarded "the override exists", not "the override consults the token",
