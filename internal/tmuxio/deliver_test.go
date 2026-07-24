@@ -1157,9 +1157,16 @@ func TestDeliver_Claude_ResubmitsStuckCollapsedPaste(t *testing.T) {
 // Claude paste read as SUBMITTED, Deliver returned nil, and #842's resubmit was
 // never reached: the recovery sat behind a gate that already said "delivered".
 //
-// Anchoring failure is reachable in production: matchCursorRowSentinel is
-// primary-sentinel-only by design (#729/#787), so a Claude pane rendering the
-// ASCII `> ` sentinel never anchors — caymans `admin` %11 is such a pane, live.
+// The reachable production path is a cursor query FAILURE (cursorOK=false), or any
+// capture whose cursor row cannot be anchored, combined with a paste small enough
+// not to collapse — it renders literally, so the header token sits in the composer
+// and satisfies the whole-pane Contains.
+//
+// ⚠️ Explicitly NOT the `> `-rendering (ASCII-variant) Claude pane: that pane
+// anchors fine, because matchCursorRowSentinel DOES honor PromptSentinelVariants.
+// Its gap is the inverse — verification works, recovery is inert, because
+// liveInputContains is primary-sentinel-only. See pasteUnsubmitted's KNOWN GAP.
+// An earlier revision of this comment had that attribution backwards.
 //
 // Fixture: cursor points at row 0 ("transcript"), which is NOT a sentinel row, so
 // anchoring fails; the token sits in the composer alongside the placeholder. With

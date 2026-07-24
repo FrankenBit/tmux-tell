@@ -528,12 +528,22 @@ func deliverySubmitted(capture string, cursorX, cursorY int, cursorOK bool, veri
 	// paste. Without this override a stuck Claude paste reads as SUBMITTED, Deliver
 	// returns nil, and the resubmit added by #842 is never reached.
 	//
-	// Anchoring failure is not hypothetical: matchCursorRowSentinel is
-	// primary-sentinel-only by design (#729/#787), so a Claude pane rendering the
-	// ASCII `> ` sentinel never anchors. Measured on a clean Linux-rendered composer
-	// the cursor DOES land on the ❯ row, so that path stays anchored — but the fix
-	// makes the outcome independent of a render behavior this author mis-measured
-	// twice. Do not bet the recovery on it.
+	// The reachable path is a cursor query FAILURE (cursorOK=false) or any capture
+	// whose cursor row cannot be anchored, combined with a paste small enough not to
+	// collapse: it renders literally, so the header token sits in the composer and
+	// satisfies the whole-pane Contains. Measured counterfactual on that shape —
+	// without this override `err=<nil>, enters=1` (a FALSE VERIFY); with it,
+	// `ErrUnverifiedDelivery`. Same class as #758's hole, now on Claude.
+	//
+	// NOT the rescue for a `> `-rendering (ASCII-variant) Claude pane: inputRowCleared
+	// anchors fine there, because matchCursorRowSentinel DOES honor
+	// PromptSentinelVariants. That pane's gap is the opposite one and is NOT closed
+	// here — see pasteUnsubmitted.
+	//
+	// On a clean Linux-rendered composer the cursor lands on the ❯ row and this path
+	// is not taken at all. The override earns its place by making the outcome
+	// independent of a render behavior that two chambers have now gotten wrong four
+	// times between them. Do not bet the recovery on it.
 	if pasteUnsubmitted(capture, verifyToken) {
 		return false
 	}
@@ -580,6 +590,17 @@ func deliverySubmitted(capture string, cursorX, cursorY int, cursorOK bool, veri
 // Degrades CLOSED: an adapter with no evidence marker returns false and never
 // resubmits — the pre-#842 Claude behavior, and the safe direction when we cannot
 // tell our own paste from someone else's typing.
+//
+// ⚠️ KNOWN GAP, not closed by #842: liveInputContains scopes to the bottom-most
+// PRIMARY prompt sentinel and deliberately does not consult PromptSentinelVariants
+// (#729/#787 — a cursor-less scan cannot safely trust `> `, a common glyph). So on
+// a Claude pane rendering the ASCII `> ` sentinel there is no ❯ row to scope to,
+// this returns false, and the #842 recovery is INERT. Note the asymmetry: such a
+// pane still VERIFIES correctly, because inputRowCleared is cursor-anchored and
+// matchCursorRowSentinel DOES honor variants — it is only the recovery that is
+// missing. `admin` %11 (caymans) is such a pane, live and taking deliveries. This
+// PR's effective scope is therefore Linux-rendered Claude; closing the variant
+// pane needs a cursor-anchored evidence scan, which is its own change.
 //
 // Measured 2026-07-24 (claude 2.1.218), on a CLEAN composer, across body shapes
 // (plain bulk / bus-header+blank+bulk / header+bulk) and n=6+ trials: a settled
