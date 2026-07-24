@@ -612,10 +612,15 @@ func (s *Store) CountSelfCompactIfNew(ctx context.Context, name string) (counted
 // Deliberate crash-window (claim committed, promote not yet run): the rows stay
 // deferred and wait for the NEXT self-compact edge. This is degradation, not loss
 // — self-compacts recur, and a staged handoff landing one compact late is strictly
-// better than the pre-#843 "never". A cross-table transaction spanning agents +
-// messages would close the window; it is not worth the surface for a self-healing
-// gap of two adjacent statements. PromoteDeferred is idempotent regardless, so a
-// retry never double-promotes.
+// better than the pre-#843 "never". And there is a SECOND, independent drain: the
+// #843 bus-reset path (serve.go, isSessionResetControl) calls PromoteDeferred
+// DIRECTLY, without consulting resume_promoted_at, so ANY bus-delivered /compact or
+// /clear drains a crash-stranded row immediately — the strandable set is exactly
+// the deferred resume rows that path already covers. A cross-table transaction
+// spanning agents + messages would close the window; it is not worth the surface
+// for a gap with two independent backstops. PromoteDeferred is idempotent
+// regardless, so a retry never double-promotes. (Backstop noted by Surveyor,
+// #853 review.)
 //
 // Note the promote is NOT gated on RespawnAfterShrinks (the #285 respawn opt-in):
 // note-compact stamps last_self_compact_at regardless of that gate, and a stuck
