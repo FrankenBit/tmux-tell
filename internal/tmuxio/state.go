@@ -421,12 +421,13 @@ const APIErrorMarker = "API Error:"
 // CompactionMarker / APIErrorMarker it is prose-collidable — a chamber quoting
 // the modal (the #719 dispatch itself does) writes it in ordinary message text,
 // which a whole-pane match would read as a live modal → defer ALL inbound
-// delivery (the #647 / #852 class). MEASURED 2026-07-24 over 19355 live bus
-// messages: this legend + the header "Resume session" + the ⌕ glyph co-occur in
-// 2 messages (the dispatch + a /compact resume note), so even a header+footer
-// co-occurrence rule false-fires. The live-scope + box-drawing-search-widget
-// discipline lives in capturedResumeModal, which prose-quotes cannot satisfy
-// (0 of 19355 messages carry the │+⌕ search-widget row).
+// delivery (the #647 / #852 class). MEASURED 2026-07-24: this legend + the header
+// "Resume session" + the ⌕ glyph co-occur in ordinary bus prose (2 messages at
+// first measure, growing as the marker is discussed), so even a header+footer
+// co-occurrence rule false-fires. The discipline that closes it lives in
+// capturedResumeModal — footer legend + a whitespace-gated search widget +
+// live-scope. The DURABLE guards are the footer and live-scope; see that function
+// for why the widget alone is not prose-proof.
 //
 // FORWARD-WATCH (same shape as PromptSentinel / CompactionMarker /
 // AwaitingOperatorMarker / APIErrorMarker): Claude-Code-version-dependent. If the
@@ -436,14 +437,17 @@ const ResumeModalMarker = "Type to Search · Enter to select · Esc to clear"
 
 // resumeModalSearchGlyph (⌕ U+2315) is the magnifier Claude Code paints inside
 // the resume modal's search field; resumeModalBoxVertical (│ U+2502) is that
-// field's rounded-box side border. The two on ONE row — "│ ⌕ …" — are the
-// modal's search widget: the structural companion that prose quoting the modal's
-// header/footer text cannot supply. MEASURED 2026-07-24: 0 of 19355 live bus
-// messages carry both on a single row (including the 2 that quote the header,
-// footer AND the glyph — the self-referential #719 dispatch and a /compact
-// resume note). Box-drawing corners are equally absent from prose (╭ U+256D: 0
-// hits), but a single corner is a brittle anchor; the vertical+glyph pairing is
-// the field itself.
+// field's rounded-box side border. The field renders as "│ ⌕ …" — a vertical,
+// WHITESPACE, then the glyph — and capturedResumeModal requires that whitespace
+// gap (see there). The gap is load-bearing: without it the gate matched the prose
+// shorthand "│+⌕" (`+` is 0x2b, not whitespace) that chambers type when they
+// discuss this detector. MEASURED 2026-07-24: a same-row │…⌕ went from 0 to 4 of
+// ~19400 messages DURING the #854 review — the self-referential-marker
+// temporal-extension landing on this very widget. Requiring the whitespace keeps
+// the golden and excludes that shorthand — but a FAITHFUL paste of the modal row
+// still reproduces "│ ⌕", so the widget narrows the surface without being
+// independently prose-proof. The durable guards are the footer legend + live-scope
+// (capturedResumeModal facts 1 and 3).
 const (
 	resumeModalSearchGlyph = "⌕" // U+2315
 	resumeModalBoxVertical = "│" // U+2502
@@ -945,18 +949,22 @@ func capturedLiveErrorChrome(capture string, p PaneProfile) (string, bool) {
 // footer legend (marker) is prose-collidable — the #719 dispatch itself quotes
 // it — so a bare whole-pane strings.Contains would classify any pane displaying
 // such a message paste-unsafe and defer ALL inbound delivery (the #647 / #852
-// class). The match is gated on three structural facts, none of which a
-// prose-quote of the modal supplies:
+// class). The match is gated on three facts, layered so that neither prose
+// quoting the modal's text nor a casual shorthand of its chrome fires:
 //
 //  1. FOOTER. The bottom-most row carrying the marker (ResumeModalMarker, the
 //     keybind legend). This is the version-pinned semantic anchor; empty marker
 //     (the caller's `m != ""` guard) disables the check for adapters with no
 //     resume UI (codex).
 //  2. SEARCH WIDGET. A row ABOVE the footer holding the box-drawn search field —
-//     a box-vertical (│ U+2502) with the search glyph (⌕ U+2315) to its right,
-//     i.e. "│ ⌕ …". MEASURED 2026-07-24: 0 of 19355 live bus messages carry this
-//     row, including the 2 that quote the header, footer AND the glyph. This is
-//     the anti-#647 companion — the modal's chrome, not its text.
+//     a box-vertical (│ U+2502), WHITESPACE, then the search glyph (⌕ U+2315):
+//     "│ ⌕ …". The whitespace gap is required and load-bearing: the prose
+//     shorthand "│+⌕" that chambers type when discussing this detector is NOT
+//     whitespace-gapped, and a same-row │…⌕ grew 0→4 of ~19400 messages DURING
+//     the #854 review (the self-referential-marker temporal-extension). This
+//     narrows the surface but is NOT independently prose-proof — a faithful paste
+//     of the modal row reproduces "│ ⌕" — so it is the WEAKEST of the three;
+//     facts 1 and 3 are the durable guards.
 //  3. LIVE-SCOPE. No composer prompt sentinel (profile.PromptSentinel, the
 //     NBSP-exact ❯) strictly BELOW the footer. A LIVE modal is a full-screen
 //     takeover (the fixture has ~30 blank rows below the footer, no ❯); a bus
@@ -970,7 +978,8 @@ func capturedLiveErrorChrome(capture string, p PaneProfile) (string, bool) {
 // The header ("Resume session") is deliberately NOT keyed on: MEASURED it
 // already appears in 9 live bus messages (self-referential — the dispatch
 // specifying the marker contains it), and it grew 6→9 during the arc that
-// discussed it. Facts 2 and 3 are what close the gap.
+// discussed it. The footer legend + live-scope (facts 1 and 3) are the durable
+// guards; the widget (fact 2) only excludes the casual "│+⌕" shorthand.
 func capturedResumeModal(capture string, p PaneProfile) bool {
 	marker := p.ResumeModalMarker
 	if marker == "" {
@@ -990,12 +999,22 @@ func capturedResumeModal(capture string, p PaneProfile) bool {
 		return false
 	}
 
-	// 2. Search widget: a box-vertical with the search glyph to its right, on a
-	// single row strictly above the footer.
+	// 2. Search widget: a box-vertical, a WHITESPACE RUN (any length ≥1), then the
+	// search glyph, on a single row strictly above the footer — i.e. "│\s+⌕".
+	// Matching the run rather than a literal single space stays robust to
+	// alignment drift ("│  ⌕") while still excluding the prose shorthand "│+⌕"
+	// (`+` is not whitespace) and "│ text ⌕" (text is not whitespace) that
+	// chambers type when discussing this detector. g > 0 requires ≥1 char in the
+	// gap (rejects an adjacent "│⌕"); the all-whitespace gap is the discriminator.
 	widget := false
 	for i := 0; i < footer; i++ {
-		if v := strings.Index(rows[i], resumeModalBoxVertical); v >= 0 &&
-			strings.Contains(rows[i][v:], resumeModalSearchGlyph) {
+		v := strings.Index(rows[i], resumeModalBoxVertical)
+		if v < 0 {
+			continue
+		}
+		after := rows[i][v+len(resumeModalBoxVertical):]
+		g := strings.Index(after, resumeModalSearchGlyph)
+		if g > 0 && strings.TrimSpace(after[:g]) == "" {
 			widget = true
 			break
 		}

@@ -102,6 +102,19 @@ func TestCapturedResumeModal(t *testing.T) {
 			want:    true,
 		},
 		{
+			// Pins Surveyor's #854 finding: the prose shorthand "│+⌕" (NOT
+			// whitespace-gapped — `+` is 0x2b) that chambers type when discussing
+			// this detector must NOT satisfy the widget gate, even with the footer
+			// legend present and no composer below (so footer + live-scope would
+			// otherwise pass). Real corpus carries this shape: a same-row │…⌕ grew
+			// 0→4 of ~19400 messages during the review, incl. the dispatch and this
+			// author's own pointer message. Before the whitespace requirement this
+			// returned true; the gap requirement is what rejects it.
+			name:    "prose shorthand │+⌕ with footer, no composer (not whitespace-gapped)",
+			capture: "discussing the widget: │+⌕ is the search field\n" + footerRow + "\n\n",
+			want:    false,
+		},
+		{
 			// Pins the LIVE-SCOPE gate — the DURABLE guard. This is a FAITHFUL
 			// full modal capture (widget + footer, box-drawing and all) but with
 			// the chamber's live ❯ composer below it: i.e. a chamber that pasted
