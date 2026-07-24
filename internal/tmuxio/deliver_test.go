@@ -1216,6 +1216,66 @@ func TestDeliver_Claude_StuckPasteNotReportedSubmittedWhenCursorCannotAnchor(t *
 	}
 }
 
+// TestDeliver_Claude_TokenArmCatchesLiteralPasteWhenCursorQueryFails pins the
+// TOKEN arm of the deliverySubmitted override (#842 review round 3, Engineer).
+//
+// Why this test exists when the sibling above already covers an unanchored cursor:
+// the sibling exercises the MARKER arm, and the two come apart under a narrower
+// mutation than "remove the override" —
+//
+//	-  if pasteUnsubmitted(capture, verifyToken) {
+//	+  if liveInputContains(capture, activeProfile.PasteEvidenceMarker) {
+//
+// which leaves the FULL SUITE GREEN while restoring the false verify. Existing
+// coverage guarded "the override exists", not "the override consults the token",
+// and those separate under exactly the likely refactor (someone simplifying
+// deliverySubmitted back toward a marker check).
+//
+// 🔴 And the arms are not equally reachable. Measured 2026-07-24: a large paste
+// collapses onto the sentinel row and the cursor ANCHORS, so marker-arm-under-
+// unanchored-cursor has no demonstrated production route. This one does: a cursor
+// query FAILURE plus a paste small enough not to collapse renders literally, so
+// the header token (`id <PublicID>`, emitted first by render.Message) sits in the
+// composer and satisfies the whole-pane Contains. The hypothetical arm was pinned
+// first; this is the reachable one.
+func TestDeliver_Claude_TokenArmCatchesLiteralPasteWhenCursorQueryFails(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var enterPresses int
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			// Small paste → renders LITERALLY, no `[Pasted text` placeholder, so the
+			// marker arm is blind to it. The verify token sits in the live composer.
+			return []byte("old turn id old\n" + PromptSentinel + "[Bosun · id fresh] short body"), nil
+		case "display-message":
+			// Cursor query FAILS → cursorOK=false → inputRowCleared cannot anchor →
+			// deliverySubmitted falls through to the whole-pane token match.
+			return nil, errors.New("no server running")
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "x", VerifyToken: "id fresh",
+	})
+	// The outer assertion: without the token arm this returns nil — a FALSE VERIFY,
+	// message marked delivered while the paste sits unsubmitted.
+	if !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Fatalf("literal paste stuck in the composer must NOT verify via the "+
+			"whole-pane token fallback; want ErrUnverifiedDelivery, got %v", err)
+	}
+	if enterPresses < 2 {
+		t.Errorf("want >=2 Enter presses (initial + token-arm resubmit), got %d", enterPresses)
+	}
+}
+
 // TestDeliver_Claude_ResubmitsStuckLiteralPasteViaToken covers the small-paste
 // half of #842: a Claude paste short enough that the composer does NOT collapse
 // it renders literally, so there is no `[Pasted text` marker — the verify token
