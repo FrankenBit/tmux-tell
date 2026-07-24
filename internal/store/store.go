@@ -363,6 +363,17 @@ var migrations = []string{
 	// nullable (NULL until the first compact / first count).
 	`ALTER TABLE agents ADD COLUMN last_self_compact_at TEXT`,
 	`ALTER TABLE agents ADD COLUMN self_compact_counted_at TEXT`,
+	// #846: resume-deferred auto-fire on a SELF-typed /compact. #843 promotes
+	// deliver_after=resume rows on a BUS-delivered reset (isSessionResetControl);
+	// a chamber that types /compact at its own pane leaves no control row, so
+	// those rows rot. The same last_self_compact_at signal above is the compaction
+	// edge for that case too — but it must NOT reuse self_compact_counted_at:
+	// CountSelfCompactIfNew advances that column atomically with respawn_shrink_count,
+	// so a shared watermark would make the promote and the shrink-count consume each
+	// other's edge. resume_promoted_at is a SECOND mailman-owned watermark, advanced
+	// atomically with the promote in PromoteResumeOnSelfCompactIfNew and read by
+	// nothing else. Nullable (NULL until the first self-compact promote).
+	`ALTER TABLE agents ADD COLUMN resume_promoted_at TEXT`,
 	// #595: schema-level UNIQUE(pane_id) as defense-in-depth for
 	// one-pane-one-identity (#549). The #564 tx-clear in UpsertAgent already
 	// prevents duplicate pane_id rows in the register path; this makes the

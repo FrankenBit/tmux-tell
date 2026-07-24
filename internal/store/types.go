@@ -251,6 +251,16 @@ type Agent struct {
 	// counter family (respawn_shrink_count + this watermark), preserving PR1's
 	// single-flight race-freedom.
 	SelfCompactCountedAt string
+	// ResumePromotedAt is the #846 mailman-owned watermark for self-compact resume
+	// promotion: the value of LastSelfCompactAt the last time the mailman promoted
+	// this agent's deliver_after=resume rows on a self-typed /compact. Advanced
+	// atomically with the promote in PromoteResumeOnSelfCompactIfNew, so the same
+	// compaction edge never re-promotes (and never re-rings the delivery doorbell).
+	// DISTINCT from SelfCompactCountedAt on purpose: that watermark is coupled to
+	// the respawn counter in CountSelfCompactIfNew, so sharing it would make the two
+	// consumers eat each other's edge. sqliteTimeFormat UTC; empty until the first
+	// self-compact promote. Hook NEVER writes this — mailman is the sole writer.
+	ResumePromotedAt string
 	// RelaunchCmd is the #285/#730 repaired-relaunch command: the exact string the
 	// mailman `send-keys` into the post-exit bare shell to restart the chamber
 	// (e.g. `chamber-claude.sh Bosun` → `claude --resume Bosun`). Required because
