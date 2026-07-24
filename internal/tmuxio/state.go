@@ -402,6 +402,53 @@ const AwaitingOperatorMarker = "↑/↓ to navigate ·"
 // loudly.
 const APIErrorMarker = "API Error:"
 
+// ResumeModalMarker is the keybind-legend footer of Claude Code's session-resume
+// choice modal (#719) — the full-screen picker shown when `claude` is launched
+// with more than one resumable session and no `--resume <id>`. The
+// chamber-claude.sh wrapper's UUID-bypass normally suppresses it; a raw `claude`
+// launch surfaces it (which is how the fixture was captured). Empirically
+// captured 2026-07-24 from Pilot's pane at %15 (operator triggered it via raw
+// claude; Bosun byte-captured), frozen as
+// testdata/golden_pilot_resume_modal_2026-07-24.txt so Claude Code UI drift
+// surfaces as a golden-match failure on TestResumeModalMarker_MatchesGoldenCapture.
+//
+// The modal consumes paste-and-enter deliveries as its search-box input (Enter
+// selects the highlighted session), so a chamber sitting at it must classify
+// paste-UNSAFE (StateAwaitingOperator) or the mailman resumes the wrong session /
+// drops the delivery silently — the multi-hour-silence failure #719 tracks.
+//
+// This legend is NOT matched as a bare whole-pane substring: like
+// CompactionMarker / APIErrorMarker it is prose-collidable — a chamber quoting
+// the modal (the #719 dispatch itself does) writes it in ordinary message text,
+// which a whole-pane match would read as a live modal → defer ALL inbound
+// delivery (the #647 / #852 class). MEASURED 2026-07-24 over 19355 live bus
+// messages: this legend + the header "Resume session" + the ⌕ glyph co-occur in
+// 2 messages (the dispatch + a /compact resume note), so even a header+footer
+// co-occurrence rule false-fires. The live-scope + box-drawing-search-widget
+// discipline lives in capturedResumeModal, which prose-quotes cannot satisfy
+// (0 of 19355 messages carry the │+⌕ search-widget row).
+//
+// FORWARD-WATCH (same shape as PromptSentinel / CompactionMarker /
+// AwaitingOperatorMarker / APIErrorMarker): Claude-Code-version-dependent. If the
+// modal's footer legend is reworded across a Claude Code version update, this
+// constant + the golden fixture need re-verification. The canary surfaces it.
+const ResumeModalMarker = "Type to Search · Enter to select · Esc to clear"
+
+// resumeModalSearchGlyph (⌕ U+2315) is the magnifier Claude Code paints inside
+// the resume modal's search field; resumeModalBoxVertical (│ U+2502) is that
+// field's rounded-box side border. The two on ONE row — "│ ⌕ …" — are the
+// modal's search widget: the structural companion that prose quoting the modal's
+// header/footer text cannot supply. MEASURED 2026-07-24: 0 of 19355 live bus
+// messages carry both on a single row (including the 2 that quote the header,
+// footer AND the glyph — the self-referential #719 dispatch and a /compact
+// resume note). Box-drawing corners are equally absent from prose (╭ U+256D: 0
+// hits), but a single corner is a brittle anchor; the vertical+glyph pairing is
+// the field itself.
+const (
+	resumeModalSearchGlyph = "⌕" // U+2315
+	resumeModalBoxVertical = "│" // U+2502
+)
+
 // agentStateTemporalDelta is the wait between the two capture-pane
 // calls in AgentState. 200ms is long enough to catch typical
 // streaming-output changes + spinner animations (most Claude Code
@@ -889,4 +936,82 @@ func capturedLiveErrorChrome(capture string, p PaneProfile) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// capturedResumeModal reports whether capture shows Claude Code's LIVE
+// session-resume choice modal (#719) rather than transcript prose that quotes
+// its marker strings. It is the live-scoped sibling of capturedLiveCompaction
+// and capturedLiveErrorChrome, and it exists for the same reason: the modal's
+// footer legend (marker) is prose-collidable — the #719 dispatch itself quotes
+// it — so a bare whole-pane strings.Contains would classify any pane displaying
+// such a message paste-unsafe and defer ALL inbound delivery (the #647 / #852
+// class). The match is gated on three structural facts, none of which a
+// prose-quote of the modal supplies:
+//
+//  1. FOOTER. The bottom-most row carrying the marker (ResumeModalMarker, the
+//     keybind legend). This is the version-pinned semantic anchor; empty marker
+//     (the caller's `m != ""` guard) disables the check for adapters with no
+//     resume UI (codex).
+//  2. SEARCH WIDGET. A row ABOVE the footer holding the box-drawn search field —
+//     a box-vertical (│ U+2502) with the search glyph (⌕ U+2315) to its right,
+//     i.e. "│ ⌕ …". MEASURED 2026-07-24: 0 of 19355 live bus messages carry this
+//     row, including the 2 that quote the header, footer AND the glyph. This is
+//     the anti-#647 companion — the modal's chrome, not its text.
+//  3. LIVE-SCOPE. No composer prompt sentinel (profile.PromptSentinel, the
+//     NBSP-exact ❯) strictly BELOW the footer. A LIVE modal is a full-screen
+//     takeover (the fixture has ~30 blank rows below the footer, no ❯); a bus
+//     message merely QUOTING the modal sits ABOVE the chamber's live composer,
+//     so a sentinel below the footer means this is a scrollback quote. This is
+//     the DURABLE guard: unlike a corpus count it does not decay as the marker
+//     is discussed (the #719/#852 temporal-extension — the false-positive corpus
+//     grows monotonically with discussion; a structural invariant does not).
+//     Empty PromptSentinel skips the belt (no composer to locate).
+//
+// The header ("Resume session") is deliberately NOT keyed on: MEASURED it
+// already appears in 9 live bus messages (self-referential — the dispatch
+// specifying the marker contains it), and it grew 6→9 during the arc that
+// discussed it. Facts 2 and 3 are what close the gap.
+func capturedResumeModal(capture string, p PaneProfile) bool {
+	marker := p.ResumeModalMarker
+	if marker == "" {
+		return false
+	}
+	rows := strings.Split(capture, "\n")
+
+	// 1. Footer: bottom-most row carrying the keybind legend.
+	footer := -1
+	for i := len(rows) - 1; i >= 0; i-- {
+		if strings.Contains(rows[i], marker) {
+			footer = i
+			break
+		}
+	}
+	if footer < 0 {
+		return false
+	}
+
+	// 2. Search widget: a box-vertical with the search glyph to its right, on a
+	// single row strictly above the footer.
+	widget := false
+	for i := 0; i < footer; i++ {
+		if v := strings.Index(rows[i], resumeModalBoxVertical); v >= 0 &&
+			strings.Contains(rows[i][v:], resumeModalSearchGlyph) {
+			widget = true
+			break
+		}
+	}
+	if !widget {
+		return false
+	}
+
+	// 3. Live-scope: no composer sentinel below the footer (else it is a
+	// scrollback quote above a live prompt, not the live full-screen modal).
+	if s := p.PromptSentinel; s != "" {
+		for i := footer + 1; i < len(rows); i++ {
+			if strings.Contains(rows[i], s) {
+				return false
+			}
+		}
+	}
+	return true
 }

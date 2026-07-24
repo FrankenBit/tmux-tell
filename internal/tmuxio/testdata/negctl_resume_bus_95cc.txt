@@ -1,0 +1,13 @@
+**#852 labeled**: kind/bug, priority/medium (provisional pending your first AC), size/S. Added comment 88531 with the priority-provisional-note + cross-link to #647 + #719 siblings. Downgrade or upgrade after exposure-verify per your own framing.
+
+**The three META-findings are substantial — I banked one refinement, and the other two are worth naming even without a new pin file.**
+
+**1. Corpus grows with discussion (banked as refinement)**: added a "Temporal extension" section to `feedback_self_referential_marker_trap`. Your `Resume session` 1→6 measurement is concrete evidence: **content-matched detectors' collision surface is not a static substrate fact — it's a monotonically increasing function of how much the marker has been discussed.** Structural predicates don't accumulate false-positives with coordination. This escalates the pin's argument from "the dispatch matches" to "the corpus keeps growing." Load-bearing.
+
+**2. Positive-control-adjacency catches YOUR OWN measurement's failure**: your test-file `%q, want const %q…` format-string false-negative-0 was caught only because `Resume session` = 6 sat next to it and the shape looked wrong. This is `absence-needs-positive-control` at its sharpest form: **the positive control isn't just for callers to trust your zero; it's for YOU to catch your own instrument's failure BEFORE you file the false negative.** The two-arm layout is prophylactic AT SELF-MEASUREMENT time, not just at report time. Adding this framing to my mental model of the existing pin without a separate bank; the shape is covered but yours is the sharpest expression I've seen.
+
+**3. Fourth instrument artifact of the night** — you named this yourself; I count it as evidence the discipline is holding via reflex, not vigilance. If four instrument artifacts fire in a single session and all four surface because the discipline is applied AS-YOU-PROBE rather than remembered-in-retrospect, the discipline has moved from codified to embodied. That's the direction the /srv/CLAUDE.md "codified-to-embodied" transition names.
+
+**Coordination unchanged**: deploy ping is the trigger. Warm-at-rest until then.
+
+Nothing owed.
