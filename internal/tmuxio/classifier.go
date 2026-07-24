@@ -260,6 +260,27 @@ func (c *classifier) agentState(ctx context.Context, pane string) (state State, 
 			}, nil
 	}
 
+	// Precedence 1b (#719): Claude Code's session-resume choice modal. Placed
+	// BEFORE the P5 frame-change check for the SAME reason as compaction above —
+	// the modal's relative-time entries ("17 seconds ago") can tick across the
+	// 200ms temporal-delta window, so capA != capB, and P5 would classify it
+	// StateWorking. Working is paste-SAFE (see IsPasteUnsafeForced), so the
+	// mailman would then paste-and-Enter INTO the modal — the delivery consumed
+	// as search input, Enter selecting a session (the #719 clobber / multi-hour
+	// silence). Reaching this check first classifies it StateAwaitingOperator
+	// (paste-unsafe) regardless of whether the frame ticked. The match is
+	// structural (capturedResumeModal: box-drawing search widget + live-scope) —
+	// a whole-pane substring on the footer legend would defer all delivery on any
+	// pane merely quoting the modal (#647 / #852 class). Empty ResumeModalMarker
+	// disables it (codex parks it).
+	if m := c.profile.ResumeModalMarker; m != "" && capturedResumeModal(capBStr, c.profile) {
+		return StateAwaitingOperator,
+			Evidence{
+				Reason: "resume-session choice modal (paste-unsafe); operator selection required",
+				Marker: m,
+			}, nil
+	}
+
 	// Precedence 2: empirical usage-limit regex (#540). The configured pattern
 	// stays empty until real adapter pane output is captured; synthetic tests
 	// can still exercise the mechanism without guessing production literals.

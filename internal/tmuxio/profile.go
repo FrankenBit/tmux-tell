@@ -53,6 +53,11 @@ import "regexp"
 //     the check (correct for an adapter with no API-error chrome, e.g. codex).
 //     The bare substring is NOT matched whole-pane; the live-scope, coded-line,
 //     and esc-to-interrupt-guard discipline all live in capturedLiveErrorChrome.
+//   - ResumeModalMarker: the keybind-legend footer of Claude Code's session-resume
+//     choice modal (#719, "Type to Search · Enter to select · Esc to clear"). Empty
+//     disables the check (correct for an adapter with no resume UI, e.g. codex).
+//     Like APIErrorMarker the bare substring is NOT matched whole-pane; the
+//     box-drawing-search-widget + live-scope discipline lives in capturedResumeModal.
 //
 // Why PromptSentinel is a string, not the rune the #322 issue sketch proposed:
 // Claude's sentinel is TWO codepoints (❯ U+276F followed by NBSP U+00A0), so a
@@ -121,6 +126,7 @@ type PaneProfile struct {
 	AwaitingOperatorMarker string
 	StatusLineMarker       string
 	APIErrorMarker         string
+	ResumeModalMarker      string
 	PasteCollapseMarker    string
 	PasteEvidenceMarker    string
 	RateLimitPattern       string
@@ -142,6 +148,7 @@ func ClaudePaneProfile() PaneProfile {
 		AwaitingOperatorMarker: AwaitingOperatorMarker,
 		StatusLineMarker:       StatusLineMarker,
 		APIErrorMarker:         APIErrorMarker,
+		ResumeModalMarker:      ResumeModalMarker,
 		PasteEvidenceMarker:    ClaudePasteEvidenceMarker,
 	}
 }
@@ -222,10 +229,11 @@ const CodexWorkingPattern = `Working \(.*esc to interrupt\)`
 //
 // The remaining marker fields are intentionally EMPTY pending characterization of
 // Codex's other UIs (the 2026-06-12 capture only exercised idle + operator-typing):
-//   - CompactionMarker / AwaitingOperatorMarker: empty disables those precedence
-//     checks. Codex's compaction / popup equivalents (if any) aren't captured
-//     yet; agent_state still classifies idle / working / awaiting-operator from
-//     the sentinel + cursor without them.
+//   - CompactionMarker / AwaitingOperatorMarker / ResumeModalMarker: empty
+//     disables those precedence checks. Codex's compaction / popup / session-
+//     resume equivalents (if any) aren't captured yet; agent_state still
+//     classifies idle / working / awaiting-operator from the sentinel + cursor
+//     without them.
 //   - StatusLineMarker: empty — Codex's status row ("gpt-5.5 default · …") has no
 //     stable leading glyph like Claude's ⏵⏵, so its input-area lower boundary
 //     relies on the adapter-universal ─×20 separator. This only matters for

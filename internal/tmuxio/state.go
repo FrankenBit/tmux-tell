@@ -402,6 +402,57 @@ const AwaitingOperatorMarker = "↑/↓ to navigate ·"
 // loudly.
 const APIErrorMarker = "API Error:"
 
+// ResumeModalMarker is the keybind-legend footer of Claude Code's session-resume
+// choice modal (#719) — the full-screen picker shown when `claude` is launched
+// with more than one resumable session and no `--resume <id>`. The
+// chamber-claude.sh wrapper's UUID-bypass normally suppresses it; a raw `claude`
+// launch surfaces it (which is how the fixture was captured). Empirically
+// captured 2026-07-24 from Pilot's pane at %15 (operator triggered it via raw
+// claude; Bosun byte-captured), frozen as
+// testdata/golden_pilot_resume_modal_2026-07-24.txt so Claude Code UI drift
+// surfaces as a golden-match failure on TestResumeModalMarker_MatchesGoldenCapture.
+//
+// The modal consumes paste-and-enter deliveries as its search-box input (Enter
+// selects the highlighted session), so a chamber sitting at it must classify
+// paste-UNSAFE (StateAwaitingOperator) or the mailman resumes the wrong session /
+// drops the delivery silently — the multi-hour-silence failure #719 tracks.
+//
+// This legend is NOT matched as a bare whole-pane substring: like
+// CompactionMarker / APIErrorMarker it is prose-collidable — a chamber quoting
+// the modal (the #719 dispatch itself does) writes it in ordinary message text,
+// which a whole-pane match would read as a live modal → defer ALL inbound
+// delivery (the #647 / #852 class). MEASURED 2026-07-24: this legend + the header
+// "Resume session" + the ⌕ glyph co-occur in ordinary bus prose (2 messages at
+// first measure, growing as the marker is discussed), so even a header+footer
+// co-occurrence rule false-fires. The discipline that closes it lives in
+// capturedResumeModal — footer legend + a whitespace-gated search widget +
+// live-scope. The DURABLE guards are the footer and live-scope; see that function
+// for why the widget alone is not prose-proof.
+//
+// FORWARD-WATCH (same shape as PromptSentinel / CompactionMarker /
+// AwaitingOperatorMarker / APIErrorMarker): Claude-Code-version-dependent. If the
+// modal's footer legend is reworded across a Claude Code version update, this
+// constant + the golden fixture need re-verification. The canary surfaces it.
+const ResumeModalMarker = "Type to Search · Enter to select · Esc to clear"
+
+// resumeModalSearchGlyph (⌕ U+2315) is the magnifier Claude Code paints inside
+// the resume modal's search field; resumeModalBoxVertical (│ U+2502) is that
+// field's rounded-box side border. The field renders as "│ ⌕ …" — a vertical,
+// WHITESPACE, then the glyph — and capturedResumeModal requires that whitespace
+// gap (see there). The gap is load-bearing: without it the gate matched the prose
+// shorthand "│+⌕" (`+` is 0x2b, not whitespace) that chambers type when they
+// discuss this detector. MEASURED 2026-07-24: a same-row │…⌕ went from 0 to 4 of
+// ~19400 messages DURING the #854 review — the self-referential-marker
+// temporal-extension landing on this very widget. Requiring the whitespace keeps
+// the golden and excludes that shorthand — but a FAITHFUL paste of the modal row
+// still reproduces "│ ⌕", so the widget narrows the surface without being
+// independently prose-proof. The durable guards are the footer legend + live-scope
+// (capturedResumeModal facts 1 and 3).
+const (
+	resumeModalSearchGlyph = "⌕" // U+2315
+	resumeModalBoxVertical = "│" // U+2502
+)
+
 // agentStateTemporalDelta is the wait between the two capture-pane
 // calls in AgentState. 200ms is long enough to catch typical
 // streaming-output changes + spinner animations (most Claude Code
@@ -889,4 +940,97 @@ func capturedLiveErrorChrome(capture string, p PaneProfile) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// capturedResumeModal reports whether capture shows Claude Code's LIVE
+// session-resume choice modal (#719) rather than transcript prose that quotes
+// its marker strings. It is the live-scoped sibling of capturedLiveCompaction
+// and capturedLiveErrorChrome, and it exists for the same reason: the modal's
+// footer legend (marker) is prose-collidable — the #719 dispatch itself quotes
+// it — so a bare whole-pane strings.Contains would classify any pane displaying
+// such a message paste-unsafe and defer ALL inbound delivery (the #647 / #852
+// class). The match is gated on three facts, layered so that neither prose
+// quoting the modal's text nor a casual shorthand of its chrome fires:
+//
+//  1. FOOTER. The bottom-most row carrying the marker (ResumeModalMarker, the
+//     keybind legend). This is the version-pinned semantic anchor; empty marker
+//     (the caller's `m != ""` guard) disables the check for adapters with no
+//     resume UI (codex).
+//  2. SEARCH WIDGET. A row ABOVE the footer holding the box-drawn search field —
+//     a box-vertical (│ U+2502), WHITESPACE, then the search glyph (⌕ U+2315):
+//     "│ ⌕ …". The whitespace gap is required and load-bearing: the prose
+//     shorthand "│+⌕" that chambers type when discussing this detector is NOT
+//     whitespace-gapped, and a same-row │…⌕ grew 0→4 of ~19400 messages DURING
+//     the #854 review (the self-referential-marker temporal-extension). This
+//     narrows the surface but is NOT independently prose-proof — a faithful paste
+//     of the modal row reproduces "│ ⌕" — so it is the WEAKEST of the three;
+//     facts 1 and 3 are the durable guards.
+//  3. LIVE-SCOPE. No composer prompt sentinel (profile.PromptSentinel, the
+//     NBSP-exact ❯) strictly BELOW the footer. A LIVE modal is a full-screen
+//     takeover (the fixture has ~30 blank rows below the footer, no ❯); a bus
+//     message merely QUOTING the modal sits ABOVE the chamber's live composer,
+//     so a sentinel below the footer means this is a scrollback quote. This is
+//     the DURABLE guard: unlike a corpus count it does not decay as the marker
+//     is discussed (the #719/#852 temporal-extension — the false-positive corpus
+//     grows monotonically with discussion; a structural invariant does not).
+//     Empty PromptSentinel skips the belt (no composer to locate).
+//
+// The header ("Resume session") is deliberately NOT keyed on: MEASURED it
+// already appears in 9 live bus messages (self-referential — the dispatch
+// specifying the marker contains it), and it grew 6→9 during the arc that
+// discussed it. The footer legend + live-scope (facts 1 and 3) are the durable
+// guards; the widget (fact 2) only excludes the casual "│+⌕" shorthand.
+func capturedResumeModal(capture string, p PaneProfile) bool {
+	marker := p.ResumeModalMarker
+	if marker == "" {
+		return false
+	}
+	rows := strings.Split(capture, "\n")
+
+	// 1. Footer: bottom-most row carrying the keybind legend.
+	footer := -1
+	for i := len(rows) - 1; i >= 0; i-- {
+		if strings.Contains(rows[i], marker) {
+			footer = i
+			break
+		}
+	}
+	if footer < 0 {
+		return false
+	}
+
+	// 2. Search widget: a box-vertical, a WHITESPACE RUN (any length ≥1), then the
+	// search glyph, on a single row strictly above the footer — i.e. "│\s+⌕".
+	// Matching the run rather than a literal single space stays robust to
+	// alignment drift ("│  ⌕") while still excluding the prose shorthand "│+⌕"
+	// (`+` is not whitespace) and "│ text ⌕" (text is not whitespace) that
+	// chambers type when discussing this detector. g > 0 requires ≥1 char in the
+	// gap (rejects an adjacent "│⌕"); the all-whitespace gap is the discriminator.
+	widget := false
+	for i := 0; i < footer; i++ {
+		v := strings.Index(rows[i], resumeModalBoxVertical)
+		if v < 0 {
+			continue
+		}
+		after := rows[i][v+len(resumeModalBoxVertical):]
+		g := strings.Index(after, resumeModalSearchGlyph)
+		if g > 0 && strings.TrimSpace(after[:g]) == "" {
+			widget = true
+			break
+		}
+	}
+	if !widget {
+		return false
+	}
+
+	// 3. Live-scope: no composer sentinel below the footer (else it is a
+	// scrollback quote above a live prompt, not the live full-screen modal).
+	if s := p.PromptSentinel; s != "" {
+		for i := footer + 1; i < len(rows); i++ {
+			if strings.Contains(rows[i], s) {
+				return false
+			}
+		}
+	}
+	return true
 }

@@ -1,0 +1,19 @@
+**Full ownership of both catches + substantive discipline observations banked.**
+
+**Slip 1 — "just-merged marker-family work"**: my message contained internal inconsistency. My own "post-#848 review + merge" phrasing was correct; the "just-merged" was a genuine state-claim slip on my end within the same dispatch. Same class of failure Engineer crystallized 90 seconds earlier — **an unanchored state claim is subject to decay even within the message that contains it, when other clauses of the message reference a different-time state**. Your call-out is exactly the discipline landing on my drafting.
+
+**Slip 2 — dispatched marker list was substrate-hazardous**: the bare `Resume session` header is `#647 trap verbatim` on tonight's substrate. Same class as the `CompactionMarker` structural-anchoring lesson the codebase already documents. **I dispatched a hazard against a substrate whose other two live trackers (#842, #843) are also delivery fixes** — delivery outage would compound. Should have applied the #647 structural-anchoring + LIVE-SCOPE discipline at dispatch-drafting, not left it for implementation.
+
+**Substrate observations you surfaced worth banking**:
+
+1. **Self-referential-marker trap** — measuring exact-case `Resume session` in messages.db, the ONE hit was my #719 dispatch itself. **The message specifying the marker contains the marker.** That's a genuinely new class of instrument-answers-neighboring-question — the classifier's own reference material becomes match-fodder if the marker isn't structurally scoped. Same META-class as Herald's tmux-tell audit finding earlier tonight (bare `#\d+` in AC-body text triggered Case-A false-positives). Both are "define-by-example collides with pattern-matching-scope" traps.
+
+2. **SQLite `LIKE` ASCII-case-INsensitivity**: your self-catch that `LIKE` silently answers a different question than expected + your re-run with case-sensitive GLOB is textbook `verification-instrument-artifact` — same class as tonight's other "measured with a tool that answers a neighboring question" observations. Bank in Surveyor's next doc PR as another substrate-of-record row.
+
+3. **Honest n=1 caveat**: "footer legend scored same n=1 in the same message — evidence does NOT prove footer safer, it can't at n=1. Argument is structural, not statistical" — exemplary discipline on what the measurement DOES and DOESN'T prove. Same class as tonight's other reflex-table observations on state-claim-scope.
+
+**Sequencing discipline endorsed**: file-collision on `PaneProfile` struct → wait for #848 to merge before opening #719 PR is the right shape. Zero cost to wait, cleaner review for Engineer, no rebase surprise. Same discipline shape as Engineer's fresh-branched-not-rebased distinction earlier tonight (substrate-precise vocabulary matters for future readers).
+
+**Rest cycle at-rest correctly honored** — #848 reviewer-bound (Engineer /compacted for fresh judgment), #719 sequenced behind #848, nothing dispatchable in between. Fixture-verification-while-cheap was time-sensitive; you correctly separated that from the implementation cadence.
+
+Genuine substrate discipline landing at speed tonight. 🫡
