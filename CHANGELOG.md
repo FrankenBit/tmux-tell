@@ -33,6 +33,56 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.36.0] — 2026-07-26
+
+### Added
+
+Added a resume-session-modal pane classification so the mailman no longer pastes deliveries into Claude Code's session-resume choice modal (`#719`).
+
+When `claude` launches with more than one resumable session and no `--resume <id>`, Claude Code shows a full-screen search modal. This happens on a raw launch that bypasses `chamber-claude.sh`'s UUID picker. A live pane sitting at the modal looked deliverable — pane live, coarsely idle. Paste-and-Enter was then consumed as the modal's search input, and Enter selected a session. That is the multi-hour queue-silence the tracker anchors.
+
+The new `capturedResumeModal` predicate classifies such a pane `StateAwaitingOperator` (paste-unsafe). The observe-gate defers it and the pre-paste safety belt aborts.
+
+Detection is structural, not a bare substring. The modal's footer legend (`Type to Search · Enter to select · Esc to clear`) is prose-collidable — the tracker dispatch itself quotes it. A whole-pane match would defer all delivery to any pane merely displaying such a message. That is the `#647` outage class, re-measured for the neighbouring `AwaitingOperatorMarker` in `#852`.
+
+The durable guards are the version-pinned footer legend and live-scope: no composer `❯` prompt below the footer. So a faithful full-modal capture quoted above a live prompt is still rejected. That guard does not decay as the marker enters discussion.
+
+A whitespace-gated search-widget row narrows the surface further — a `│` box-border, whitespace, then the `⌕` glyph, the field's real `│ ⌕` render. It excludes the `│+⌕` prose shorthand chambers type when discussing the detector. It is deliberately NOT claimed as independently prose-proof, since a faithful paste reproduces `│ ⌕`. MEASURED: a same-row `│…⌕` grew from 0 to 4 of ~19400 messages during this change's own review — the self-referential-marker temporal-extension. That is why the durable weight sits on the footer and live-scope.
+
+The check is placed before the frame-change classifier, mirroring the compaction check and for the same reason. The modal's relative-time entries (`17 seconds ago`) tick across the 200 ms capture window. The frame-change branch would read the tick as `StateWorking`, which is paste-safe — delivering into the modal.
+
+Claude-only: codex parks it via an empty `ResumeModalMarker`. Verified against a byte-captured fixture plus a negative-control corpus of real bus messages that quote the markers, with each structural gate exercised by a targeted mutation.
+
+### Changed
+
+CI now pins release-toolkit v0.33.0 (was v0.32.0). The bump pulls release-toolkit#493's compose fixes: `release-prep` no longer drops the `### Upgrade` section, nor emits summary bullets that duplicate an authored fragment, when composing over pre-existing `## [Unreleased]` content. Both defects hit the v0.34.0 cut and were fixed by hand at review. v0.33.0 also makes `PREP_SUBJECT_RE` accept the Forgejo squash-merge ` (#NN)` subject suffix, closing a silent skip-gate.
+
+### Fixed
+
+Live-scoped the awaiting-operator picker detector so a bus message that merely quotes the picker footer no longer defers delivery (`#852`).
+
+The classifier's precedence-7 check matched `↑/↓ to navigate ·` anywhere in the pane. Any chamber whose scrollback held a message quoting that footer could classify paste-unsafe and silently defer all inbound delivery. 18 messages do, and the count grows as the fix is discussed. The fire was intermittent. The check sits below the cursor-at-prompt idle check, so a cleanly-idle pane stayed safe. The false fire needed a stable frame with the cursor off the prompt, such as a cursor-query hiccup.
+
+The fix requires the marker on a live picker footer with no composer prompt below it. A real picker replaces the composer; a scrollback quote sits above it. This mirrors the compaction, API-error, and resume-modal live-scope guards. A real AskUserQuestion popup or `/mcp` picker still classifies awaiting-operator.
+
+Post-compaction resume messages now submit on their own instead of sitting pasted-but-unsent in the composer until the operator presses Enter by hand (`#865`).
+
+When a chamber's `/compact` takes longer than the stability ceiling to settle, the mailman delivered the promoted resume into a pane still redrawing the restored context, where every submit-Enter was eaten by the redraw. The delivery is now marked `PostCompactSettle` and runs an extended verify budget so the settle-gated resubmit fires once the pane finally settles. The flag is armed only on a stability-ceiling blow and consumed once by the next delivery, so general-work delivery is byte-identical — mid-work steering messages still land in the composer during active work.
+
+The class hid through the v0.35.0 fix arc because the delivery verifier keyed on "did the composer empty", which cannot tell the operator's manual Enter from the mailman's own — so every operator rescue recorded a clean `verified=1` and the `delivered_in_input_box` signal never fired. A post-compact clear that cannot be attributed to a settled-frame Enter of the mailman's is now reported as the new `delivered_externally_submitted` delivery state (metric + WARN) rather than counted as a mailman success, so the failure is finally measurable.
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.35.0] — 2026-07-24
 
 ### Added
