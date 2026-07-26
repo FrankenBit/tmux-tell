@@ -1219,6 +1219,18 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	consecutivePaneFails := 0
 	paneFailMsgID := ""
 
+	// #865: post-compact settle deadline. Set when a /compact's stability wait
+	// blows its ceiling — the pane is still redrawing the restored context, so the
+	// NEXT delivery (the promoted resume) is pasted into an unsettled pane. While
+	// this deadline is live, that delivery runs in PostCompactSettle mode: an
+	// extended verify budget so the settle-gated resubmit fires once the pane
+	// settles (Fix B), and external-submit attribution so an operator rescue is not
+	// miscounted as a mailman success (Fix A). A single time.Time, not a map: one
+	// mailman serves one agent. Consumed once (cleared on the first delivery that
+	// reads it) so general traffic after the resume is unaffected — the operator's
+	// scope constraint that general-work delivery stays byte-identical.
+	var postCompactSettleUntil time.Time
+
 	// #783 session-stale streak. Counts consecutive iterations where the
 	// registered session-id resolves to no live pane (session_stale) AND a quick
 	// pane probe classifies StateUnknown — the stuck class where #105's
@@ -2387,8 +2399,26 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			paneFailMsgID = ""
 		}
 
-		deliverCtx, cancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
-		derr := deliverOne(deliverCtx, paneForDelivery, msg, opts.ByteMarkerThreshold, onVerify)
+		// #865: consume the post-compact settle deadline (set when a prior /compact
+		// blew its stability ceiling). The first delivery after that — the promoted
+		// resume — runs in PostCompactSettle mode; clear it so later general traffic
+		// is byte-identical. Only regular messages take the Deliver path where the
+		// flag applies (control commands take the SendKeys path and ignore it).
+		postCompactSettle := !postCompactSettleUntil.IsZero() && time.Now().Before(postCompactSettleUntil)
+		if postCompactSettle {
+			postCompactSettleUntil = time.Time{}
+			logger.Printf("post_compact_settle_delivery id=%s — resume pasted into a still-settling pane; extended verify budget + external-submit attribution active (#865)",
+				msg.PublicID)
+		}
+		// The PostCompactSettle verify budget runs while the pane settles (up to
+		// ~1min), so the delivery ctx must outlast it; give it the post-compact
+		// window plus the normal timeout as margin. General deliveries are unchanged.
+		deliverTimeout := opts.DeliverTimeout
+		if postCompactSettle {
+			deliverTimeout = opts.PostCompactPause + opts.DeliverTimeout
+		}
+		deliverCtx, cancel := context.WithTimeout(opCtx, deliverTimeout)
+		derr := deliverOne(deliverCtx, paneForDelivery, msg, opts.ByteMarkerThreshold, onVerify, postCompactSettle)
 		cancel()
 
 		// Auto-heal on pane-id drift: if tmux says the pane is gone, ask
@@ -2406,8 +2436,8 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				if uerr := s.UpsertAgent(opCtx, opts.Agent, newPane); uerr != nil {
 					logger.Printf("auto_heal_update_failed err=%v", uerr)
 				} else {
-					retryCtx, rcancel := context.WithTimeout(opCtx, opts.DeliverTimeout)
-					derr = deliverOne(retryCtx, newPane, msg, opts.ByteMarkerThreshold, onVerify)
+					retryCtx, rcancel := context.WithTimeout(opCtx, deliverTimeout)
+					derr = deliverOne(retryCtx, newPane, msg, opts.ByteMarkerThreshold, onVerify, postCompactSettle)
 					rcancel()
 				}
 			} else if lerr != nil {
@@ -2460,6 +2490,16 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				if !settled {
 					logger.Printf("post_compact_stability_ceiling id=%s — pane not stably idle within %s; proceeding (pre-paste gate backstops)",
 						msg.PublicID, opts.PostCompactPause)
+
+					// #865: the pane never settled within the ceiling, so the promoted
+					// resume (delivered on a subsequent iteration) is about to be pasted
+					// into a still-redrawing pane — the exact window where the submit-
+					// Enter is eaten. Arm the post-compact settle deadline so that next
+					// delivery runs with the extended verify budget (Fix B) + external-
+					// submit attribution (Fix A). Consumed once, so general traffic after
+					// the resume is unaffected. Scoped to the ceiling-blow because a pane
+					// that DID settle takes the normal delivery path into an idle pane.
+					postCompactSettleUntil = time.Now().Add(opts.PostCompactPause)
 
 					// #730 co-trigger: a tmux-tell-triggered /compact that never
 					// settled to idle may have EXITED the chamber to a bare shell
@@ -2525,6 +2565,28 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					paneForDelivery, a.RelaunchCmd, "clear", count, a.RespawnAfterShrinks, watchdogPing) {
 					return exitOK
 				}
+			}
+		case errors.Is(derr, tmuxio.ErrDeliveredExternally):
+			// #865: the post-compact resume WAS submitted, but a still-settling pane
+			// ate every Enter WE sent — the clear came from an EXTERNAL Enter (the
+			// operator rescuing the stuck paste by hand). Mark delivered + verified
+			// (it IS submitted; do NOT replay it), but record a DISTINCT delivery
+			// state so the metric stops counting operator rescues as mailman
+			// successes. That conflation is what hid this class through the v0.35.0
+			// arc — every rescue looked like a clean verify. The WARN is the
+			// operator-visible "mailman did not land this on its own" report; no bus
+			// failure-notice (a self-addressed resume would notify only itself, and
+			// the message did reach the session).
+			logger.Printf("WARN delivered_externally_submitted id=%s — post-compact resume submitted by an EXTERNAL Enter (operator rescue), not the mailman; the extended budget did not land a self-submit before the pane settled (#865)",
+				msg.PublicID)
+			if err := s.MarkDelivered(opCtx, msg.PublicID); err != nil {
+				logger.Printf("mark_delivered_err id=%s err=%v", msg.PublicID, err)
+			}
+			delivered = true
+			m.RecordDelivery(msg.FromAgent, opts.Agent, metrics.StateDeliveredExternallySubmitted)
+			if sec, ok := deliveryLatencySeconds(msg.CreatedAt); ok {
+				m.ObserveDeliveryLatency(opts.Agent, sec)
+				m.ObserveDeliveryLatencyByPriority(store.PriorityName(msg.Priority), sec)
 			}
 		case errors.Is(derr, tmuxio.ErrUnverifiedDelivery):
 			logger.Printf("WARN delivered_in_input_box id=%s — paste+Enter completed but token not surfaced in time (Claude likely mid-turn); message is in recipient's input box pending submit",
@@ -2941,7 +3003,7 @@ func adapterSupportsControl(body string) bool {
 //
 // onVerify (may be nil) is forwarded to tmuxio.Deliver's verify-attempt
 // callback (#146); it never fires for control messages (no verification).
-func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarkerThreshold int, onVerify func(time.Duration, bool)) error {
+func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarkerThreshold int, onVerify func(time.Duration, bool), postCompactSettle bool) error {
 	if msg.Kind == store.KindControl {
 		// #419/#420: a control command this adapter's CLI doesn't implement (codex
 		// has no `/mcp …` and no `/cost`) would land as literal text in the prompt
@@ -2960,10 +3022,11 @@ func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarker
 	// verify confirms the submit regardless of collapse. The #160 byte-marker
 	// length suffix still rides in the header — only the framing went.
 	return tmuxio.Deliver(ctx, tmuxio.DeliverParams{
-		Pane:        pane,
-		Body:        render.Message(*msg, byteMarkerThreshold, time.Now()),
-		VerifyToken: "id " + msg.PublicID,
-		OnVerify:    onVerify,
+		Pane:              pane,
+		Body:              render.Message(*msg, byteMarkerThreshold, time.Now()),
+		VerifyToken:       "id " + msg.PublicID,
+		OnVerify:          onVerify,
+		PostCompactSettle: postCompactSettle,
 	})
 }
 

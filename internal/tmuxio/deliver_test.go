@@ -1864,3 +1864,210 @@ func contains(haystack []string, needle string) bool {
 
 // Silence unused warnings when nothing else in this file uses fmt.
 var _ = fmt.Sprintf
+
+// --- #865 post-compact resume delivery (Fix A: attribution / Fix B: extended settle) ---
+
+// claudeStuckCapture builds a Claude verify frame where our paste is still
+// sitting UNSUBMITTED in the composer: the collapse marker sits below the
+// bottom-most prompt sentinel (pasteUnsubmitted → true). The suffix makes the
+// frame differ poll-to-poll so the verify loop reads frameChanging=true (the
+// post-compact "pane still redrawing" signature).
+func claudeStuckCapture(suffix string) []byte {
+	return []byte("restoring conversation " + suffix + "\n" + PromptSentinel + "[Pasted text #1 +40 lines]")
+}
+
+// claudeClearedCapture builds a Claude frame where the composer is EMPTY (the
+// message submitted): the verify token sits only in the scrollback transcript,
+// above a bare prompt sentinel, so pasteUnsubmitted → false and the cursor
+// anchors the cleared input row.
+func claudeClearedCapture() []byte {
+	return []byte("assistant: done id 7f3a\n" + PromptSentinel)
+}
+
+// TestDeliver_PostCompact_ExternalSubmitReported is the #865 Fix A repro +
+// mutation anchor. A resume pasted into a still-settling post-compact pane sits
+// unsubmitted across several redrawing polls (marker present, frame changing →
+// no settled-frame resubmit ever fires), then the composer clears — the operator
+// pressing Enter by hand. Because no Enter of OURS could have caused the clear,
+// Deliver must report ErrDeliveredExternally, NOT credit itself a verified
+// submit. That distinct outcome is what un-masks the class the v0.35.0 arc hid
+// (every operator rescue previously recorded verified=1).
+//
+// Mutation: drop the `sawStuckPasteWhileSettling && !firedAnyResubmit` branch (or
+// its p.PostCompactSettle gate) → the clear is credited as a normal verify and
+// err becomes nil → this test fails. That is the exact false-green the bug is.
+func TestDeliver_PostCompact_ExternalSubmitReported(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var enterPresses int
+	newRun := func() func(args []string, _ string) ([]byte, error) {
+		captureN := 0
+		return func(args []string, _ string) ([]byte, error) {
+			switch args[0] {
+			case "capture-pane":
+				captureN++
+				if captureN <= 3 {
+					// attempts 0..2: paste sitting unsubmitted, pane still redrawing.
+					return claudeStuckCapture(fmt.Sprintf("frame-%d", captureN)), nil
+				}
+				return claudeClearedCapture(), nil // external Enter cleared it
+			case "display-message":
+				if captureN <= 3 {
+					return []byte("30/1"), nil // cursor past sentinel: not cleared
+				}
+				return []byte("2/1"), nil // cursor at sentinel: cleared
+			case "send-keys":
+				if contains(args, "Enter") {
+					enterPresses++
+				}
+			}
+			return nil, nil
+		}
+	}
+
+	// With PostCompactSettle: the unattributable clear is reported as external.
+	enterPresses = 0
+	withFakeRunner(t, newRun())
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%5", Body: "resume orientation id 7f3a", VerifyToken: "id 7f3a",
+		PrePasteRaceCheckDisabled: true, PostCompactSettle: true,
+	})
+	if !errors.Is(err, ErrDeliveredExternally) {
+		t.Fatalf("want ErrDeliveredExternally (operator rescued a stuck post-compact paste); got %v", err)
+	}
+	// No settled-frame resubmit could have fired (frame changed every poll), so the
+	// only Enter is the initial step-3 submit — the one that was eaten.
+	if enterPresses != 1 {
+		t.Errorf("want exactly 1 Enter (step-3 submit; no settled-frame resubmit); got %d", enterPresses)
+	}
+
+	// WITHOUT the flag (general-work delivery): the SAME frames must stay
+	// byte-identical to today — any clear is credited as a verified submit. This
+	// pins the operator's scope constraint: attribution fires post-compaction only.
+	enterPresses = 0
+	withFakeRunner(t, newRun())
+	err = Deliver(context.Background(), DeliverParams{
+		Pane: "%5", Body: "resume orientation id 7f3a", VerifyToken: "id 7f3a",
+		PrePasteRaceCheckDisabled: true, // PostCompactSettle: false
+	})
+	if err != nil {
+		t.Errorf("general-work delivery must be unchanged (clear credited as verified); got %v", err)
+	}
+}
+
+// TestDeliver_PostCompact_ResubmitOnSettleVerifies is the #865 Fix B core: once
+// the post-compact pane SETTLES (two identical consecutive frames) with the paste
+// still present, the stability-gated resubmit fires an effective Enter and the
+// submit is then attributed to the mailman — a verified success, not an external
+// rescue. This is the path B creates by keeping the delivery alive long enough
+// for the settle to happen.
+func TestDeliver_PostCompact_ResubmitOnSettleVerifies(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	var enterPresses int
+	captureN := 0
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captureN++
+			switch {
+			case captureN <= 2:
+				return claudeStuckCapture(fmt.Sprintf("redraw-%d", captureN)), nil // changing
+			case captureN <= 4:
+				return claudeStuckCapture("settled"), nil // two identical → settled frame
+			default:
+				return claudeClearedCapture(), nil // resubmit landed → submitted
+			}
+		case "display-message":
+			if captureN <= 4 {
+				return []byte("30/1"), nil
+			}
+			return []byte("2/1"), nil
+		case "send-keys":
+			if contains(args, "Enter") {
+				enterPresses++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%5", Body: "resume orientation id 7f3a", VerifyToken: "id 7f3a",
+		PrePasteRaceCheckDisabled: true, PostCompactSettle: true,
+	})
+	if err != nil {
+		t.Fatalf("want verified after the settle-gated resubmit fired; got %v", err)
+	}
+	// step-3 submit + at least one settled-frame resubmit.
+	if enterPresses < 2 {
+		t.Errorf("want >=2 Enter presses (step-3 + settled-frame resubmit); got %d", enterPresses)
+	}
+}
+
+// TestDeliver_PostCompact_ExtendedBudgetReachesLateSettle pins that the extended
+// budget (Fix B) is load-bearing: a settle that lands well past the general
+// base+load-adaptive budget is reached ONLY with PostCompactSettle. With the flag
+// the delivery rides postCompactExtraAttempts to the late settle and verifies;
+// without it the general budget exhausts first and the paste is left in the input
+// box (ErrUnverifiedDelivery) — the pre-fix behaviour.
+func TestDeliver_PostCompact_ExtendedBudgetReachesLateSettle(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+	// Shrink the extension so the test is fast but still well past the base budget
+	// (len(retryDelays)=2 + maxLoadAdaptiveExtraAttempts=6 = attempt 8).
+	prevExtra := postCompactExtraAttempts
+	postCompactExtraAttempts = 30
+	t.Cleanup(func() { postCompactExtraAttempts = prevExtra })
+
+	// The pane settles + clears only at capture 13 (attempt 12) — past the base
+	// budget but inside the extension.
+	newRun := func() func(args []string, _ string) ([]byte, error) {
+		captureN := 0
+		return func(args []string, _ string) ([]byte, error) {
+			switch args[0] {
+			case "capture-pane":
+				captureN++
+				switch {
+				case captureN <= 11:
+					return claudeStuckCapture(fmt.Sprintf("redraw-%d", captureN)), nil // changing
+				case captureN <= 13:
+					return claudeStuckCapture("late-settle"), nil // two identical → settled frame
+				default:
+					return claudeClearedCapture(), nil // resubmit landed → submitted
+				}
+			case "display-message":
+				if captureN <= 13 {
+					return []byte("30/1"), nil
+				}
+				return []byte("2/1"), nil
+			}
+			return nil, nil
+		}
+	}
+
+	// With the flag: the extension reaches the late settle → verified.
+	withFakeRunner(t, newRun())
+	if err := Deliver(context.Background(), DeliverParams{
+		Pane: "%5", Body: "resume id 7f3a", VerifyToken: "id 7f3a",
+		PrePasteRaceCheckDisabled: true, PostCompactSettle: true,
+	}); err != nil {
+		t.Fatalf("with PostCompactSettle the extension must reach the late settle; got %v", err)
+	}
+
+	// Without the flag: the general budget exhausts before the late settle → the
+	// paste is left in the input box (the pre-#865 behaviour).
+	withFakeRunner(t, newRun())
+	if err := Deliver(context.Background(), DeliverParams{
+		Pane: "%5", Body: "resume id 7f3a", VerifyToken: "id 7f3a",
+		PrePasteRaceCheckDisabled: true, // PostCompactSettle: false
+	}); !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Errorf("without the flag the general budget must exhaust → ErrUnverifiedDelivery; got %v", err)
+	}
+}

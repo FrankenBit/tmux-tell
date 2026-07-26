@@ -40,7 +40,15 @@ import (
 const (
 	StateDelivered           = "delivered"
 	StateDeliveredInInputBox = "delivered_in_input_box"
-	StateFailed              = "failed"
+	// StateDeliveredExternallySubmitted (#865): the message WAS submitted, but the
+	// clear could not be attributed to the mailman's own Enter — a post-compact
+	// resume that sat unsubmitted in a settling pane until the operator pressed
+	// Enter by hand. Distinct from StateDelivered (mailman submitted it) and from
+	// StateDeliveredInInputBox (still sitting unsubmitted at budget end). This is
+	// the signal that un-masks the paste-not-submitted class: every operator rescue
+	// previously recorded as StateDelivered, hiding the class through v0.35.0.
+	StateDeliveredExternallySubmitted = "delivered_externally_submitted"
+	StateFailed                       = "failed"
 )
 
 // latencyBuckets covers the queued→delivered span. Deliveries are usually

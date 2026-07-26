@@ -66,6 +66,26 @@ type DeliverParams struct {
 	// idiom would otherwise read the pre-paste capture as operator content.
 	// Mirrors serve.go's PrePasteSafetyDisabled (safety on by default).
 	PrePasteRaceCheckDisabled bool
+
+	// PostCompactSettle marks this as a post-compaction resume delivery (#865):
+	// a message delivered right after a /compact whose stability wait blew its
+	// ceiling, so the recipient pane is still SETTLING (redrawing the restored
+	// context) rather than idle. Two behaviours switch on for this delivery ONLY,
+	// leaving every general-work delivery byte-identical (the operator's scope
+	// constraint — mid-work steering messages must still land during active work):
+	//
+	//   B (fix): the verify+resubmit budget is extended (postCompactExtraAttempts)
+	//     so the settle-gated resubmit has time to fire once the pane finally
+	//     settles, instead of the ~16s general budget expiring mid-settle with
+	//     every submit-Enter eaten.
+	//   A (measurement): a clear that cannot be attributed to one of OUR settled-
+	//     frame Enters is reported as ErrDeliveredExternally (operator rescue),
+	//     not credited as a mailman success. Scoped here because in general/under-
+	//     load delivery a frame-change means ingest-progress, and a late clear is a
+	//     legitimately-delayed mailman submit — only in the post-compact window is a
+	//     redraw unrelated to the paste, so only here is an unattributable clear an
+	//     external rescue.
+	PostCompactSettle bool
 }
 
 // SetRetrySchedule replaces the package-level verify-retry schedule and
@@ -182,6 +202,17 @@ func DeriveRetrySchedule(budget time.Duration) []time.Duration {
 // the base schedule (#674 dir 2).
 const maxLoadAdaptiveExtraAttempts = 6
 
+// postCompactExtraAttempts is the #865 post-compact verify extension (Fix B). A
+// PostCompactSettle delivery — a resume pasted into a pane still settling from a
+// /compact whose stability wait blew its ceiling — keeps polling + resubmitting
+// for far longer than the general maxLoadAdaptiveExtraAttempts, so the settle-
+// gated resubmit fires once the pane FINALLY settles rather than the general
+// ~16s budget expiring mid-settle with every submit-Enter eaten (the #865
+// mechanism). Sized to span the post-compact-pause ceiling (~120s) at the
+// patient-tail cadence; a package var so tests can shrink it. Consumed ONLY when
+// PostCompactSettle is set — general and under-load deliveries are unchanged.
+var postCompactExtraAttempts = 60
+
 // ErrUnverifiedDelivery is returned by Deliver when the paste + Enter
 // sequence completed without tmux errors, but the verify token never
 // became visible in the pane within the retry budget. The caller's
@@ -224,6 +255,22 @@ var ErrInputRaced = errors.New("tmuxio: operator input raced the paste")
 // Codex-specific by config: an adapter without a collapse marker (Claude) never
 // triggers it (pasteStillInInput is false).
 var ErrPriorPasteStuck = errors.New("tmuxio: prior collapsed paste still unsubmitted in input")
+
+// ErrDeliveredExternally is returned by Deliver when the recipient's input DID
+// clear (the message was submitted) but the clear cannot be attributed to the
+// mailman's own Enter: our paste sat unsubmitted in the live input across a
+// genuinely-settling (redrawing) pane — the post-compact signature — and we
+// never got a settled frame to fire an effective resubmit into, so every Enter
+// we sent was eaten by the redraw. The clear therefore came from OUTSIDE the
+// mailman (typically the operator pressing Enter by hand to rescue the stuck
+// paste). Distinct from a clean verify (mailman submitted it) and from
+// ErrUnverifiedDelivery (paste still sitting at budget end): here the message
+// IS submitted, just not by us. Caller policy: mark delivered (do NOT replay —
+// it is submitted) but record it under a distinct delivery outcome + WARN so
+// the metric stops counting operator rescues as mailman successes. That mask is
+// exactly what hid the post-compact paste-not-submitted class through the
+// v0.35.0 fix arc (#865): every operator rescue recorded verified=1.
+var ErrDeliveredExternally = errors.New("tmuxio: delivery submitted externally, not by the mailman")
 
 // Deliver pastes Body into the given tmux pane and presses Enter. It uses
 // a unique named buffer per call so concurrent invocations from multiple
@@ -395,8 +442,20 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 	verifyStart := time.Now()
 	var lastCapture, prevCapture string
 	firedAnyResubmit := false
+	// #865: set once our paste is seen sitting UNSUBMITTED in the live input
+	// across a genuine pane redraw (the post-compact settling signature). If the
+	// input later clears while this is set and we never fired an effective
+	// (settled-frame) resubmit, that clear came from outside the mailman — see the
+	// attribution branch in the acceptance block below.
+	sawStuckPasteWhileSettling := false
 	polls := 0
-	ceiling := len(retryDelays) + maxLoadAdaptiveExtraAttempts
+	extraAttempts := maxLoadAdaptiveExtraAttempts
+	if p.PostCompactSettle {
+		// #865 Fix B: span the post-compact settle window so the resubmit fires
+		// when the pane settles, instead of the general budget expiring mid-settle.
+		extraAttempts = postCompactExtraAttempts
+	}
+	ceiling := len(retryDelays) + extraAttempts
 	for attempt := 0; attempt <= ceiling; attempt++ {
 		if attempt > 0 {
 			// Base schedule for scheduled attempts; patient-tail cadence for the
@@ -446,6 +505,16 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 				if p.OnVerify != nil {
 					p.OnVerify(time.Since(verifyStart), true)
 				}
+				// #865 attribution: the input cleared — but was it OUR Enter that
+				// cleared it? If our paste sat unsubmitted across a settling pane and we
+				// never got a settled frame to fire an effective resubmit into, every
+				// Enter we sent was eaten by the redraw, so this clear is an EXTERNAL
+				// submit (the operator rescuing the stuck paste by hand). Report it
+				// distinctly so the delivery metric stops recording operator rescues as
+				// mailman successes — the mask that hid this class through v0.35.0.
+				if p.PostCompactSettle && sawStuckPasteWhileSettling && !firedAnyResubmit {
+					return ErrDeliveredExternally
+				}
 				return nil
 			}
 		}
@@ -463,6 +532,17 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		// we just sent the step-3 Enter), so treat it as changing: never fire a
 		// resubmit on the first poll.
 		frameChanging := attempt == 0 || lastCapture != prevCapture
+		// #865: our paste is sitting unsubmitted (pastePresent) AND the pane just
+		// redrew between two real polls (attempt 0's "changing" is a construction
+		// default, not a redraw — exclude it). That is the post-compact settling
+		// signature: the pane is not ready to accept a submit, so our Enters are
+		// being eaten. Record it so a LATER clear (which always lands on a poll after
+		// the paste was last seen present) is attributed to an external submit rather
+		// than credited to the mailman. Codex-noop shape is unaffected: this only
+		// sets a flag consumed by the acceptance branch above.
+		if pastePresent && attempt >= 1 && prevCapture != "" && lastCapture != prevCapture {
+			sawStuckPasteWhileSettling = true
+		}
 		// Dir 1 (#674): stability-gated resubmit (#401). Fire only on a settled
 		// frame with the marker still present — the paste is ingested but not
 		// submitted, so this Enter lands submit-ready. Enter-on-empty is a safe

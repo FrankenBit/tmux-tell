@@ -113,7 +113,7 @@ func TestDeliverOne_Codex_SkipsUnsupportedControl(t *testing.T) {
 	for _, body := range []string{"/mcp disable tmux-tell", "/cost"} {
 		lits := recordSendKeysLiteral(t)
 		msg := &store.Message{Kind: store.KindControl, Body: body, PublicID: "abc1"}
-		err := deliverOne(context.Background(), "%3", msg, 0, nil)
+		err := deliverOne(context.Background(), "%3", msg, 0, nil, false)
 		if !errors.Is(err, errControlUnsupported) {
 			t.Fatalf("codex %q control: err = %v, want errControlUnsupported", body, err)
 		}
@@ -131,7 +131,7 @@ func TestDeliverOne_Codex_PastesSupportedControl(t *testing.T) {
 	for _, body := range []string{"/compact", "/rename"} {
 		lits := recordSendKeysLiteral(t)
 		msg := &store.Message{Kind: store.KindControl, Body: body, PublicID: "abc2"}
-		if err := deliverOne(context.Background(), "%3", msg, 0, nil); err != nil {
+		if err := deliverOne(context.Background(), "%3", msg, 0, nil, false); err != nil {
 			t.Fatalf("codex %q control: err = %v, want nil (in codex allowlist)", body, err)
 		}
 		if len(*lits) != 1 || (*lits)[0] != body {
@@ -148,7 +148,7 @@ func TestDeliverOne_Claude_PastesAllControl(t *testing.T) {
 	for _, body := range []string{"/mcp disable tmux-tell", "/cost"} {
 		lits := recordSendKeysLiteral(t)
 		msg := &store.Message{Kind: store.KindControl, Body: body, PublicID: "abc3"}
-		if err := deliverOne(context.Background(), "%3", msg, 0, nil); err != nil {
+		if err := deliverOne(context.Background(), "%3", msg, 0, nil, false); err != nil {
 			t.Fatalf("claude %q control: err = %v, want nil", body, err)
 		}
 		if len(*lits) != 1 || (*lits)[0] != body {
