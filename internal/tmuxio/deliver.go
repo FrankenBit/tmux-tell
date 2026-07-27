@@ -359,6 +359,12 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 	if err := pasteChunk(ctx, p.Pane, body); err != nil {
 		return err
 	}
+	// #873 transition-guard flag: set once we have positively seen OUR paste
+	// rendered in the live input at a verify poll. The acceptance block refuses to
+	// credit a CLEARED composer as a submit until this is true — a clear with no
+	// prior "present" observation is the busy-restoring post-/compact TUI's empty
+	// composer BEFORE it drew the paste, not our submission (the #873 false-accept).
+	sawPastePresent := false
 	// 2.5. Settle. Let Claude Code's TUI finish ingesting the pasted
 	// characters before we ask it to submit. Without this, the Enter
 	// in step 3 frequently arrives before the input is fully populated
@@ -502,20 +508,33 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 			// The stability-gate prevents pasting INTO compaction; this guards the
 			// TOCTOU residual where a /compact becomes visible mid-verify.
 			if m := activeProfile.CompactionMarker; m == "" || !capturedLiveCompaction(lastCapture, m) {
-				if p.OnVerify != nil {
-					p.OnVerify(time.Since(verifyStart), true)
+				// #873 transition guard: refuse to credit a CLEARED composer as a
+				// submit until we have seen OUR paste PRESENT at an earlier verify
+				// poll. In the post-compact settle window the busy-restoring TUI shows
+				// an empty composer BEFORE it draws the paste; the cursor-anchored
+				// "input cleared" misreads that pre-render empty as submitted and returns
+				// verified before the paste even appears — then the paste renders and
+				// sticks (#873). Scoped to the cursor-anchored accept (the production
+				// path): the token-match fallback (anchored=false) has no reliable
+				// present-signal and keeps today's behavior, and non-PostCompactSettle
+				// deliveries are unchanged.
+				_, anchored := inputRowCleared(lastCapture, cursorX, cursorY, cursorErr == nil)
+				if !p.PostCompactSettle || !anchored || sawPastePresent {
+					if p.OnVerify != nil {
+						p.OnVerify(time.Since(verifyStart), true)
+					}
+					// #865 attribution: the input cleared — but was it OUR Enter that
+					// cleared it? If our paste sat unsubmitted across a settling pane and we
+					// never got a settled frame to fire an effective resubmit into, every
+					// Enter we sent was eaten by the redraw, so this clear is an EXTERNAL
+					// submit (the operator rescuing the stuck paste by hand). Report it
+					// distinctly so the delivery metric stops recording operator rescues as
+					// mailman successes — the mask that hid this class through v0.35.0.
+					if p.PostCompactSettle && sawStuckPasteWhileSettling && !firedAnyResubmit {
+						return ErrDeliveredExternally
+					}
+					return nil
 				}
-				// #865 attribution: the input cleared — but was it OUR Enter that
-				// cleared it? If our paste sat unsubmitted across a settling pane and we
-				// never got a settled frame to fire an effective resubmit into, every
-				// Enter we sent was eaten by the redraw, so this clear is an EXTERNAL
-				// submit (the operator rescuing the stuck paste by hand). Report it
-				// distinctly so the delivery metric stops recording operator rescues as
-				// mailman successes — the mask that hid this class through v0.35.0.
-				if p.PostCompactSettle && sawStuckPasteWhileSettling && !firedAnyResubmit {
-					return ErrDeliveredExternally
-				}
-				return nil
 			}
 		}
 		// A collapsed marker OR this delivery's verify token in the live
@@ -527,6 +546,14 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 		// transcript after a successful submit. Keep this codex-only: the collapse
 		// capability is the existing adapter seam for Enter-resubmit behavior.
 		pastePresent := pasteUnsubmitted(lastCapture, p.VerifyToken)
+		// #873: record that we've seen OUR paste rendered in the live input — the
+		// "present" half of the non-empty→empty transition guard the acceptance block
+		// enforces. A clear observed after this is a genuine submit; a clear while
+		// this is still false is the pre-render empty composer (post-compact TUI not
+		// yet caught up), which must not be credited as a submit.
+		if pastePresent {
+			sawPastePresent = true
+		}
 		// frameChanging: the pane redrew since the previous poll — codex is
 		// still actively ingesting/rendering. attempt 0 has no prior frame (and
 		// we just sent the step-3 Enter), so treat it as changing: never fire a

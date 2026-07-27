@@ -1958,6 +1958,102 @@ func TestDeliver_PostCompact_ExternalSubmitReported(t *testing.T) {
 	}
 }
 
+// TestDeliver_PostCompact_PreRenderEmptyNotFalseAccepted is the #873 repro +
+// mutation anchor. It scripts the PRODUCTION order my #866 tests missed: the
+// cursor-anchored composer reads EMPTY for the first polls (the busy-restoring
+// post-/compact TUI has not drawn the pasted bytes yet), THEN the paste renders,
+// THEN it clears on submit. The pre-render empty frame is byte-indistinguishable
+// from a submitted-and-cleared frame (bare sentinel, cursor at col 2) — only the
+// non-empty→empty TRANSITION tells them apart. Pre-fix, the verify accepted that
+// first empty frame as "submitted" and returned verified before the paste ever
+// appeared (the eaten step-3 Enter then left it stuck — the recurrence). The fix
+// refuses to credit a cleared composer until the paste was seen PRESENT, so the
+// loop waits through the empties, sees the render, and the settle-gated resubmit
+// submits it.
+//
+// Load-bearing assertion: >=2 Enters fire (step-3 + the post-render resubmit) —
+// a false-accept of the empty frame returns after the single step-3 Enter.
+// Mutation: force the sawPastePresent gate open → the empty frame is accepted at
+// attempt-0 → only 1 Enter → this test reds.
+func TestDeliver_PostCompact_PreRenderEmptyNotFalseAccepted(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+
+	// Pre-render empty and post-submit cleared are the SAME bytes — that is the trap.
+	empty := "restoring conversation…\n" + PromptSentinel
+	present := "restoring conversation…\n" + PromptSentinel + "[Pasted text #7 +30 lines]"
+
+	var captureN, enters int
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			captureN++
+			switch {
+			case captureN <= 2:
+				return []byte(empty), nil // pre-render: composer empty (TUI still restoring)
+			case captureN <= 4:
+				return []byte(present), nil // paste rendered (two identical → settled → resubmit)
+			default:
+				return []byte(empty), nil // submitted → composer cleared (same bytes as pre-render!)
+			}
+		case "display-message":
+			if captureN >= 3 && captureN <= 4 {
+				return []byte("30/1"), nil // cursor past sentinel: paste present
+			}
+			return []byte("2/1"), nil // cursor at sentinel: empty/cleared
+		case "send-keys":
+			if contains(args, "Enter") {
+				enters++
+			}
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "wake orientation id 7f3a", VerifyToken: "id 7f3a",
+		PrePasteRaceCheckDisabled: true, PostCompactSettle: true,
+	})
+	if err != nil {
+		t.Fatalf("want verified once the paste rendered + the resubmit submitted; got %v", err)
+	}
+	if enters < 2 {
+		t.Errorf("the pre-render empty frames must be rejected and the paste resubmitted after render (>=2 Enters: step-3 + resubmit); got %d — a false-accept of the empty composer", enters)
+	}
+}
+
+// TestDeliver_PostCompact_NeverAcceptsClearWithoutPresent is the #873 axis-B pin:
+// a cleared composer that was NEVER preceded by a present observation (a genuinely
+// wedged TUI that draws an empty composer for the whole budget) must NOT be credited
+// as submitted — it exhausts to ErrUnverifiedDelivery (re-queue), never a false
+// verified. Uses a tiny extension so the bounded budget exhausts fast.
+func TestDeliver_PostCompact_NeverAcceptsClearWithoutPresent(t *testing.T) {
+	shortRetries(t)
+	prev := ActivePaneProfile()
+	SetActivePaneProfile(ClaudePaneProfile())
+	t.Cleanup(func() { SetActivePaneProfile(prev) })
+	prevExtra := postCompactExtraAttempts
+	postCompactExtraAttempts = 4
+	t.Cleanup(func() { postCompactExtraAttempts = prevExtra })
+
+	withFakeRunner(t, func(args []string, _ string) ([]byte, error) {
+		switch args[0] {
+		case "capture-pane":
+			return []byte("restoring…\n" + PromptSentinel), nil // always empty: paste never renders
+		case "display-message":
+			return []byte("2/1"), nil // cursor at sentinel: reads "cleared" every poll
+		}
+		return nil, nil
+	})
+	err := Deliver(context.Background(), DeliverParams{
+		Pane: "%3", Body: "wake id 7f3a", VerifyToken: "id 7f3a",
+		PrePasteRaceCheckDisabled: true, PostCompactSettle: true,
+	})
+	if !errors.Is(err, ErrUnverifiedDelivery) {
+		t.Errorf("a cleared composer never preceded by a present observation must NOT be accepted as submitted; want ErrUnverifiedDelivery, got %v", err)
+	}
+}
+
 // TestDeliver_PostCompact_ResubmitOnSettleVerifies is the #865 Fix B core: once
 // the post-compact pane SETTLES (two identical consecutive frames) with the paste
 // still present, the stability-gated resubmit fires an effective Enter and the
