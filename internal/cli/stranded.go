@@ -32,6 +32,12 @@ const (
 	strandedHeaderLine    = ":bookmark: Stranded draft snapshot"
 	strandedPanePrefix    = "  Pane: "
 	strandedTriggerPrefix = "  Triggered by delivery of: "
+	// strandedScopeNote names what this snapshot does NOT capture (#879
+	// mechanism-design: a pass must state its silence). Emitted between
+	// the trigger line and the content marker so parseStrandedBody ignores
+	// it (the parser scans for the exact strandedContentMarker line; unrecognized
+	// lines are skipped).
+	strandedScopeNote     = "  Note: content is the visible terminal area at capture time — text scrolled above the screen may not appear."
 	strandedContentMarker = "  Cleared content:"
 	strandedBodyIndent    = "    "
 	// strandedEmptyMarker is what indentForBody emits for empty content.

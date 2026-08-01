@@ -636,6 +636,174 @@ func TestServe_AutoHealNoMatchStillFails(t *testing.T) {
 	}
 }
 
+// TestServe_StaleFlushArchivesFreshContent pins the #879 fix: when the
+// observe-gate fires Stale=true, serve.go must archive a FRESH capture of
+// the input content (taken immediately before archiving) rather than
+// outcome.InputContent, which was captured at stale-detection time. The
+// operator may have continued typing in the window between the gate's
+// stale-detection capture and the archive; archiving the stale snapshot
+// silently discards those extra keystrokes.
+//
+// Mutation test: revert the fresh-capture assignment in serve.go's
+// stale-flush block —
+//
+//	if fresh, ferr := tmuxio.ExtractInputContent(...); ferr == nil && fresh != "" {
+//	    archiveContent = fresh
+//	}
+//
+// With that branch removed, the test fails: archived content equals
+// staleContent instead of freshContent.
+func TestServe_StaleFlushArchivesFreshContent(t *testing.T) {
+	const (
+		staleContent = "stale draft line"
+		freshContent = "stale draft line MORE TYPED AFTER DETECTION"
+	)
+
+	// Collapse temporal delta so gate iterations don't pay 200ms each.
+	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta) })
+	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
+
+	// Pane layout (0-indexed rows):
+	//   row 0: "header"
+	//   row 1: "❯ <content>" — sentinel row
+	//            cursor_y=1, cursor_x=3 > sentinelCol=2 → StateAwaitingOperator
+	//   row 2: 60× ─ — isInputAreaBoundary stops extractInputContent walk here
+	//   row 3: "  ⏵⏵ status"
+	//
+	// capAB is returned for both AgentState captures (capA == capB → not
+	// StateWorking) AND for extractInputContent during gate iterations.
+	const separatorRow = "────────────────────────────────────────────────────────────"
+	makePane := func(content string) string {
+		return "header\n" + tmuxio.PromptSentinel + content + "\n" +
+			separatorRow + "\n" + "  ⏵⏵ status\n"
+	}
+	capAB := makePane(staleContent)     // used for all 6 gate capture-pane calls
+	freshPane := makePane(freshContent) // used for serve.go's fresh re-read (call 7)
+
+	var (
+		captureN atomic.Int32
+		mu       sync.Mutex
+		lastBody string
+	)
+
+	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+		switch args[0] {
+		case "display-message":
+			if strings.Contains(args[len(args)-1], "pane_in_mode") {
+				return []byte("0\n"), nil // not in copy mode
+			}
+			// cursor query: x=3 (> sentinelCol=2), y=1 (sentinel row)
+			return []byte("3/1\n"), nil
+		case "capture-pane":
+			// Monotonic counter across all capture-pane calls.
+			// Gate runs 2 iterations × 3 captures each:
+			//   n=1,4: capA for AgentState
+			//   n=2,5: capB for AgentState (capA==capB → not Working)
+			//   n=3,6: extractInputContent → returns staleContent
+			// After gate fires Stale=true:
+			//   n=7: serve.go fresh ExtractInputContent → freshContent
+			//   n≥8: delivery verify → lastBody (contains verify token)
+			n := captureN.Add(1)
+			if n == 7 {
+				return []byte(freshPane), nil
+			}
+			if n >= 8 {
+				mu.Lock()
+				b := lastBody
+				mu.Unlock()
+				return []byte(b), nil
+			}
+			return []byte(capAB), nil
+		case "load-buffer":
+			if stdin != nil {
+				b, _ := io.ReadAll(stdin)
+				mu.Lock()
+				lastBody = string(b)
+				mu.Unlock()
+			}
+			return nil, nil
+		case "paste-buffer", "send-keys", "delete-buffer":
+			return nil, nil
+		}
+		return nil, nil
+	})
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%5")
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob",
+		Body: "hello from alice",
+	})
+
+	opts := serveOpts{
+		Agent:                  "bob",
+		InterMessageDelay:      time.Millisecond,
+		IdlePollInterval:       time.Millisecond,
+		PauseCheckInterval:     time.Millisecond,
+		DeliverTimeout:         5 * time.Second,
+		PostDeliverCooldown:    time.Millisecond,
+		DriftCheckDisabled:     true,
+		PrePasteSafetyDisabled: true,
+		ProviderCapDisabled:    true,
+		NotifyEmojiDisabled:    true, // no extra display-message from 📫 notification
+		GateDisabled:           false,
+		ObserveGateOpts: tmuxio.ObserveGateOpts{
+			// Gate runs 2 iterations: iteration 1 sets hashSeenAt, sleeps
+			// PollIntervalMin (5ms); iteration 2 finds stableFor ≈ 5ms > 3ms
+			// → Stale=true with InputContent=staleContent.
+			InputStaleThreshold: 3 * time.Millisecond,
+			PollIntervalMin:     5 * time.Millisecond,
+			PollIntervalMax:     5 * time.Millisecond,
+			MaxWait:             5 * time.Second,
+		},
+	}
+
+	stop, wait, _ := runServeInBackground(t, s, opts)
+
+	// Wait for the stranded_draft row to appear (archive precedes delivery).
+	deadline := time.Now().Add(5 * time.Second)
+	var strandedID string
+	for time.Now().Before(deadline) {
+		drafts, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "bob",
+			Kind:    store.KindStrandedDraft,
+			Limit:   10,
+		})
+		if len(drafts) >= 1 {
+			strandedID = drafts[0].PublicID
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	if strandedID == "" {
+		t.Fatal("no stranded_draft row written — gate stale-flush or archive did not fire")
+	}
+	m, err := s.GetMessage(ctx, strandedID)
+	if err != nil {
+		t.Fatalf("GetMessage(%s): %v", strandedID, err)
+	}
+	_, _, got, ok := parseStrandedBody(m.Body)
+	if !ok {
+		t.Fatalf("parseStrandedBody failed for body:\n%s", m.Body)
+	}
+	// The fix: archived content must be the FRESH capture (freshContent),
+	// not the stale gate snapshot (staleContent).
+	if got != freshContent {
+		t.Errorf("archived content = %q\nwant fresh content = %q\n(stale content was %q)",
+			got, freshContent, staleContent)
+	}
+}
+
 // runServeInBackgroundOpts is like runServeInBackground but accepts a full
 // serveOpts so tests can plug in a walker.
 func runServeInBackgroundOpts(t *testing.T, s *store.Store, opts serveOpts) (cancel func(), wait func() int, logbuf *syncBuffer) {

@@ -698,20 +698,21 @@ func hashContent(content string) string {
 // sender saw a pending bus message land while they were typing."
 const PendingMessageMarker = "📫"
 
-// NotifyPendingMessage injects PendingMessageMarker into the
-// receiver's input row via a single `tmux send-keys -l` call. Used by
-// the mailman serve loop as a one-shot visibility signal (#95) when
-// the observe-gate first detects StateAwaitingOperator — the
-// operator's input row gains one extra character so they have a
-// visible indication that a bus message is pending.
+// pendingNotifyDurationMs is the display-message duration for the
+// pending-message notification. 3 s is long enough to notice and
+// short enough not to obscure the status line across subsequent
+// deliveries (#879).
+const pendingNotifyDurationMs = "3000"
+
+// NotifyPendingMessage shows a transient PendingMessageMarker notice in
+// the tmux status line of the pane's window via `tmux display-message -d`.
+// Used by the mailman serve loop as a one-shot visibility signal (#95)
+// when the observe-gate first detects StateAwaitingOperator.
 //
-// One-shot semantics (no follow-up Enter, no cleanup). Operator
-// either notices and deletes it via Backspace (gate keeps waiting),
-// or notices and finishes typing (📫 rides along into the sent
-// message), or doesn't notice at all (same as the previous case). The
-// mailman does NOT track or remove the marker — operator-deletes-or-
-// it-rides-along is the intentional design, sibling to the (b)-
-// rejected-style honesty that informs the (c) flush.
+// #879: changed from `send-keys -l` (which injected the marker at the
+// cursor position mid-word) to `display-message -d` (which renders in
+// the status line and never touches the input buffer). The operator sees
+// the notification without their draft being modified.
 //
 // Idempotency is enforced at the gate layer (ObserveGate's
 // OnOperatorTyping callback fires at most once per delivery cycle);
@@ -720,11 +721,23 @@ func NotifyPendingMessage(ctx context.Context, pane string) error {
 	if pane == "" {
 		return errors.New("tmuxio: pane required")
 	}
-	if out, err := tmuxRun(ctx, nil, "send-keys", "-t", pane, "-l", PendingMessageMarker); err != nil {
-		return fmt.Errorf("tmuxio: send-keys notify-pending: %w: %s",
+	msg := PendingMessageMarker + " bus message pending"
+	if out, err := tmuxRun(ctx, nil,
+		"display-message", "-d", pendingNotifyDurationMs, "-t", pane, msg); err != nil {
+		return fmt.Errorf("tmuxio: display-message notify-pending: %w: %s",
 			err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// ExtractInputContent is the exported surface of extractInputContent for
+// callers outside this package (the mailman serve loop's pre-clear
+// fresh-capture path in cli/serve.go, #879). Same semantics: one
+// capture-pane read of the visible terminal area, returns the operator's
+// current input content, or "" when the sentinel is absent or the pane
+// is not in the input-awaiting state.
+func ExtractInputContent(ctx context.Context, pane string) (string, error) {
+	return extractInputContent(ctx, pane)
 }
 
 // clearPressesPerLine is how many Ctrl+U presses ClearInput sends per visual

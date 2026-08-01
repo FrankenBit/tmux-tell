@@ -2277,8 +2277,18 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			// failure after a successful clear, which the (b)-rejected
 			// rationale exists to prevent.
 			if outcome.Stale && outcome.InputContent != "" {
+				// #879: re-read the input immediately before archiving.
+				// outcome.InputContent was captured at stale-detection time;
+				// the operator may have continued typing in the window between
+				// then and now. A fresh read here archives what Ctrl+U will
+				// actually erase. Fall back to the stale snapshot only when
+				// the fresh read fails or returns empty (e.g. sentinel gone).
+				archiveContent := outcome.InputContent
+				if fresh, ferr := tmuxio.ExtractInputContent(opCtx, paneForDelivery); ferr == nil && fresh != "" {
+					archiveContent = fresh
+				}
 				if archiveErr := archiveStrandedDraft(opCtx, s, opts.Agent,
-					paneForDelivery, msg.PublicID, outcome.InputContent); archiveErr != nil {
+					paneForDelivery, msg.PublicID, archiveContent); archiveErr != nil {
 					logger.Printf("WARN stranded_draft_archive_failed id=%s err=%v — falling back to (a) compound delivery",
 						msg.PublicID, archiveErr)
 					// Skip the Ctrl+U; deliverOne will paste onto the
@@ -2287,10 +2297,10 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					clearCtx, ccancel := context.WithTimeout(stopCtx, 2*time.Second)
 					// Clear by line-count (#336 InputControl): codex clears one
 					// line per Ctrl+U, so a multi-line stranded draft needs one
-					// press per line. outcome.InputContent is extractInputContent's
+					// press per line. archiveContent is extractInputContent's
 					// visual-row join, so its line count is the right press count;
 					// Claude clears all on the first press and ignores the rest.
-					clearLines := strings.Count(outcome.InputContent, "\n") + 1
+					clearLines := strings.Count(archiveContent, "\n") + 1
 					clearErr := tmuxio.ClearInput(clearCtx, paneForDelivery, clearLines)
 					ccancel()
 					if clearErr != nil {
@@ -2298,7 +2308,7 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 							msg.PublicID, clearErr)
 					} else {
 						logger.Printf("stranded_draft archived+cleared id=%s pane=%s bytes=%d (gate iter=%d)",
-							msg.PublicID, paneForDelivery, len(outcome.InputContent), outcome.Iterations)
+							msg.PublicID, paneForDelivery, len(archiveContent), outcome.Iterations)
 					}
 				}
 			}
@@ -2803,6 +2813,7 @@ func renderStrandedDraftBody(pane, triggerMsgID, content string) string {
 		strandedPanePrefix + pane,
 		strandedTriggerPrefix + triggerMsgID,
 		fmt.Sprintf("  Recover: %s stranded list  →  %s stranded show <id>", active.BinaryName, active.BinaryName),
+		strandedScopeNote,
 		strandedContentMarker,
 		indentForBody(content),
 	}, "\n")

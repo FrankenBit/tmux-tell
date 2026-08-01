@@ -813,11 +813,12 @@ func TestObserveGate_OnOperatorTyping_NilCallbackSafe(t *testing.T) {
 	}
 }
 
-// TestNotifyPendingMessage_SendsCorrectKeystroke pins the tmux call
-// shape: a single send-keys -l with PendingMessageMarker as the
-// literal payload. No Enter follow-up — the 📫 rides along in the
-// operator's input row.
-func TestNotifyPendingMessage_SendsCorrectKeystroke(t *testing.T) {
+// TestNotifyPendingMessage_UsesDisplayMessage pins the #879 fix: the
+// notification must use display-message (status-line overlay) rather than
+// send-keys -l (which injects at the cursor position, mid-word). The
+// marker must appear in the message text; no Enter follow-up is sent;
+// the input buffer is not touched.
+func TestNotifyPendingMessage_UsesDisplayMessage(t *testing.T) {
 	var calls []string
 	prev := SetTmuxRunner(func(ctx context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 		calls = append(calls, strings.Join(args, " "))
@@ -829,19 +830,22 @@ func TestNotifyPendingMessage_SendsCorrectKeystroke(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(calls) != 1 {
-		t.Fatalf("tmux call count = %d, want 1 (single send-keys)", len(calls))
+		t.Fatalf("tmux call count = %d, want 1 (single display-message)", len(calls))
 	}
-	if !strings.Contains(calls[0], "send-keys") {
-		t.Errorf("expected send-keys; got %q", calls[0])
+	if !strings.Contains(calls[0], "display-message") {
+		t.Errorf("expected display-message (not send-keys); got %q", calls[0])
 	}
-	if !strings.Contains(calls[0], "-l") {
-		t.Errorf("expected -l (literal) flag; got %q", calls[0])
+	if strings.Contains(calls[0], "send-keys") {
+		t.Errorf("must NOT use send-keys (injects into input buffer); got %q", calls[0])
+	}
+	if !strings.Contains(calls[0], "-d") {
+		t.Errorf("expected -d duration flag; got %q", calls[0])
 	}
 	if !strings.Contains(calls[0], PendingMessageMarker) {
-		t.Errorf("expected PendingMessageMarker %q in call; got %q", PendingMessageMarker, calls[0])
+		t.Errorf("expected PendingMessageMarker %q in message; got %q", PendingMessageMarker, calls[0])
 	}
 	if strings.Contains(calls[0], "Enter") {
-		t.Errorf("send-keys should NOT include Enter (📫 rides along); got %q", calls[0])
+		t.Errorf("display-message must NOT include Enter; got %q", calls[0])
 	}
 }
 
