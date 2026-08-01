@@ -2280,20 +2280,40 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 				// #879: re-read the input immediately before archiving.
 				// outcome.InputContent was captured at stale-detection time;
 				// the operator may have continued typing in the window between
-				// then and now. A fresh read here archives what Ctrl+U will
-				// actually erase. Fall back to the stale snapshot only when
-				// the fresh read fails or returns empty (e.g. sentinel gone).
-				archiveContent := outcome.InputContent
-				if fresh, ferr := tmuxio.ExtractInputContent(opCtx, paneForDelivery); ferr == nil && fresh != "" {
-					archiveContent = fresh
+				// Three cases for the pre-flush capture (#884 / Surveyor review):
+				//
+				//   ("content", nil) — fresh read succeeded with text:
+				//       archive the fresh content (narrower TOCTOU window).
+				//   ("", nil) — fresh read succeeded but buffer is empty:
+				//       operator cleared their draft between gate-detection and
+				//       flush. Do NOT resurrect the stale snapshot; nothing to
+				//       archive. Still proceed to ClearInput+deliver.
+				//   ("", err) — fresh read failed:
+				//       archive the stale gate-snapshot as best-effort fallback.
+				archiveContent := outcome.InputContent // stale fallback (err case)
+				skipArchive := false
+				if fresh, ferr := tmuxio.ExtractInputContent(opCtx, paneForDelivery); ferr == nil {
+					if fresh != "" {
+						archiveContent = fresh
+					} else {
+						skipArchive = true // buffer empty; nothing to archive
+					}
 				}
-				if archiveErr := archiveStrandedDraft(opCtx, s, opts.Agent,
-					paneForDelivery, msg.PublicID, archiveContent); archiveErr != nil {
-					logger.Printf("WARN stranded_draft_archive_failed id=%s err=%v — falling back to (a) compound delivery",
-						msg.PublicID, archiveErr)
-					// Skip the Ctrl+U; deliverOne will paste onto the
-					// operator's content producing a compound message.
-				} else {
+
+				archiveOK := skipArchive
+				if !skipArchive {
+					if archiveErr := archiveStrandedDraft(opCtx, s, opts.Agent,
+						paneForDelivery, msg.PublicID, archiveContent); archiveErr != nil {
+						logger.Printf("WARN stranded_draft_archive_failed id=%s err=%v — falling back to (a) compound delivery",
+							msg.PublicID, archiveErr)
+						// Skip the Ctrl+U; deliverOne will paste onto the
+						// operator's content producing a compound message.
+					} else {
+						archiveOK = true
+					}
+				}
+
+				if archiveOK {
 					clearCtx, ccancel := context.WithTimeout(stopCtx, 2*time.Second)
 					// Clear by line-count (#336 InputControl): codex clears one
 					// line per Ctrl+U, so a multi-line stranded draft needs one
@@ -2306,6 +2326,9 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 					if clearErr != nil {
 						logger.Printf("WARN stranded_draft_clear_failed id=%s err=%v — falling back to (a) compound delivery; draft snapshot already archived",
 							msg.PublicID, clearErr)
+					} else if skipArchive {
+						logger.Printf("stranded_draft cleared (buffer empty at flush, nothing archived) id=%s pane=%s (gate iter=%d)",
+							msg.PublicID, paneForDelivery, outcome.Iterations)
 					} else {
 						logger.Printf("stranded_draft archived+cleared id=%s pane=%s bytes=%d (gate iter=%d)",
 							msg.PublicID, paneForDelivery, len(archiveContent), outcome.Iterations)
