@@ -49,6 +49,13 @@ func TestStrandedRenderParseRoundTrip(t *testing.T) {
 			if strings.Contains(content, "stranded show <id>") {
 				t.Errorf("recovery hint leaked into parsed content: %q", content)
 			}
+			// The scope note (#879) must be present but must not leak into content.
+			if !strings.Contains(body, strandedScopeNote) {
+				t.Errorf("scope note missing from body:\n%s", body)
+			}
+			if strings.Contains(content, "visible terminal area") {
+				t.Errorf("scope note leaked into parsed content: %q", content)
+			}
 		})
 	}
 }
