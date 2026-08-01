@@ -86,6 +86,24 @@ var ErrRecipientQueueFull = errors.New("store: recipient queue full")
 // ErrSenderBacklogFull is the symmetric sentinel for the from-side cap.
 var ErrSenderBacklogFull = errors.New("store: sender backlog full")
 
+// CapRejectionError wraps ErrRecipientQueueFull or ErrSenderBacklogFull
+// and carries the public_id of the StateRefused row written to the store
+// so the caller has a handle to look the rejection up by (#881).
+//
+// errors.Is(err, ErrRecipientQueueFull) and errors.Is(err, ErrSenderBacklogFull)
+// both continue to work — Unwrap returns the underlying sentinel.
+type CapRejectionError struct {
+	// RefusedID is the public_id of the StateRefused row. Empty only when
+	// the refused-row write itself failed (logged separately); callers
+	// should treat empty as "durable record not available this time".
+	RefusedID string
+	err       error // wrapped sentinel; non-nil, unwrapped by Unwrap
+	msg       string
+}
+
+func (e *CapRejectionError) Error() string { return e.msg }
+func (e *CapRejectionError) Unwrap() error { return e.err }
+
 // publicIDRetryAttempts caps the collision-retry loop in InsertMessage.
 // At 4 hex chars (~65 K namespace) and a few thousand outstanding rows,
 // 20 attempts is comfortably overkill.
@@ -126,7 +144,19 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 	defer func() { _ = tx.Rollback() }()
 
 	if err := checkCapsInTx(ctx, tx, p, 1); err != nil {
-		return InsertResult{}, err
+		// #881: write a StateRefused durability record so the rejection is
+		// not silently lost. Roll back the cap-check transaction explicitly
+		// before insertRefusedRow so s.db.ExecContext can acquire the
+		// connection (the deferred Rollback is a no-op on an already-rolled
+		// tx). RefusedID may be empty when that insert itself fails; callers
+		// treat empty as "no durable record available".
+		_ = tx.Rollback()
+		refusedID := s.insertRefusedRow(ctx, p)
+		return InsertResult{}, &CapRejectionError{
+			RefusedID: refusedID,
+			err:       errors.Unwrap(err), // the sentinel (ErrRecipientQueueFull etc.)
+			msg:       err.Error(),
+		}
 	}
 
 	res, err := insertOneInTx(ctx, tx, p)
@@ -246,7 +276,18 @@ func (s *Store) InsertMessagePair(ctx context.Context, p1, p2 InsertParams, link
 	defer func() { _ = tx.Rollback() }()
 
 	if err := checkCapsInTx(ctx, tx, p1, 2); err != nil {
-		return InsertResult{}, InsertResult{}, err
+		// #881: write refused rows for both p1 and p2 — the pair is
+		// atomic, so both are lost on rejection. Rollback explicitly first
+		// so s.db.ExecContext can acquire the connection (same deadlock
+		// guard as InsertMessage). RefusedID carries p1's id.
+		_ = tx.Rollback()
+		refusedID := s.insertRefusedRow(ctx, p1)
+		_ = s.insertRefusedRow(ctx, p2)
+		return InsertResult{}, InsertResult{}, &CapRejectionError{
+			RefusedID: refusedID,
+			err:       errors.Unwrap(err),
+			msg:       err.Error(),
+		}
 	}
 
 	res1, err := insertOneInTx(ctx, tx, p1)
@@ -370,6 +411,41 @@ func checkCapsInTx(ctx context.Context, tx *sql.Tx, p InsertParams, addedRows in
 		}
 	}
 	return nil
+}
+
+// insertRefusedRow writes a StateRefused durability record for a message
+// that was rejected by a cap check (#881). The row preserves from_agent,
+// to_agent, body, and kind so the sender can reconstruct the lost content.
+// It does NOT go through InsertNotice (which queues and fires the mailman
+// doorbell) — a refused row must never be claimed for delivery, so the
+// insert is direct with state=refused.
+//
+// Returns the assigned public_id, or "" when the insert fails (the error
+// is discarded; the caller is already returning an error, and refused-row
+// persistence is best-effort durability, not a correctness gate).
+func (s *Store) insertRefusedRow(ctx context.Context, p InsertParams) string {
+	kind := p.Kind
+	if kind == "" {
+		kind = KindMessage
+	}
+	for i := 0; i < publicIDRetryAttempts; i++ {
+		candidate, err := generatePublicID()
+		if err != nil {
+			return ""
+		}
+		_, err = s.db.ExecContext(ctx,
+			`INSERT INTO messages (public_id, from_agent, to_agent, body, kind, state)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			candidate, p.FromAgent, p.ToAgent, p.Body, kind, StateRefused)
+		if err == nil {
+			return candidate
+		}
+		// UNIQUE violation on public_id: retry with a new candidate.
+		if !strings.Contains(err.Error(), "UNIQUE") {
+			return ""
+		}
+	}
+	return ""
 }
 
 // insertOneInTx is the shared INSERT-with-collision-retry helper used

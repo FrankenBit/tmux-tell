@@ -115,7 +115,14 @@ func runResendWithStore(ctx context.Context, s *store.Store, p resendParams, std
 		switch {
 		case errors.Is(err, store.ErrRecipientQueueFull),
 			errors.Is(err, store.ErrSenderBacklogFull):
-			return writeJSONError(stdout, stderr, err.Error(), exitTempFail)
+			resp := SendResponse{OK: false, Error: err.Error()}
+			var capErr *store.CapRejectionError
+			if errors.As(err, &capErr) {
+				resp.RefusedID = capErr.RefusedID
+			}
+			renderSendResult(stdout, resp, orig.ToAgent, p.Format)
+			fmt.Fprintln(stderr, err.Error())
+			return exitTempFail
 		}
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}

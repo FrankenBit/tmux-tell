@@ -78,6 +78,11 @@ func runReapWithStore(ctx context.Context, s *store.Store,
 		}
 		fmt.Fprintf(stderr, "reap --dry-run: %d undeliverable fossil(s) would be reaped (%s, older than %s)\n",
 			len(cands), scope, olderThan)
+		// NOTE: reap only covers state='queued' fossils whose recipient is
+		// unreachable. Cap-rejected rows (state='refused', written by #881's
+		// insertRefusedRow) are durability records, not queued messages — they
+		// are NOT included in this count and are never reaped. Query them via
+		// inbox --state refused or message_status.
 		return writeOK(format, stdout, map[string]any{
 			"ok":         true,
 			"dry_run":    true,
@@ -85,7 +90,7 @@ func runReapWithStore(ctx context.Context, s *store.Store,
 			"agent":      agent,
 			"count":      len(cands),
 			"candidates": cands,
-		}, fmt.Sprintf("%d fossil(s) would be reaped (older than %s)", len(cands), olderThan))
+		}, fmt.Sprintf("%d fossil(s) would be reaped (older than %s). This does NOT include cap-rejected rows (state=refused); use inbox --state refused to see them.", len(cands), olderThan))
 	}
 
 	reason := fmt.Sprintf("dead-letter-reap: recipient unreachable, queued >%s, never claimed (#726)", olderThan)

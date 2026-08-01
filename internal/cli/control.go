@@ -377,7 +377,18 @@ func runControlCLI(args []string, stdout, stderr io.Writer) int {
 		switch {
 		case errors.Is(err, store.ErrRecipientQueueFull),
 			errors.Is(err, store.ErrSenderBacklogFull):
-			return writeJSONError(stdout, stderr, msg, exitTempFail)
+			errRes := struct {
+				OK        bool   `json:"ok"`
+				Error     string `json:"error"`
+				RefusedID string `json:"refused_id,omitempty"`
+			}{OK: false, Error: msg}
+			var capErr *store.CapRejectionError
+			if errors.As(err, &capErr) {
+				errRes.RefusedID = capErr.RefusedID
+			}
+			_ = writeJSONResult(stdout, errRes)
+			fmt.Fprintln(stderr, msg)
+			return exitTempFail
 		case strings.Contains(msg, "unknown recipient"):
 			return writeJSONError(stdout, stderr, msg, exitUnavailable)
 		case errors.Is(err, control.ErrNotAllowed),

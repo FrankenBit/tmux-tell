@@ -135,7 +135,12 @@ type SendResponse struct {
 	// (#227): the row is staged in StateDeferred, NOT queued, and delivers only
 	// after a matching flush_deferred call. Empty on a normal (queued) send.
 	DeliverAfter string `json:"deliver_after,omitempty"`
-	Error        string `json:"error,omitempty"`
+	// RefusedID is set when the send was rejected by a cap check (#881):
+	// the public_id of the StateRefused durability row written to the store.
+	// Query via `inbox --state refused` or message_status. Empty when the
+	// refused-row write itself failed (rare; see insertRefusedRow).
+	RefusedID string `json:"refused_id,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // MultiSendResult is one recipient's outcome within a multi-recipient send
@@ -150,7 +155,9 @@ type MultiSendResult struct {
 	Delivery  *DeliveryStatus  `json:"delivery,omitempty"`
 	Receipt   *SendReceipt     `json:"receipt,omitempty"`
 	Freshness *ThreadFreshness `json:"thread_freshness,omitempty"`
-	Error     string           `json:"error,omitempty"`
+	// RefusedID mirrors SendResponse.RefusedID for per-recipient fan-out (#881).
+	RefusedID string `json:"refused_id,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // MultiSendResponse is the top-level response shape for a multi-recipient send.

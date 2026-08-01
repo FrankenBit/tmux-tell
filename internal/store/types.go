@@ -22,6 +22,13 @@ const (
 	// `state`, not in delivery-cadence policy, so the mailman stays eager
 	// and the single-writer invariant is untouched.
 	StateDeferred State = "deferred"
+	// StateRefused marks a message rejected at enqueue due to a cap
+	// violation (#881). The row is written to the sender's store so the
+	// rejection is durable and the sender has a handle (public_id) to
+	// look it up. Unlike queued/delivering/delivered, a refused row is
+	// never claimed by the mailman — it is purely a durability record.
+	// Query via inbox --state refused or send --sent --state refused.
+	StateRefused State = "refused"
 )
 
 // Kind distinguishes a paste-rendered chat message from a control command

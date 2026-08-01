@@ -382,6 +382,48 @@ func TestSend_MultiRecipient_MixOutcome(t *testing.T) {
 	}
 }
 
+// TestSend_CapRefusal_JSONIncludesRefusedID pins the #881 wire surface: when a
+// send is rejected by a cap check, the JSON stdout includes a non-empty
+// "refused_id" field containing the public_id of the durable StateRefused row.
+// Callers can look it up via inbox --state refused or message_status.
+//
+// Mutation check: remove the errors.As(err, &capErr) block in runSendWithStore
+// and refused_id disappears from the response while exit still equals
+// exitTempFail — the field is the observable, not the exit code.
+func TestSend_CapRefusal_JSONIncludesRefusedID(t *testing.T) {
+	s := newCmdTestStore(t, "alice", "bob")
+	ctx := context.Background()
+
+	// Saturate alice→bob to the recipient cap.
+	for i := 0; i < 2; i++ {
+		var stdout, stderr bytes.Buffer
+		if exit := runSendWithStore(ctx, s, sendParams{
+			From: "alice", To: "bob", Body: "m",
+			MaxRecipient: 2, MaxSender: 100, MaxBody: 1024,
+		}, &stdout, &stderr); exit != exitOK {
+			t.Fatalf("fill %d: %s", i, stderr.String())
+		}
+	}
+
+	var stdout, stderr bytes.Buffer
+	exit := runSendWithStore(ctx, s, sendParams{
+		From: "alice", To: "bob", Body: "refused-content",
+		MaxRecipient: 2, MaxSender: 100, MaxBody: 1024,
+	}, &stdout, &stderr)
+	if exit != exitTempFail {
+		t.Fatalf("exit = %d, want exitTempFail", exit)
+	}
+
+	got := parseJSONResult(t, stdout.Bytes())
+	if got["ok"] != false {
+		t.Errorf("ok = %v, want false", got["ok"])
+	}
+	refusedID, _ := got["refused_id"].(string)
+	if len(refusedID) != 4 {
+		t.Errorf("refused_id = %q, want 4-char public_id — refused row not surfaced in JSON", refusedID)
+	}
+}
+
 func TestSend_SingleRecipient_BackCompat(t *testing.T) {
 	// ToRecipients with len==1 should dispatch through the single path and
 	// produce the scalar SendResponse shape, not MultiSendResponse.

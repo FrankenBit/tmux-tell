@@ -33,7 +33,9 @@ func runInboxCLI(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	dbPath := fs.String("db", "", "path to messages.db (env: TMUX_TELL_DB)")
 	stateFlag := fs.String("state", "queued",
-		"queued|delivering|delivered|failed|acknowledged (empty = all)")
+		"queued|delivering|delivered|failed|acknowledged|refused (empty = all). "+
+			"Default 'queued' does not show refused rows (#881 cap-rejections); "+
+			"use --state refused to see them.")
 	limit := fs.Int("limit", 50, "maximum rows to return")
 	format := fs.String("format", "text", "text|json")
 	ackID := fs.String("ack", "", "mark a single queued message as acknowledged (#221)")

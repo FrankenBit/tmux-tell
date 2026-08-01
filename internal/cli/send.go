@@ -288,7 +288,14 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		switch {
 		case errors.Is(err, store.ErrRecipientQueueFull),
 			errors.Is(err, store.ErrSenderBacklogFull):
-			return writeJSONError(stdout, stderr, err.Error(), exitTempFail)
+			resp := SendResponse{OK: false, Error: err.Error()}
+			var capErr *store.CapRejectionError
+			if errors.As(err, &capErr) {
+				resp.RefusedID = capErr.RefusedID
+			}
+			_ = writeJSONResult(stdout, resp)
+			fmt.Fprintln(stderr, err.Error())
+			return exitTempFail
 		case errors.Is(err, store.ErrNotFound):
 			return writeJSONError(stdout, stderr,
 				fmt.Sprintf("unknown reply-to id: %s", p.ReplyTo), exitDataErr)
@@ -467,7 +474,12 @@ func sendOneRecipient(ctx context.Context, s *store.Store, p sendParams) (SendRe
 		switch {
 		case errors.Is(err, store.ErrRecipientQueueFull),
 			errors.Is(err, store.ErrSenderBacklogFull):
-			return SendResponse{OK: false, Recipient: rs, Error: err.Error()}, nil
+			resp := SendResponse{OK: false, Recipient: rs, Error: err.Error()}
+			var capErr *store.CapRejectionError
+			if errors.As(err, &capErr) {
+				resp.RefusedID = capErr.RefusedID
+			}
+			return resp, nil
 		case errors.Is(err, store.ErrNotFound):
 			// reply_to was validated before the loop; shouldn't happen, but
 			// surface as a hard error rather than silently attributing it to
