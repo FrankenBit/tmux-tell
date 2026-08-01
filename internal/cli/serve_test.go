@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log"
 	"strings"
@@ -636,82 +637,49 @@ func TestServe_AutoHealNoMatchStillFails(t *testing.T) {
 	}
 }
 
-// TestServe_StaleFlushArchivesFreshContent pins the #879 fix: when the
-// observe-gate fires Stale=true, serve.go must archive a FRESH capture of
-// the input content (taken immediately before archiving) rather than
-// outcome.InputContent, which was captured at stale-detection time. The
-// operator may have continued typing in the window between the gate's
-// stale-detection capture and the archive; archiving the stale snapshot
-// silently discards those extra keystrokes.
+// staleFlushTmuxMock is a shared tmux runner factory for the stale-flush test
+// family. It simulates a gate that fires Stale=true after 2 iterations (6
+// capture-pane calls total). The caller supplies n7fn, which controls what the
+// fresh ExtractInputContent call at position n=7 returns (and may be an error).
+// n≥8 are delivery-verify captures that echo back the last load-buffer body.
 //
-// Mutation test: revert the fresh-capture assignment in serve.go's
-// stale-flush block —
+// Pane layout (0-indexed rows):
 //
-//	if fresh, ferr := tmuxio.ExtractInputContent(...); ferr == nil && fresh != "" {
-//	    archiveContent = fresh
-//	}
-//
-// With that branch removed, the test fails: archived content equals
-// staleContent instead of freshContent.
-func TestServe_StaleFlushArchivesFreshContent(t *testing.T) {
-	const (
-		staleContent = "stale draft line"
-		freshContent = "stale draft line MORE TYPED AFTER DETECTION"
-	)
-
-	// Collapse temporal delta so gate iterations don't pay 200ms each.
-	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
-	t.Cleanup(func() { tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta) })
-	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
-	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
-
-	// Pane layout (0-indexed rows):
-	//   row 0: "header"
-	//   row 1: "❯ <content>" — sentinel row
-	//            cursor_y=1, cursor_x=3 > sentinelCol=2 → StateAwaitingOperator
-	//   row 2: 60× ─ — isInputAreaBoundary stops extractInputContent walk here
-	//   row 3: "  ⏵⏵ status"
-	//
-	// capAB is returned for both AgentState captures (capA == capB → not
-	// StateWorking) AND for extractInputContent during gate iterations.
+//	row 0: "header"
+//	row 1: "❯ <content>" — sentinel row
+//	         cursor_y=1, cursor_x=3 > sentinelCol=2 → StateAwaitingOperator
+//	row 2: 60× ─ — isInputAreaBoundary stops extractInputContent walk here
+//	row 3: "  ⏵⏵ status"
+func staleFlushTmuxMock(
+	staleContent string,
+	n7fn func() ([]byte, error),
+) (runner func(context.Context, io.Reader, ...string) ([]byte, error), lastBody func() string) {
 	const separatorRow = "────────────────────────────────────────────────────────────"
-	makePane := func(content string) string {
-		return "header\n" + tmuxio.PromptSentinel + content + "\n" +
-			separatorRow + "\n" + "  ⏵⏵ status\n"
+	makePane := func(c string) string {
+		return "header\n" + tmuxio.PromptSentinel + c + "\n" + separatorRow + "\n  ⏵⏵ status\n"
 	}
-	capAB := makePane(staleContent)     // used for all 6 gate capture-pane calls
-	freshPane := makePane(freshContent) // used for serve.go's fresh re-read (call 7)
+	capAB := makePane(staleContent)
 
 	var (
 		captureN atomic.Int32
 		mu       sync.Mutex
-		lastBody string
+		body     string
 	)
-
-	prev := tmuxio.SetTmuxRunner(func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
+	r := func(_ context.Context, stdin io.Reader, args ...string) ([]byte, error) {
 		switch args[0] {
 		case "display-message":
 			if strings.Contains(args[len(args)-1], "pane_in_mode") {
-				return []byte("0\n"), nil // not in copy mode
+				return []byte("0\n"), nil
 			}
-			// cursor query: x=3 (> sentinelCol=2), y=1 (sentinel row)
 			return []byte("3/1\n"), nil
 		case "capture-pane":
-			// Monotonic counter across all capture-pane calls.
-			// Gate runs 2 iterations × 3 captures each:
-			//   n=1,4: capA for AgentState
-			//   n=2,5: capB for AgentState (capA==capB → not Working)
-			//   n=3,6: extractInputContent → returns staleContent
-			// After gate fires Stale=true:
-			//   n=7: serve.go fresh ExtractInputContent → freshContent
-			//   n≥8: delivery verify → lastBody (contains verify token)
 			n := captureN.Add(1)
 			if n == 7 {
-				return []byte(freshPane), nil
+				return n7fn()
 			}
 			if n >= 8 {
 				mu.Lock()
-				b := lastBody
+				b := body
 				mu.Unlock()
 				return []byte(b), nil
 			}
@@ -720,7 +688,7 @@ func TestServe_StaleFlushArchivesFreshContent(t *testing.T) {
 			if stdin != nil {
 				b, _ := io.ReadAll(stdin)
 				mu.Lock()
-				lastBody = string(b)
+				body = string(b)
 				mu.Unlock()
 			}
 			return nil, nil
@@ -728,21 +696,15 @@ func TestServe_StaleFlushArchivesFreshContent(t *testing.T) {
 			return nil, nil
 		}
 		return nil, nil
-	})
-	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+	}
+	return r, func() string { mu.Lock(); defer mu.Unlock(); return body }
+}
 
-	s, _ := store.Open(":memory:")
-	t.Cleanup(func() { _ = s.Close() })
-	ctx := context.Background()
-
-	_ = s.UpsertAgent(ctx, "alice", "%1")
-	_ = s.UpsertAgent(ctx, "bob", "%5")
-	_, _ = s.InsertMessage(ctx, store.InsertParams{
-		FromAgent: "alice", ToAgent: "bob",
-		Body: "hello from alice",
-	})
-
-	opts := serveOpts{
+// staleFlushServeOpts returns the standard serveOpts used by the stale-flush
+// test family. The gate is configured to fire Stale=true after 2 iterations
+// (≈ 5ms each with a 3ms threshold).
+func staleFlushServeOpts() serveOpts {
+	return serveOpts{
 		Agent:                  "bob",
 		InterMessageDelay:      time.Millisecond,
 		IdlePollInterval:       time.Millisecond,
@@ -752,29 +714,61 @@ func TestServe_StaleFlushArchivesFreshContent(t *testing.T) {
 		DriftCheckDisabled:     true,
 		PrePasteSafetyDisabled: true,
 		ProviderCapDisabled:    true,
-		NotifyEmojiDisabled:    true, // no extra display-message from 📫 notification
+		NotifyEmojiDisabled:    true,
 		GateDisabled:           false,
 		ObserveGateOpts: tmuxio.ObserveGateOpts{
-			// Gate runs 2 iterations: iteration 1 sets hashSeenAt, sleeps
-			// PollIntervalMin (5ms); iteration 2 finds stableFor ≈ 5ms > 3ms
-			// → Stale=true with InputContent=staleContent.
 			InputStaleThreshold: 3 * time.Millisecond,
 			PollIntervalMin:     5 * time.Millisecond,
 			PollIntervalMax:     5 * time.Millisecond,
 			MaxWait:             5 * time.Second,
 		},
 	}
+}
 
-	stop, wait, _ := runServeInBackground(t, s, opts)
+// TestServe_StaleFlushArchivesFreshContent pins the #879 fix: when the
+// observe-gate fires Stale=true and the fresh ExtractInputContent returns
+// non-empty content, serve.go must archive the FRESH capture rather than
+// outcome.InputContent (captured at stale-detection time). The operator
+// may have continued typing in the window between gate detection and flush.
+//
+// Mutation test: remove the `archiveContent = fresh` assignment in serve.go's
+// stale-flush block so the stale snapshot is always used. The test fails:
+// archived content equals staleContent instead of freshContent.
+func TestServe_StaleFlushArchivesFreshContent(t *testing.T) {
+	const (
+		staleContent = "stale draft line"
+		freshContent = "stale draft line MORE TYPED AFTER DETECTION"
+	)
 
-	// Wait for the stranded_draft row to appear (archive precedes delivery).
+	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta) })
+	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
+
+	const separatorRow = "────────────────────────────────────────────────────────────"
+	freshPane := "header\n" + tmuxio.PromptSentinel + freshContent + "\n" + separatorRow + "\n  ⏵⏵ status\n"
+	runner, _ := staleFlushTmuxMock(staleContent, func() ([]byte, error) {
+		return []byte(freshPane), nil
+	})
+	prev := tmuxio.SetTmuxRunner(runner)
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%5")
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob", Body: "hello from alice",
+	})
+
+	stop, wait, _ := runServeInBackground(t, s, staleFlushServeOpts())
+
 	deadline := time.Now().Add(5 * time.Second)
 	var strandedID string
 	for time.Now().Before(deadline) {
 		drafts, _ := s.ListMessages(ctx, store.ListFilter{
-			ToAgent: "bob",
-			Kind:    store.KindStrandedDraft,
-			Limit:   10,
+			ToAgent: "bob", Kind: store.KindStrandedDraft, Limit: 10,
 		})
 		if len(drafts) >= 1 {
 			strandedID = drafts[0].PublicID
@@ -796,11 +790,129 @@ func TestServe_StaleFlushArchivesFreshContent(t *testing.T) {
 	if !ok {
 		t.Fatalf("parseStrandedBody failed for body:\n%s", m.Body)
 	}
-	// The fix: archived content must be the FRESH capture (freshContent),
-	// not the stale gate snapshot (staleContent).
 	if got != freshContent {
 		t.Errorf("archived content = %q\nwant fresh content = %q\n(stale content was %q)",
 			got, freshContent, staleContent)
+	}
+}
+
+// TestServe_StaleFlushSkipsArchiveWhenBufferEmpty pins the semantic: if the
+// fresh ExtractInputContent returns ("", nil) — meaning the operator cleared
+// their draft between gate-detection and flush — serve.go must NOT archive
+// the stale gate-snapshot. That would be data-resurrection: the operator
+// deliberately removed the text, and the archive would put it back.
+//
+// Mutation test: change skipArchive to always be false in serve.go's
+// stale-flush block. The test fails: a stranded_draft row is written (with
+// the stale snapshot) when none should be.
+func TestServe_StaleFlushSkipsArchiveWhenBufferEmpty(t *testing.T) {
+	const staleContent = "stale draft line"
+
+	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta) })
+	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
+
+	const separatorRow = "────────────────────────────────────────────────────────────"
+	// Empty pane: sentinel row has no content after the prompt, so
+	// extractInputContent returns "".
+	emptyPane := "header\n" + tmuxio.PromptSentinel + "\n" + separatorRow + "\n  ⏵⏵ status\n"
+	runner, _ := staleFlushTmuxMock(staleContent, func() ([]byte, error) {
+		return []byte(emptyPane), nil // ("", nil) — operator cleared buffer
+	})
+	prev := tmuxio.SetTmuxRunner(runner)
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%5")
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob", Body: "hello from alice",
+	})
+
+	stop, wait, _ := runServeInBackground(t, s, staleFlushServeOpts())
+
+	// Wait long enough that a stranded_draft WOULD appear if archiving fired,
+	// but stop before the 5s deadline so the test doesn't hang on success.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		drafts, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "bob", Kind: store.KindStrandedDraft, Limit: 10,
+		})
+		if len(drafts) >= 1 {
+			stop()
+			wait()
+			t.Fatalf("stranded_draft row written when buffer was empty — data-resurrection: %+v", drafts[0])
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+}
+
+// TestServe_StaleFlushArchivesStaleOnExtractError pins the fallback: if the
+// fresh ExtractInputContent returns an error, serve.go must fall back to the
+// stale gate-snapshot (outcome.InputContent) rather than silently discarding
+// any record of the operator's draft.
+//
+// Mutation test: change the fallback path so errors are treated like the empty
+// case (skipArchive = true). The test fails: no stranded_draft row is written.
+func TestServe_StaleFlushArchivesStaleOnExtractError(t *testing.T) {
+	const staleContent = "stale draft line"
+
+	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta) })
+	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
+
+	runner, _ := staleFlushTmuxMock(staleContent, func() ([]byte, error) {
+		return nil, errors.New("tmux: capture-pane: simulated failure") // ("", err)
+	})
+	prev := tmuxio.SetTmuxRunner(runner)
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "alice", "%1")
+	_ = s.UpsertAgent(ctx, "bob", "%5")
+	_, _ = s.InsertMessage(ctx, store.InsertParams{
+		FromAgent: "alice", ToAgent: "bob", Body: "hello from alice",
+	})
+
+	stop, wait, _ := runServeInBackground(t, s, staleFlushServeOpts())
+
+	deadline := time.Now().Add(5 * time.Second)
+	var strandedID string
+	for time.Now().Before(deadline) {
+		drafts, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "bob", Kind: store.KindStrandedDraft, Limit: 10,
+		})
+		if len(drafts) >= 1 {
+			strandedID = drafts[0].PublicID
+			break
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+
+	if strandedID == "" {
+		t.Fatal("no stranded_draft row written — extract error should fall back to stale snapshot")
+	}
+	m, err := s.GetMessage(ctx, strandedID)
+	if err != nil {
+		t.Fatalf("GetMessage(%s): %v", strandedID, err)
+	}
+	_, _, got, ok := parseStrandedBody(m.Body)
+	if !ok {
+		t.Fatalf("parseStrandedBody failed for body:\n%s", m.Body)
+	}
+	if got != staleContent {
+		t.Errorf("archived content = %q\nwant stale content = %q (extract error should fall back to stale)",
+			got, staleContent)
 	}
 }
 

@@ -25,6 +25,10 @@ func TestStrandedRenderParseRoundTrip(t *testing.T) {
 		{"leading-space preserved", "%3", "abcd", "    indented draft line"},
 		{"empty content", "%9", "ffff", ""},
 		{"content with colon lines", "%1", "1234", "foo: bar\nbaz: qux"},
+		// Adversarial: content that contains the literal scope-note text.
+		// Ensures the parser does not mis-detect the scope note inside the
+		// content section as a top-level metadata line.
+		{"scope-note text in content", "%2", "beef", "Note: content is the visible terminal area at capture time — text scrolled above the screen may not appear."},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -49,11 +53,17 @@ func TestStrandedRenderParseRoundTrip(t *testing.T) {
 			if strings.Contains(content, "stranded show <id>") {
 				t.Errorf("recovery hint leaked into parsed content: %q", content)
 			}
-			// The scope note (#879) must be present but must not leak into content.
+			// The scope note (#879) must appear in the body.
 			if !strings.Contains(body, strandedScopeNote) {
 				t.Errorf("scope note missing from body:\n%s", body)
 			}
-			if strings.Contains(content, "visible terminal area") {
+			// The scope note must not leak into the parsed content — but only
+			// check via substring when the content itself does NOT already
+			// contain that text (adversarial case). For all cases, the
+			// content == c.content assertion above is the definitive check:
+			// a leaked scope note would append text and break equality.
+			if !strings.Contains(c.content, "visible terminal area") &&
+				strings.Contains(content, "visible terminal area") {
 				t.Errorf("scope note leaked into parsed content: %q", content)
 			}
 		})
