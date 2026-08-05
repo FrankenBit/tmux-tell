@@ -33,6 +33,38 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.37.0] — 2026-08-05
+
+### Added
+
+- **#881**: refused enqueue durability — StateRefused row + CapRejectionError
+
+### Changed
+
+None.
+
+### Fixed
+
+- **changelog.d**: genericize the chamber name in the #883 fragment
+- **#879**: correct stale-flush guard + add 3 test arms per [reviewer] review
+- **#879**: 📫 injects mid-word + snapshot captures stale content + no scroll disclosure
+- **test**: drop unit-specific suffix from watchdogSec (staticcheck ST1011)
+- **#879**: correct stale-flush guard + add 3 test arms per [reviewer] review
+- **mailman**: ping the watchdog from the deliver verify loop (#883)
+- **#879**: 📫 injects mid-word + snapshot captures stale content + no scroll disclosure
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.36.2] — 2026-08-05
 
 ### Added
