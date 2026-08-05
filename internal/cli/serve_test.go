@@ -933,8 +933,20 @@ func TestServe_StaleFlushSkipsArchiveForStrandedDraftDelivery(t *testing.T) {
 	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
 	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
 
-	// Pane holds staleContent throughout — so the gate would fire Stale=true
-	// and archive if the message-kind guard were absent.
+	// Pane holds staleContent throughout — so the gate fires Stale=true and
+	// InputContent="stale draft line". Without the msg.Kind guard the archive
+	// block would run: n=7 (n7fn) would be consumed by ExtractInputContent,
+	// see staleContent, and insert a second stranded-draft row.
+	//
+	// With the guard: the archive block is skipped. n=7 is instead consumed by
+	// deliverOne's pre-paste race check (capture-pane before load-buffer).
+	// The stale pane makes inputRowCleared return anchored=true, cleared=false →
+	// ErrInputRaced → delivery deferred. The mailman logs "input_raced …".
+	//
+	// That "input_raced" log line is the delivery-confirmation signal: it proves
+	// mailman ran the full delivery pipeline (observe-gate → guard → deliverOne →
+	// race check) and did not silently skip the message, which is what Surveyor's
+	// "nothing observed" concern requires.
 	runner, _ := staleFlushTmuxMock(staleContent, func() ([]byte, error) {
 		const separatorRow = "────────────────────────────────────────────────────────────"
 		return []byte("header\n" + tmuxio.PromptSentinel + staleContent + "\n" + separatorRow + "\n  ⏵⏵ status\n"), nil
@@ -960,12 +972,22 @@ func TestServe_StaleFlushSkipsArchiveForStrandedDraftDelivery(t *testing.T) {
 		t.Fatalf("InsertNotice: %v", insertErr)
 	}
 
-	stop, wait, _ := runServeInBackground(t, s, staleFlushServeOpts())
+	stop, wait, logbuf := runServeInBackground(t, s, staleFlushServeOpts())
 
-	// Wait long enough for the mailman to deliver the notification AND for
-	// a second stranded_draft to appear if the loop fires. On success
-	// (the guard works) the count stays at 1.
+	// Poll: fail fast if the loop fires, exit as soon as delivery is confirmed.
+	// Both conditions must be checked together — a test that only watches for
+	// the loop can pass because delivery never happened (mailman didn't run, or
+	// the guard accidentally suppressed delivery).
+	//
+	// Delivery signal: the "input_raced" log line (emitted by the ErrInputRaced
+	// handler in serve.go) proves mailman ran the full delivery pipeline and
+	// reached deliverOne — it cannot appear unless the observe-gate ran, the
+	// guard fired (skipping the archive block), and deliverOne's race check
+	// found the stale pane content. The race check fires at n=7 (before
+	// load-buffer), so this signal lands at ~10ms — well within the 500ms
+	// deadline without depending on verification completing.
 	deadline := time.Now().Add(500 * time.Millisecond)
+	var deliveryConfirmed bool
 	for time.Now().Before(deadline) {
 		drafts, _ := s.ListMessages(ctx, store.ListFilter{
 			ToAgent: "bob", Kind: store.KindStrandedDraft, Limit: 10,
@@ -975,10 +997,17 @@ func TestServe_StaleFlushSkipsArchiveForStrandedDraftDelivery(t *testing.T) {
 			wait()
 			t.Fatalf("stranded-draft loop fired: %d rows for bob (want ≤ 1) — msg.Kind guard is missing", len(drafts))
 		}
+		if strings.Contains(logbuf.String(), "input_raced") {
+			deliveryConfirmed = true
+			break
+		}
 		time.Sleep(2 * time.Millisecond)
 	}
 	stop()
 	wait()
+	if !deliveryConfirmed {
+		t.Fatal("mailman did not attempt stranded-draft delivery within 500ms (no input_raced log) — guard may have suppressed delivery or mailman did not run")
+	}
 }
 
 // runServeInBackgroundOpts is like runServeInBackground but accepts a full

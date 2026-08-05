@@ -2284,14 +2284,6 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 			// (the operator's draft is preserved, just not formally archived;
 			// a real draft that happens to be in the buffer at the time was
 			// already captured by the earlier archival that produced this row).
-			// A stranded-draft notification is itself a bus message addressed
-			// to the same agent. Archiving during its delivery would insert
-			// another stranded-draft notification, which would in turn trigger
-			// another archive on its delivery — a self-sustaining loop (#906).
-			// Exempt the notification kind: let it paste as compound delivery
-			// (the operator's draft is preserved, just not formally archived;
-			// a real draft that happens to be in the buffer at the time was
-			// already captured by the earlier archival that produced this row).
 			if outcome.Stale && outcome.InputContent != "" && msg.Kind != store.KindStrandedDraft {
 				// #879: re-read the input immediately before archiving.
 				// outcome.InputContent was captured at stale-detection time;
