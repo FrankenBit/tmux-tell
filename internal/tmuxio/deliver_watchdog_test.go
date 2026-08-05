@@ -151,14 +151,19 @@ func TestMaxVerifySpan_PostCompactExceedsWatchdog(t *testing.T) {
 		t.Fatalf("post-compact span %s must exceed general %s — the #865 extension is the point", postCompact, general)
 	}
 
-	const watchdogSec = 30 * time.Second // init/tmux-tell-*-mailman@.service
-	if general >= watchdogSec {
-		t.Errorf("general verify span %s >= WatchdogSec %s — the general path would now trip the watchdog too", general, watchdogSec)
+	// Mirrors `WatchdogSec=30` in init/tmux-tell-*-mailman@.service. The Go
+	// identifier deliberately drops the "Sec" suffix — it is a time.Duration and
+	// carries its own unit (staticcheck ST1011) — while the messages below keep
+	// the systemd spelling, because that is the string a reader greps the unit
+	// file for.
+	const watchdogTimeout = 30 * time.Second
+	if general >= watchdogTimeout {
+		t.Errorf("general verify span %s >= WatchdogSec %s — the general path would now trip the watchdog too", general, watchdogTimeout)
 	}
 	// This is the incident, asserted rather than described: the settle budget is
 	// LONGER than the watchdog, and survivable only because Deliver pings.
-	if postCompact <= watchdogSec {
-		t.Skipf("post-compact span %s no longer exceeds WatchdogSec %s — budgets changed; re-check that the ping is still needed", postCompact, watchdogSec)
+	if postCompact <= watchdogTimeout {
+		t.Skipf("post-compact span %s no longer exceeds WatchdogSec %s — budgets changed; re-check that the ping is still needed", postCompact, watchdogTimeout)
 	}
 }
 
