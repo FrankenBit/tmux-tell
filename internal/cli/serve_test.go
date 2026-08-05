@@ -916,6 +916,71 @@ func TestServe_StaleFlushArchivesStaleOnExtractError(t *testing.T) {
 	}
 }
 
+// TestServe_StaleFlushSkipsArchiveForStrandedDraftDelivery pins the #906 fix:
+// when the triggering message is itself a stranded-draft notification, the
+// observe-gate's stale-flush block must NOT archive the pane content, because
+// doing so would insert another stranded-draft notification — which would in
+// turn trigger another archive on its delivery, forming a self-sustaining loop.
+//
+// Mutation test: remove the `msg.Kind != store.KindStrandedDraft` guard from
+// serve.go's stale-flush condition. The test fails: a second stranded_draft row
+// appears within the deadline, showing the loop fired.
+func TestServe_StaleFlushSkipsArchiveForStrandedDraftDelivery(t *testing.T) {
+	const staleContent = "stale draft line"
+
+	prevDelta := tmuxio.SetAgentStateTemporalDeltaForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetAgentStateTemporalDeltaForTest(prevDelta) })
+	prevSettle := tmuxio.SetSettleDelayForTest(time.Microsecond)
+	t.Cleanup(func() { tmuxio.SetSettleDelayForTest(prevSettle) })
+
+	// Pane holds staleContent throughout — so the gate would fire Stale=true
+	// and archive if the message-kind guard were absent.
+	runner, _ := staleFlushTmuxMock(staleContent, func() ([]byte, error) {
+		const separatorRow = "────────────────────────────────────────────────────────────"
+		return []byte("header\n" + tmuxio.PromptSentinel + staleContent + "\n" + separatorRow + "\n  ⏵⏵ status\n"), nil
+	})
+	prev := tmuxio.SetTmuxRunner(runner)
+	t.Cleanup(func() { tmuxio.SetTmuxRunner(prev) })
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "bob", "%5")
+
+	// Insert a stranded-draft notice from bob to bob (simulates the second
+	// iteration of the loop: the first real delivery already archived, and
+	// now this notification is waiting for delivery to bob).
+	_, insertErr := s.InsertNotice(ctx, store.InsertParams{
+		FromAgent: "bob",
+		ToAgent:   "bob",
+		Body:      renderStrandedDraftBody("%5", "trigger-000", staleContent),
+		Kind:      store.KindStrandedDraft,
+	})
+	if insertErr != nil {
+		t.Fatalf("InsertNotice: %v", insertErr)
+	}
+
+	stop, wait, _ := runServeInBackground(t, s, staleFlushServeOpts())
+
+	// Wait long enough for the mailman to deliver the notification AND for
+	// a second stranded_draft to appear if the loop fires. On success
+	// (the guard works) the count stays at 1.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		drafts, _ := s.ListMessages(ctx, store.ListFilter{
+			ToAgent: "bob", Kind: store.KindStrandedDraft, Limit: 10,
+		})
+		if len(drafts) >= 2 {
+			stop()
+			wait()
+			t.Fatalf("stranded-draft loop fired: %d rows for bob (want ≤ 1) — msg.Kind guard is missing", len(drafts))
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	stop()
+	wait()
+}
+
 // runServeInBackgroundOpts is like runServeInBackground but accepts a full
 // serveOpts so tests can plug in a walker.
 func runServeInBackgroundOpts(t *testing.T, s *store.Store, opts serveOpts) (cancel func(), wait func() int, logbuf *syncBuffer) {
