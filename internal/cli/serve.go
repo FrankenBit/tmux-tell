@@ -1168,7 +1168,15 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	}
 	watchdogPing, _ := sdnotify.WatchdogInterval()
 	if watchdogPing > 0 {
-		logger.Printf("watchdog interval=%s", watchdogPing)
+		// #883: log the verify-loop spans NEXT TO the watchdog interval, so the
+		// comparison that matters is readable in the journal instead of requiring
+		// someone to sum defaultRetryDelays by hand. A post-compact span longer
+		// than WatchdogSec is survivable only because Deliver now pings per poll;
+		// printing both is what makes a future budget increase visible before it
+		// fires rather than after.
+		gen, pc := tmuxio.MaxVerifySpan()
+		logger.Printf("watchdog interval=%s verify_span_general=%s verify_span_post_compact=%s (spans are upper bounds; Deliver pings per poll — #883)",
+			watchdogPing, gen.Round(time.Millisecond), pc.Round(time.Millisecond))
 	}
 
 	// Wire a ping closure into the observe-gate so its internal sleeps
@@ -3056,10 +3064,19 @@ func deliverOne(ctx context.Context, pane string, msg *store.Message, byteMarker
 	// verify confirms the submit regardless of collapse. The #160 byte-marker
 	// length suffix still rides in the header — only the framing went.
 	return tmuxio.Deliver(ctx, tmuxio.DeliverParams{
-		Pane:              pane,
-		Body:              render.Message(*msg, byteMarkerThreshold, time.Now()),
-		VerifyToken:       "id " + msg.PublicID,
-		OnVerify:          onVerify,
+		Pane:        pane,
+		Body:        render.Message(*msg, byteMarkerThreshold, time.Now()),
+		VerifyToken: "id " + msg.PublicID,
+		OnVerify:    onVerify,
+		// #883: keep systemd's WatchdogSec=30s alive across a long verify loop.
+		// The observe-gate already gets this at :1180 and :2041; the DELIVER path
+		// never did, and #865's extended settle budget (~104s of polling) is over
+		// three times the watchdog — so a bus-triggered /compact SIGABRTed its own
+		// mailman mid-paste. Same closure, same source, the third path.
+		//
+		// Deliver calls this only after a capture-pane returns, never from the
+		// retry sleep, so a genuinely wedged mailman is still killed.
+		Ping:              func() { _ = sdnotify.Watchdog() },
 		PostCompactSettle: postCompactSettle,
 	})
 }

@@ -86,6 +86,32 @@ type DeliverParams struct {
 	//     redraw unrelated to the paste, so only here is an unattributable clear an
 	//     external rescue.
 	PostCompactSettle bool
+
+	// Ping, when non-nil, is called once per completed verify poll to keep
+	// systemd's WatchdogSec= alive during a long verify loop (#883). Mirrors
+	// tmuxio.ObserveGateOpts.Ping, which serve.go already wires from
+	// sdnotify.Watchdog on both observe paths — this is the same hook on the
+	// path that was missing it.
+	//
+	// ⚠️ The safety property is that the ping lives INSIDE the verify loop and
+	// downstream of work — never on an independent timer or goroutine. A ping
+	// that fires on a schedule of its own would satisfy the watchdog regardless
+	// of whether this loop is alive, disabling the supervisor for this path;
+	// that is strictly worse than the bug, because the watchdog exists to kill
+	// exactly that. Here, a mailman blocked in tmuxRun stops pinging and dies on
+	// schedule, while a loop that is merely slow (the #865 settle window, ~104s
+	// against WatchdogSec=30s) stays supervised and alive.
+	//
+	// ⚠️ It is placed after the capture rather than in the retry sleep, but that
+	// choice is NOT load-bearing and the comment here previously claimed it was.
+	// MEASURED by mutation: moving the ping into the sleep leaves every arm in
+	// deliver_watchdog_test.go green, because the loop strictly ALTERNATES
+	// sleep → capture — a wedge in either one prevents reaching the other, so
+	// both placements go silent together. After-capture is kept because it reads
+	// as "progress pings", not because the alternative is unsafe.
+	//
+	// May be nil — every call is guarded.
+	Ping func()
 }
 
 // SetRetrySchedule replaces the package-level verify-retry schedule and
@@ -188,6 +214,31 @@ func DeriveRetrySchedule(budget time.Duration) []time.Duration {
 		out[i] = time.Duration(float64(d) * scale)
 	}
 	return out
+}
+
+// MaxVerifySpan reports the worst-case wall-clock span of the verify loop for a
+// general delivery and for a #865 post-compact-settle delivery, under the retry
+// schedule currently in effect.
+//
+// Exists so the mailman can LOG both spans next to systemd's watchdog interval
+// at startup (#883 AC). Before this, comparing the verify budget against
+// WatchdogSec meant summing defaultRetryDelays by hand and knowing that attempts
+// past the schedule reuse its last entry — arithmetic nobody does, which is why
+// a 104s budget sat under a 30s watchdog unnoticed until it fired.
+//
+// The numbers are an upper bound: they assume every attempt waits its full
+// cadence. Real deliveries verify and return early.
+func MaxVerifySpan() (general, postCompact time.Duration) {
+	if len(retryDelays) == 0 {
+		return 0, 0
+	}
+	var base time.Duration
+	for _, d := range retryDelays {
+		base += d
+	}
+	tail := retryDelays[len(retryDelays)-1]
+	return base + time.Duration(maxLoadAdaptiveExtraAttempts)*tail,
+		base + time.Duration(postCompactExtraAttempts)*tail
 }
 
 // maxLoadAdaptiveExtraAttempts bounds #674's load-adaptive verify extension.
@@ -490,6 +541,14 @@ func Deliver(ctx context.Context, p DeliverParams) error {
 			return fmt.Errorf("tmuxio: capture-pane: %w", err)
 		}
 		polls++
+		// #883: the capture returned, so this loop is alive — tell systemd. A
+		// mailman blocked in tmuxRun never reaches this line and still dies on
+		// the watchdog. (Placement after the capture rather than in the sleep is
+		// presentational, not a safety boundary — measured; see
+		// DeliverParams.Ping.)
+		if p.Ping != nil {
+			p.Ping()
+		}
 		prevCapture, lastCapture = lastCapture, string(out)
 		// Cursor position anchors the input-emptied signal (#336 cursor-
 		// anchor): cursorOK=false (query failed) degrades to token-match
