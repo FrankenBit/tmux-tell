@@ -45,45 +45,19 @@ None.
 
 ### Fixed
 
-- **changelog.d**: genericize the chamber name in the #883 fragment
-- **#879**: correct stale-flush guard + add 3 test arms per [reviewer] review
-- **#879**: 📫 injects mid-word + snapshot captures stale content + no scroll disclosure
-- **test**: drop unit-specific suffix from watchdogSec (staticcheck ST1011)
-- **#879**: correct stale-flush guard + add 3 test arms per [reviewer] review
-- **mailman**: ping the watchdog from the deliver verify loop (#883)
-- **#879**: 📫 injects mid-word + snapshot captures stale content + no scroll disclosure
+A `/compact` sent over the bus no longer kills its own mailman. The delivery loop now
+signals systemd's watchdog while it waits, so a slow post-compaction resume is supervised
+rather than killed mid-paste (`#883`).
 
-### Removed
+Previously the delivery budget ran to about 1m44s while the mailman units set
+`WatchdogSec=30s`. One mailman was killed 29s into a delivery. It restarted and
+redelivered. Only chambers that compact through the bus reach this path.
 
-None.
+A mailman that is genuinely stuck stops signalling and is still killed. That is what
+the watchdog is for.
 
-### Deprecated
-
-None.
-
-### Upgrade
-
-None.
-
-## [0.36.2] — 2026-08-05
-
-### Added
-
-None.
-
-### Changed
-
-None.
-
-### Fixed
-
-A `/compact` sent over the bus no longer kills its own mailman. The delivery verify loop now pings systemd's watchdog, so a post-compaction resume that takes longer than `WatchdogSec` is supervised rather than SIGABRTed mid-paste (`#883`).
-
-`#865` extended the post-`/compact` verify budget so the settle-gated resubmit could fire once the pane settled. That budget polls for up to ~1m44s; the mailman units set `WatchdogSec=30s`; and `deliver.go` had no watchdog ping at all — so hardening the delivery made the supervisor more likely to kill it. Two timeouts on one code path, each correct alone, neither aware of the other. It fired on one chamber at 22:50 on 2026-07-31: killed 29.4s into a delivery, restarted 3s later, the message redelivered. Only chambers that compact *through the bus* enter this path — a `/compact` typed straight into a pane never does, which is why `NRestarts` was 1 for one chamber and 0 for six.
-
-The ping hook already existed: `ObserveGateOpts.Ping` has kept the watchdog alive across long observe loops since the sibling incident, wired from `sdnotify` at two call sites. The deliver path never got it. It is now wired from the same source, called once per completed verify poll — a mailman genuinely blocked in `tmuxRun` stops pinging and is still killed, which is what the watchdog is for.
-
-The mailman also logs both verify-loop spans next to the watchdog interval at startup (`verify_span_general`, `verify_span_post_compact`), so a budget that outgrows the watchdog is visible in the journal before it fires rather than after. Comparing them previously meant summing the retry schedule by hand, which is why a ~1m44s budget sat under a 30s watchdog unnoticed.
+Startup now logs both delivery timeouts beside the watchdog interval. A budget that
+outgrows its supervisor is now visible before it causes a kill.
 
 - **#879**: correct stale-flush guard + add 3 test arms per [reviewer] review
 - **#879**: 📫 injects mid-word + snapshot captures stale content + no scroll disclosure
@@ -100,7 +74,6 @@ None.
 ### Upgrade
 
 None.
-
 ## [0.36.1] — 2026-07-27
 
 ### Added
