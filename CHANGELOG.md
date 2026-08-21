@@ -33,6 +33,36 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.37.1] — 2026-08-21
+
+### Added
+
+None.
+
+### Changed
+
+None.
+
+### Fixed
+
+A stranded-draft notification no longer re-strands itself. Delivering a
+stranded-draft row to its own agent no longer archives the pane content as
+another stranded-draft notification. That breaks the self-sustaining loop, which
+produced up to 15 identical rows from a single trigger and occupied inbox queue
+slots needed for real messages (`#906`).
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.37.0] — 2026-08-05
 
 ### Added
