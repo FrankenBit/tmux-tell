@@ -150,6 +150,8 @@ func Run(p Profile, argv0 string, args []string, stdin io.Reader, stdout, stderr
 		return exitOK
 	case "send":
 		return runSendCLI(args[1:], stdout, stderr)
+	case "budget":
+		return runBudgetCLI(args[1:], stdout, stderr)
 	case "resend":
 		return runResendCLI(args[1:], stdout, stderr)
 	case "flush":

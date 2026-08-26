@@ -48,6 +48,17 @@ type sendParams struct {
 	// Multi-recipient spam guard (#158). 0 = no cap.
 	MaxRecipientsPerSend int
 
+	// Communication budget (#918). Budget.Enabled false leaves every send
+	// path byte-for-byte as it was, which is what makes this safe to land
+	// before the calibration replay has run.
+	Budget budgetTunables
+	// DryRun reports what the send WOULD cost and exits without inserting
+	// or charging. Deliberately reports BOTH the static cost and the
+	// windowed one: the static figure is what the sender can reason about
+	// in advance, the windowed figure is what they will actually be
+	// charged, and they differ by exactly the recipients already reached.
+	DryRun bool
+
 	// Recipient-status options (#152).
 	Strict           bool          // reject (ok:false) if recipient unreachable
 	WaitForDelivered bool          // block until terminal delivery state or timeout
@@ -82,6 +93,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		"block until the message reaches a terminal delivery state (or --timeout)")
 	timeout := fs.Duration("timeout", defaultDeliveredWaitTimeout,
 		"bound for --wait-for-delivered")
+	dryRun := fs.Bool("dry-run", false, "price the send and exit without inserting or charging (#918)")
 	blockOnStale := fs.Bool("block-on-stale", false,
 		"with --reply-to: fail (ok:false) if the thread moved since you last spoke (#155)")
 	deliverAfter := fs.String("deliver-after", "",
@@ -118,6 +130,15 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 	cfg, _ := config.Load()
 	maxRPS := config.ResolveInt(cfg, fromName, "max-recipients-per-send", capMaxRecipientsPerSend)
 
+	// #918 tunables, resolved through the ordinary precedence chain. The
+	// budget is OFF unless explicitly enabled — landing it dark is what lets
+	// the calibration replay run against real traffic before anyone is
+	// refused by numbers nobody has measured.
+	budgetOn := config.ResolveInt(cfg, fromName, "budget-enabled", 0) != 0
+	tunables := resolveBudgetTunables(func(field string, hardcoded int) int {
+		return config.ResolveInt(cfg, fromName, field, hardcoded)
+	}, budgetOn)
+
 	toList := splitRecipients(*to)
 	p := sendParams{
 		From:                 fromName,
@@ -138,6 +159,8 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		Timeout:              *timeout,
 		Format:               *format,
 		BlockOnStale:         *blockOnStale,
+		Budget:               tunables,
+		DryRun:               *dryRun,
 	}
 	if len(toList) > 1 {
 		p.ToRecipients = toList
@@ -192,6 +215,17 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 			fmt.Sprintf("body too large (%d > %d bytes)", len(p.Body), p.MaxBody),
 			exitDataErr)
 	}
+
+	// #918: price and charge before any insert, single-recipient path. Same
+	// gate as the fan-out so the two cannot drift in what they charge.
+	if p.DryRun {
+		return writeBudgetQuote(ctx, s, p, []string{p.To}, stdout, stderr)
+	}
+	charged, ok, code := chargeForSend(ctx, s, p.Budget, p.From, []string{p.To}, p.Body, stdout, stderr)
+	if !ok {
+		return code
+	}
+	_ = charged
 
 	// Deferred delivery (#227): validate the trigger before any insert. An
 	// unsupported trigger is fail-loud (don't stage a row whose promotion path
@@ -397,6 +431,18 @@ func runMultiSendWithStore(ctx context.Context, s *store.Store, p sendParams, st
 		}
 	}
 
+	// #918: the whole fan-out is priced and charged HERE, before the first
+	// insert. See chargeForSend for why this cannot live inside the loop:
+	// the loop is one transaction per recipient, so a refusal inside it
+	// delivers to a subset nobody chose.
+	if p.DryRun {
+		return writeBudgetQuote(ctx, s, p, p.ToRecipients, stdout, stderr)
+	}
+	charged, ok, code := chargeForSend(ctx, s, p.Budget, p.From, p.ToRecipients, p.Body, stdout, stderr)
+	if !ok {
+		return code
+	}
+
 	results := make([]MultiSendResult, 0, len(p.ToRecipients))
 	anyFailed := false
 	// #580: per-pool fan-out stagger — space same-pool inserts so the recipients
@@ -427,6 +473,21 @@ func runMultiSendWithStore(ctx context.Context, s *store.Store, p sendParams, st
 			anyFailed = true
 		}
 		results = append(results, mr)
+	}
+
+	// #918: a fan-out charged before the loop that then reached NOBODY has
+	// paid full price and delivered nothing. Zero-landed is unambiguous, so
+	// it is refunded. A PARTIAL failure keeps the full charge deliberately —
+	// see RefundBudget for why one recipient's "share" of a superlinear
+	// breadth term has no principled value.
+	delivered := 0
+	for _, r := range results {
+		if r.OK {
+			delivered++
+		}
+	}
+	if delivered == 0 && charged > 0 {
+		refundSendBudget(ctx, s, p, charged, stderr)
 	}
 
 	out := MultiSendResponse{OK: !anyFailed, Messages: results}

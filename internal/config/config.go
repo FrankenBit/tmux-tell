@@ -123,6 +123,20 @@ func (f *File) IsPrivileged(agent string) bool {
 // that's absent stays nil, allowing the precedence chain to fall
 // through to the next layer.
 type Block struct {
+	// Communication budget (#918). All five are ints so they go through the
+	// ordinary ResolveInt precedence chain rather than needing a parallel
+	// float one; alpha is expressed in hundredths for the same reason.
+	//
+	// ⚠️ budget-cap and budget-refill-per-hour are PROVISIONAL — 500/80 were
+	// chosen so a normal day does not touch the ceiling and a 6-recipient
+	// broadcast is noticeable, NOT measured against real traffic. Treat a
+	// refusal in the field as evidence about the numbers first.
+	BudgetEnabled         *int `toml:"budget-enabled"`
+	BudgetCap             *int `toml:"budget-cap"`
+	BudgetRefillPerHour   *int `toml:"budget-refill-per-hour"`
+	BudgetAlphaHundredths *int `toml:"budget-alpha-hundredths"`
+	BudgetWindowMinutes   *int `toml:"budget-window-minutes"`
+
 	NotifyOnFailed              *bool `toml:"notify-on-failed"`
 	NotifyOnDeliveredInInputBox *bool `toml:"notify-on-delivered-in-input-box"`
 	// NotifyOnDeliveredUnverified is the deprecated alias for NotifyOnDeliveredInInputBox
@@ -569,7 +583,23 @@ func blockIntField(b *Block, field string) *int {
 		return b.MaxRecipientsPerSend
 	case "on-register-backlog-cap":
 		return b.OnRegisterBacklogCap
+	case "budget-enabled":
+		return b.BudgetEnabled
+	case "budget-cap":
+		return b.BudgetCap
+	case "budget-refill-per-hour":
+		return b.BudgetRefillPerHour
+	case "budget-alpha-hundredths":
+		return b.BudgetAlphaHundredths
+	case "budget-window-minutes":
+		return b.BudgetWindowMinutes
 	}
+	// ⚠️ AN UNKNOWN FIELD RETURNS nil, WHICH ResolveInt READS AS "not set" AND
+	// ANSWERS WITH THE HARDCODED DEFAULT. There is no error and no log line, so
+	// a caller that adds a knob HERE and forgets to add it to this switch gets a
+	// setting that parses, validates, and is permanently inert — measured on the
+	// #918 budget knobs, which were fully wired at both ends and could never be
+	// turned on. If you add a ResolveInt field, add its case.
 	return nil
 }
 

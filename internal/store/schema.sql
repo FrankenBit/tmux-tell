@@ -37,3 +37,23 @@ CREATE TABLE IF NOT EXISTS agents (
     updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     aliases     TEXT NOT NULL DEFAULT '[]'         -- #38: JSON-encoded list of alt names discover matches against
 );
+
+-- #918: per-sender communication budget. Deliberately NOT a column on `agents`
+-- and deliberately WITHOUT a foreign key to it.
+--
+-- AC: "a budget survives re-registration". `register` writes `agents` only, so
+-- keeping the balance in its own table satisfies that BY CONSTRUCTION rather
+-- than by anyone remembering to preserve it — there is no code path that could
+-- forget. An FK with ON DELETE CASCADE would actively defeat the AC; an FK
+-- without one buys nothing here. The cost is an orphan row per agent name ever
+-- used, which is bounded by the number of names and is the cheaper side.
+--
+-- Only the balance is stored. The WINDOW state (which recipients this sender
+-- has already paid breadth for) is DERIVED from `messages` at charge time —
+-- see internal/store/budget.go. Nothing to keep consistent, nothing to
+-- reconcile after a crash.
+CREATE TABLE IF NOT EXISTS budgets (
+    agent       TEXT PRIMARY KEY,
+    balance     REAL NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
