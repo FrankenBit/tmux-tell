@@ -370,3 +370,181 @@ func TestRefundBudget(t *testing.T) {
 			stuck.Balance, fresh.Remaining, p.Capacity)
 	}
 }
+
+// TestBalanceSurvivesRelaunch is the second half of the persistence AC.
+// Re-registration is covered above; this covers RELAUNCH.
+//
+// 🔑 A relaunch and a /compact are, from the budget's point of view, the
+// SAME event: the process goes away and comes back. Neither touches the
+// database. So the honest test is close-the-store-and-reopen-the-file —
+// and stating that is more useful than three near-identical tests, because
+// it names WHY one of them covers all three.
+//
+// ⚠️ This needs a FILE-backed store: `:memory:` would prove the opposite of
+// what is claimed, since closing an in-memory database destroys it. A test
+// that passed against `:memory:` would be testing that the handle survives,
+// not that the data does.
+func TestBalanceSurvivesRelaunch(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "relaunch.db")
+
+	s1, err := Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	spent, err := s1.ChargeBudget(ctx, t0, budgetParams("alice", "bob", "carol"))
+	if err != nil {
+		t.Fatalf("charge: %v", err)
+	}
+	if err := s1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// The relaunch.
+	s2, err := Open(path)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	t.Cleanup(func() { _ = s2.Close() })
+
+	got, err := s2.QuoteBudget(ctx, t0, budgetParams("alice"))
+	if err != nil {
+		t.Fatalf("quote: %v", err)
+	}
+	if got.Balance != spent.Remaining {
+		t.Fatalf("balance did not survive relaunch: %v → %v", spent.Remaining, got.Balance)
+	}
+	// Control: the value has to be a SPENT one, or this passes against an
+	// implementation that never charged and always reports a full cap.
+	if got.Balance >= got.Capacity {
+		t.Fatalf("balance is at capacity (%v) — nothing was spent, so persistence is untested", got.Balance)
+	}
+}
+
+// TestQuoteMutatesNothing is the dry-run AC, and it asserts the ABSENCE of a
+// write rather than the presence of a number.
+//
+// 🔑 Asserting "the balance is unchanged" alone is too weak: a quote that
+// wrote a row and then wrote the same value back would pass it. This checks
+// the ROW COUNT and the stored updated_at as well, so a write that happens
+// to be idempotent still fails.
+func TestQuoteMutatesNothing(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	// Case 1: an agent with NO budget row. A quote must not create one.
+	if _, err := s.QuoteBudget(ctx, t0, budgetParams("alice", "bob", "carol")); err != nil {
+		t.Fatalf("quote: %v", err)
+	}
+	var rows int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM budgets`).Scan(&rows); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if rows != 0 {
+		t.Fatalf("a dry-run created %d budget row(s); it must create none", rows)
+	}
+
+	// Case 2: an agent WITH a row. Neither the balance nor updated_at moves.
+	if _, err := s.ChargeBudget(ctx, t0, budgetParams("alice", "bob")); err != nil {
+		t.Fatalf("charge: %v", err)
+	}
+	var balBefore float64
+	var atBefore string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT balance, updated_at FROM budgets WHERE agent = 'alice'`).Scan(&balBefore, &atBefore); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	// Quote at a LATER instant, so a write-back would be visible in
+	// updated_at even if it happened to store the same balance.
+	if _, err := s.QuoteBudget(ctx, t0.Add(time.Hour), budgetParams("alice", "carol", "dave")); err != nil {
+		t.Fatalf("quote: %v", err)
+	}
+	var balAfter float64
+	var atAfter string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT balance, updated_at FROM budgets WHERE agent = 'alice'`).Scan(&balAfter, &atAfter); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if balAfter != balBefore {
+		t.Fatalf("a dry-run moved the balance: %v → %v", balBefore, balAfter)
+	}
+	if atAfter != atBefore {
+		t.Fatalf("a dry-run rewrote updated_at: %q → %q (an idempotent write is still a write)", atBefore, atAfter)
+	}
+}
+
+// TestFanOutRefusalIsAllOrNothing is the AC's PARTIAL-AFFORDABILITY fixture,
+// and the fixture is the whole point.
+//
+// 🔑 A budget that can afford the WHOLE fan-out, or NONE of it, cannot
+// distinguish an all-or-nothing implementation from a per-recipient one:
+// both deliver everything or nothing. The discriminating case is a balance
+// that affords SOME recipients — where a per-recipient charge would deliver
+// a prefix and stop. That is the fixture built here.
+func TestFanOutRefusalIsAllOrNothing(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	recipients := []string{"bob", "carol", "dave", "erin", "frank", "grace"}
+	p := budgetParams("alice", recipients...)
+	p.RefillPerHour = 0
+
+	// Size the balance so it affords a PROPER SUBSET: strictly more than a
+	// 2-recipient fan-out costs, strictly less than the full 6.
+	two := budgetParams("alice", "bob", "carol")
+	two.Capacity = p.Capacity
+	full, err := s.QuoteBudget(ctx, t0, p)
+	if err != nil {
+		t.Fatalf("quote full: %v", err)
+	}
+	part, err := s.QuoteBudget(ctx, t0, two)
+	if err != nil {
+		t.Fatalf("quote part: %v", err)
+	}
+	if !(part.Cost < full.Cost) {
+		t.Fatalf("fixture is degenerate: a 2-way (%v) does not cost less than a 6-way (%v)", part.Cost, full.Cost)
+	}
+
+	// Set the capacity between the two costs. Affordable() allows spending
+	// down to -25% of cap, so pick a cap where the full send lands below the
+	// floor and a smaller one does not.
+	p.Capacity = part.Cost * 1.5
+	recheck, err := s.QuoteBudget(ctx, t0, p)
+	if err != nil {
+		t.Fatalf("re-quote: %v", err)
+	}
+	if recheck.Affordable {
+		t.Fatalf("fixture is degenerate: the full fan-out is affordable at capacity %v, so nothing is refused", p.Capacity)
+	}
+
+	_, err = s.ChargeBudget(ctx, t0, p)
+	if !errors.Is(err, ErrBudgetExhausted) {
+		t.Fatalf("expected the fan-out to be refused, got %v", err)
+	}
+
+	// ALL-OR-NOTHING: the refusal must have written NOTHING — no budget row,
+	// so no partial charge, and by construction no message rows either
+	// (the charge precedes the first insert).
+	var budgetRows, msgRows int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM budgets WHERE agent = 'alice'`).Scan(&budgetRows); err != nil {
+		t.Fatalf("count budgets: %v", err)
+	}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE from_agent = 'alice'`).Scan(&msgRows); err != nil {
+		t.Fatalf("count messages: %v", err)
+	}
+	if budgetRows != 0 {
+		t.Fatalf("a refused fan-out charged the budget: %d row(s)", budgetRows)
+	}
+	if msgRows != 0 {
+		t.Fatalf("a refused fan-out left %d message row(s) — it delivered to a subset", msgRows)
+	}
+
+	// Control: a SMALLER fan-out from the same balance must SUCCEED. Without
+	// this the test passes against an implementation that refuses everything.
+	if _, err := s.ChargeBudget(ctx, t0, two); err != nil {
+		t.Fatalf("the affordable 2-way fan-out was also refused (%v) — the fixture refuses everything, so all-or-nothing is untested", err)
+	}
+}
