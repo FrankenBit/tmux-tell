@@ -464,12 +464,19 @@ func (s *Store) insertRefusedRow(ctx context.Context, p InsertParams, reason str
 // A WINDOW rather than an all-time total, and the reason is the point of the
 // feature. There is no seen-marker for refused rows — they are terminal, so
 // the acknowledged state cannot apply to them — which means an all-time count
-// never decreases: one chamber's own refused inbound read 137 on #933's
-// census and 143 six hours later, having only grown. A banner reading "143
-// refused" on every inbox call is wallpaper by the second day, and a
-// disclosure nobody reads is worse than none because it still occupies the
-// surface a real one would need. Measured against the same store, the window
-// makes it actionable: 6 recent against 143 all-time.
+// never decreases: ONE CHAMBER'S OWN refused inbound (engineer, as recipient)
+// read 137 on #933's census and 143 six hours later, having only grown. A
+// banner reading "143 refused" on every inbox call is wallpaper by the second
+// day, and a disclosure nobody reads is worse than none because it still
+// occupies the surface a real one would need. For that same chamber the
+// window makes it actionable: 7 recent against 143 all-time.
+//
+// EVERY FIGURE HERE IS PER-RECIPIENT, which is what this query is scoped to
+// (WHERE to_agent = ?) and what the banner reports. Store-wide the same
+// predicate reads 1074 all-time — a number no single recipient has ever lost,
+// and quoting it beside a per-recipient banner would overstate one chamber's
+// exposure by roughly 7x. @surveyor caught this scope conflation in review;
+// her own inbound is 194, which is neither figure and is the point.
 //
 // 24h is chosen from the cost cases on #933, all of which were same-day: a
 // correction that never landed, a 344-insertion push whose notification was
