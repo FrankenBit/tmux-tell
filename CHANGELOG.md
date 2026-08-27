@@ -33,6 +33,32 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.38.1] — 2026-08-27
+
+### Added
+
+None.
+
+### Changed
+
+None.
+
+### Fixed
+
+- **bus**: surface refused inbound to the RECIPIENT (#933)
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.38.0] — 2026-08-27
 
 ### Added
