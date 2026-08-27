@@ -321,7 +321,7 @@ func resolveRecipientStatus(ctx context.Context, s *store.Store, agent string) (
 	// so mailman_running is definitionally false; only probe for paste-and-
 	// enter recipients.
 	if rs.DeliveryMode == store.DeliveryModePasteAndEnter {
-		rs.MailmanRunning = mailmanActive(ctx, agent)
+		rs.MailmanRunning = mailmanActive(ctx, s, agent)
 	}
 
 	switch {

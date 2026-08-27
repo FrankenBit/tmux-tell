@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 	"os"
 	"os/exec"
 	"strings"
@@ -158,14 +159,33 @@ func stopMailman(ctx context.Context, agent string) error {
 	return nil
 }
 
-// mailmanActive reports whether the recipient's mailman unit is active, via
+// mailmanActive reports whether the RECIPIENT's mailman unit is active.
+//
+// 🔴 It takes a *store.Store because the unit name depends on the RECIPIENT's
+// adapter, not the caller's. mailmanUnit() below builds the name from
+// active.BinaryName — the binary that is RUNNING — which is correct for the
+// callers that start/stop/restart their OWN mailman and wrong for this one,
+// the only caller that probes ANOTHER agent. A claude chamber sending to a
+// codex chamber probed tmux-tell-claude-mailman@<codex-agent>, which does not
+// exist, and reported mailman_running=false for a mailman that had delivered
+// 980 messages (#923).
+//
+// mailmanUnitResolverForStore (health.go) already resolves this correctly from
+// the agent's persisted provider — it was added for #708 and wired into the
+// health and status probes. This call site and ping's were never migrated to
+// it, so the same defect survived in the two surfaces a sender actually reads.
+// One function, two responsibilities: correct for the first when the second
+// was added.
+//
+// The original comment follows:
+// reports whether the recipient's mailman unit is active, via
 // `systemctl --user is-active`. is-active prints "active" + exits 0 only when
 // the unit is running; any other state ("inactive"/"failed"/unknown) or a
 // non-zero exit reads as not-running. Used by the send-time recipient-status
 // probe (#152) — best-effort, so a systemctl error is treated as "not active"
 // rather than surfaced.
-func mailmanActive(ctx context.Context, agent string) bool {
-	out, _ := systemctlRun(ctx, "is-active", mailmanUnit(agent))
+func mailmanActive(ctx context.Context, s *store.Store, agent string) bool {
+	out, _ := systemctlRun(ctx, "is-active", mailmanUnitResolverForStore(ctx, s)(agent))
 	return strings.TrimSpace(string(out)) == "active"
 }
 

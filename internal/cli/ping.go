@@ -393,7 +393,7 @@ func gatherPingEvidence(ctx context.Context, s *store.Store, agent string) pingE
 	} else if debug.Enabled() {
 		log.Printf("evidence-gather: agent %q lookup err=%v", agent, err)
 	}
-	ev.MailmanActive = mailmanActive(ctx, agent)
+	ev.MailmanActive = mailmanActive(ctx, s, agent)
 	if d, err := s.RecipientQueueDepth(ctx, agent); err == nil {
 		ev.QueueDepth = d
 	} else if debug.Enabled() {
