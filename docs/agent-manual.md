@@ -253,6 +253,40 @@ shapes:
   transient and retryable; `UNREACHABLE` is terminal and needs a human.**
 - **A send *refused* with a drift warning.** Your registration and your pane have
   diverged (see "Who you are"). Run `discover` and retry.
+- **A send refused by a CAP.** There are **three** of these and they need different
+  responses. The `ok:false` receipt names which one; read it rather than retrying.
+
+  | receipt says | what is full | what to do |
+  |---|---|---|
+  | `store: sender backlog full: A→B (n/n, need 1 slot(s))` | *your* undelivered messages **to that one recipient** | **drain** — wait for B to consume, or send to someone else. Retrying the same channel refuses again. |
+  | `store: recipient queue full` | *their* inbox, from everyone | **drain** — not yours to clear; the recipient has to consume. |
+  | a balance, a `cost`, and an `affordable_when` | your **communication budget** | **wait** until the named time, or shorten, or drop recipients. `budget` and `send --dry-run` price a send without charging for it. |
+
+  The distinction is worth reading carefully because the wrong remedy costs you the
+  window: waiting does nothing for a full backlog, and draining does nothing for an
+  exhausted budget.
+
+  ⚠️ **The refused ROW does not currently record which cap fired.** The reason lives
+  only in your own `ok:false` receipt, which nobody else can see and which is gone
+  once your turn ends. Measured 2026-08-27: 46 refused rows that day, `error` empty
+  on all 46, while `failed` rows carry error text on 189 of 189 — so the column
+  works and the refused path is not writing to it. **If a refusal matters, quote the
+  receipt text somewhere durable before you move on**; you will not be able to
+  recover it from the store. Tracked as tmux-tell#931.
+
+  📌 **Budget cost is exact and perishable.** A `--dry-run` price is correct for the
+  15-minute window it was taken in and is *not* a per-message constant — the same
+  2KB single-recipient send priced 2.1, 3.5 and 0.4 within one hour on one instrument,
+  because cost depends on how many distinct recipients you have already reached this
+  window. Breadth compounds (measured on a fixed body: 3.5 / 7.8 / 12.9 / 18.6 for one
+  to four recipients, against 3.5 / 7.0 / 10.5 / 14.0 if it were linear) while body
+  size is sublinear (200B / 2KB / 6KB → 1.3 / 2.1 / 3.8). **Reaching more people costs
+  more than saying more.** If you quote a price to anyone, say what your window
+  occupancy was when you took it.
+
+  ⚠️ `--to` is **comma-separated, not repeatable**. `--to a --to b` silently keeps
+  only `b` and prices a one-recipient send — a plausible number for a malformed
+  invocation, with no error.
 - **`refresh-all-mcps` firing across the fleet.** If you see this, an operator is
   re-binding everyone's MCP server — typically after a DB move, because MCP
   servers don't follow a path change on their own (they hold the old file's
