@@ -33,6 +33,37 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.37.2] — 2026-08-27
+
+### Added
+
+None.
+
+### Changed
+
+None.
+
+### Fixed
+
+Mailman units now skip startup when `/srv` is not mounted. They write caches
+under `/srv`, a separate volume; unmounted, those writes land on the root volume
+and are then shadowed by the mount, consuming space no `du /srv/cache` can see.
+The guard is `ConditionPathIsMountPoint`, which skips rather than fails, so
+`Restart=on-failure` never fires and the unit starts cleanly once `/srv` returns
+(`#583`).
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.37.1] — 2026-08-21
 
 ### Added
