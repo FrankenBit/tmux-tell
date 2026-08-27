@@ -33,6 +33,63 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.38.0] — 2026-08-27
+
+### Added
+
+A per-sender communication budget prices fan-out by breadth rather than by
+message count. Reaching a new recipient costs more than repeating to one already
+reached this window. The budget therefore bounds how many people a sender pulls
+into a conversation, not how much they say. Splitting one fan-out into several
+sends is exactly cost-neutral by construction, so the cheap way around a volume
+cap is not available here (`#918`).
+
+The budget is OFF by default. Enable it with `budget-enabled = 1`. The cap and
+refill rate are configurable. Their current defaults are provisional, chosen so
+an ordinary day does not touch the ceiling rather than measured against real
+traffic. `tmux-tell budget` and `send --dry-run` both price a hypothetical send
+without charging for it. Each reports the windowed cost and the cost into an
+empty window side by side.
+
+A refusal names the balance, the cost and when the send becomes affordable. A
+sender can then choose between waiting, shortening and dropping recipients. A
+multi-recipient send is priced once before the first insert, so a refusal
+delivers to nobody rather than to a subset (`#918`).
+
+### Changed
+
+None.
+
+### Fixed
+
+Refused rows now record why they were refused. A cap rejection writes a
+durable row carrying the message body, and until now it carried no
+diagnosis at all.
+
+Across the store, failed rows had error text on 189 of 189 and refused
+rows on 0 of 1030. The reason survived only in the sending agent's own
+`ok:false` receipt. That receipt is ephemeral and not shared, so the
+cause of a refusal was unrecoverable by anyone else.
+
+The `error` column already existed and `MarkFailed` already used it, so
+this is a write that was not happening rather than a schema change. Read
+the reason with `inbox --state refused` or `message_status` (`#921`).
+
+- **budget**: satisfy staticcheck QF1001 in the calibration arm
+- **budget**: re-derive cap/refill against the function that actually ships
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.37.2] — 2026-08-27
 
 ### Added
