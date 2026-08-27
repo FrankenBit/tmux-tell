@@ -151,7 +151,7 @@ func (s *Store) InsertMessage(ctx context.Context, p InsertParams) (InsertResult
 		// tx). RefusedID may be empty when that insert itself fails; callers
 		// treat empty as "no durable record available".
 		_ = tx.Rollback()
-		refusedID := s.insertRefusedRow(ctx, p)
+		refusedID := s.insertRefusedRow(ctx, p, err.Error())
 		return InsertResult{}, &CapRejectionError{
 			RefusedID: refusedID,
 			err:       errors.Unwrap(err), // the sentinel (ErrRecipientQueueFull etc.)
@@ -281,8 +281,8 @@ func (s *Store) InsertMessagePair(ctx context.Context, p1, p2 InsertParams, link
 		// so s.db.ExecContext can acquire the connection (same deadlock
 		// guard as InsertMessage). RefusedID carries p1's id.
 		_ = tx.Rollback()
-		refusedID := s.insertRefusedRow(ctx, p1)
-		_ = s.insertRefusedRow(ctx, p2)
+		refusedID := s.insertRefusedRow(ctx, p1, err.Error())
+		_ = s.insertRefusedRow(ctx, p2, err.Error())
 		return InsertResult{}, InsertResult{}, &CapRejectionError{
 			RefusedID: refusedID,
 			err:       errors.Unwrap(err),
@@ -420,10 +420,20 @@ func checkCapsInTx(ctx context.Context, tx *sql.Tx, p InsertParams, addedRows in
 // doorbell) — a refused row must never be claimed for delivery, so the
 // insert is direct with state=refused.
 //
+// reason is the cap-check failure text (e.g. "store: recipient queue full:
+// bosun (5/5, need 1 slot(s))") and is persisted into the row's error column
+// (#921). Before this, refused rows carried state and body but NO diagnosis:
+// measured across the live store, failed rows had error text on 189 of 189
+// and refused rows on 0 of 1030. The column already existed, so the reason
+// was not unrecoverable in principle — it was simply never written, and it
+// survived only in the sending chamber's own ephemeral ok:false receipt.
+// That made a refusal's cause structurally unrecoverable by anyone but the
+// original sender, and only for as long as their session lasted.
+//
 // Returns the assigned public_id, or "" when the insert fails (the error
 // is discarded; the caller is already returning an error, and refused-row
 // persistence is best-effort durability, not a correctness gate).
-func (s *Store) insertRefusedRow(ctx context.Context, p InsertParams) string {
+func (s *Store) insertRefusedRow(ctx context.Context, p InsertParams, reason string) string {
 	kind := p.Kind
 	if kind == "" {
 		kind = KindMessage
@@ -434,9 +444,9 @@ func (s *Store) insertRefusedRow(ctx context.Context, p InsertParams) string {
 			return ""
 		}
 		_, err = s.db.ExecContext(ctx,
-			`INSERT INTO messages (public_id, from_agent, to_agent, body, kind, state)
-			 VALUES (?, ?, ?, ?, ?, ?)`,
-			candidate, p.FromAgent, p.ToAgent, p.Body, kind, StateRefused)
+			`INSERT INTO messages (public_id, from_agent, to_agent, body, kind, state, error)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			candidate, p.FromAgent, p.ToAgent, p.Body, kind, StateRefused, reason)
 		if err == nil {
 			return candidate
 		}
