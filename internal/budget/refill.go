@@ -39,11 +39,18 @@ import "time"
 // a fan-out is ONE send with N deliveries, grouped by sender+body within 2s. That
 // matches the shipped path (store/budget.go passes len(p.Recipients) to Cost), but
 // an UNGROUPED replay prices each leg as a 1-recipient send, the breadth term never
-// engages, and the same settings read far gentler. 55% of rows on 08-19 are fan-out
-// legs. @bosun's independent replay was ungrouped and reports 5.3%/10.7% where this
-// one reports 17.4%/24.0% — the shape agrees, the magnitudes do not, and the
-// grouping is the whole difference. Cited so the next person re-deriving these knows
-// which question they must answer first.
+// engages, and the same settings read far gentler. On 08-19 grouping REMOVES 54.3%
+// of rows (3523 -> 1609), and 86.8% of rows BELONG to a multi-recipient send —
+// two different quantities of the same data, differing by one row per group.
+// @bosun measured 88% and I measured 55%; both were right and neither said which
+// question it answered. Quote the unit, not just the number.
+//
+// His first replay was UNGROUPED and reported 5.3%/10.7% where this one reports
+// 17.4%/24.0%. He re-ran it grouped and the recommendation moved: 150/20 no longer
+// holds, 120/16 does. The two replays still differ by a few points and that gap is
+// deliberately NOT chased — both quiet controls hold on both instruments and the
+// decision does not turn on it. Cited so the next person re-deriving these knows
+// grouping is the first question they must answer, not the last.
 //
 // ⚠️ NOT varied: alpha, the window, the overdraft ratio. Four days, one host.
 const (
