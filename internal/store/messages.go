@@ -473,10 +473,28 @@ func (s *Store) insertRefusedRow(ctx context.Context, p InsertParams, reason str
 //
 // EVERY FIGURE HERE IS PER-RECIPIENT, which is what this query is scoped to
 // (WHERE to_agent = ?) and what the banner reports. Store-wide the same
-// predicate reads 1074 all-time — a number no single recipient has ever lost,
-// and quoting it beside a per-recipient banner would overstate one chamber's
-// exposure by roughly 7x. @surveyor caught this scope conflation in review;
-// her own inbound is 194, which is neither figure and is the point.
+// predicate read 1074 all-time AS OF 2026-08-27T16:02Z — a number no single
+// recipient has ever lost.
+//
+// Every count here is STAMPED rather than present-tense: the corpus grew 139
+// in the 24h before that reading, so an unanchored figure in a permanent
+// comment decays silently — the same defect the window below exists to avoid,
+// committed one paragraph up from it.
+//
+// And the store-wide-to-per-recipient ratio is not one number, which is a
+// stronger argument for scoping than any single one. At that reading the ten
+// recipients partition 1074 exactly:
+//
+//	bosun      564  (1.9x)      herald      34  (31.6x)
+//	surveyor   194  (5.5x)      lookout     12  (89.5x)
+//	engineer   143  (7.5x)      carpenter    5 (214.8x)
+//	shipwright  98 (11.0x)      pilot        1 (1074.0x)
+//
+// So quoting a store-wide count at a per-recipient banner overstates a
+// chamber's exposure by anywhere from 1.9x to 1074x — and it misleads MOST
+// the chamber with LEAST to worry about. @surveyor caught the conflation in
+// review and supplied the spread; her own 194 is neither figure, which is
+// the point.
 //
 // 24h is chosen from the cost cases on #933, all of which were same-day: a
 // correction that never landed, a 344-insertion push whose notification was
