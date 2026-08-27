@@ -30,6 +30,37 @@ Documentation=https://git.frankenbit.de/frankenbit/tmux-msg
 After=default.target
 PartOf=default.target
 
+# alcatraz-infra#583: this mailman writes developer caches under /srv
+# (XDG_CACHE_HOME, GOMODCACHE, npm_config_cache — /etc/environment.d/
+# 10-cache-on-srv.conf, alcatraz-infra#580). /srv is a SEPARATE LVM VOLUME.
+#
+# Unmounted, its parent is writable, so `mkdir -p /srv/cache/...` SUCCEEDS on
+# the ROOT volume. Those writes are then SHADOWED the moment /srv mounts: still
+# consuming root, invisible to `du /srv/cache`, findable only by unmounting.
+#
+# 🔴 THE HAZARD IS NOT A MISSING DIRECTORY — IT IS THE WRONG FILESYSTEM.
+# Nothing errors, every write succeeds, and that is precisely why it goes
+# unnoticed. The realistic trigger is not boot (no `nofail`, so a failed mount
+# goes to emergency) but MAINTENANCE: an operator unmounting /srv for fsck, a
+# resize or a snapshot while these services keep running.
+#
+# ⚠️ RequiresMountsFor=/srv IS NOT THE GUARD, AND IT LOOKS LIKE ONE. Measured on
+# this host: in a systemd --user manager it yields ORDERING ONLY —
+#     After=basic.target -.mount srv.mount app.slice
+#     Requires=basic.target app.slice          <- srv.mount ABSENT
+# and on a path that is not a mount it is inert entirely: a probe unit naming a
+# non-existent mountpoint STARTED and ran.
+#
+# 🔑 AND ExecStartPre IS THE WRONG FORM TOO. A failing ExecStartPre marks the
+# unit FAILED and feeds Restart=on-failure: five tries, then StartLimitBurst
+# parks it in `failed` needing a manual reset-failed. ConditionPathIsMountPoint
+# SKIPS instead -- ActiveState=inactive, Result=success -- so Restart= never
+# fires and the unit starts cleanly the moment /srv is back. Three arms:
+# non-mount -> ExecStart never runs, rc=0, Result=success; real /srv -> runs;
+# a bogus directive IS reported by systemd-analyze, so "it parses" is a real
+# claim rather than an absence. (@surveyor, ai#624 review.)
+ConditionPathIsMountPoint=/srv
+
 # Restart-flood cap (alcatraz-infra#40 belt-and-suspenders against alcatraz-infra#39
 # pattern). After 5 starts in 60s, systemd marks the unit `failed` and stops
 # restarting until manual intervention (`systemctl --user reset-failed`).
