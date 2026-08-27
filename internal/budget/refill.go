@@ -5,18 +5,50 @@ import "time"
 // Defaults from #918. All four are configurable; these are the calibrated
 // starting points.
 //
-// ⚠️ CALIBRATION CAVEAT. Cap and RefillPerHour were derived by replaying
-// messages.db against the AS-FILED cost function (per-send r^1.5, alpha
-// implicitly 0). This package ships the marginal-window form with alpha=1.0,
-// which prices every send higher — so "binds on exactly the three who churned and
-// never touches the six who worked normally" is a result about a function that is
-// no longer the one running. The replay at alpha=1.0 is owed (Bosun); these values
-// are deliberately LEFT AS MEASURED rather than silently rescaled to fit a new
-// function, because a rescaled default would carry the authority of a measurement
-// nobody made.
+// ✅ CALIBRATED AGAINST THE SHIPPED FUNCTION (#918, re-derived 2026-08-27).
+//
+// An earlier revision shipped cap=500/refill=80, derived by replaying against the
+// AS-FILED cost function (per-send r^1.5, alpha implicitly 0). @bosun ran the
+// replay this comment said was owed and found those values INERT on the shipped
+// marginal-window form: zero refusals across 689 sends of six-chamber churn, every
+// chamber ending at a full balance. A default carries the authority of a
+// measurement, and that one had been measured against a function no longer running.
+//
+// Re-derived by replaying messages.db through THIS package's Cost and Refilled —
+// not a re-implementation, so the calibration cannot drift from the code it
+// calibrates. Refusal rate by day:
+//
+//	cap/refill   08-24   08-25   08-27   08-26   08-19
+//	              quiet   quiet   today    busy  incident
+//	500/80        0.0%    0.0%    0.0%    0.0%     0.0%   ← inert, the old default
+//	150/20        0.0%    0.0%    0.0%   14.0%    12.8%
+//	120/16        0.0%    0.0%    0.0%   17.4%    24.0%   ← shipped
+//	100/14        0.0%    0.0%    1.5%   20.9%    31.9%
+//	 80/10        0.0%    0.0%    6.1%   30.9%    47.0%
+//
+// 🔑 TWO QUIET DAYS ARE THE CONTROL AND THEY HOLD AT EVERY SETTING TRIED. A budget
+// that taxes normal work is worse than none; 08-24 and 08-25 stay at 0.0% down to
+// 80/10, so the discrimination is real rather than an artifact of a gentle cap.
+//
+// 120/16 is chosen over the harder settings because at 100/14 the incident day puts
+// TWO chambers past 50% refusals, which is past "shapes behaviour" into "breaks the
+// day". At 120/16 today's two heaviest senders still end at 8 and -8 — the mechanism
+// is live and the next burst binds — while nobody is refused mid-work.
+//
+// ⚠️ WHAT THIS REPLAY ASSUMES, and it changes the numbers by more than the cap does:
+// a fan-out is ONE send with N deliveries, grouped by sender+body within 2s. That
+// matches the shipped path (store/budget.go passes len(p.Recipients) to Cost), but
+// an UNGROUPED replay prices each leg as a 1-recipient send, the breadth term never
+// engages, and the same settings read far gentler. 55% of rows on 08-19 are fan-out
+// legs. @bosun's independent replay was ungrouped and reports 5.3%/10.7% where this
+// one reports 17.4%/24.0% — the shape agrees, the magnitudes do not, and the
+// grouping is the whole difference. Cited so the next person re-deriving these knows
+// which question they must answer first.
+//
+// ⚠️ NOT varied: alpha, the window, the overdraft ratio. Four days, one host.
 const (
-	DefaultCap            = 500.0
-	DefaultRefillPerHour  = 80.0
+	DefaultCap            = 120.0
+	DefaultRefillPerHour  = 16.0
 	DefaultOverdraftRatio = -0.25 // of cap: a send passes if it leaves balance above this
 	// DefaultAlpha is the per-delivery volume floor. It exists to stop a repeat
 	// message to someone already inside the window costing ZERO; see Cost.
