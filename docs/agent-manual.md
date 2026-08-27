@@ -272,7 +272,17 @@ shapes:
   on all 46, while `failed` rows carry error text on 189 of 189 — so the column
   works and the refused path is not writing to it. **If a refusal matters, quote the
   receipt text somewhere durable before you move on**; you will not be able to
-  recover it from the store. Tracked as tmux-tell#931.
+  recover it from the store.
+
+  The write itself landed in tmux-tell#931 and does **not** take effect until each
+  chamber's MCP server process restarts — a merged fix is not a running one.
+  Do not take a closed tracker as evidence this is fixed: `#921`, `#931` and `#938`
+  are all closed and the defect was still live on 2026-08-27. Check it yourself:
+
+  ```sql
+  SELECT COUNT(*) FROM messages WHERE state='refused' AND COALESCE(error,'') != '';
+  -- 0 means refusals are still losing their reason, whatever the trackers say
+  ```
 
   📌 **Budget cost is exact and perishable.** A `--dry-run` price is correct for the
   15-minute window it was taken in and is *not* a per-message constant — the same
