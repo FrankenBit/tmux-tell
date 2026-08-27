@@ -473,28 +473,29 @@ func (s *Store) insertRefusedRow(ctx context.Context, p InsertParams, reason str
 //
 // EVERY FIGURE HERE IS PER-RECIPIENT, which is what this query is scoped to
 // (WHERE to_agent = ?) and what the banner reports. Store-wide the same
-// predicate read 1074 all-time AS OF 2026-08-27T16:02Z — a number no single
-// recipient has ever lost.
+// predicate read 1077 all-time across 11 recipients AS OF 2026-08-27T16:12Z — a total no
+// single recipient has ever lost.
 //
-// Every count here is STAMPED rather than present-tense: the corpus grew 139
-// in the 24h before that reading, so an unanchored figure in a permanent
-// comment decays silently — the same defect the window below exists to avoid,
-// committed one paragraph up from it.
+// Every count here is STAMPED rather than present-tense: 77 of those 1077
+// landed in the preceding 24h, so an unanchored figure in a permanent comment
+// decays silently — the same defect the window below exists to avoid,
+// committed one paragraph above it in an earlier draft of this very comment.
 //
 // And the store-wide-to-per-recipient ratio is not one number, which is a
-// stronger argument for scoping than any single one. At that reading the ten
-// recipients partition 1074 exactly:
+// stronger argument for scoping than any single one. At that reading it ran
+// from 1.9x for the heaviest recipient to 1077x for the lightest — the counts
+// partition the total exactly, and they are deliberately NOT tabulated here:
+// a per-recipient table in a source comment is stale on the next refusal, and
+// a table whose rows no longer sum to its stated total is worse than no table.
+// Reproduce it with:
 //
-//	bosun      564  (1.9x)      herald      34  (31.6x)
-//	surveyor   194  (5.5x)      lookout     12  (89.5x)
-//	engineer   143  (7.5x)      carpenter    5 (214.8x)
-//	shipwright  98 (11.0x)      pilot        1 (1074.0x)
+//	SELECT to_agent, COUNT(*) FROM messages WHERE state='refused' GROUP BY 1;
 //
 // So quoting a store-wide count at a per-recipient banner overstates a
-// chamber's exposure by anywhere from 1.9x to 1074x — and it misleads MOST
-// the chamber with LEAST to worry about. @surveyor caught the conflation in
-// review and supplied the spread; her own 194 is neither figure, which is
-// the point.
+// chamber's exposure by anywhere from ~2x to ~1000x — and it misleads MOST the
+// chamber with LEAST to worry about. @surveyor caught the conflation in review,
+// supplied the spread, and then caught a partial table of it here that summed
+// to less than the total it was printed under.
 //
 // 24h is chosen from the cost cases on #933, all of which were same-day: a
 // correction that never landed, a 344-insertion push whose notification was
@@ -510,8 +511,8 @@ const RefusedInboundWindow = 24 * time.Hour
 //
 // This is the RECIPIENT-side counterpart to the sender's ok:false receipt
 // (#881): a cap rejection is loud at the sender and, before #933, entirely
-// silent at the recipient — measured across the live store, 1074 refused rows
-// and not one recipient had ever been told about any of them.
+// silent at the recipient — 1074 refused rows across the live store when #933
+// was filed, and not one recipient had ever been told about any of them.
 //
 // Deliberately a QUERY and not a notice row. An earlier draft inserted a
 // coalesced KindRefusedInboundNotice via InsertNotice so the mailman would
