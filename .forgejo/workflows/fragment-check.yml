@@ -15,7 +15,9 @@ name: fragment-check
 on:
   pull_request:
     branches: [main]
-    paths: ['changelog.d/**']
+    # Coverage must run on PRs that do not touch changelog.d/ as well.
+    # Body-only declarations can be corrected without a push.
+    types: [opened, synchronize, reopened, edited]
 
 jobs:
   check:

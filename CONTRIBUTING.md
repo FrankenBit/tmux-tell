@@ -62,8 +62,9 @@ reads safe concurrent with mailman writes.
 
 ## How we work
 
-- **CHANGELOG.** Every change-carrying PR adds a **fragment** in `changelog.d/` —
-  **not** a direct edit of `CHANGELOG.md` (#494). The fragment file is named
+- **CHANGELOG.** Every change-carrying PR adds a **fragment** in `changelog.d/`,
+  or declares why it needs none in the PR body — **not** a direct edit of
+  `CHANGELOG.md` (#494). The fragment file is named
   `changelog.d/<issue>.<type>.md` (e.g. `changelog.d/480.changed.md`), and its content
   is the [Keep a Changelog](https://keepachangelog.com/)-style bullet the entry would
   have added. `<type>` ∈ `added changed deprecated removed fixed security documentation`;
@@ -157,6 +158,15 @@ below the fold. Style reference: the compressed
 as the reader-simulated brevity check. Anchor: post-#687 v0.27.0 incident where multiple
 fragments arrived as multi-paragraph PR-body prose + the assembled body reached the
 outcome only after 3 paragraphs of narrative.
+
+**Fragment coverage (#498).** The fragment-check workflow runs on every pull request,
+not only on changes under `changelog.d/`. A PR that changes a visible fragment is
+covered by that path. A PR that legitimately needs no changelog entry must add exactly
+one non-empty `No-Changelog: <reason>` line to its body. A PR with neither declaration
+is refused as a forgotten fragment; a PR with both is refused as ambiguous. Editing
+the body is a supported way to correct the declaration because the workflow includes
+the `edited` pull-request event. This consumer trigger is paired with the provider
+implementation in release-toolkit#498; do not merge it against the old provider pin.
 
 **Forward-living-comprehensive.** The `CHANGELOG.md` at a tag is the *comprehensive*
 record — the canonical surface a reader consults for "what exactly changed" — while
