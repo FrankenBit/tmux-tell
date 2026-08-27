@@ -901,6 +901,67 @@ func (s *Store) RecipientOldestPendingAt(ctx context.Context, toAgent string) (s
 	return ts.String, true, nil
 }
 
+// SetCreatedAtForTest overrides a row's created_at. Test-only: aging a fixture
+// is the only way to exercise the #934 age surface, whose whole subject is a
+// backlog older than a freshly-seeded row can be.
+func (s *Store) SetCreatedAtForTest(ctx context.Context, publicID, ts string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET created_at = ? WHERE public_id = ?`, ts, publicID)
+	return err
+}
+
+// BacklogAgeAndAnnounces reports how long the OLDEST still-pending real
+// deliverable for toAgent has been waiting, and how many backlog_announce
+// nudges have ALREADY been delivered to them. ok=false when there is no
+// pending real deliverable (nothing to age).
+//
+// tmux-tell#934. The nudge said only "📬 N queued", which is true on the first
+// register and says the same thing on the fifth — so a chamber cannot tell
+// today's traffic from a row that has been sitting for a day and a half. Both
+// numbers here exist to make that legible at the moment the nudge is read.
+//
+// Computed in the store because sqliteTimeFormat lives here; returning a
+// time.Duration keeps the CLI from re-parsing a format it cannot name.
+//
+// TWO DELIBERATE SCOPE CHOICES, both mirroring RecipientOldestPendingAt:
+//
+//   - The AGE excludes synthetic notice kinds, so it measures the oldest REAL
+//     message rather than the age of a nudge announcing it. A pile of notices
+//     must not report itself as old backlog.
+//   - The COUNT includes only DELIVERED announces. An announce that FAILED
+//     told nobody, so counting it would claim the chamber was warned when it
+//     was not — that is cabinboy's third state (its announce rows and its
+//     delivery-failure notices both failed), and it is explicitly not the
+//     "announced and unread" case this number is for.
+func (s *Store) BacklogAgeAndAnnounces(ctx context.Context, toAgent string, now time.Time) (age time.Duration, announces int, ok bool, err error) {
+	toAgent = CanonicalName(toAgent)
+	oldest, found, err := s.RecipientOldestPendingAt(ctx, toAgent)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages
+		   WHERE to_agent = ? AND kind = ? AND state = ?`,
+		toAgent, KindBacklogAnnounce, StateDelivered).Scan(&announces); err != nil {
+		return 0, 0, false, fmt.Errorf("store: backlog announce count: %w", err)
+	}
+	if !found {
+		return 0, announces, false, nil
+	}
+	t, perr := time.Parse(sqliteTimeFormat, oldest)
+	if perr != nil {
+		// An unparseable stamp is could-not-tell, never "brand new": report
+		// ok=false so the caller omits the age rather than printing 0s and
+		// implying the backlog just arrived.
+		return 0, announces, false, nil
+	}
+	age = now.UTC().Sub(t.UTC())
+	if age < 0 {
+		age = 0
+	}
+	return age, announces, true, nil
+}
+
 // RecipientLastDelivered returns the timestamp (RFC3339) of the most recent
 // delivery to toAgent and ok=false when there is none in retained history
 // (#348). A delivery is any row that reached state=delivered — both the

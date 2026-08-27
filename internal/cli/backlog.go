@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/config"
 	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
@@ -21,6 +22,20 @@ type backlogPolicyResult struct {
 	// NudgeID is the public_id of the inserted 📬 nudge, or "" when no nudge
 	// was inserted (Skipped == 0, or the insert soft-failed — see Err).
 	NudgeID string
+	// OldestAge is how long the oldest still-pending REAL deliverable has
+	// been waiting, and OldestAgeOK reports whether it could be determined.
+	// tmux-tell#934: "📬 N queued" reads identically on the first register and
+	// the fifth, so a chamber cannot tell today's traffic from a row that has
+	// been buried for a day. Zero-with-OK-false means could-not-tell, never
+	// "brand new".
+	OldestAge   time.Duration
+	OldestAgeOK bool
+	// PriorAnnounces is how many backlog_announce nudges were ALREADY
+	// delivered to this agent before this one. >0 means the chamber has been
+	// told before and the backlog is still unread — which is the epoch-ratchet
+	// signature, since each register re-floors past the undelivered rows and
+	// inserts a fresh nudge that clears the new floor.
+	PriorAnnounces int
 	// Err is a soft error: registration already succeeded, so a store hiccup
 	// here is reported to the caller (which surfaces it as `backlog_error`)
 	// rather than failing the register. When SetBacklogEpoch succeeded but
@@ -98,11 +113,21 @@ func applyBacklogPolicy(ctx context.Context, s *store.Store, cfg *config.File, n
 	// Its id is higher than every skipped row (and every kept row), so it
 	// outranks the floor and the mailman delivers it last — a heads-up that
 	// lands after any auto-delivered backlog.
+	// #934: age and prior-announce count, both SOFT — a store hiccup here
+	// degrades the nudge to its pre-#934 wording rather than failing a
+	// register that has already succeeded. res.Err is deliberately NOT set:
+	// the caller surfaces that as `backlog_error`, and a missing cosmetic
+	// suffix is not an error the operator needs to see.
+	age, priorAnnounces, ageOK, ageErr := s.BacklogAgeAndAnnounces(ctx, name, time.Now())
+	if ageErr == nil {
+		res.OldestAge, res.OldestAgeOK, res.PriorAnnounces = age, ageOK, priorAnnounces
+	}
+
 	nudge, err := s.InsertNotice(ctx, store.InsertParams{
 		FromAgent: name,
 		ToAgent:   name,
 		Kind:      store.KindBacklogAnnounce,
-		Body:      fmt.Sprintf("📬 %d queued — run tmux-tell.inbox", skipped),
+		Body:      backlogNudgeBody(skipped, res.OldestAge, res.OldestAgeOK, res.PriorAnnounces),
 	})
 	if err != nil {
 		res.Err = err
@@ -110,6 +135,64 @@ func applyBacklogPolicy(ctx context.Context, s *store.Store, cfg *config.File, n
 	}
 	res.NudgeID = nudge.PublicID
 	return res
+}
+
+// backlogAgeFloor is the age below which the nudge omits the age clause —
+// see backlogNudgeBody. One minute: anything fresher is the same register's
+// own traffic, and every pre-#934 test fixture seeds milliseconds-old rows,
+// so their bodies are unchanged by this feature rather than needing edits.
+const backlogAgeFloor = time.Minute
+
+// backlogNudgeBody renders the 📬 nudge.
+//
+// tmux-tell#934. The pre-#934 body was "📬 N queued — run tmux-tell.inbox",
+// which is identical on the first register and the fifth. Two suffixes make
+// the difference legible AT THE MOMENT THE NUDGE IS READ, which is the only
+// moment a chamber is looking:
+//
+//	📬 2 queued — run tmux-tell.inbox                              first time, age unknown
+//	📬 2 queued, oldest 32h — run tmux-tell.inbox                  age known
+//	📬 2 queued, oldest 32h, announced 2× before — run …           told before, still unread
+//
+// The "announced N× before" clause is the epoch-ratchet tell: each register
+// re-floors past the undelivered rows and inserts a nudge above the new floor,
+// so a repeat count means the chamber has been notified and the rows are STILL
+// buried. Without it, nudge five is indistinguishable from nudge one.
+//
+// Both clauses are omitted when unknown rather than rendered as zero — "oldest
+// 0s" would assert the backlog just arrived, which is the opposite of what a
+// could-not-tell means.
+func backlogNudgeBody(skipped int, age time.Duration, ageOK bool, priorAnnounces int) string {
+	b := fmt.Sprintf("📬 %d queued", skipped)
+	// Below the floor the age is NOISE, not signal: a backlog seconds old is
+	// today's traffic and the count already says everything. Rendering
+	// "oldest 0s" on a fresh register would also assert the opposite of what
+	// this surface exists to convey. The clause appears only once the age is
+	// something a reader would act differently on.
+	if ageOK && age >= backlogAgeFloor {
+		b += fmt.Sprintf(", oldest %s", humanBacklogAge(age))
+	}
+	if priorAnnounces > 0 {
+		b += fmt.Sprintf(", announced %d× before", priorAnnounces)
+	}
+	return b + " — run tmux-tell.inbox"
+}
+
+// humanBacklogAge renders a coarse age for the nudge: seconds under a minute,
+// then minutes, then hours, then days. Deliberately coarse — the nudge is read
+// in a pane and the actionable distinction is "minutes" versus "a day", not
+// the exact figure.
+func humanBacklogAge(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours())/24)
+	}
 }
 
 // addBacklogPolicyFields folds a backlogPolicyResult into a register
@@ -125,6 +208,15 @@ func addBacklogPolicyFields(out map[string]any, bp backlogPolicyResult) {
 	}
 	if bp.NudgeID != "" {
 		out["backlog_nudge"] = bp.NudgeID
+	}
+	// #934: the machine-readable half of the nudge's new suffixes, for a
+	// caller that reads the register response rather than the pane. Omitted
+	// when unknown/zero rather than emitted as 0 — see backlogNudgeBody.
+	if bp.OldestAgeOK {
+		out["backlog_oldest_age_seconds"] = int(bp.OldestAge.Seconds())
+	}
+	if bp.PriorAnnounces > 0 {
+		out["backlog_announced_before"] = bp.PriorAnnounces
 	}
 	if bp.Err != nil {
 		out["backlog_error"] = bp.Err.Error()
