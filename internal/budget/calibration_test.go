@@ -112,7 +112,7 @@ func TestCalibration_SustainedBroadcastIsRefused(t *testing.T) {
 func TestCalibration_DiscriminatesBetweenTheTwo(t *testing.T) {
 	normal, _ := simulate(t, 1, 2000, 5*time.Minute, 24)
 	burst, _ := simulate(t, 6, 4000, 30*time.Second, 60)
-	if !(normal == 0 && burst > 10) {
+	if normal != 0 || burst <= 10 {
 		t.Errorf("defaults do not discriminate: normal refused=%d, burst refused=%d", normal, burst)
 	}
 }
