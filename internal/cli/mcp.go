@@ -221,11 +221,11 @@ func newMCPServer(s *store.Store) *mcp.Server {
 		mcpWhoamiHandler(s))
 
 	srv.RegisterTool("tmux-tell.inbox",
-		"List the caller's own queued messages, or acknowledge announce-skipped backlog residue (#221). Pass ack_ids to mark specific messages acknowledged; pass ack_all=true to acknowledge all messages ≤ the backlog_epoch (drains the announce-skipped residue left by the don't-flood policy). Acknowledged messages are excluded from the default queued view but remain retrievable via tmux-tell.get. Pass unanswered=true to see only messages where the sender signaled expects_reply AND you haven't replied yet (#270).",
+		"List the caller's own queued messages, or acknowledge announce-skipped backlog residue (#221). Pass ack_ids to mark specific messages acknowledged; pass ack_all=true to acknowledge all messages ≤ the backlog_epoch (drains the announce-skipped residue left by the don't-flood policy). Acknowledged messages are excluded from the default queued view but remain retrievable via tmux-tell.get. Pass unanswered=true to see only messages where the sender signaled expects_reply AND you haven't replied yet (#270). Pass state=refused to read inbound REFUSED by a cap check (#881): those messages never reached you and appear in no other view, so a refused row is invisible unless asked for by name (#933).",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
-				"state": {"type": "string", "enum": ["queued","delivering","delivered","failed","acknowledged"]},
+				"state": {"type": "string", "enum": ["queued","delivering","delivered","failed","acknowledged","refused"], "description": "Which rows to list. Default queued. Use refused to read inbound that a cap check rejected and that therefore NEVER reached you (#881/#933) \u2014 those rows are excluded from every other view."},
 				"limit": {"type": "integer", "minimum": 1, "maximum": 1000},
 				"ack_ids": {"type": "array", "items": {"type": "string"}, "description": "Public IDs of queued messages to mark acknowledged. Idempotent."},
 				"ack_all": {"type": "boolean", "description": "Mark all queued messages ≤ backlog_epoch_id as acknowledged. Drains announce-skipped backlog residue."},

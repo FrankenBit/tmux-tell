@@ -240,12 +240,32 @@ func runInboxWithStore(ctx context.Context, s *store.Store,
 			})
 		}
 		renderTextTable(stdout, header, rows)
+		// #933: refused inbound is excluded from EVERY other view, including
+		// this one's default. Without a line here the only way to discover a
+		// message that never reached you is to already suspect it exists.
+		//
+		// Suppressed when the caller is already looking at refused rows, and
+		// written to stderr so the table on stdout stays machine-parseable.
+		if state != store.StateRefused {
+			if refused, rErr := s.RefusedInbound(ctx, agent); rErr == nil && refused.Recent > 0 {
+				fmt.Fprintf(stderr,
+					"\u26a0\ufe0f  %d inbound REFUSED in the last %s (newest %s ago, %d all-time) \u2014 never reached you.\n"+
+						"   Read them: inbox --state refused\n",
+					refused.Recent, refusedWindowLabel(), ageOf(refused.NewestAt), refused.Total)
+			}
+		}
 		return exitOK
 
 	default:
 		return writeJSONError(stdout, stderr,
 			fmt.Sprintf("unknown --format: %s", format), exitUsage)
 	}
+}
+
+// refusedWindowLabel renders RefusedInboundWindow for humans: time.Duration
+// stringifies 24h as "24h0m0s", which reads like a bug in a warning line.
+func refusedWindowLabel() string {
+	return fmt.Sprintf("%dh", int(store.RefusedInboundWindow.Hours()))
 }
 
 // messageToMap shapes a Message for JSON output. Mirrors the wire format

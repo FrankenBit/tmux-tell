@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // InsertParams is the input to InsertMessage. ReplyTo may be empty for new
@@ -456,6 +457,73 @@ func (s *Store) insertRefusedRow(ctx context.Context, p InsertParams, reason str
 		}
 	}
 	return ""
+}
+
+// RefusedInboundWindow is how far back RefusedInbound looks (#933).
+//
+// A WINDOW rather than an all-time total, and the reason is the point of the
+// feature. There is no seen-marker for refused rows — they are terminal, so
+// the acknowledged state cannot apply to them — which means an all-time count
+// never decreases: one chamber's own refused inbound read 137 on #933's
+// census and 143 six hours later, having only grown. A banner reading "143
+// refused" on every inbox call is wallpaper by the second day, and a
+// disclosure nobody reads is worse than none because it still occupies the
+// surface a real one would need. Measured against the same store, the window
+// makes it actionable: 6 recent against 143 all-time.
+//
+// 24h is chosen from the cost cases on #933, all of which were same-day: a
+// correction that never landed, a 344-insertion push whose notification was
+// refused, a follow-up request filed three hours late. A refusal older than a
+// day is history; the total is still reported alongside so nothing is hidden.
+const RefusedInboundWindow = 24 * time.Hour
+
+// RefusedInbound reports what a recipient never received.
+//
+// Recent counts refusals inside RefusedInboundWindow, Total counts every
+// refused row addressed to the agent, and NewestAt is the created_at of the
+// most recent one ("" when there are none).
+//
+// This is the RECIPIENT-side counterpart to the sender's ok:false receipt
+// (#881): a cap rejection is loud at the sender and, before #933, entirely
+// silent at the recipient — measured across the live store, 1074 refused rows
+// and not one recipient had ever been told about any of them.
+//
+// Deliberately a QUERY and not a notice row. An earlier draft inserted a
+// coalesced KindRefusedInboundNotice via InsertNotice so the mailman would
+// push it. That design is retracted: any row addressed to the recipient
+// raises their queue depth, and a refusal happens exactly when that depth is
+// AT the cap, so the notice pushed depth to cap+1 and broke ADR-0001's
+// cap-as-ceiling pin — four pins red, and green again with only the two hook
+// calls removed. Counting is unconditionally safe; inserting is not.
+type RefusedInbound struct {
+	Recent   int
+	Total    int
+	NewestAt string
+}
+
+// RefusedInbound returns the refused-inbound summary for toAgent. A zero
+// struct and a nil error mean the recipient has lost nothing.
+func (s *Store) RefusedInbound(ctx context.Context, toAgent string) (RefusedInbound, error) {
+	toAgent = CanonicalName(toAgent)
+	cutoff := time.Now().UTC().Add(-RefusedInboundWindow).Format(sqliteTimeFormat)
+
+	var out RefusedInbound
+	var newest sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT
+		   COUNT(*),
+		   COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0),
+		   MAX(created_at)
+		 FROM messages
+		 WHERE to_agent = ? AND state = ?`,
+		cutoff, toAgent, StateRefused).Scan(&out.Total, &out.Recent, &newest)
+	if err != nil {
+		return RefusedInbound{}, fmt.Errorf("store: refused inbound: %w", err)
+	}
+	if newest.Valid {
+		out.NewestAt = newest.String
+	}
+	return out, nil
 }
 
 // insertOneInTx is the shared INSERT-with-collision-retry helper used

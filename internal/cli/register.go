@@ -342,6 +342,27 @@ func runRegisterCLI(args []string, stdout, stderr io.Writer) int {
 		addBacklogPolicyFields(out, applyBacklogPolicy(ctx, s, cfg, *name, *deliveryMode, queued))
 	}
 
+	// #933: inbound REFUSED by a cap check never reached this agent and shows
+	// up in no other view — not inbox's default, not the queued count above.
+	// Register is where it belongs: the moment a chamber starts or resumes is
+	// the last moment it can still act on what it missed.
+	//
+	// Soft-fail like the queued count, and for the same reason — an honest
+	// zero must not be confused with "unknown". Emitted only when something
+	// was actually refused: a field that is present-and-zero on every register
+	// is the shape a reader stops seeing, and this one has to survive being
+	// read for months.
+	if refused, rErr := s.RefusedInbound(ctx, *name); rErr != nil {
+		out["refused_inbound_error"] = rErr.Error()
+	} else if refused.Total > 0 {
+		out["refused_inbound"] = map[string]any{
+			"recent":    refused.Recent,
+			"total":     refused.Total,
+			"newest_at": refused.NewestAt,
+			"window":    refusedWindowLabel(),
+		}
+	}
+
 	// #258(a): promote this agent's register-deferred messages
 	// (deliver_after="register") — the spawn-die session-bridge ("remember
 	// this for my next dispatch", e.g. Pilot's dispatch-across-sessions). The
