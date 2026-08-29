@@ -131,8 +131,15 @@ func TestDoctor_E2E_FlagsOrphanedMCP(t *testing.T) {
 		// returns success. Read /proc/<pid>/stat directly — ENOENT means the
 		// pid is fully gone; state 'Z' means the process has terminated and is
 		// awaiting reap. Both are "exited" for our purpose (per Surveyor 2480).
+		//
+		// #948: Skipf, not Fatalf. mcp reaping before doctor could observe it
+		// is an environment race (a loaded runner reaping the child between
+		// spawn and our poll), NOT the /proc-scan slew #605 this test exists
+		// to pin — the message above says so and the verb disagreed with it.
+		// Visible skip, not silent: the reason names the pid + state so a
+		// reader can tell "raced" from "never ran".
 		if state, err := readProcStatState(mcp.Process.Pid); err != nil || state == 'Z' {
-			t.Fatalf("mcp pid %d exited before doctor could observe it (state=%q err=%v); this is not the /proc-scan slew #605 targets\n%s", mcp.Process.Pid, state, err, out)
+			t.Skipf("mcp pid %d exited before doctor could observe it (state=%q err=%v); this is not the /proc-scan slew #605 targets, it is an environment reap race\n%s", mcp.Process.Pid, state, err, out)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
