@@ -16,6 +16,31 @@ import (
 	dto "github.com/prometheus/client_model/go"
 )
 
+// gaugePresent reports whether a gauge series identified by name + an exact
+// label-value set exists in the gathered exposition, distinct from
+// gatherGauge below: that helper returns 0 for BOTH an absent series and a
+// present-at-0 one, so it cannot tell "never written" apart from
+// "present-at-zero idiom fired" — exactly the gap #946 needs a real arm for
+// ("an arm asserting only 'not 1' would pass today").
+func gaugePresent(t *testing.T, m *metrics.Metrics, name string, labels map[string]string) bool {
+	t.Helper()
+	families, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, fam := range families {
+		if fam.GetName() != name {
+			continue
+		}
+		for _, metric := range fam.GetMetric() {
+			if labelsMatch(metric.GetLabel(), labels) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // gatherGauge returns the current value of a gauge series identified by name +
 // an exact label-value set, or 0 when the series is absent.
 func gatherGauge(t *testing.T, m *metrics.Metrics, name string, labels map[string]string) float64 {
@@ -402,6 +427,50 @@ func TestServe_Metrics_MailmanStuck_ParkAndUnpark(t *testing.T) {
 	if got := gatherGauge(t, m, "tmux_tell_mailman_stuck",
 		map[string]string{"agent": "bob", "reason": store.StuckReasonPaneNotFound}); got != 0 {
 		t.Errorf("stuck gauge after unpark = %v, want 0", got)
+	}
+}
+
+// TestServe_Metrics_MailmanStuck_StartupHealthy pins #946: a mailman that
+// starts against an agent that is NOT stuck must still expose
+// tmux_tell_mailman_stuck present at 0 (reason="") — the present-at-zero
+// idiom, exercised through the real serve loop startup path rather than by
+// calling metrics.InitMailmanStuck directly. Before this fix the series was
+// written only on a stuck/clear transition, so a healthy mailman never wrote
+// it at all: absence and health were byte-identical, which is what turned a
+// correct, always-NoData Grafana rule into a 36-day page loop.
+//
+// Uses gaugePresent, not gatherGauge(...) == 0: the latter returns 0 for an
+// absent series too, so an arm built on it would pass whether or not
+// InitMailmanStuck ever ran — the exact gap this tracker asked to close.
+func TestServe_Metrics_MailmanStuck_StartupHealthy(t *testing.T) {
+	withSuccessfulDelivery(t)
+
+	s, _ := store.Open(":memory:")
+	t.Cleanup(func() { _ = s.Close() })
+	ctx := context.Background()
+	_ = s.UpsertAgent(ctx, "bob", "%3")
+	// No SetStuck, no queued message: bob is healthy from the first iteration.
+
+	m := metrics.New()
+	opts := fastOpts("bob")
+	opts.Metrics = m
+
+	stop, wait, _ := runServeInBackground(t, s, opts)
+	t.Cleanup(func() { stop(); wait() })
+
+	want := map[string]string{"agent": "bob", "reason": ""}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if gaugePresent(t, m, "tmux_tell_mailman_stuck", want) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !gaugePresent(t, m, "tmux_tell_mailman_stuck", want) {
+		t.Fatal("tmux_tell_mailman_stuck{agent=\"bob\",reason=\"\"} absent after healthy startup — present-at-zero idiom broken (#946)")
+	}
+	if got := gatherGauge(t, m, "tmux_tell_mailman_stuck", want); got != 0 {
+		t.Errorf("tmux_tell_mailman_stuck after healthy startup = %v, want 0", got)
 	}
 }
 

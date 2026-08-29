@@ -139,7 +139,7 @@ func New() *Metrics {
 		}, []string{"agent", "reason"}),
 		mailmanStuck: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "tmux_tell_mailman_stuck",
-			Help: "1 when the mailman is parked in the #291 stuck state (stopped probing tmux), 0 when clear. Labels: agent name and stuck reason (pane-not-found).",
+			Help: "1 when the mailman is parked in the #291 stuck state (stopped probing tmux), 0 when clear. Labels: agent name and stuck reason (pane-not-found). Present-at-zero (reason=\"\") from mailman startup, unconditionally (#946) — before this, the series was only ever written on a stuck/clear transition, so a mailman that never got stuck never emitted it and an absent series could mean either a healthy mailman or a dead metrics pipeline.",
 		}, []string{"agent", "reason"}),
 		reapedTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "tmux_tell_reaped_total",
@@ -459,4 +459,23 @@ func (m *Metrics) SetMailmanStuck(agent, reason string, parked bool) {
 		v = 1.0
 	}
 	m.mailmanStuck.WithLabelValues(agent, reason).Set(v)
+}
+
+// InitMailmanStuck materializes the mailman-stuck gauge for the agent at 0
+// (reason="") so the metric is present in exposition from mailman startup,
+// before any stuck transition — the present-at-zero idiom (#531/#526),
+// applied here per #946. Without this, tmux_tell_mailman_stuck is written
+// only on a SetMailmanStuck transition (stuck or clear); an agent that never
+// goes stuck never gets a series at all, and an absent series is then
+// indistinguishable from a dead metrics pipeline. reason="" matches the
+// existing empty-string-means-not-stuck convention (StuckReason == "" at
+// serve.go's transition check) rather than inventing a second sentinel.
+// Unconditional, like InitCopyModeDefer: mailman-stuck detection does not
+// depend on any per-adapter capability the way rate/usage-limit detection
+// does.
+func (m *Metrics) InitMailmanStuck(agent string) {
+	if m == nil {
+		return
+	}
+	m.mailmanStuck.WithLabelValues(agent, "").Set(0)
 }

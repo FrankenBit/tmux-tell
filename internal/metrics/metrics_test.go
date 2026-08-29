@@ -212,6 +212,91 @@ func TestSetMailmanStuck(t *testing.T) {
 	}
 }
 
+// gaugeSeries reports whether a labeled series exists in the gathered
+// exposition for the named gauge metric, and its value if so. Deliberately
+// does NOT call WithLabelValues on the probed metric: that call lazily
+// materializes the series on ANY invocation, so a presence assertion built
+// on testutil.ToFloat64(m.field.WithLabelValues(...)) would pass whether or
+// not the code under test ever wrote the series — exactly the "an arm
+// asserting only 'not 1' would pass today" trap #946 called out. Gather()
+// only returns what has actually been Set/Inc/Add'd (or otherwise
+// materialized by the code under test), so this is the one instrument that
+// can tell "present at 0" apart from "absent".
+func gaugeSeries(t *testing.T, m *Metrics, name string, labels map[string]string) (value float64, present bool) {
+	t.Helper()
+	families, err := m.Registry().Gather()
+	if err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+	for _, fam := range families {
+		if fam.GetName() != name {
+			continue
+		}
+		for _, metric := range fam.GetMetric() {
+			got := make(map[string]string, len(metric.GetLabel()))
+			for _, lp := range metric.GetLabel() {
+				got[lp.GetName()] = lp.GetValue()
+			}
+			if len(got) != len(labels) {
+				continue
+			}
+			match := true
+			for k, v := range labels {
+				if got[k] != v {
+					match = false
+					break
+				}
+			}
+			if match {
+				return metric.GetGauge().GetValue(), true
+			}
+		}
+	}
+	return 0, false
+}
+
+// TestInitMailmanStuck pins #946: tmux_tell_mailman_stuck must be PRESENT at
+// 0 (agent, reason="") from mailman startup, before any stuck transition.
+// Before this fix the series was written only on a SetMailmanStuck
+// transition, so a mailman that never got stuck never emitted it — an
+// absent series was then indistinguishable from a dead metrics pipeline,
+// the cause of a 36-day Grafana NoData page loop.
+func TestInitMailmanStuck(t *testing.T) {
+	m := New()
+
+	// Isolation check: before init, the series must be genuinely absent —
+	// not merely "reads as 0", which WithLabelValues would give for free.
+	if _, present := gaugeSeries(t, m, "tmux_tell_mailman_stuck", map[string]string{"agent": "bob", "reason": ""}); present {
+		t.Fatal("mailman_stuck series present before InitMailmanStuck — fixture is not isolated")
+	}
+
+	m.InitMailmanStuck("bob")
+
+	value, present := gaugeSeries(t, m, "tmux_tell_mailman_stuck", map[string]string{"agent": "bob", "reason": ""})
+	if !present {
+		t.Fatal("mailman_stuck series absent after InitMailmanStuck — present-at-zero idiom broken (#946)")
+	}
+	if value != 0 {
+		t.Errorf("mailman_stuck after init = %v, want 0", value)
+	}
+
+	// Init is per-agent, not global — an untouched agent must stay absent.
+	if _, present := gaugeSeries(t, m, "tmux_tell_mailman_stuck", map[string]string{"agent": "alice", "reason": ""}); present {
+		t.Error("untouched agent's mailman_stuck series present — init leaked across agents")
+	}
+
+	// A real stuck transition creates its own (agent, reason) series,
+	// independent of the reason="" not-stuck series init created — the
+	// clear-then-set logic in serve.go relies on these staying separate.
+	m.SetMailmanStuck("bob", "pane-not-found", true)
+	if v := testutil.ToFloat64(m.mailmanStuck.WithLabelValues("bob", "pane-not-found")); v != 1 {
+		t.Errorf("stuck series after SetMailmanStuck(true) = %v, want 1", v)
+	}
+	if value, present := gaugeSeries(t, m, "tmux_tell_mailman_stuck", map[string]string{"agent": "bob", "reason": ""}); !present || value != 0 {
+		t.Errorf("reason=\"\" series after unrelated stuck transition: present=%v value=%v, want present=true value=0", present, value)
+	}
+}
+
 // TestCopyModeDeferMetrics pins #526's metric surface: InitCopyModeDefer
 // materializes the counter at 0 (the present-at-zero idiom from #531), Inc
 // bumps it, ObserveCopyModeDeferWait records a wait sample, and series are
@@ -254,6 +339,7 @@ func TestNilMetrics_AllNoOp(t *testing.T) {
 	m.IncPasteUnsafeAbort("b", "unknown")
 	m.IncRateLimit("b", "anthropic", "overloaded")
 	m.SetMailmanStuck("b", "pane-not-found", true)
+	m.InitMailmanStuck("b")
 	m.IncProviderDefer("anthropic")
 	m.SetProviderDeferInflight("anthropic", 1)
 	m.ObserveProviderDeferWait("anthropic", 1)

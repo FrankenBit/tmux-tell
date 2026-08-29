@@ -1297,6 +1297,14 @@ func runServeWithStore(stopCtx context.Context, s *store.Store,
 	// idiom, #531). Unconditional — copy-mode defer is independent of the
 	// provider cap.
 	m.InitCopyModeDefer(opts.Agent)
+	// #946: same idiom for mailman-stuck. Without this, a mailman that never
+	// gets stuck never writes tmux_tell_mailman_stuck at all, and an absent
+	// series is indistinguishable from a dead metrics pipeline — the cause of
+	// a 36-day NoData page loop. The a.StuckReason transition check further
+	// down this loop still owns the actual stuck/clear series (reason=
+	// StuckReason); this seeds the reason="" not-stuck series so absence
+	// starts meaning the pipeline broke.
+	m.InitMailmanStuck(opts.Agent)
 	if m != nil && tmuxio.ActivePaneProfile().RateLimitPattern != "" {
 		m.SetChamberRateLimited(opts.Agent, active.Provider, 0)
 		m.SetChamberRateLimitRetryAfter(opts.Agent, active.Provider, 0)
