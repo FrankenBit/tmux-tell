@@ -166,7 +166,7 @@ one non-empty `No-Changelog: <reason>` line to its body. A PR with neither decla
 is refused as a forgotten fragment; a PR with both is refused as ambiguous. Editing
 the body is a supported way to correct the declaration because the workflow includes
 the `edited` pull-request event. This consumer trigger is paired with the provider
-implementation in release-toolkit#498; do not merge it against the old provider pin.
+implementation in release-toolkit#498 and pins the released coverage contract at `v0.56.0`.
 
 **Forward-living-comprehensive.** The `CHANGELOG.md` at a tag is the *comprehensive*
 record — the canonical surface a reader consults for "what exactly changed" — while
