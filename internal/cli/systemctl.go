@@ -3,10 +3,11 @@ package cli
 import (
 	"context"
 	"fmt"
-	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 	"os"
 	"os/exec"
 	"strings"
+
+	"git.frankenbit.de/frankenbit/tmux-tell/internal/store"
 )
 
 // systemctlRun is the indirection for shelling out to `systemctl --user`.

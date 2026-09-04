@@ -36,7 +36,7 @@ func TestMailmanActiveResolvesRecipientAdapter(t *testing.T) {
 			if err != nil {
 				t.Fatalf("store.Open: %v", err)
 			}
-			defer s.Close()
+			defer func() { _ = s.Close() }()
 			// The agent row must exist before a provider can attach to it —
 			// without this, SetProvider is a no-op and every arm silently
 			// exercises the claude fallback. Measured: the codex arm failed
