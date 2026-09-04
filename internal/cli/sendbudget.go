@@ -37,31 +37,90 @@ func (b budgetTunables) paramsFor(from string, recipients []string, body string)
 	}
 }
 
-// chargeForSend is the single budget gate on the send path.
+// chargeSend is the POLICY half of the budget gate: it decides, charges, and
+// returns what happened. It renders nothing and knows about no output shape.
 //
-// 🔑 WHY IT SITS HERE AND NOT INSIDE THE FAN-OUT LOOP — this is the
-// all-or-nothing half of #918 and it is STRUCTURAL, not a check that
+// 🔴 THE SPLIT EXISTS BECAUSE THE RENDERING IS THE ONE THING THE TWO SEND
+// SURFACES DO NOT SHARE, AND #950 IS WHAT IT COSTS TO WRITE THE POLICY INSIDE
+// ONE OF THEM. The CLI writes JSON to a Writer and returns a process exit code;
+// the MCP tool returns Go values and an error. With the decision embedded in the
+// CLI's rendering, the MCP path could not call it — and did not. Measured on
+// `main@6ebbc6b`: `internal/cli/mcp.go` carried ZERO budget references against
+// 13 in send.go, so every chamber send went unpriced. The `budgets` table agreed
+// from the other side — the six heaviest senders had no row at all while the
+// five that did were the five lightest.
+//
+// ⚠️ AND THE COMMENT ON THE OLD FUNCTION SAID THE OPPOSITE, WITH AUTHORITY: it
+// opened "chargeForSend is the single budget gate on the send path" — true of
+// the path it could see. A claim of singularity is a claim about the surfaces
+// you did NOT enumerate, and it read as settled for three weeks.
+//
+// # Why it sits here and not inside the fan-out loop
+//
+// This is the all-or-nothing half of #918 and it is STRUCTURAL, not a check that
 // happens to run early.
 //
-// runMultiSendWithStore inserts ONE TRANSACTION PER RECIPIENT
-// (sendOneRecipient → InsertMessage, in a loop). A budget check inside
-// that loop would refuse partway through a fan-out: recipients 1..k get
-// the message, k+1..n do not, and the sender is told the send failed
-// while half the crew has already read it. That is strictly worse than
-// either outcome — a partial fan-out is not a cheaper send, it is a
-// DIFFERENT MESSAGE, delivered to a subset nobody chose.
+// The fan-out paths insert ONE TRANSACTION PER RECIPIENT (sendOneRecipient →
+// InsertMessage, in a loop). A budget check inside that loop would refuse
+// partway through: recipients 1..k get the message, k+1..n do not, and the
+// sender is told the send failed while half the crew has already read it. That
+// is strictly worse than either outcome — a partial fan-out is not a cheaper
+// send, it is a DIFFERENT MESSAGE, delivered to a subset nobody chose.
 //
 // Charging the whole fan-out once, before the loop, makes the refusal
-// all-or-nothing by construction: at the point of refusal no row has
-// been written, so there is nothing to unwind and no compensating
-// delete to get wrong.
+// all-or-nothing by construction: at the point of refusal no row has been
+// written, so there is nothing to unwind and no compensating delete to get
+// wrong.
 //
-// ⚠️ The converse is a real and accepted cost: a fan-out that is CHARGED
-// and then fails mid-loop for an unrelated reason (recipient queue full,
-// pane gone) has spent budget on messages that did not land. That is the
-// safe direction — it overcharges rather than overdelivering — but it is
-// a cost, not a free lunch, and it is the reason the recipient-cap checks
-// still run per-recipient underneath.
+// ⚠️ The converse is a real and accepted cost: a fan-out that is CHARGED and then
+// fails mid-loop for an unrelated reason (recipient queue full, pane gone) has
+// spent budget on messages that did not land. That is the safe direction — it
+// overcharges rather than overdelivering — but it is a cost, not a free lunch,
+// and it is the reason the recipient-cap checks still run per-recipient
+// underneath.
+func chargeSend(
+	ctx context.Context,
+	s *store.Store,
+	b budgetTunables,
+	from string,
+	recipients []string,
+	body string,
+) (charged float64, err error) {
+	if !b.Enabled || len(recipients) == 0 {
+		return 0, nil
+	}
+	st, err := s.ChargeBudget(ctx, time.Now(), b.paramsFor(from, recipients, body))
+	if err != nil {
+		return 0, err
+	}
+	return st.Cost, nil
+}
+
+// budgetRefusalText renders an exhaustion refusal.
+//
+// Every gate prints what it did NOT check (/srv/CLAUDE.md §Mechanism design).
+// This one refuses, so the disclosure rides on the refusal — but it names the
+// scope regardless, because the sender's next question is "what do I do
+// instead" and two of the three answers are cheaper than waiting.
+//
+// 🔑 IT IS SHARED RATHER THAN DUPLICATED SO THE TWO SURFACES CANNOT DRIFT IN
+// WHAT THEY ADVISE. A refusal a chamber meets through the MCP tool and the same
+// refusal met through the CLI are the same refusal; if only one of them explains
+// that splitting the send does not help, the other teaches the evasion the cost
+// function was rewritten to close.
+func budgetRefusalText(err error) string {
+	return fmt.Sprintf("%s\n"+
+		"  splitting this into separate sends does NOT help — breadth is charged once per\n"+
+		"  distinct recipient per window, so N sends to N people cost the same as one send\n"+
+		"  to N people. Shortening the body and dropping recipients both do.\n"+
+		"  This does NOT check whether the recipients are reachable or their queues have\n"+
+		"  room; those are separate refusals you may still hit after this one clears.",
+		err.Error())
+}
+
+// chargeForSend is the CLI rendering of chargeSend: same decision, written to
+// stdout/stderr as JSON with a process exit code. See chargeSend for why the
+// decision is not in here.
 func chargeForSend(
 	ctx context.Context,
 	s *store.Store,
@@ -71,28 +130,12 @@ func chargeForSend(
 	body string,
 	stdout, stderr io.Writer,
 ) (charged float64, ok bool, code int) {
-	if !b.Enabled || len(recipients) == 0 {
-		return 0, true, 0
-	}
-	st, err := s.ChargeBudget(ctx, time.Now(), b.paramsFor(from, recipients, body))
+	charged, err := chargeSend(ctx, s, b, from, recipients, body)
 	switch {
 	case err == nil:
-		return st.Cost, true, 0
+		return charged, true, 0
 	case errors.Is(err, store.ErrBudgetExhausted):
-		// Every gate prints what it did NOT check (/srv/CLAUDE.md
-		// §Mechanism design). This one refuses, so the disclosure can ride
-		// on the refusal — but it names the scope regardless, because the
-		// sender's next question is "what do I do instead" and two of the
-		// three answers are cheaper than waiting.
-		return 0, false, writeJSONError(stdout, stderr,
-			fmt.Sprintf("%s\n"+
-				"  splitting this into separate sends does NOT help — breadth is charged once per\n"+
-				"  distinct recipient per window, so N sends to N people cost the same as one send\n"+
-				"  to N people. Shortening the body and dropping recipients both do.\n"+
-				"  This does NOT check whether the recipients are reachable or their queues have\n"+
-				"  room; those are separate refusals you may still hit after this one clears.",
-				err.Error()),
-			exitUnavailable)
+		return 0, false, writeJSONError(stdout, stderr, budgetRefusalText(err), exitUnavailable)
 	default:
 		return 0, false, writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
@@ -233,16 +276,43 @@ func whenAffordableCLI(d time.Duration, ratePerHour float64) string {
 	return "in " + d.Round(time.Minute).String()
 }
 
-// refundSendBudget credits a fully-failed fan-out back.
+// refundSend credits a fully-failed fan-out back and returns the warning text
+// if the credit did not land, or "" if it did.
 //
-// ⚠️ A refund that itself fails is reported to stderr and deliberately NOT
-// made fatal: the send has already been answered on stdout, and turning a
-// bookkeeping failure into a non-zero exit would tell the caller their send
-// failed differently than it did. The warning names the amount so the
-// discrepancy is reconstructable rather than merely announced.
-func refundSendBudget(ctx context.Context, s *store.Store, p sendParams, amount float64, stderr io.Writer) {
+// ⚠️ A refund that itself fails is reported and deliberately NOT made fatal:
+// the send has already been answered, and turning a bookkeeping failure into a
+// failed send would tell the caller their send failed differently than it did.
+// The warning names the AMOUNT so the discrepancy is reconstructable rather
+// than merely announced.
+//
+// 🔑 Split from its rendering for the same reason as chargeSend: the CLI has a
+// stderr to write this to and the MCP surface does not, so a version that takes
+// an io.Writer is a version one of the two callers cannot use.
+func refundSend(ctx context.Context, s *store.Store, p sendParams, amount float64) string {
 	if err := s.RefundBudget(ctx, time.Now(), p.From, amount, p.Budget.Capacity); err != nil {
-		fmt.Fprintf(stderr, "warning: budget refund failed (%.1f not credited back to %s): %v\n",
+		return fmt.Sprintf("budget refund failed (%.1f not credited back to %s): %v",
 			amount, p.From, err)
 	}
+	return ""
+}
+
+// refundSendBudget is the CLI rendering of refundSend.
+func refundSendBudget(ctx context.Context, s *store.Store, p sendParams, amount float64, stderr io.Writer) string {
+	if w := refundSend(ctx, s, p, amount); w != "" {
+		fmt.Fprintln(stderr, "warning: "+w)
+		return w
+	}
+	return ""
+}
+
+// warningsFor seeds a response's warning list from the send's config warning.
+// Returns nil (not an empty slice) when there is nothing to say, so the field is
+// omitted from JSON rather than rendering as an empty array — an empty array
+// reads as "checked, nothing found", which is a different claim from "nothing
+// to report".
+func warningsFor(configWarning string) []string {
+	if configWarning == "" {
+		return nil
+	}
+	return []string{configWarning}
 }

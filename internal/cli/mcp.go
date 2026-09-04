@@ -834,8 +834,36 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 			}
 			timeout = d
 		}
-		cfg, _ := config.Load()
+		// #950 AC3: the error is NOT discarded. config.Load returns an EMPTY
+		// File ALONGSIDE its error, so `cfg, _ :=` degrades a malformed config
+		// into compiled defaults — silently WIDENING every limit the operator
+		// set (max-recipients-per-send falls back from its configured value to
+		// the compiled cap; budget-enabled falls back to OFF). Two opposite
+		// states, one rendering, no signal.
+		//
+		// ⚠️ SURFACED, NOT REFUSED, AND THE REASON IS THE FAILURE'S OWN SHAPE.
+		// A malformed config is ONE file, and refusing every send on it takes
+		// the whole bus down at once — including the channel anyone would use to
+		// coordinate the fix. That is a self-sealing outage, and it is the one
+		// failure mode a messaging substrate must not have. The send proceeds on
+		// the defaults it can name, and says so in `warnings`.
+		cfg, cfgErr := config.Load()
+		configWarning := ""
+		if cfgErr != nil {
+			configWarning = "config did not load, so [defaults] and per-agent limits are NOT in force " +
+				"(compiled defaults applied instead): " + cfgErr.Error()
+		}
 		maxRPS := config.ResolveInt(cfg, from, "max-recipients-per-send", capMaxRecipientsPerSend)
+		// #950: the budget is resolved through the SAME precedence chain the CLI
+		// walks, so the two surfaces cannot end up tuned differently. Before this,
+		// mcp.go read `max-recipients-per-send` out of this very block and no
+		// budget key at all — one knob in one config read reached chambers and the
+		// others did not, which is part of why the gap was invisible: the block
+		// LOOKED like it was reading config.
+		budgetOn := config.ResolveInt(cfg, from, "budget-enabled", 0) != 0
+		tunables := resolveBudgetTunables(func(field string, hardcoded int) int {
+			return config.ResolveInt(cfg, from, field, hardcoded)
+		}, budgetOn)
 		p := sendParams{
 			From:                 from,
 			ReplyTo:              in.ReplyTo,
@@ -853,6 +881,8 @@ func mcpSendHandler(s *store.Store) mcp.ToolHandler {
 			DeliverAfter:         in.DeliverAfter,
 			ExpectsReply:         in.ExpectsReply,
 			Priority:             priority,
+			Budget:               tunables,
+			ConfigWarning:        configWarning,
 		}
 		if len(toList) > 1 {
 			p.ToRecipients = toList
@@ -928,6 +958,19 @@ func doMultiSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, err
 		}
 	}
 
+	// #918/#950: the whole fan-out is priced and charged HERE, before the first
+	// insert — the same gate, at the same position, as runMultiSendWithStore. See
+	// chargeSend for why this cannot live inside the loop: the loop is one
+	// transaction per recipient, so a refusal inside it delivers to a subset
+	// nobody chose.
+	charged, err := chargeSend(ctx, s, p.Budget, p.From, p.ToRecipients, p.Body)
+	if err != nil {
+		if errors.Is(err, store.ErrBudgetExhausted) {
+			return nil, errors.New(budgetRefusalText(err))
+		}
+		return nil, err
+	}
+
 	results := make([]MultiSendResult, 0, len(p.ToRecipients))
 	anyFailed := false
 	// #580: per-pool fan-out stagger — space same-pool inserts so the recipients
@@ -959,7 +1002,24 @@ func doMultiSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, err
 		}
 		results = append(results, mr)
 	}
-	return MultiSendResponse{OK: !anyFailed, Messages: results}, nil
+
+	// #918/#950: a fan-out charged before the loop that then reached NOBODY has
+	// paid full price and delivered nothing. Zero-landed is unambiguous, so it is
+	// refunded. A PARTIAL failure keeps the full charge deliberately — one
+	// recipient's "share" of a superlinear breadth term has no principled value.
+	warnings := warningsFor(p.ConfigWarning)
+	delivered := 0
+	for _, r := range results {
+		if r.OK {
+			delivered++
+		}
+	}
+	if delivered == 0 && charged > 0 {
+		if w := refundSend(ctx, s, p, charged); w != "" {
+			warnings = append(warnings, w)
+		}
+	}
+	return MultiSendResponse{OK: !anyFailed, Messages: results, Warnings: warnings}, nil
 }
 
 // doSendMCP is the MCP-side equivalent of runSendWithStore. We use the
@@ -978,6 +1038,18 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 	}
 	if p.MaxBody > 0 && len(p.Body) > p.MaxBody {
 		return nil, fmt.Errorf("body too large (%d > %d bytes)", len(p.Body), p.MaxBody)
+	}
+	// #918/#950: price and charge before any insert — the SAME gate, at the same
+	// position in the cascade, as runSendWithStore. Placed after the body checks
+	// and before the registry lookup deliberately: charging a send that a cheap
+	// shape check would have rejected is an overcharge for a send that never
+	// happened, and the two surfaces must agree on that boundary or a chamber
+	// pays a different price depending on which one they used.
+	if _, err := chargeSend(ctx, s, p.Budget, p.From, []string{p.To}, p.Body); err != nil {
+		if errors.Is(err, store.ErrBudgetExhausted) {
+			return nil, errors.New(budgetRefusalText(err))
+		}
+		return nil, err
 	}
 	// Deferred delivery (#227): validate the trigger before any insert.
 	if p.DeliverAfter != "" {
@@ -1062,6 +1134,7 @@ func doSendMCP(ctx context.Context, s *store.Store, p sendParams) (any, error) {
 		Recipient:    rs,
 		Freshness:    freshness,
 		DeliverAfter: p.DeliverAfter, // non-empty → staged, not queued (#227)
+		Warnings:     warningsFor(p.ConfigWarning),
 	}
 	// A deferred send never delivers within the wait window (it's staged until
 	// flush), so the wait is skipped — it would always time out misleadingly.

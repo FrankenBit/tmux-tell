@@ -140,7 +140,17 @@ type SendResponse struct {
 	// Query via `inbox --state refused` or message_status. Empty when the
 	// refused-row write itself failed (rare; see insertRefusedRow).
 	RefusedID string `json:"refused_id,omitempty"`
-	Error     string `json:"error,omitempty"`
+	// Warnings carries non-fatal conditions the sender should see but which
+	// must not change the outcome of the send (#950): a config that failed to
+	// load, a budget refund that did not credit back.
+	//
+	// 🔑 IT EXISTS BECAUSE THE MCP SURFACE HAS NO STDERR. The CLI writes those
+	// warnings to stderr; the MCP tool had nowhere to put them, so the same
+	// condition was reportable on one path and invisible on the other — which
+	// is #950's own shape one layer down. A warning nobody can receive is not
+	// a warning.
+	Warnings []string `json:"warnings,omitempty"`
+	Error    string   `json:"error,omitempty"`
 }
 
 // MultiSendResult is one recipient's outcome within a multi-recipient send
@@ -167,6 +177,10 @@ type MultiSendResult struct {
 type MultiSendResponse struct {
 	OK       bool              `json:"ok"`
 	Messages []MultiSendResult `json:"messages"`
+	// Warnings: see SendResponse.Warnings. Carried on the ENVELOPE rather than
+	// per-recipient because both conditions it reports (config load, budget
+	// refund) are properties of the whole fan-out, not of any one leg.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func newSendReceipt(createdAt, deliverAfter string, delivery *DeliveryStatus) *SendReceipt {

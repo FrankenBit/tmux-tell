@@ -52,6 +52,12 @@ type sendParams struct {
 	// path byte-for-byte as it was, which is what makes this safe to land
 	// before the calibration replay has run.
 	Budget budgetTunables
+	// ConfigWarning is non-empty when config.Load() failed for this send
+	// (#950 AC3). It does not change the outcome — see the MCP callsite for
+	// why a malformed config must not take the bus down — but it has to reach
+	// the sender, because every limit they configured has silently fallen back
+	// to a compiled default.
+	ConfigWarning string
 	// DryRun reports what the send WOULD cost and exits without inserting
 	// or charging. Deliberately reports BOTH the static cost and the
 	// windowed one: the static figure is what the sender can reason about
@@ -127,7 +133,17 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		return writeJSONError(stdout, stderr, err.Error(), exitInternal)
 	}
 
-	cfg, _ := config.Load()
+	// #950 AC3: config.Load returns an EMPTY File ALONGSIDE its error, so
+	// discarding the error degrades a malformed config into compiled defaults
+	// and silently WIDENS every limit the operator set. Surfaced, not fatal —
+	// see the MCP callsite for why refusing on it is a self-sealing outage.
+	cfg, cfgErr := config.Load()
+	configWarning := ""
+	if cfgErr != nil {
+		configWarning = "config did not load, so [defaults] and per-agent limits are NOT in force " +
+			"(compiled defaults applied instead): " + cfgErr.Error()
+		fmt.Fprintln(stderr, "warning: "+configWarning)
+	}
 	maxRPS := config.ResolveInt(cfg, fromName, "max-recipients-per-send", capMaxRecipientsPerSend)
 
 	// #918 tunables, resolved through the ordinary precedence chain. The
@@ -160,6 +176,7 @@ func runSendCLI(args []string, stdout, stderr io.Writer) int {
 		Format:               *format,
 		BlockOnStale:         *blockOnStale,
 		Budget:               tunables,
+		ConfigWarning:        configWarning,
 		DryRun:               *dryRun,
 	}
 	if len(toList) > 1 {
@@ -344,6 +361,7 @@ func runSendWithStore(ctx context.Context, s *store.Store, p sendParams, stdout,
 		Recipient:    rs,
 		Freshness:    freshness,
 		DeliverAfter: p.DeliverAfter, // non-empty → staged, not queued (#227)
+		Warnings:     warningsFor(p.ConfigWarning),
 	}
 	// Opt-in synchronous delivery confirmation (#152). Bounded by --timeout
 	// (defaulted at flag-parse); the row is already inserted, so a timeout
@@ -486,11 +504,14 @@ func runMultiSendWithStore(ctx context.Context, s *store.Store, p sendParams, st
 			delivered++
 		}
 	}
+	warnings := warningsFor(p.ConfigWarning)
 	if delivered == 0 && charged > 0 {
-		refundSendBudget(ctx, s, p, charged, stderr)
+		if w := refundSendBudget(ctx, s, p, charged, stderr); w != "" {
+			warnings = append(warnings, w)
+		}
 	}
 
-	out := MultiSendResponse{OK: !anyFailed, Messages: results}
+	out := MultiSendResponse{OK: !anyFailed, Messages: results, Warnings: warnings}
 	_ = writeJSONResult(stdout, out)
 	if anyFailed {
 		return exitTempFail
