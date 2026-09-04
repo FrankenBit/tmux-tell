@@ -157,7 +157,7 @@ func load(t *testing.T, db *sql.DB, from, to string) []row {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rs.Close()
+	defer func() { _ = rs.Close() }()
 	var out []row
 	for rs.Next() {
 		var f, tt, at string
@@ -186,7 +186,7 @@ func TestReplayAgainstRealTraffic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	days := []struct{ name, from, to string }{
 		{"08-19 incident", "2026-08-19T00:00", "2026-08-20T00:00"},
