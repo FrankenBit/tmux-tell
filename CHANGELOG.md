@@ -33,6 +33,121 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.39.0] — 2026-09-05
+
+### Added
+
+None.
+
+### Changed
+
+- **fragment coverage**: every pull request now declares a fragment or a reason for no changelog entry (#498).
+
+### Fixed
+
+**status**: `mailman_running` now reports the recipient's mailman rather than the sender's (`#923`).
+
+The send receipt and `ping` resolved the systemd unit from the running binary's
+adapter. So every probe of a Codex chamber asked about a Claude unit that does
+not exist, and returned false for mailmen that had delivered hundreds of
+messages. Both call sites now resolve the unit from the recipient's persisted
+provider, which is what the health and status probes already did (`#923`).
+
+**The backlog nudge**: it now names how old the oldest message is, and whether you were told before (`#934`).
+
+The nudge said `📬 N queued`, which reads the same on the first register and
+the fifth. A chamber could not tell today's traffic from a row that had been
+waiting since yesterday.
+
+It now reads `📬 2 queued, oldest 1d, announced 2× before — run
+tmux-tell.inbox`. The age appears only once it is over a minute, so an ordinary
+register is unchanged. The repeat count is the useful half: it means you were
+told already and the messages are still unread.
+
+The register response carries the same two facts as `backlog_oldest_age_seconds`
+and `backlog_announced_before`.
+
+This surfaces the backlog. It does not deliver it, and it does not change which
+messages the mailman skips.
+
+**metrics**: `tmux_tell_mailman_stuck` is now present-at-zero from mailman startup (`#946`).
+
+The gauge was edge-triggered: it was only ever written on a stuck/clear
+transition, so a mailman that never went stuck never emitted the series at
+all. An absent series then meant either "healthy" or "the metrics pipeline
+died" — indistinguishable. That turned a correctly-configured Grafana rule
+into a 36-day repeat-page loop, with no chamber or reason to show in the
+notification.
+
+Mailman startup now materializes `tmux_tell_mailman_stuck{agent=<agent>,
+reason=""}` at 0 unconditionally, alongside the existing per-agent
+present-at-zero metrics (`#526`/`#531`). Absence now means the pipeline is
+not reporting; a genuine stuck episode still creates its own
+`reason=<stuck-reason>` series exactly as before.
+
+**doctor e2e**: the orphan-MCP test no longer fails on a reap race it names as out of scope (`#948`)
+
+`TestDoctor_E2E_FlagsOrphanedMCP` used `t.Fatalf` on a condition its own
+message says is not what it targets: the spawned mcp process reaping
+(state `Z`) before `doctor` gets a chance to observe it. That is an
+environment race, not the `/proc`-scan slew `#605` this test exists to
+pin. It reddened `PR#947` — four lines of changelog — with a plausible
+but false "the diff broke it" read.
+
+Now `t.Skipf`, with the pid and state named in the skip reason so the
+coverage loss is visible rather than silent.
+
+Measured before shipping: 20/20 local runs completed the real assertions
+with zero skips (the race did not reproduce here). 5/5 runs against a
+deliberately broken orphan-detection build still failed for the named
+`db_deleted` reason. Forcing the skip branch itself, 1/1 reported `SKIP`
+with a real pid and state rendered, and did not fall through to the
+assertions below it.
+
+**budget**: the MCP send path now charges the communication budget (`#950`)
+
+The budget was charged on the CLI send path only. Every chamber sends
+through the MCP tool, so it had never charged one.
+
+Measured on `main@6ebbc6b`: `internal/cli/mcp.go` carried zero budget
+references against 13 in `send.go`. The `budgets` table agreed from the
+other side. The six heaviest senders had no row at all, while the five
+that did were the five lightest.
+
+The decision is now split from its rendering. `chargeSend` and
+`refundSend` hold the policy and return values. The CLI's
+JSON-and-exit-code wrapper and the MCP tool's Go-values wrapper both call
+them. The policy could not be reused before, because it was written
+inside one surface's output shape.
+
+A config that fails to load is reported rather than discarded.
+`config.Load` returns an empty file alongside its error, so the previous
+`cfg, _ :=` fell back to compiled defaults and silently widened every
+configured limit. The send still proceeds, and says so in a new
+`warnings` field on the send response. Refusing every send over one
+malformed file would take down the channel needed to coordinate the fix.
+
+Replayed before enabling: today's 657 delivery rows fold to 471 sends,
+and the shipped 120/16 refuses none of them. The harness ships as
+`internal/budget/replay_test.go` and skips without `REPLAY_DB`. It
+reproduces `refill.go`'s published table on the days it was derived from
+(08-26 17.4%, 08-19 24.2% against 17.4%/24.0%).
+
+- **lint**: errcheck on the replay harness's deferred Closes
+- **lint**: the two golangci-lint findings this PR introduced
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.38.1] — 2026-08-27
 
 ### Added
