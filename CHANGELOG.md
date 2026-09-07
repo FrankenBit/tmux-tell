@@ -33,6 +33,34 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.39.1] — 2026-09-07
+
+### Added
+
+None.
+
+### Changed
+
+None.
+
+### Fixed
+
+- **register**: the refused-inbound field is now covered by a test (#933)
+
+    Three mutations to the field survived a full green suite: never emitting it, emitting it for an honest zero, and swapping `recent` with `total`. The store query behind it was already well covered; the field that renders it was not.
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.39.0] — 2026-09-05
 
 ### Added
