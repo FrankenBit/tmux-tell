@@ -32,6 +32,27 @@ import (
 // packages had reported cached, three green runs would have proved nothing.
 //
 // This test closes that. Its arms are keyed to those three mutants.
+// MUTATION RECORD — #933's last owed item. Five mutants of the REGISTER FIELD
+// in internal/cli/register.go, each applied and restored SEPARATELY, each killed
+// by a DIFFERENT assertion. Cited by assertion text rather than line number,
+// because this repo has already had cited coordinates rot mid-review.
+//
+//	gate `refused.Total > 0` -> `>= 0`   "present for an agent with NO refusals"
+//	"total":     Total -> Recent         "refused_inbound.total = 1"
+//	"recent":    Recent -> Total         "refused_inbound.recent = 2"
+//	"newest_at": NewestAt -> ""          "newest_at is empty"
+//	"window":    label() -> ""           "window is empty"
+//
+// Five distinct assertions, not five reds: a wholesale revert would redden on
+// the first live arm and report the other four as covered. The applied-check
+// diffed each mutant against a PRE-MUTATION SNAPSHOT rather than HEAD, and an
+// UNMUTATED control was run through that same check — it correctly reported NO
+// CHANGE, which is what proves the check measures the mutation and not the tree.
+//
+// What this does NOT establish: that the arms cover the STORE query underneath
+// (surveyor measured that separately — to_agent->from_agent reddens exactly one
+// arm), nor that the field is reachable from the MCP surface, which is a
+// different tracker.
 func TestRegisterEmitsRefusedInbound(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
