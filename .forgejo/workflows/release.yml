@@ -89,6 +89,23 @@ on:
 #      release-toolkit#805). Schema 1 is still read and migrates on the next
 #      record that needs the field, so `.release-toolkit-manifest.json` was
 #      left at schema 1 rather than hand-edited.
+#
+# 🔴 THE PREREQUISITE THAT BLOCKED THIS BUMP, AND IT IS NOT IN THE CONTRACT.
+# From v0.57.0 (release-toolkit#1062) the rt bootstrap minisign-verifies
+# `checksums.txt` and REFUSES when it has no trust root. The root is the
+# repository Actions variable `RELEASE_TOOLKIT_MINISIGN_PUBLIC_KEY`, read as
+# `vars.` inside the reusable — so it is neither a `workflow_call` input nor a
+# secret, and a diff of the contract shows NOTHING. All three of this repo's
+# wrappers broke identically at `bootstrap rt`, before any gate ran:
+#
+#   ::error::release-toolkit: trusted minisign public key is missing;
+#            refusing to use checksums.txt
+#
+# It is set on this repository (key D11C3791DB75C907, byte-identical to the
+# toolkit's own). It is NOT set at frankenbit org scope, so the next adopter
+# hits this too. `rt adopter-preflight --label go` reports it by name and is
+# the cheap way to check before bumping a pin. The runner image must also carry
+# `minisign`; ours does.
 
 jobs:
   release:
