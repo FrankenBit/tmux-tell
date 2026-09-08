@@ -72,10 +72,27 @@ on:
 # PREP_SUBJECT_RE matches the release-prep template it will run against, AND
 # that its section merge preserves `### Upgrade` over pre-existing
 # `## [Unreleased]` content.
+#
+# UPGRADE v0.42.0 -> v0.63.1 (release-toolkit#1477, 2026-09-08). 42 releases
+# crossed; the `workflow_call` contract gained two optional inputs and six
+# `blocked`-mode outputs, and removed nothing. Three behaviour changes reach an
+# adopter, and only the third needed any action here:
+#
+#   1. `publish_mode` default flipped `draft` -> `immediate` at v0.43.0,
+#      reverting #332. INERT for tmux-tell: the `with:` block below has always
+#      passed `immediate` explicitly. An adopter relying on the default would
+#      have started auto-publishing with no diff of its own to show for it.
+#   2. A cut now REFUSES while the previous release is an unpublished draft
+#      (v0.54.0, release-toolkit#811); the block is named on the PR. Under
+#      `immediate` this repo does not generate that state.
+#   3. Manifest schema 2 adds `last_released_published` (v0.47.0,
+#      release-toolkit#805). Schema 1 is still read and migrates on the next
+#      record that needs the field, so `.release-toolkit-manifest.json` was
+#      left at schema 1 rather than hand-edited.
 
 jobs:
   release:
-    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-release.yml@v0.42.0
+    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-release.yml@v0.63.1
     secrets: inherit
     with:
       runs_on:       go
