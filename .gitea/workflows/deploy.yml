@@ -1,0 +1,243 @@
+# GENERATED FILE — DO NOT EDIT.
+#
+# Source:     .forgejo/workflows/deploy.yml  (hand-edited, authoritative)
+# Regenerate: rt gitea-twin --write
+#
+# Gitea does not resolve a `uses:` into a .forgejo/workflows/ path, and it
+# fails SILENTLY — the caller registers state=active and never fires, with no
+# error and no run object at all. This twin exists so a Gitea consumer can
+# reference a real file at a tag (release-toolkit#1092).
+#
+# `rt gitea-twin --check` fails the build when this file does not match what
+# the generator would produce, so a hand edit here cannot merge.
+
+name: deploy
+
+# Manual deploy to alcatraz via the dedicated host-mode Forgejo runner +
+# /usr/local/sbin/deploy-tmux-tell.sh wrapper (alcatraz-infra #392). Operator
+# triggers from the Forgejo Actions UI with an optional `ref` input to pin
+# the deploy to a specific tag / commit. No automatic trigger by design —
+# auto-deploy-on-push is a follow-up once the manual path is established
+# (#394 release.yml chains here via repository_dispatch / workflow_call).
+#
+# Schema-compatibility notes (Forgejo Actions YAML schema, validated against
+# git.frankenbit.de's instance at 2026-06-14): `gitea.*` is not accepted by
+# the schema validator — use `github.*` (Forgejo aliases the namespace).
+# `timeout-minutes` is not accepted as a job-level property. Top-level
+# `concurrency:` block also tripped the schema validator and was dropped;
+# wrapper-side flock on /run/lock/tmux-tell-deploy.lock provides the
+# concurrency gate at the substrate-honest level. The wrapper uses
+# `flock --nonblock` (fail-fast on contention per Lookout 2347), so a
+# concurrent second deploy exits non-zero immediately with "another deploy
+# is in progress" instead of queueing. The workflow run surfaces that as
+# a failed job; operator-retry is the recovery path. Conservative-then-
+# soften: if the fail-fast surfaces real coordination pain, switch to a
+# blocking flock or re-add workflow-level concurrency at that point.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch / tag / commit to deploy (default: main)'
+        required: false
+        default: 'main'
+        # Explicit type required by Forgejo Actions dispatch UI per #417
+        # (operator-witnessed "Invalid input type ''" 2026-06-14).
+        type: string
+  # workflow_call entry point so release-publish.yml can chain the deploy
+  # after a tag push creates the Forgejo release. Same `ref` input as the
+  # workflow_dispatch trigger; release-publish.yml passes the tag name.
+  # Closes the v0.17.0 cut automation loop (deferred from #394 / #406 as
+  # release-publish.yml fast-follow; operator-greenlit 2026-06-14 evening).
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Branch / tag / commit to deploy'
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    name: install + bootstrap on alcatraz
+    runs-on: alcatraz-host
+    steps:
+      - name: checkout requested ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          # Full history so `git describe` in the Makefile picks up the
+          # right tag for the version stamp (install.sh:155 builds via
+          # `make bin/$BIN_NAME` which embeds `git describe --tags`).
+          fetch-depth: 0
+
+      - name: deploy state
+        run: |
+          set -euo pipefail
+          echo "ref:        ${{ inputs.ref || github.ref_name }}"
+          echo "workspace:  $GITHUB_WORKSPACE"
+          echo "describe:   $(git describe --tags --always)"
+          echo "head:       $(git rev-parse HEAD)"
+          echo "origin:     $(git config --get remote.origin.url)"
+
+      - name: deploy via wrapper (claude adapter, binary + mailman restart)
+        # --system (#636): since the user-space install became the default,
+        # alcatraz's system-wide deploy (root-owned binary in /usr/local/bin — the
+        # existing deploy contract) must opt in explicitly, because install.sh now
+        # REJECTS running as root without --system. PREREQUISITE: the alcatraz-infra
+        # deploy-tmux-tell.sh argument allowlist must already permit --system, or
+        # the wrapper rejects this arg before exec'ing install.sh. That allowlist
+        # change must land BEFORE this ref deploys (see PR #636 cross-repo note).
+        #
+        # --no-bootstrap (#656): the runner has its own tmux context (or none at
+        # all) — chambers live in alex's separate tmux server. bootstrap's step 3
+        # (discover) + step 6 (refresh-all-mcps) both walk live tmux state, so
+        # they can't see the chambers from here and fail. Symptom: v0.23.0 +
+        # v0.24.0 + v0.24.1 all showed exit 70 at the refresh-all-mcps step even
+        # though the binary installed correctly. install.sh's --no-bootstrap path
+        # still runs restart-mailmen (the #436 load-bearing binary-effectiveness
+        # step) + prints a "Next steps" block naming `tmux-tell-claude bootstrap`
+        # as the operator-side follow-up to fire from their tmux session. Also
+        # loses --prune-orphans on the runner path (bootstrap is where the
+        # orphan walk lives); operator's manual bootstrap post-deploy picks it up.
+        run: |
+          sudo /usr/local/sbin/deploy-tmux-tell.sh \
+            "$GITHUB_WORKSPACE" \
+            --adapter=claude \
+            --system \
+            --no-bootstrap
+
+      - name: deploy via wrapper (codex adapter, binary + mailman restart)
+        # #436: the release builds BOTH adapter binaries, so the deploy must roll
+        # both — claude-only left the codex binary a version behind every cut
+        # (caught at v0.17.0). `--no-bootstrap`: same runner-context reason as
+        # the claude step (#656) — the runner can't see chamber panes to fire
+        # substrate-refresh, so it's deferred to the operator's manual
+        # `tmux-tell-claude bootstrap --prune-orphans` post-deploy. No
+        # `--prune-orphans` on either step here: orphan walk is bootstrap-only
+        # and belongs on the operator's manual pass. The codex install path
+        # restarts running codex mailmen via the restart-mailmen primitive, so
+        # the new codex binary is EFFECTIVE (not just on disk) — the #393
+        # effectiveness lesson applied to codex. The call omits
+        # --allow-stale-mailmen, so a restart failure is FATAL: the step fails
+        # loud rather than greening a stale-mailman state (Lookout #439 — the
+        # post-deploy smoke's `--version` only proves file-on-disk).
+        run: |
+          sudo /usr/local/sbin/deploy-tmux-tell.sh \
+            "$GITHUB_WORKSPACE" \
+            --adapter=codex \
+            --system \
+            --no-bootstrap
+
+      - name: post-deploy smoke
+        # Doctor runs with #791's --allow-active-agents flag: mid-turn
+        # chamber-side MCP staleness softens as pending-drain; every other
+        # divergence class (SYNC db-state trouble, mailman-stale, orphan
+        # MCP, idle-at-prompt+stale) is classified per its recovery path
+        # and case-switched below (#797).
+        #
+        # Since #797 landed the doctor case-switches on three exit codes
+        # rather than warn-wrapping any non-zero:
+        #
+        #   0  = no divergence at all → step green
+        #   71 = ALL divergences are idle-stale chamber-side MCPs (the
+        #        class refresh-all-mcps closes) → ::warning::, step green
+        #   *  = ≥1 real-divergence class (SYNC db-state, mailman-stale,
+        #        orphan MCP with no chamber resolvable) → hard-fail
+        #
+        # Restores #416's original goal (hard-fail on real divergence)
+        # while keeping idle-stale — the class the mid-run install.sh
+        # can't reach in --no-bootstrap runner context — as diagnostic-
+        # visible-but-non-blocking. Install-sh's --no-bootstrap tail
+        # also fires `refresh-all-mcps` when tmux is reachable (#797's
+        # Option A subset), so runner-context deploys with a live
+        # operator tmux session now converge chambers autonomously.
+        #
+        # HISTORY — soften/un-conflate/hybrid arc:
+        #
+        #   #415 (v0.17.0-lane) softened doctor to `::warning::` because
+        #   first-deploy empirically hit a false-positive surface: every
+        #   deploy replaces the `tmux-tell-claude` inode, so chamber-side
+        #   MCP servers canonical BEFORE the deploy became stale AFTER.
+        #   `refresh-all-mcps` queued an MCP restart but only fired when
+        #   the chamber processed it — claude `/mcp` on next prompt, and
+        #   codex chambers couldn't act on it at all. With chambers idle
+        #   at deploy time the stale-MCP state persisted, and doctor's
+        #   `Divergent` flag (doctor.go:71) fired on any stale-binary
+        #   process, not just stale mailmen. Every workflow_dispatch
+        #   failed on doctor even when the deploy was structurally
+        #   successful.
+        #
+        #   #416 targeted a bare un-soften on the premise that #411 +
+        #   #414 closed the false-positive class. That premise was
+        #   partial — it closed the CODEX-chamber subclass; the
+        #   CLAUDE-chamber-mid-turn subclass remained. A first attempt
+        #   to re-land (#790) hit the residual false-positive live (a
+        #   mid-turn chamber's own stale MCP flagged divergence).
+        #
+        #   #791 un-conflates SYNC (mailman/binary version — stays
+        #   hard-fail) from ASYNC (chamber-side MCP freshness — softens
+        #   for chambers with a fresh mid-turn observed_state). The
+        #   flag `--allow-active-agents` opts in the softening
+        #   scoped by Surveyor 3ea9: mid-turn observed_state (working /
+        #   at-rest-in-compaction / awaiting-operator) → pending-drain;
+        #   idle-at-prompt + stale-binary → STILL fail (Surveyor's
+        #   named exception: MCP will not self-heal without external
+        #   action). Interactive doctor invocations without the flag
+        #   remain strict.
+        #
+        #   Surveyor's #796 re-review surfaced World-2: nothing post-
+        #   deploy autonomously queues `refresh-all-mcps` to chambers,
+        #   so idle-at-prompt chambers stay stale until the operator
+        #   manually bootstraps. The mid-turn softening is a real
+        #   improvement (mid-turn cases no longer false-positive) but
+        #   the idle-stale case still fires under a bare hard-fail.
+        #   Solution deferred to #797: autonomous refresh path AND
+        #   doctor exit-code split so deploy can distinguish. Until
+        #   #797 lands, the WARN-WRAP held so idle-stale was a
+        #   diagnostic surface, not a deploy blocker.
+        #
+        #   #797 landed both halves (this PR): install.sh --no-bootstrap
+        #   fires `refresh-all-mcps` non-fatal when tmux is reachable
+        #   (Option A subset — reduces the surface reaching this step);
+        #   doctor emits exit 71 for idle-stale-only (Option B), which
+        #   this step case-switches. Exit 71 was picked over 70 to
+        #   avoid a collision with common.go's exitInternal=70 (which
+        #   MUST stay hard-fail — an internal doctor error is NOT the
+        #   same class as idle-stale-only). Sysexits 71 = EX_OSERR is
+        #   a loose semantic fit but is the next-unused slot avoiding
+        #   the collision; the constant name exitDoctorIdleStaleOnly
+        #   in common.go carries the authoritative semantics.
+        #
+        # Install success (the wrapper step exiting 0) remains the load-
+        # bearing deploy signal. Doctor is the mechanical composition on
+        # top: a substrate-state check that lands in the workflow log
+        # for postmortem visibility.
+        run: |
+          set -euo pipefail
+          echo "==> installed binary versions (#436: assert BOTH adapters — a"
+          echo "    silent per-adapter version lag is the gap this surfaces)"
+          tmux-tell-claude --version
+          tmux-tell-codex --version
+          echo "==> doctor (MCP / mailman DB-binding divergence check, #348 / #791)"
+          # #797 case-switch: 0 clean · 71 idle-stale-only (warn) · * real fail.
+          # `set +e` here scopes the failure branch to us rather than tripping
+          # `set -e` at line-192 on doctor's non-zero exit; without it, exit 69
+          # (real divergence) would fail the step immediately without hitting
+          # the case block, defeating the exit-code split entirely. Restored
+          # to -e in the case body's default arm which explicitly exits 1.
+          set +e
+          tmux-tell-claude doctor --allow-active-agents
+          doctor_rc=$?
+          set -e
+          case $doctor_rc in
+              0)
+                  echo "doctor: clean"
+                  ;;
+              71)
+                  echo "::warning::doctor: idle-stale-only — chamber-side MCPs need 'tmux-tell-claude refresh-all-mcps' from a tmux session to converge (softened '~' rows are mid-turn pending-drain; '✗' rows are the idle-stale class). #797 landed."
+                  ;;
+              *)
+                  echo "::error::doctor: real divergence (exit $doctor_rc) — SYNC db-state / mailman-stale / orphan MCP class. refresh-all-mcps CANNOT close these; operator intervention required."
+                  exit 1
+                  ;;
+          esac

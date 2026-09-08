@@ -33,6 +33,32 @@ at the v0.11.0 cut per ADR-0008 §Discretion clause; operator decision 2026-06-0
 
 ## [Unreleased]
 
+## [0.39.2] — 2026-09-08
+
+### Added
+
+None.
+
+### Changed
+
+- **release machinery**: the release-toolkit pins move from v0.42.0/v0.56.0 to v0.63.1 (release-toolkit#1477).
+
+### Fixed
+
+None.
+
+### Removed
+
+None.
+
+### Deprecated
+
+None.
+
+### Upgrade
+
+None.
+
 ## [0.39.1] — 2026-09-07
 
 ### Added
