@@ -1,0 +1,48 @@
+name: pr
+
+# The release-toolkit PR gates, from one workflow and one pin (tmux-tell#963,
+# frankenbit/release-toolkit ADR-0013). It replaces manifest-check.yml and
+# fragment-check.yml, which each called a single-gate reusable at its own pin.
+#
+# Gates on here:
+#   manifest  - .release-toolkit-manifest.json has not drifted from the latest
+#               tag (the old manifest-check.yml, tmux-tell#617).
+#   fragments - every PR carries a changelog.d/ fragment or exactly one
+#               `No-Changelog: <reason>` body line, and each fragment has an
+#               accepted kind and density (the old fragment-check.yml,
+#               release-toolkit#271 / #280 / #498).
+# Every other gate (changelog_body, register, ac_closure, workflow_parse) stays
+# at the reusable's default, off.
+#
+# The reusable replays the PR onto main before grading (release-toolkit#1548),
+# so the gates grade what would land. A branch that no longer applies cleanly
+# goes red with "Rebase locally".
+#
+# The status to require on main is this caller job's,
+# `pr / gates (pull_request)` (ADR-0013 D3). The operator adds it to branch
+# protection only after it has posted on this repo's rolling release PR
+# (release-toolkit#809).
+
+on:
+  pull_request:
+    branches: [main]
+    # The wiring rule (ADR-0013 D4): `edited` because fragment coverage reads
+    # the PR BODY and must re-run when only the body changes. NO `paths:`
+    # filter: a filtered workflow posts no status for an unmatched PR, and a
+    # required status that never posts blocks that PR forever
+    # (release-toolkit#644).
+    types: [opened, synchronize, reopened, edited]
+
+jobs:
+  gates:
+    # `uses:@<ref>` is the single source of truth for the toolkit version.
+    # Keep it on the same tag as release.yml.
+    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-pr-gates.yml@v0.66.0
+    with:
+      runs_on: go
+      # One runner slot is shared by every repo on this forge
+      # (release-toolkit#1530), so every gate runs as a step of one job.
+      layout: combined
+      # Quote on/off: YAML 1.1 reads a bare `on` as a boolean.
+      manifest: 'on'
+      fragments: 'on'

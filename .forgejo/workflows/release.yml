@@ -106,10 +106,28 @@ on:
 # hits this too. `rt adopter-preflight --label go` reports it by name and is
 # the cheap way to check before bumping a pin. The runner image must also carry
 # `minisign`; ours does.
+#
+# UPGRADE v0.63.1 -> v0.66.0 (tmux-tell#963, 2026-10-05). The `workflow_call`
+# block of reusable-release.yml is byte-identical across the gap, so this pin
+# is a one-token change. One behaviour change reaches this wrapper:
+#
+#   1. From v0.64.0 (release-toolkit#1484) the credential step probes the
+#      release PAT's issue scope with one read-only GET /labels before any cut
+#      work, and refuses a PAT the forge answers 401/403. This repo's PAT is
+#      the frankenbit org secret RELEASE_TOOLKIT_TOKEN, which
+#      release-toolkit's own cuts (v0.64.0 to v0.66.0) also use.
+#
+# Since the note above was written, RELEASE_TOOLKIT_MINISIGN_PUBLIC_KEY is
+# also set at frankenbit org scope (read 2026-10-05); the repository copy here
+# still applies.
+#
+# The PR gates moved in the same change: manifest-check.yml and
+# fragment-check.yml became one pr.yml calling reusable-pr-gates.yml, pinned to
+# the same tag as this file. Keep the two pins together.
 
 jobs:
   release:
-    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-release.yml@v0.63.1
+    uses: frankenbit/release-toolkit/.forgejo/workflows/reusable-release.yml@v0.66.0
     secrets: inherit
     with:
       runs_on:       go

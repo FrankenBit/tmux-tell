@@ -159,14 +159,14 @@ as the reader-simulated brevity check. Anchor: post-#687 v0.27.0 incident where 
 fragments arrived as multi-paragraph PR-body prose + the assembled body reached the
 outcome only after 3 paragraphs of narrative.
 
-**Fragment coverage (#498).** The fragment-check workflow runs on every pull request,
+**Fragment coverage (#498).** The `fragments` gate in `pr.yml` (#963) runs on every pull request,
 not only on changes under `changelog.d/`. A PR that changes a visible fragment is
 covered by that path. A PR that legitimately needs no changelog entry must add exactly
 one non-empty `No-Changelog: <reason>` line to its body. A PR with neither declaration
 is refused as a forgotten fragment; a PR with both is refused as ambiguous. Editing
 the body is a supported way to correct the declaration because the workflow includes
 the `edited` pull-request event. This consumer trigger is paired with the provider
-implementation in release-toolkit#498 and pins the released coverage contract at `v0.63.1`.
+implementation in release-toolkit#498 and pins the released coverage contract at `v0.66.0`.
 
 **Forward-living-comprehensive.** The `CHANGELOG.md` at a tag is the *comprehensive*
 record — the canonical surface a reader consults for "what exactly changed" — while
@@ -314,7 +314,7 @@ but tick them explicitly; don't skip.
 5. **Arc42 staleness.** Scan against `revisit-triggers` frontmatter of the
    [Arc42 sections](docs/arc42/) — did any section's named trigger fire?
    Salience, not machine-enforcement (#386).
-6. **CI green.** `test / lint + build + test` + `manifest-check` all green on
+6. **CI green.** `test / lint + build + test` + `pr / gates` all green on
    the rolling PR head. If required checks don't fire on push (Forgejo anti-
    recursion), `RELEASE_TOOLKIT_TOKEN` may need provisioning per
    [release-toolkit#273](https://git.frankenbit.de/frankenbit/release-toolkit/issues/273).
